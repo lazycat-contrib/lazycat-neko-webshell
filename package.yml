@@ -1,4 +1,4 @@
-package: lazycat-neko-webshell
+package: community.lazycat.webshell.neko
 version: 0.2.3
 name: LazyCat Neko WebShell
 description: LightOS WebShell provider backed by Rust, Restty terminal I/O, and Connect control APIs
@@ -8,5 +8,5 @@ permissions:
     - lightos.manage
 locales:
   zh:
-    name: LazyCat Neko WebShell
+    name: Neko WebShell
     description: 基于 Rust、Restty 终端数据面和 Connect 控制面的 LightOS WebShell provider
