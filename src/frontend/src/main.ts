@@ -49,15 +49,17 @@ const transport = createConnectTransport({ baseUrl: window.location.origin });
 const client = createClient(CapabilityService, transport);
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
+const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
 
 const params = new URLSearchParams(window.location.search);
-const initialSelector = params.get("name") ?? "";
+const initialSelector = normalizeSelector(params.get("name") ?? "");
 
 const elements = renderShell(qs<HTMLDivElement>("#app"));
 
 let settings = loadLocalSettings();
 let instances: Instance[] = [];
 let selectedSelector = initialSelector;
+let selectedSelectorGeneration = 0;
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
@@ -98,6 +100,113 @@ function saveSettings() {
 
 function tr(key: MessageKey, values?: Record<string, string | number>): string {
   return translate(settings.locale, key, values);
+}
+
+function normalizeSelector(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function instanceSelector(instance: Instance | undefined): string {
+  const explicit = normalizeSelector(instance?.selector);
+  if (explicit) return explicit;
+  const name = normalizeSelector(instance?.name);
+  const ownerDeployId = normalizeSelector(instance?.ownerDeployId);
+  return name && ownerDeployId ? `${name}@${ownerDeployId}` : "";
+}
+
+function isRunningInstance(instance: Instance | undefined): boolean {
+  return Boolean(
+    instance
+      && normalizeSelector(instance.status) === "running"
+      && instanceSelector(instance),
+  );
+}
+
+function setSelectedSelector(
+  selector: string,
+  options: {
+    replaceLocation?: boolean;
+    tabId?: string;
+    updateLocation?: boolean;
+  } = {},
+): number {
+  const normalized = normalizeSelector(selector);
+  if (normalized !== selectedSelector) {
+    selectedSelector = normalized;
+    selectedSelectorGeneration += 1;
+  }
+  if (options.updateLocation !== false && selectedSelector) {
+    updateWorkspaceLocation(selectedSelector, {
+      replace: options.replaceLocation ?? true,
+      tabId: options.tabId,
+    });
+  }
+  return selectedSelectorGeneration;
+}
+
+function isCurrentSelectorRequest(selector: string, generation: number): boolean {
+  return normalizeSelector(selector) === selectedSelector && generation === selectedSelectorGeneration;
+}
+
+function updateWorkspaceLocation(
+  selector: string,
+  options: {
+    replace?: boolean;
+    tabId?: string;
+  } = {},
+) {
+  const normalized = normalizeSelector(selector);
+  if (!normalized) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set("name", normalized);
+  const tabId = normalizeSelector(options.tabId ?? activeTabId ?? "");
+  if (tabId) {
+    url.searchParams.set("tab", tabId);
+  } else {
+    url.searchParams.delete("tab");
+  }
+  const state = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
+  const nextState: Record<string, unknown> = { ...state, name: normalized };
+  if (tabId) {
+    nextState.tab = tabId;
+  } else {
+    delete nextState.tab;
+  }
+  if (options.replace === false) {
+    window.history.pushState(nextState, "", url);
+    return;
+  }
+  window.history.replaceState(nextState, "", url);
+}
+
+function requestedTabIdFromLocation(): string {
+  return normalizeSelector(new URLSearchParams(window.location.search).get("tab") ?? "");
+}
+
+function lastTabStorageKey(selector: string): string {
+  return `${LAST_TAB_STORAGE_PREFIX}.${selector}`;
+}
+
+function readRememberedTabId(selector: string): string {
+  try {
+    return normalizeSelector(window.localStorage.getItem(lastTabStorageKey(selector)) ?? "");
+  } catch {
+    return "";
+  }
+}
+
+function rememberActiveTab() {
+  if (!selectedSelector || !activeTabId) return;
+  try {
+    window.localStorage.setItem(lastTabStorageKey(selectedSelector), activeTabId);
+  } catch {
+    // localStorage is best-effort; workspace persistence remains server-owned.
+  }
+  updateWorkspaceLocation(selectedSelector, { replace: true, tabId: activeTabId });
+}
+
+function firstExistingTabId(candidates: Array<string | undefined>): string | undefined {
+  return candidates.map(normalizeSelector).find((tabId) => tabs.some((tab) => tab.id === tabId));
 }
 
 function applyI18n() {
@@ -334,6 +443,24 @@ function bindActions() {
 
 function bindLifecycleEvents() {
   window.addEventListener("online", () => void connectRestoredPanes());
+  window.addEventListener("popstate", () => {
+    const nextParams = new URLSearchParams(window.location.search);
+    const nextSelector = normalizeSelector(nextParams.get("name") ?? "");
+    const nextTabId = normalizeSelector(nextParams.get("tab") ?? "");
+    if (!nextSelector) return;
+    if (nextSelector === selectedSelector) {
+      if (nextTabId && tabs.some((tab) => tab.id === nextTabId)) {
+        activateTab(nextTabId, { updateLocation: false });
+      }
+      return;
+    }
+    setSelectedSelector(nextSelector, { updateLocation: false });
+    reconcileSelectedInstance();
+    renderInstances();
+    if (selectedSelector) {
+      void loadWorkspace(selectedSelector);
+    }
+  });
   window.addEventListener("focus", () => {
     scheduleTerminalSizeRefresh();
     void connectRestoredPanes();
@@ -907,7 +1034,7 @@ async function loadInstances() {
   try {
     const response = await client.listInstances({});
     instances = response.instances;
-    selectDefaultInstance();
+    reconcileSelectedInstance();
     renderInstances();
     setGlobalStatus(instances.length ? tr("status.instancesLoaded") : tr("status.noInstances"));
   } catch (error) {
@@ -916,11 +1043,32 @@ async function loadInstances() {
   }
 }
 
-function selectDefaultInstance() {
-  const selected = instances.find((instance) => instance.selector === selectedSelector && instance.status === "running");
-  if (selected) return;
-  const running = instances.find((instance) => instance.status === "running" && instance.selector);
-  selectedSelector = running?.selector ?? selectedSelector;
+function reconcileSelectedInstance(): boolean {
+  const current = normalizeSelector(selectedSelector);
+  const selected = current ? instances.find((instance) => instanceSelector(instance) === current) : undefined;
+  if (selected && isRunningInstance(selected)) {
+    setSelectedSelector(current, {
+      replaceLocation: true,
+      tabId: activeTabId ?? requestedTabIdFromLocation(),
+      updateLocation: true,
+    });
+    updateSelectedInstanceChrome();
+    return true;
+  }
+
+  const runningSelector = instanceSelector(instances.find(isRunningInstance));
+  if (runningSelector) {
+    setSelectedSelector(runningSelector, { updateLocation: true, replaceLocation: true, tabId: "" });
+    updateSelectedInstanceChrome();
+    return true;
+  }
+
+  setSelectedSelector(current, { updateLocation: false });
+  updateSelectedInstanceChrome();
+  return false;
+}
+
+function updateSelectedInstanceChrome() {
   elements.targetLabel.textContent = selectedSelector ? selectorLabel(selectedSelector) : tr("status.noTarget");
   elements.instanceStatusDot.dataset.status = selectedSelector ? selectedInstance()?.status ?? "unknown" : "unknown";
 }
@@ -931,8 +1079,8 @@ function renderInstances() {
     return;
   }
   elements.instanceList.innerHTML = instances.map((instance) => {
-    const selector = instance.selector ?? "";
-    const running = instance.status === "running";
+    const selector = instanceSelector(instance);
+    const running = isRunningInstance(instance);
     const active = selector === selectedSelector;
     return `
       <button class="instance-row ${active ? "selected" : ""}" data-selector="${escapeAttr(selector)}" ${running ? "" : "disabled"} type="button">
@@ -945,8 +1093,9 @@ function renderInstances() {
   }).join("");
   elements.instanceList.querySelectorAll<HTMLButtonElement>(".instance-row").forEach((button) => {
     button.addEventListener("click", () => {
-      selectedSelector = button.dataset.selector ?? "";
-      elements.targetLabel.textContent = selectedSelector ? selectorLabel(selectedSelector) : tr("status.noTarget");
+      const selector = normalizeSelector(button.dataset.selector ?? "");
+      setSelectedSelector(selector, { updateLocation: true, replaceLocation: false, tabId: "" });
+      updateSelectedInstanceChrome();
       closeInstanceMenu();
       renderInstances();
       if (selectedSelector) {
@@ -956,16 +1105,36 @@ function renderInstances() {
   });
 }
 
-async function loadWorkspace(selector: string) {
+async function loadWorkspace(selector: string, options: { allowReconcileRetry?: boolean } = {}) {
+  const requestSelector = normalizeSelector(selector);
+  const generation = selectedSelectorGeneration;
   try {
-    const workspace = await fetchWorkspace(selector);
-    await applyWorkspaceState(workspace, { replayFromStart: true });
+    const workspace = await fetchWorkspace(requestSelector);
+    await applyWorkspaceState(workspace, {
+      generation,
+      replayFromStart: true,
+      selector: requestSelector,
+    });
   } catch (error) {
+    if (
+      options.allowReconcileRetry !== false
+      && isCurrentSelectorRequest(requestSelector, generation)
+      && reconcileSelectedInstance()
+      && selectedSelector !== requestSelector
+    ) {
+      renderInstances();
+      await loadWorkspace(selectedSelector, { allowReconcileRetry: false });
+      return;
+    }
+    if (!isCurrentSelectorRequest(requestSelector, generation)) return;
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
 }
 
 async function fetchWorkspace(selector: string): Promise<WorkspaceState> {
+  if (!selector) {
+    throw new Error(tr("status.selectRunningInstance"));
+  }
   const url = new URL("./api/workspace", window.location.href);
   url.searchParams.set("name", selector);
   url.searchParams.set("cols", String(INITIAL_COLS));
@@ -1018,23 +1187,47 @@ async function runWorkspaceAction(
   }
   const workspace = await response.json() as WorkspaceState;
   if (options.apply !== false) {
-    await applyWorkspaceState(workspace);
+    await applyWorkspaceState(workspace, {
+      generation: selectedSelectorGeneration,
+      preferStateActiveTab: true,
+      selector,
+    });
   }
   return workspace;
 }
 
 type ApplyWorkspaceOptions = {
+  generation?: number;
+  preferStateActiveTab?: boolean;
   replayFromStart?: boolean;
+  selector?: string;
 };
 
-async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWorkspaceOptions = {}) {
+async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWorkspaceOptions = {}): Promise<boolean> {
+  const responseSelector = normalizeSelector(workspace.selector);
+  const expectedSelector = normalizeSelector(options.selector ?? selectedSelector);
+  if (responseSelector && expectedSelector && responseSelector !== expectedSelector) {
+    throw new Error(`Workspace selector mismatch: expected ${expectedSelector}, got ${responseSelector}`);
+  }
+  const workspaceSelector = responseSelector || expectedSelector;
+  if (!workspaceSelector) return false;
+  if (options.generation !== undefined && !isCurrentSelectorRequest(workspaceSelector, options.generation)) {
+    return false;
+  }
+  setSelectedSelector(workspaceSelector, { updateLocation: false });
   const existingPanes = new Map(allPanes().map((pane) => [pane.id, pane]));
   const retainedPaneIds = new Set<string>();
   tabs = [];
-  activeTabId = workspace.active_tab_id;
+  const requestedTabId = requestedTabIdFromLocation();
+  const rememberedTabId = readRememberedTabId(workspaceSelector);
+  const stateActiveTabId = workspace.active_tab_id;
+  const preferredTabIds = options.preferStateActiveTab
+    ? [stateActiveTabId, requestedTabId, rememberedTabId]
+    : [requestedTabId, rememberedTabId, stateActiveTabId];
+  activeTabId = undefined;
   elements.terminalStage.replaceChildren();
   for (const tabState of workspace.tabs) {
-    const tab = makeTab(workspace.selector, tabState.id);
+    const tab = makeTab(workspaceSelector, tabState.id);
     tab.customTitle = tabState.custom_label?.trim() || undefined;
     tab.activePaneId = tabState.active_pane_id;
     tab.layout = tabState.layout;
@@ -1052,6 +1245,7 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
     }
     renderPaneLayout(tab);
   }
+  activeTabId = firstExistingTabId(preferredTabIds);
   if (!activeTabId || !tabs.some((tab) => tab.id === activeTabId)) {
     activeTabId = tabs[0]?.id;
   }
@@ -1069,6 +1263,7 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
   await nextAnimationFrame();
   connectWorkspacePanes();
   scheduleTerminalSizeRefresh();
+  return true;
 }
 
 async function restoreWorkspacePane(
@@ -1672,7 +1867,7 @@ async function remountTerminalsForTouchMode() {
   }
 }
 
-function activateTab(tabId: string, options: { sync?: boolean } = {}) {
+function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: boolean } = {}) {
   activeTabId = tabId;
   for (const tab of tabs) {
     const active = tab.id === tabId;
@@ -1682,6 +1877,9 @@ function activateTab(tabId: string, options: { sync?: boolean } = {}) {
   renderTabs();
   updateActiveDetails();
   activePane()?.term?.focus();
+  if (options.updateLocation !== false) {
+    rememberActiveTab();
+  }
   if (options.sync !== false) {
     const tab = tabs.find((item) => item.id === tabId);
     void runWorkspaceAction("activate_tab", { selector: tab?.selector, tabId, apply: false }).catch(() => undefined);
@@ -2217,11 +2415,12 @@ function tabCurrentTitle(tab: TerminalTab): string {
 }
 
 function selectedInstance(): Instance | undefined {
-  return instances.find((instance) => instance.selector === selectedSelector);
+  return instances.find((instance) => instanceSelector(instance) === selectedSelector);
 }
 
 function instanceForSelector(selector: string): Instance | undefined {
-  return instances.find((instance) => instance.selector === selector);
+  const normalized = normalizeSelector(selector);
+  return instances.find((instance) => instanceSelector(instance) === normalized);
 }
 
 function updateIcons() {

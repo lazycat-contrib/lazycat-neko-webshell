@@ -49,10 +49,6 @@ pub fn build_app(state: Arc<AppState>) -> Router {
             "no-referrer",
         ))
         .layer(security_header(
-            HeaderName::from_static("x-frame-options"),
-            "SAMEORIGIN",
-        ))
-        .layer(security_header(
             CONTENT_SECURITY_POLICY,
             "default-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data: blob:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; object-src 'none'; base-uri 'self'",
         ))
