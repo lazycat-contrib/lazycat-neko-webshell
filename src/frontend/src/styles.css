@@ -15,6 +15,10 @@
   --danger: #ff6b6b;
   --ok: #9be278;
   --radius: 8px;
+  --lzc-safe-area-inset-top: var(--lzc-safe-area-top, env(safe-area-inset-top, 0px));
+  --lzc-safe-area-inset-right: var(--lzc-safe-area-right, env(safe-area-inset-right, 0px));
+  --lzc-safe-area-inset-bottom: var(--lzc-safe-area-bottom, env(safe-area-inset-bottom, 0px));
+  --lzc-safe-area-inset-left: var(--lzc-safe-area-left, env(safe-area-inset-left, 0px));
   font-family:
     "IBM Plex Sans",
     "Aptos",
@@ -92,9 +96,9 @@ textarea:focus-visible {
   display: flex;
   align-items: stretch;
   gap: 10px;
-  height: 38px;
-  min-height: 38px;
-  padding: 0 10px;
+  height: calc(38px + var(--lzc-safe-area-inset-top));
+  min-height: calc(38px + var(--lzc-safe-area-inset-top));
+  padding: var(--lzc-safe-area-inset-top) max(10px, var(--lzc-safe-area-inset-right)) 0 max(10px, var(--lzc-safe-area-inset-left));
   border-bottom: 1px solid var(--line);
   background: var(--chrome);
 }
@@ -110,7 +114,11 @@ textarea:focus-visible {
   height: auto;
   min-width: 42px;
   min-height: 0;
-  padding: 6px 5px;
+  padding:
+    max(6px, var(--lzc-safe-area-inset-top))
+    5px
+    max(6px, var(--lzc-safe-area-inset-bottom))
+    max(5px, var(--lzc-safe-area-inset-left));
   border-right: 1px solid var(--line);
   border-bottom: 0;
 }
@@ -675,7 +683,7 @@ textarea:focus-visible {
 
 .tab-mount {
   position: absolute;
-  inset: 0;
+  inset: 0 0 var(--lzc-safe-area-inset-bottom) 0;
   display: block;
   min-height: 0;
   background: var(--term-bg, #050a12);
@@ -695,7 +703,11 @@ textarea:focus-visible {
   height: 100%;
   min-height: 0;
   min-width: 0;
-  padding: 8px 10px;
+  padding:
+    8px
+    max(10px, var(--lzc-safe-area-inset-right))
+    8px
+    max(10px, var(--lzc-safe-area-inset-left));
   border: 0;
   background: var(--term-bg, #050a12);
   overflow: hidden;
@@ -1298,10 +1310,10 @@ output {
   }
 
   .topbar {
-    height: 46px;
-    min-height: 46px;
+    height: calc(46px + var(--lzc-safe-area-inset-top));
+    min-height: calc(46px + var(--lzc-safe-area-inset-top));
     gap: 6px;
-    padding: 0 8px;
+    padding: var(--lzc-safe-area-inset-top) max(8px, var(--lzc-safe-area-inset-right)) 0 max(8px, var(--lzc-safe-area-inset-left));
   }
 
   .tab {
@@ -1345,7 +1357,11 @@ output {
   .webshell[data-tab-layout="vertical"] .topbar {
     width: 48px;
     min-width: 48px;
-    padding: 7px 4px;
+    padding:
+      max(7px, var(--lzc-safe-area-inset-top))
+      4px
+      max(7px, var(--lzc-safe-area-inset-bottom))
+      max(4px, var(--lzc-safe-area-inset-left));
   }
 
   .webshell[data-tab-layout="vertical"].has-named-tabs .topbar {
@@ -1421,11 +1437,11 @@ output {
   }
 
   .tab-mount {
-    bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(104px + var(--lzc-safe-area-inset-bottom));
   }
 
   .empty-state {
-    bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(104px + var(--lzc-safe-area-inset-bottom));
   }
 
   .mobile-shortcuts {
@@ -1437,8 +1453,12 @@ output {
     display: grid;
     grid-template-rows: 32px minmax(0, auto);
     gap: 5px;
-    min-height: calc(104px + env(safe-area-inset-bottom, 0px));
-    padding: 5px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    min-height: calc(104px + var(--lzc-safe-area-inset-bottom));
+    padding:
+      5px
+      max(6px, var(--lzc-safe-area-inset-right))
+      calc(6px + var(--lzc-safe-area-inset-bottom))
+      max(6px, var(--lzc-safe-area-inset-left));
     overflow: hidden;
     border-top: 1px solid rgba(148, 163, 184, 0.22);
     background: rgba(16, 20, 25, 0.96);
