@@ -26,6 +26,7 @@ import { encodeMobileShortcutKeyInput } from "./keyboard";
 import { loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
 import { nextPaneLayout, paneIdsInLayout, paneLayoutNode, removePaneFromLayout } from "./split-layout";
+import { cursorStyleSequence, terminalThemeCssVars } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
 import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX, parseCustomGhosttyTheme, resolveTheme, resttyThemeFor } from "./theme-registry";
 import type { FontPreset, PaneTerminalTransport, SplitNode, SplitPlacement, StoredFont, TerminalPane, TerminalTab, TerminalTheme, Tone } from "./types";
@@ -628,7 +629,10 @@ async function runPaneMenuAction(action: string) {
 function applySettings(options: { resizeTerminals?: boolean } = {}) {
   const theme = currentTheme();
   const font = currentFont();
+  const resttyTheme = resttyThemeFor(theme);
   applyI18n();
+  applyThemeVariables(elements.webshell, resttyTheme);
+  applyThemeVariables(elements.terminalStage, resttyTheme);
   elements.localeSelect.value = settings.locale;
   renderThemeOptions();
   elements.themeSelect.value = theme.id;
@@ -656,7 +660,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.debugMode.checked = settings.debugMode;
 
   for (const pane of allPanes()) {
-    applyTerminalAppearance(pane);
+    applyTerminalAppearance(pane, resttyTheme);
     if (options.resizeTerminals) {
       pane.term?.restty?.setFontSize(settings.fontSize);
       pane.term?.restty?.updateSize(true);
@@ -674,7 +678,14 @@ function currentFont(): FontPreset {
   return [...FONT_PRESETS, ...customFonts].find((item) => item.id === settings.fontFamilyId) ?? FONT_PRESETS[0];
 }
 
-function applyThemeToMount(mount: HTMLElement) {
+function applyThemeVariables(target: HTMLElement, resttyTheme = resttyThemeFor(currentTheme())) {
+  const vars = terminalThemeCssVars(resttyTheme);
+  for (const [name, value] of Object.entries(vars)) {
+    target.style.setProperty(name, value);
+  }
+}
+
+function applyThemeToMount(mount: HTMLElement, resttyTheme = resttyThemeFor(currentTheme())) {
   const theme = currentTheme();
   const font = currentFont();
   const themeClasses = THEMES.map((item) => item.className).filter((value): value is string => Boolean(value));
@@ -682,6 +693,7 @@ function applyThemeToMount(mount: HTMLElement) {
   if (theme.className) {
     mount.classList.add(theme.className);
   }
+  applyThemeVariables(mount, resttyTheme);
   mount.classList.remove("cursor-shape-block", "cursor-shape-bar", "cursor-shape-underline");
   mount.classList.add(`cursor-shape-${settings.cursorShape}`);
   mount.classList.toggle("cursor-blink", settings.cursorBlink);
@@ -690,19 +702,32 @@ function applyThemeToMount(mount: HTMLElement) {
   mount.style.setProperty("--term-line-height", String(settings.lineHeight));
 }
 
-function applyTerminalAppearance(pane: TerminalPane) {
-  applyThemeToMount(pane.mount);
+function applyTerminalAppearance(pane: TerminalPane, theme = resttyThemeFor(currentTheme())) {
+  applyThemeToMount(pane.mount, theme);
   const term = pane.term;
   if (!term?.restty) return;
-  const theme = resttyThemeFor(currentTheme());
   if (theme) {
     term.restty.applyTheme(theme, currentTheme().label);
   }
+  const themeVars = terminalThemeCssVars(theme);
+  term.restty.setPaneStyleOptions({
+    splitBackground: themeVars["--term-bg"],
+    paneBackground: themeVars["--term-bg"],
+    inactivePaneOpacity: 1,
+    activePaneOpacity: 1,
+    opacityTransitionMs: 0,
+    dividerThicknessPx: 1,
+  });
+  applyCursorAppearance(pane);
   term.restty.setFontSize(settings.fontSize);
   void term.restty.setFontSources(resttyFontSourcesFor(currentFont())).catch((error) => {
     setFontStatus(tr("status.fontLoadFailed", { message: errorMessage(error) }), "error");
   });
   term.restty.updateSize(true);
+}
+
+function applyCursorAppearance(pane: TerminalPane) {
+  pane.term?.write(cursorStyleSequence(settings.cursorShape, settings.cursorBlink));
 }
 
 function syncThemeEditor() {
@@ -1317,7 +1342,10 @@ async function mountTerminal(pane: TerminalPane) {
       maxScrollbackBytes: Math.max(1_000_000, settings.scrollbackLimit * 160),
       ptyTransport: pane.transport,
       callbacks: {
-        onGridSize: (cols, rows) => handleTerminalResize(pane, cols, rows),
+        onGridSize: (cols, rows) => {
+          handleTerminalResize(pane, cols, rows);
+          applyCursorAppearance(pane);
+        },
       },
     },
   });
@@ -1442,6 +1470,7 @@ function clearReplayInputLock(pane: TerminalPane) {
 
 function finishReplayInputLock(pane: TerminalPane) {
   clearReplayInputLock(pane);
+  applyCursorAppearance(pane);
   flushPendingInput(pane);
 }
 
