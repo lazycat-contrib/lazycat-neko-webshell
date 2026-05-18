@@ -14,11 +14,11 @@ mod preferences;
 mod proto;
 mod router;
 mod service;
-mod session_api;
 mod state;
 mod terminal;
 mod terminal_manager;
 mod validation;
+mod workspace;
 
 use crate::router::build_app;
 use crate::state::AppState;

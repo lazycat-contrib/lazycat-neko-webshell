@@ -1,8 +1,6 @@
 import type { ResttyFontSource } from "restty";
 import type { Terminal } from "restty/xterm";
 
-import type { Session } from "./gen/lazycat/webshell/v1/capability_pb";
-
 export type Tone = "ok" | "error" | "neutral";
 export type TabLayout = "horizontal" | "vertical";
 export type CursorShape = "block" | "bar" | "underline";
@@ -23,6 +21,40 @@ export type SplitContainerNode = {
 };
 
 export type SplitNode = SplitPaneNode | SplitContainerNode;
+
+export type WorkspacePaneState = {
+  id: string;
+  session_id: string;
+  status: string;
+  cols: number;
+  rows: number;
+};
+
+export type WorkspaceTabState = {
+  id: string;
+  label: string;
+  custom_label?: string;
+  active_pane_id?: string;
+  layout?: SplitNode;
+  panes: WorkspacePaneState[];
+};
+
+export type WorkspaceState = {
+  selector: string;
+  active_tab_id?: string;
+  tabs: WorkspaceTabState[];
+};
+
+export type WorkspaceAction =
+  | "create_tab"
+  | "close_tab"
+  | "rename_tab"
+  | "activate_tab"
+  | "split_pane"
+  | "close_pane"
+  | "activate_pane"
+  | "promote_pane_to_tab"
+  | "update_layout";
 
 export type TerminalTheme = {
   id: string;
@@ -117,7 +149,8 @@ export type TerminalPane = {
   status: string;
   tone: Tone;
   mount: HTMLDivElement;
-  session?: Session;
+  sessionId?: string;
+  sessionStatus?: string;
   term?: Terminal;
   socket?: WebSocket;
   transport?: PaneTerminalTransport;

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::{fs, io};
@@ -13,6 +13,7 @@ use crate::config::{
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
 use crate::terminal_manager::{TerminalRegistry, TerminalSpec};
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
+use crate::workspace::{WorkspaceRecord, WorkspaceStore, default_workspace_store};
 
 const METADATA_RESTARTABLE: &str = "restartable";
 const METADATA_HOST: &str = "host";
@@ -24,20 +25,33 @@ pub struct AppState {
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
     pub terminals: Arc<TerminalRegistry>,
     session_store: Arc<SessionStore>,
+    pub workspaces: Arc<RwLock<HashMap<String, WorkspaceRecord>>>,
+    workspace_store: Arc<WorkspaceStore>,
 }
 
 impl AppState {
     pub fn new() -> Self {
         let session_store = Arc::new(SessionStore::new(session_state_path()));
-        let sessions = session_store.load().unwrap_or_else(|err| {
+        let workspace_store = Arc::new(default_workspace_store());
+        let workspaces = workspace_store.load().unwrap_or_else(|err| {
+            warn!(error = %err, "failed to load persisted terminal workspaces");
+            HashMap::new()
+        });
+        let mut sessions = session_store.load().unwrap_or_else(|err| {
             warn!(error = %err, "failed to load persisted terminal sessions");
             HashMap::new()
         });
+        prune_unreferenced_sessions(&mut sessions, &workspaces);
+        if let Err(err) = session_store.save(&sessions) {
+            warn!(error = %err, "failed to prune unreferenced terminal sessions");
+        }
         Self {
             sessions: Arc::new(RwLock::new(sessions)),
             plugins: Arc::new(RwLock::new(builtin_plugins())),
             terminals: Arc::new(TerminalRegistry::new()),
             session_store,
+            workspaces: Arc::new(RwLock::new(workspaces)),
+            workspace_store,
         }
     }
 
@@ -47,6 +61,26 @@ impl AppState {
     ) -> io::Result<()> {
         self.session_store.save(sessions)
     }
+
+    pub fn persist_workspaces_snapshot(
+        &self,
+        workspaces: &HashMap<String, WorkspaceRecord>,
+    ) -> io::Result<()> {
+        self.workspace_store.save(workspaces)
+    }
+}
+
+fn prune_unreferenced_sessions(
+    sessions: &mut HashMap<String, SessionRecord>,
+    workspaces: &HashMap<String, WorkspaceRecord>,
+) {
+    let referenced = workspaces
+        .values()
+        .flat_map(|workspace| &workspace.tabs)
+        .flat_map(|tab| &tab.panes)
+        .map(|pane| pane.session_id.as_str())
+        .collect::<HashSet<_>>();
+    sessions.retain(|session_id, _| referenced.contains(session_id.as_str()));
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

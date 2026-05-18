@@ -20,16 +20,29 @@ import {
   THEMES,
 } from "./config";
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
-import { CapabilityService, type Instance, type Session } from "./gen/lazycat/webshell/v1/capability_pb";
+import { CapabilityService, type Instance } from "./gen/lazycat/webshell/v1/capability_pb";
 import { translate, type MessageKey } from "./i18n";
 import { encodeMobileShortcutKeyInput } from "./keyboard";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
-import { nextPaneLayout, paneIdsInLayout, paneLayoutNode, removePaneFromLayout } from "./split-layout";
+import { paneLayoutNode } from "./split-layout";
 import { cursorStyleSequence, terminalThemeCssVars } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
 import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX, parseCustomGhosttyTheme, resolveTheme, resttyThemeFor } from "./theme-registry";
-import type { FontPreset, PaneTerminalTransport, SplitNode, SplitPlacement, StoredFont, TerminalPane, TerminalTab, TerminalTheme, Tone } from "./types";
+import type {
+  FontPreset,
+  PaneTerminalTransport,
+  SplitNode,
+  SplitPlacement,
+  StoredFont,
+  TerminalPane,
+  TerminalTab,
+  TerminalTheme,
+  Tone,
+  WorkspaceAction,
+  WorkspacePaneState,
+  WorkspaceState,
+} from "./types";
 import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorLabel } from "./utils";
 
 const transport = createConnectTransport({ baseUrl: window.location.origin });
@@ -71,12 +84,11 @@ async function init() {
   createIcons({ icons });
   setInterval(updateActiveDetails, STATUS_REFRESH_MS);
   await loadInstances();
-  await restoreSessions();
-  if (selectedSelector && (initialSelector || !tabs.length)) {
+  if (selectedSelector) {
+    await loadWorkspace(selectedSelector);
+  }
+  if (selectedSelector && !tabs.length) {
     elements.targetLabel.textContent = selectorLabel(selectedSelector);
-    if (!tabs.some((tab) => tab.selector === selectedSelector)) {
-      await createTerminalTab(selectedSelector);
-    }
   }
 }
 
@@ -621,9 +633,9 @@ async function runPaneMenuAction(action: string) {
   } else if (action === "paste-clipboard") {
     await pasteIntoPane(pane, true);
   } else if (action === "promote-session-to-tab" && tab && pane) {
-    promoteSessionToNewTab(tab, pane);
+    await promoteSessionToNewTab(tab, pane);
   } else if (action === "close-active-session" && tab && pane) {
-    closeActiveSession(tab, pane);
+    await closeActiveSession(tab, pane);
   }
 }
 
@@ -937,90 +949,178 @@ function renderInstances() {
       elements.targetLabel.textContent = selectedSelector ? selectorLabel(selectedSelector) : tr("status.noTarget");
       closeInstanceMenu();
       renderInstances();
+      if (selectedSelector) {
+        void loadWorkspace(selectedSelector);
+      }
     });
   });
 }
 
-async function restoreSessions() {
+async function loadWorkspace(selector: string) {
   try {
-    const response = await client.listSessions({});
-    let sessions = response.sessions
-      .filter((session) => session.id && session.selector && session.status !== "closed")
-      .sort(compareSessionsForRestore);
-    if (!sessions.length) return;
-
-    const restoredTabs = new Map<string, { tabId?: string; host: string; title?: string; order: number; sessions: Session[] }>();
-    for (const session of sessions) {
-      const key = sessionTabKey(session);
-      const host = sessionHost(session);
-      const title = sessionTabTitle(session);
-      const order = sessionMetadataIndex(session, "tabOrder", Number.MAX_SAFE_INTEGER);
-      const group = restoredTabs.get(key);
-      if (group) {
-        group.sessions.push(session);
-        group.order = Math.min(group.order, order);
-        group.title ??= title;
-      } else {
-        restoredTabs.set(key, {
-          tabId: session.metadata.tabId?.trim() || undefined,
-          host,
-          title,
-          order,
-          sessions: [session],
-        });
-      }
-    }
-
-    const groups = [...restoredTabs.values()].sort(
-      (left, right) => left.order - right.order || left.host.localeCompare(right.host) || (left.tabId ?? "").localeCompare(right.tabId ?? ""),
-    );
-    for (const group of groups) {
-      const selector = group.sessions[0]?.selector;
-      if (!selector) continue;
-      const tab = makeTab(selector, group.tabId);
-      tab.customTitle = group.title;
-      tabs = [...tabs, tab];
-      elements.terminalStage.appendChild(tab.mount);
-      for (const session of group.sessions.sort(comparePanesForRestore)) {
-        await restorePane(tab, session);
-      }
-      if (!activeTabId) {
-        activateTab(tab.id);
-      }
-    }
-    renderTabs();
-    updateActiveDetails();
+    const workspace = await fetchWorkspace(selector);
+    await applyWorkspaceState(workspace, { replayFromStart: true });
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
 }
 
-async function restorePane(tab: TerminalTab, session: Session) {
-  const pane = makePane(tab);
-  pane.session = session;
-  pane.cols = session.cols || INITIAL_COLS;
-  pane.rows = session.rows || INITIAL_ROWS;
-  const referencePane = activePane(tab);
+async function fetchWorkspace(selector: string): Promise<WorkspaceState> {
+  const url = new URL("./api/workspace", window.location.href);
+  url.searchParams.set("name", selector);
+  url.searchParams.set("cols", String(INITIAL_COLS));
+  url.searchParams.set("rows", String(INITIAL_ROWS));
+  url.searchParams.set("output_limit", String(settings.outputBufferLimit));
+  url.searchParams.set("auto_restart", String(settings.autoRestartSessions));
+  const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  return response.json() as Promise<WorkspaceState>;
+}
+
+async function runWorkspaceAction(
+  action: WorkspaceAction,
+  options: {
+    selector?: string;
+    tabId?: string;
+    paneId?: string;
+    direction?: SplitPlacement;
+    label?: string;
+    layout?: SplitNode;
+    activePaneId?: string;
+    apply?: boolean;
+  } = {},
+): Promise<WorkspaceState | undefined> {
+  const selector = options.selector ?? activeTab()?.selector ?? selectedSelector;
+  if (!selector) return undefined;
+  const response = await fetch(new URL("./api/workspace", window.location.href), {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: selector,
+      action,
+      tab_id: options.tabId,
+      pane_id: options.paneId,
+      direction: options.direction,
+      label: options.label,
+      layout: options.layout,
+      active_pane_id: options.activePaneId,
+      cols: INITIAL_COLS,
+      rows: INITIAL_ROWS,
+      output_limit: settings.outputBufferLimit,
+      auto_restart: settings.autoRestartSessions,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  const workspace = await response.json() as WorkspaceState;
+  if (options.apply !== false) {
+    await applyWorkspaceState(workspace);
+  }
+  return workspace;
+}
+
+type ApplyWorkspaceOptions = {
+  replayFromStart?: boolean;
+};
+
+async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWorkspaceOptions = {}) {
+  const existingPanes = new Map(allPanes().map((pane) => [pane.id, pane]));
+  const retainedPaneIds = new Set<string>();
+  tabs = [];
+  activeTabId = workspace.active_tab_id;
+  elements.terminalStage.replaceChildren();
+  for (const tabState of workspace.tabs) {
+    const tab = makeTab(workspace.selector, tabState.id);
+    tab.customTitle = tabState.custom_label?.trim() || undefined;
+    tab.activePaneId = tabState.active_pane_id;
+    tab.layout = tabState.layout;
+    tabs = [...tabs, tab];
+    elements.terminalStage.appendChild(tab.mount);
+    for (const paneState of tabState.panes) {
+      const pane = await restoreWorkspacePane(tab, paneState, existingPanes.get(paneState.id), options);
+      retainedPaneIds.add(pane.id);
+    }
+    if (!tab.activePaneId) {
+      tab.activePaneId = tab.panes[0]?.id;
+    }
+    if (!tab.layout && tab.panes.length) {
+      tab.layout = paneLayoutNode(tab.panes[0].id);
+    }
+    renderPaneLayout(tab);
+  }
+  if (!activeTabId || !tabs.some((tab) => tab.id === activeTabId)) {
+    activeTabId = tabs[0]?.id;
+  }
+  if (activeTabId) {
+    activateTab(activeTabId, { sync: false });
+  } else {
+    renderTabs();
+    updateActiveDetails();
+  }
+  for (const [paneId, pane] of existingPanes) {
+    if (!retainedPaneIds.has(paneId)) {
+      disposePaneLocal(pane);
+    }
+  }
+}
+
+async function restoreWorkspacePane(
+  tab: TerminalTab,
+  paneState: WorkspacePaneState,
+  existing?: TerminalPane,
+  options: ApplyWorkspaceOptions = {},
+): Promise<TerminalPane> {
+  const pane = existing ?? makePane(tab, paneState.id);
+  if (existing && options.replayFromStart) {
+    preparePaneForFullReplay(pane);
+  }
+  pane.tabId = tab.id;
+  pane.selector = tab.selector;
+  pane.label = tab.label;
+  pane.sessionId = paneState.session_id;
+  pane.sessionStatus = paneState.status;
+  pane.cols = paneState.cols || INITIAL_COLS;
+  pane.rows = paneState.rows || INITIAL_ROWS;
+  pane.exited = paneState.status === "exited";
+  pane.closing = false;
   tab.panes.push(pane);
-  tab.layout = nextPaneLayout(tab.layout, referencePane?.id, pane.id, "down");
-  tab.activePaneId ??= pane.id;
   renderPaneLayout(tab);
-  setPaneStatus(pane, tr("status.loadingGhostty"));
-  await mountTerminal(pane);
-  if (shouldConnectRestoredSession(session)) {
+  if (!pane.term) {
+    setPaneStatus(pane, tr("status.loadingGhostty"));
+    await mountTerminal(pane);
+  }
+  if (shouldConnectRestoredPane(pane) && pane.socket?.readyState !== WebSocket.OPEN && pane.socket?.readyState !== WebSocket.CONNECTING) {
     connectPanePty(pane);
   } else {
     setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
   }
+  return pane;
 }
 
-function shouldConnectRestoredSession(session: Session): boolean {
-  return session.status === "running" || settings.autoRestartSessions;
+function preparePaneForFullReplay(pane: TerminalPane) {
+  window.clearTimeout(pane.reconnectTimer);
+  clearReplayInputLock(pane);
+  pane.transport?.disconnect();
+  flushPaneDecoder(pane);
+  pane.term?.dispose();
+  pane.term = undefined;
+  pane.socket = undefined;
+  pane.lastOutputSequence = 0;
+  pane.titleBuffer = "";
+  clearPendingInput(pane);
+}
+
+function shouldConnectRestoredPane(pane: TerminalPane): boolean {
+  return Boolean(pane.sessionId && pane.sessionStatus !== "exited");
 }
 
 async function connectRestoredPanes() {
   for (const pane of allPanes()) {
-    if (pane.closing || pane.exited || !pane.session?.id) continue;
+    if (pane.closing || pane.exited || !pane.sessionId) continue;
     if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) continue;
     setPaneStatus(pane, tr("status.loadingGhostty"));
     if (!pane.term) {
@@ -1028,40 +1128,6 @@ async function connectRestoredPanes() {
     }
     connectPanePty(pane);
   }
-}
-
-function sessionHost(session: Session): string {
-  return session.metadata.host?.trim() || selectorLabel(session.selector || "");
-}
-
-function sessionTabKey(session: Session): string {
-  return session.metadata.tabId?.trim() || `session:${session.id}`;
-}
-
-function sessionTabTitle(session: Session): string | undefined {
-  const title = session.metadata.tabTitle?.trim();
-  if (!title) return undefined;
-  const explicit = session.metadata.tabCustomTitle?.trim().toLowerCase();
-  if (explicit === "true") return title;
-  if (explicit === "false") return undefined;
-  return title === sessionHost(session) ? undefined : title;
-}
-
-function compareSessionsForRestore(left: Session, right: Session): number {
-  return sessionMetadataIndex(left, "tabOrder", Number.MAX_SAFE_INTEGER) - sessionMetadataIndex(right, "tabOrder", Number.MAX_SAFE_INTEGER)
-    || sessionHost(left).localeCompare(sessionHost(right))
-    || sessionTabKey(left).localeCompare(sessionTabKey(right))
-    || comparePanesForRestore(left, right);
-}
-
-function comparePanesForRestore(left: Session, right: Session): number {
-  return sessionMetadataIndex(left, "paneOrder", Number.MAX_SAFE_INTEGER) - sessionMetadataIndex(right, "paneOrder", Number.MAX_SAFE_INTEGER)
-    || left.id.localeCompare(right.id);
-}
-
-function sessionMetadataIndex(session: Session, key: string, fallback: number): number {
-  const value = Number.parseInt(session.metadata[key] ?? "", 10);
-  return Number.isFinite(value) ? value : fallback;
 }
 
 async function createSelectedTab() {
@@ -1073,11 +1139,11 @@ async function createSelectedTab() {
 }
 
 async function createTerminalTab(selector: string) {
-  const tab = makeTab(selector);
-  tabs = [...tabs, tab];
-  elements.terminalStage.appendChild(tab.mount);
-  activateTab(tab.id);
-  await createPane(tab, "down");
+  try {
+    await runWorkspaceAction("create_tab", { selector });
+  } catch (error) {
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+  }
 }
 
 function makeTab(selector: string, restoredId?: string): TerminalTab {
@@ -1097,8 +1163,8 @@ function makeTab(selector: string, restoredId?: string): TerminalTab {
   };
 }
 
-function makePane(tab: TerminalTab): TerminalPane {
-  const id = newId();
+function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
+  const id = restoredId || newId();
   const mount = document.createElement("div");
   mount.className = "terminal-mount";
   mount.dataset.paneId = id;
@@ -1210,41 +1276,15 @@ function createPaneTransport(pane: TerminalPane): PaneTerminalTransport {
 }
 
 async function createPane(tab: TerminalTab, placement: SplitPlacement) {
-  const pane = makePane(tab);
-  const referencePane = activePane(tab);
-  tab.panes.push(pane);
-  tab.layout = nextPaneLayout(tab.layout, referencePane?.id, pane.id, placement);
-  tab.activePaneId = pane.id;
-  renderPaneLayout(tab);
-  activatePane(tab.id, pane.id, { focus: false });
-  setPaneStatus(pane, tr("status.creatingSession"));
-
   try {
-    const response = await client.createSession({
+    await runWorkspaceAction("split_pane", {
       selector: tab.selector,
-      cols: INITIAL_COLS,
-      rows: INITIAL_ROWS,
-      metadata: {
-        frontend: "restty-xterm",
-        tabId: tab.id,
-        paneId: pane.id,
-        outputBufferLimit: String(settings.outputBufferLimit),
-        tabTitle: tab.customTitle?.trim() ?? "",
-        tabCustomTitle: String(Boolean(tab.customTitle?.trim())),
-        tabOrder: String(tabOrder(tab)),
-        paneOrder: String(paneOrder(tab, pane)),
-        split: placement,
-        autoRestart: String(settings.autoRestartSessions),
-        restartable: String(settings.autoRestartSessions),
-      },
+      tabId: tab.id,
+      paneId: activePane(tab)?.id,
+      direction: placement,
     });
-    pane.session = response.session;
-    syncAllTabMetadata();
-    setPaneStatus(pane, tr("status.loadingGhostty"));
-    await mountTerminal(pane);
-    connectPanePty(pane);
   } catch (error) {
-    setPaneStatus(pane, tr("status.connectFailed", { message: errorMessage(error) }), "error");
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
 }
 
@@ -1377,7 +1417,7 @@ function sendPaneResize(pane: TerminalPane, cols: number, rows: number): boolean
 }
 
 function connectPanePty(pane: TerminalPane) {
-  if (pane.closing || pane.exited || !pane.session?.id) return;
+  if (pane.closing || pane.exited || !pane.sessionId) return;
   const restty = pane.term?.restty;
   if (restty) {
     restty.connectPty("");
@@ -1387,23 +1427,17 @@ function connectPanePty(pane: TerminalPane) {
 }
 
 function openSocket(pane: TerminalPane) {
-  if (!pane.session?.id) return;
+  if (!pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
   const url = new URL("./ws/terminal", window.location.href);
   url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("session_id", pane.session.id);
+  url.searchParams.set("session_id", pane.sessionId);
   url.searchParams.set("cols", String(pane.cols || pane.term?.cols || INITIAL_COLS));
   url.searchParams.set("rows", String(pane.rows || pane.term?.rows || INITIAL_ROWS));
   url.searchParams.set("restart", String(settings.autoRestartSessions));
   url.searchParams.set("replay", "true");
   url.searchParams.set("after", String(pane.lastOutputSequence));
   url.searchParams.set("output_limit", String(settings.outputBufferLimit));
-  url.searchParams.set("tab_id", pane.tabId);
-  url.searchParams.set("pane_id", pane.id);
-  url.searchParams.set("tab_title", tabForPane(pane)?.customTitle?.trim() ?? "");
-  url.searchParams.set("tab_custom_title", String(Boolean(tabForPane(pane)?.customTitle?.trim())));
-  url.searchParams.set("tab_order", String(tabOrder(tabForPane(pane))));
-  url.searchParams.set("pane_order", String(paneOrder(tabForPane(pane), pane)));
 
   pane.exited = false;
   pane.replaying = true;
@@ -1418,7 +1452,6 @@ function openSocket(pane: TerminalPane) {
     pane.transport?.notifyConnect();
     sendRestartPolicy(pane);
     sendOutputBufferLimit(pane);
-    sendPanePlacement(pane);
     setPaneStatus(pane, tr("status.connected"), "ok");
     if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
       pane.term?.focus();
@@ -1465,18 +1498,12 @@ function finishReplayInputLock(pane: TerminalPane) {
 
 function syncRestartPolicyToServer() {
   for (const pane of allPanes()) {
-    if (pane.session) {
-      pane.session.metadata.restartable = String(settings.autoRestartSessions);
-    }
     sendRestartPolicy(pane);
   }
 }
 
 function syncOutputBufferLimitToServer() {
   for (const pane of allPanes()) {
-    if (pane.session) {
-      pane.session.metadata.outputBufferLimit = String(settings.outputBufferLimit);
-    }
     sendOutputBufferLimit(pane);
   }
 }
@@ -1489,74 +1516,6 @@ function sendOutputBufferLimit(pane: TerminalPane) {
 function sendRestartPolicy(pane: TerminalPane) {
   if (pane.socket?.readyState !== WebSocket.OPEN) return;
   pane.socket.send(JSON.stringify({ type: "restart-policy", enabled: settings.autoRestartSessions }));
-}
-
-function syncPanePlacement(pane: TerminalPane) {
-  const tab = tabForPane(pane);
-  const placement = panePlacementPayload(tab, pane);
-  if (pane.session) {
-    pane.session.metadata.tabId = placement.tab_id;
-    pane.session.metadata.paneId = placement.pane_id;
-    pane.session.metadata.outputBufferLimit = String(settings.outputBufferLimit);
-    pane.session.metadata.tabOrder = placement.tab_order;
-    pane.session.metadata.paneOrder = placement.pane_order;
-    if (placement.tab_title) {
-      pane.session.metadata.tabTitle = placement.tab_title;
-      pane.session.metadata.tabCustomTitle = placement.tab_custom_title;
-    } else {
-      delete pane.session.metadata.tabTitle;
-      pane.session.metadata.tabCustomTitle = placement.tab_custom_title;
-    }
-    persistPanePlacement(pane, placement);
-  }
-  sendPanePlacement(pane, placement);
-}
-
-function syncAllTabMetadata() {
-  for (const pane of allPanes()) {
-    syncPanePlacement(pane);
-  }
-}
-
-type PanePlacementPayload = {
-  tab_id: string;
-  pane_id: string;
-  tab_title: string;
-  tab_custom_title: string;
-  tab_order: string;
-  pane_order: string;
-};
-
-function panePlacementPayload(tab: TerminalTab | undefined, pane: TerminalPane): PanePlacementPayload {
-  const title = tab?.customTitle?.trim() ?? "";
-  return {
-    tab_id: pane.tabId,
-    pane_id: pane.id,
-    tab_title: title,
-    tab_custom_title: String(Boolean(title)),
-    tab_order: String(tabOrder(tab)),
-    pane_order: String(paneOrder(tab, pane)),
-  };
-}
-
-function persistPanePlacement(pane: TerminalPane, placement: PanePlacementPayload) {
-  if (!pane.session?.id) return;
-  const body = JSON.stringify(placement);
-  void fetch(new URL(`./api/sessions/${encodeURIComponent(pane.session.id)}/placement`, window.location.href), {
-    method: "PUT",
-    credentials: "same-origin",
-    headers: { "content-type": "application/json" },
-    body,
-    keepalive: body.length < 64 * 1024,
-  }).catch(() => undefined);
-}
-
-function sendPanePlacement(pane: TerminalPane, placement = panePlacementPayload(tabForPane(pane), pane)) {
-  if (pane.socket?.readyState !== WebSocket.OPEN) return;
-  pane.socket.send(JSON.stringify({
-    type: "session-placement",
-    ...placement,
-  }));
 }
 
 function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {
@@ -1581,6 +1540,8 @@ function handleServerText(pane: TerminalPane, text: string) {
     return;
   }
   if (event.type === "ready") {
+    pane.sessionStatus = "running";
+    pane.exited = false;
     setPaneStatus(pane, tr("status.shellReady"), "ok");
   } else if (event.type === "error") {
     clearReplayInputLock(pane);
@@ -1590,9 +1551,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     clearReplayInputLock(pane);
     pane.exited = true;
     clearPendingInput(pane);
-    if (pane.session) {
-      pane.session.status = "exited";
-    }
+    pane.sessionStatus = "exited";
     pane.transport?.notifyExit(event.exit_code ?? -1);
     setPaneStatus(pane, tr("status.processExited", { code: event.exit_code ?? -1 }), "error");
   } else if (event.type === "output-sequence") {
@@ -1634,7 +1593,11 @@ function observeTerminalTitle(pane: TerminalPane, text: string) {
 }
 
 function scheduleReconnect(pane: TerminalPane) {
-  if (pane.closing || pane.exited || !pane.session?.id) return;
+  if (pane.closing || pane.exited || !pane.sessionId) return;
+  if (pane.sessionStatus !== "running" && !settings.autoRestartSessions) {
+    setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
+    return;
+  }
   window.clearTimeout(pane.reconnectTimer);
   const delay = pane.reconnectDelay;
   pane.reconnectDelay = Math.min(pane.reconnectDelay * 2, 30000);
@@ -1654,7 +1617,7 @@ function scheduleTerminalSizeRefresh() {
 async function remountTerminalsForTouchMode() {
   for (const pane of allPanes()) {
     if (pane.closing || !pane.term) continue;
-    const shouldReconnect = Boolean(pane.session?.id && !pane.exited);
+    const shouldReconnect = Boolean(pane.sessionId && !pane.exited);
     pane.transport?.disconnect();
     await mountTerminal(pane);
     if (shouldReconnect) {
@@ -1663,7 +1626,7 @@ async function remountTerminalsForTouchMode() {
   }
 }
 
-function activateTab(tabId: string) {
+function activateTab(tabId: string, options: { sync?: boolean } = {}) {
   activeTabId = tabId;
   for (const tab of tabs) {
     const active = tab.id === tabId;
@@ -1673,9 +1636,13 @@ function activateTab(tabId: string) {
   renderTabs();
   updateActiveDetails();
   activePane()?.term?.focus();
+  if (options.sync !== false) {
+    const tab = tabs.find((item) => item.id === tabId);
+    void runWorkspaceAction("activate_tab", { selector: tab?.selector, tabId, apply: false }).catch(() => undefined);
+  }
 }
 
-function activatePane(tabId: string, paneId: string, options: { focus?: boolean } = {}) {
+function activatePane(tabId: string, paneId: string, options: { focus?: boolean; sync?: boolean } = {}) {
   const tab = tabs.find((item) => item.id === tabId);
   if (!tab) return;
   activeTabId = tabId;
@@ -1685,6 +1652,9 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean 
   updateActiveDetails();
   if (options.focus !== false) {
     activePane(tab)?.term?.focus();
+  }
+  if (options.sync !== false) {
+    void runWorkspaceAction("activate_pane", { selector: tab.selector, tabId, paneId, apply: false }).catch(() => undefined);
   }
 }
 
@@ -1740,19 +1710,19 @@ function renderTabs() {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        commitTabRename(input.dataset.renameTab ?? "", input.value);
+        void commitTabRename(input.dataset.renameTab ?? "", input.value);
       } else if (event.key === "Escape") {
         event.preventDefault();
         cancelTabRename();
       }
     });
-    input.addEventListener("blur", () => commitTabRename(input.dataset.renameTab ?? "", input.value));
+    input.addEventListener("blur", () => void commitTabRename(input.dataset.renameTab ?? "", input.value));
   });
   elements.tabList.querySelectorAll<HTMLElement>("[data-close-tab]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      closeTab(button.dataset.closeTab ?? "");
+      void closeTab(button.dataset.closeTab ?? "");
     });
     button.addEventListener("auxclick", (event) => event.stopPropagation());
   });
@@ -1760,7 +1730,7 @@ function renderTabs() {
     tabElement.addEventListener("auxclick", (event) => {
       if (event.button !== 1) return;
       const tabId = tabElement.querySelector<HTMLElement>("[data-tab-id]")?.dataset.tabId;
-      if (tabId) closeTab(tabId);
+      if (tabId) void closeTab(tabId);
     });
   });
   updateIcons();
@@ -1791,7 +1761,7 @@ function focusRenameInput() {
   });
 }
 
-function commitTabRename(tabId: string, value: string) {
+async function commitTabRename(tabId: string, value: string) {
   if (renamingTabId !== tabId) return;
   const tab = tabs.find((item) => item.id === tabId);
   renamingTabId = undefined;
@@ -1802,10 +1772,19 @@ function commitTabRename(tabId: string, value: string) {
   const trimmed = value.trim();
   const defaultName = String(tabs.findIndex((item) => item.id === tab.id) + 1);
   tab.customTitle = trimmed && trimmed !== defaultName ? trimmed : undefined;
-  syncAllTabMetadata();
   renderTabs();
   updateActiveDetails();
   activePane()?.term?.focus();
+  try {
+    await runWorkspaceAction("rename_tab", {
+      selector: tab.selector,
+      tabId,
+      label: tab.customTitle ?? "",
+      apply: false,
+    });
+  } catch (error) {
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+  }
 }
 
 function cancelTabRename() {
@@ -1817,92 +1796,45 @@ function cancelTabRename() {
 function closeActiveTab() {
   const tab = activeTab();
   if (!tab) return;
-  closeTab(tab.id);
+  void closeTab(tab.id);
 }
 
-function closeTab(tabId: string) {
+async function closeTab(tabId: string) {
   const tab = tabs.find((item) => item.id === tabId);
   if (!tab) return;
-
-  tab.closing = true;
-  for (const pane of tab.panes) {
-    closePaneSession(pane);
-  }
-  tab.mount.remove();
-
-  const index = tabs.findIndex((item) => item.id === tabId);
-  tabs = tabs.filter((item) => item.id !== tabId);
-  if (activeTabId === tabId) {
-    activeTabId = tabs[Math.max(0, index - 1)]?.id;
-  }
-  if (activeTabId) {
-    activateTab(activeTabId);
-    syncAllTabMetadata();
-  } else {
-    renderTabs();
-    updateActiveDetails();
-    setGlobalStatus(tr("status.closed"));
+  try {
+    await runWorkspaceAction("close_tab", { selector: tab.selector, tabId });
+  } catch (error) {
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
 }
 
-function closeActiveSession(tab: TerminalTab, pane: TerminalPane) {
+async function closeActiveSession(tab: TerminalTab, pane: TerminalPane) {
   if (visiblePanes(tab).length <= 1) {
-    closeTab(tab.id);
+    await closeTab(tab.id);
     return;
   }
-
-  const paneIndex = tab.panes.findIndex((item) => item.id === pane.id);
-  if (paneIndex < 0) return;
-
-  closePaneSession(pane);
-  tab.panes = tab.panes.filter((item) => item.id !== pane.id);
-  tab.layout = removePaneFromLayout(tab.layout, pane.id) ?? paneLayoutNode(tab.panes[0].id);
-  if (tab.activePaneId === pane.id) {
-    tab.activePaneId = tab.panes[Math.min(paneIndex, tab.panes.length - 1)]?.id;
+  try {
+    await runWorkspaceAction("close_pane", { selector: tab.selector, tabId: tab.id, paneId: pane.id });
+  } catch (error) {
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
-  renderPaneLayout(tab);
-  renderTabs();
-  updateActiveDetails();
-  syncAllTabMetadata();
-  activePane(tab)?.term?.focus();
 }
 
-function promoteSessionToNewTab(sourceTab: TerminalTab, pane: TerminalPane) {
+async function promoteSessionToNewTab(sourceTab: TerminalTab, pane: TerminalPane) {
   if (visiblePanes(sourceTab).length <= 1) return;
-  const paneIndex = sourceTab.panes.findIndex((item) => item.id === pane.id);
-  if (paneIndex < 0) return;
-
-  sourceTab.panes = sourceTab.panes.filter((item) => item.id !== pane.id);
-  sourceTab.layout = removePaneFromLayout(sourceTab.layout, pane.id) ?? paneLayoutNode(sourceTab.panes[0].id);
-  if (sourceTab.activePaneId === pane.id) {
-    sourceTab.activePaneId = sourceTab.panes[Math.min(paneIndex, sourceTab.panes.length - 1)]?.id;
+  try {
+    await runWorkspaceAction("promote_pane_to_tab", {
+      selector: sourceTab.selector,
+      tabId: sourceTab.id,
+      paneId: pane.id,
+    });
+  } catch (error) {
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
-
-  const promotedTab = makeTab(sourceTab.selector);
-  const title = pane.title.trim();
-  if (title && title !== pane.label) {
-    promotedTab.customTitle = title;
-  }
-  pane.tabId = promotedTab.id;
-  promotedTab.panes = [pane];
-  promotedTab.activePaneId = pane.id;
-  promotedTab.layout = paneLayoutNode(pane.id);
-
-  const sourceIndex = tabs.findIndex((item) => item.id === sourceTab.id);
-  if (sourceIndex < 0) return;
-  tabs = [
-    ...tabs.slice(0, sourceIndex + 1),
-    promotedTab,
-    ...tabs.slice(sourceIndex + 1),
-  ];
-  sourceTab.mount.after(promotedTab.mount);
-  renderPaneLayout(sourceTab);
-  renderPaneLayout(promotedTab);
-  activateTab(promotedTab.id);
-  syncAllTabMetadata();
 }
 
-function closePaneSession(pane: TerminalPane) {
+function disposePaneLocal(pane: TerminalPane) {
   pane.closing = true;
   window.clearTimeout(pane.reconnectTimer);
   clearReplayInputLock(pane);
@@ -1912,9 +1844,7 @@ function closePaneSession(pane: TerminalPane) {
   clearPendingInput(pane);
   pane.term?.dispose();
   pane.term = undefined;
-  if (pane.session?.id) {
-    client.closeSession({ sessionId: pane.session.id }).catch(() => undefined);
-  }
+  pane.mount.remove();
 }
 
 function updatePaneTitle(pane: TerminalPane, title: string) {
@@ -2063,7 +1993,7 @@ function cancelPaneImeComposition(pane: TerminalPane, force: boolean): boolean {
 }
 
 function sendPaneInput(pane: TerminalPane, data: string): boolean {
-  if (!pane || pane.closing || pane.exited || !pane.session?.id) {
+  if (!pane || pane.closing || pane.exited || !pane.sessionId) {
     activePane()?.term?.focus();
     return false;
   }
@@ -2148,21 +2078,6 @@ function findPaneById(id: string): TerminalPane | undefined {
 
 function tabForPane(pane: TerminalPane): TerminalTab | undefined {
   return tabs.find((tab) => tab.id === pane.tabId);
-}
-
-function tabOrder(tab: TerminalTab | undefined): number {
-  if (!tab) return tabs.length;
-  const index = tabs.findIndex((item) => item.id === tab.id);
-  return index >= 0 ? index : tabs.length;
-}
-
-function paneOrder(tab: TerminalTab | undefined, pane: TerminalPane): number {
-  if (!tab) return 0;
-  const layoutOrder = paneIdsInLayout(tab.layout);
-  const layoutIndex = layoutOrder.indexOf(pane.id);
-  if (layoutIndex >= 0) return layoutIndex;
-  const paneIndex = tab.panes.findIndex((item) => item.id === pane.id);
-  return paneIndex >= 0 ? paneIndex : tab.panes.length;
 }
 
 function scheduleCopySelection() {
