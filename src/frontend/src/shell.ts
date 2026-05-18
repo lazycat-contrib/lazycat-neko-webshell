@@ -2,6 +2,7 @@ import { qs } from "./utils";
 
 export type ShellElements = {
   webshell: HTMLElement;
+  topbar: HTMLElement;
   instanceList: HTMLDivElement;
   instanceSwitcher: HTMLDivElement;
   instanceButton: HTMLButtonElement;
@@ -23,9 +24,16 @@ export type ShellElements = {
   closeSettings: HTMLButtonElement;
   settingsPage: HTMLElement;
   settingsTabs: HTMLDivElement;
+  fontTabs: HTMLDivElement;
   localeSelect: HTMLSelectElement;
   themeSelect: HTMLSelectElement;
+  customThemeName: HTMLInputElement;
+  customThemeSource: HTMLTextAreaElement;
+  saveTheme: HTMLButtonElement;
+  removeTheme: HTMLButtonElement;
+  themeStatus: HTMLElement;
   fontFamily: HTMLSelectElement;
+  fontPreview: HTMLDivElement;
   tabLayout: HTMLSelectElement;
   fontUpload: HTMLInputElement;
   removeFont: HTMLButtonElement;
@@ -39,6 +47,8 @@ export type ShellElements = {
   cursorBlink: HTMLInputElement;
   cursorShape: HTMLSelectElement;
   copyOnSelect: HTMLInputElement;
+  useResttyClipboard: HTMLInputElement;
+  touchSelectionMode: HTMLSelectElement;
   autoRestartSessions: HTMLInputElement;
   debugMode: HTMLInputElement;
   paneMenu: HTMLDivElement;
@@ -98,7 +108,7 @@ export function renderShell(app: HTMLElement): ShellElements {
           <button class="command-button primary icon-only-large" id="emptyNewTab" type="button" aria-label="New terminal tab" title="New terminal tab" data-i18n-aria="action.newTab" data-i18n-title="action.newTab">
             <i data-lucide="square-plus"></i>
           </button>
-          <p id="statusLine" data-i18n="status.idle">Idle</p>
+          <p id="statusLine" aria-live="polite" data-i18n="status.idle">Idle</p>
         </div>
         <div class="mobile-shortcuts" id="mobileShortcuts" aria-label="Terminal shortcuts" data-i18n-aria="menu.mobileShortcuts">
           <button type="button" data-mobile-shortcut="escape" aria-label="Escape">Esc</button>
@@ -126,10 +136,16 @@ export function renderShell(app: HTMLElement): ShellElements {
             </button>
           </header>
 
-          <div class="settings-grid">
-            <section class="settings-section">
+          <div class="settings-tabs settings-main-tabs" id="settingsTabs" role="tablist" aria-label="Settings" data-i18n-aria="action.settings">
+            <button type="button" role="tab" aria-selected="true" aria-controls="appearanceSettingsPanel" data-settings-tab="appearance" data-i18n="tab.appearance">Appearance</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="fontSettingsRootPanel" data-settings-tab="fonts" data-i18n="tab.fonts">Fonts</button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="themeSettingsPanel" data-settings-tab="themes" data-i18n="tab.themes">Themes</button>
+          </div>
+
+          <div class="settings-panels">
+            <section class="settings-section" id="appearanceSettingsPanel" data-settings-panel="appearance" role="tabpanel">
               <div class="section-head">
-                <i data-lucide="palette"></i>
+                <i data-lucide="sliders-horizontal"></i>
                 <div>
                   <h3 data-i18n="section.appearance">Appearance</h3>
                 </div>
@@ -141,10 +157,6 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <option value="en" data-i18n="locale.en">English</option>
                   <option value="zh-CN" data-i18n="locale.zhCN">Chinese</option>
                 </select>
-              </label>
-              <label class="field">
-                <span data-i18n="field.theme">Theme</span>
-                <select id="themeSelect"></select>
               </label>
               <label class="field">
                 <span data-i18n="field.tabs">Tabs</span>
@@ -178,6 +190,18 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <span data-i18n="setting.copyOnSelect">Copy on select</span>
               </label>
               <label class="switch">
+                <input id="useResttyClipboard" type="checkbox" />
+                <span data-i18n="setting.useResttyClipboard">Use restty clipboard</span>
+              </label>
+              <label class="field mobile-only-setting">
+                <span data-i18n="field.touchBehavior">Touch behavior</span>
+                <select id="touchSelectionMode">
+                  <option value="long-press" data-i18n="touch.longPress">Pan first, long-press select</option>
+                  <option value="drag" data-i18n="touch.drag">Drag to select</option>
+                  <option value="off" data-i18n="touch.off">Touch selection off</option>
+                </select>
+              </label>
+              <label class="switch">
                 <input id="autoRestartSessions" type="checkbox" />
                 <span data-i18n="setting.autoRestartSessions">Restart sessions after provider restart</span>
               </label>
@@ -186,22 +210,27 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <span data-i18n="setting.debugAdapter">Debug adapter</span>
               </label>
             </section>
-            <section class="settings-section">
+
+            <section class="settings-section" id="fontSettingsRootPanel" data-settings-panel="fonts" role="tabpanel" hidden>
               <div class="section-head">
                 <i data-lucide="type"></i>
                 <div>
                   <h3 data-i18n="section.fonts">Fonts</h3>
                 </div>
               </div>
-              <div class="settings-tabs" id="settingsTabs" role="tablist" aria-label="Fonts" data-i18n-aria="section.fonts">
-                <button type="button" role="tab" aria-selected="true" aria-controls="fontSettingsPanel" data-settings-tab="font-settings" data-i18n="tab.fontSettings">Font settings</button>
-                <button type="button" role="tab" aria-selected="false" aria-controls="fontUploadPanel" data-settings-tab="font-upload" data-i18n="tab.fontUpload">Font upload</button>
+              <div class="settings-tabs settings-sub-tabs" id="fontTabs" role="tablist" aria-label="Fonts" data-i18n-aria="section.fonts">
+                <button type="button" role="tab" aria-selected="true" aria-controls="fontSettingsPanel" data-font-tab="font-settings" data-i18n="tab.fontSettings">Font settings</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="fontUploadPanel" data-font-tab="font-upload" data-i18n="tab.fontUpload">Font upload</button>
               </div>
-              <div class="settings-tab-panel" id="fontSettingsPanel" data-settings-panel="font-settings" role="tabpanel">
+              <div class="settings-tab-panel" id="fontSettingsPanel" data-font-panel="font-settings" role="tabpanel">
                 <label class="field">
                   <span data-i18n="field.font">Font</span>
                   <select id="fontFamily"></select>
                 </label>
+                <div class="font-preview" id="fontPreview" aria-label="Font preview" data-i18n-aria="field.fontPreview">
+                  <span>LazyCat Neko WebShell</span>
+                  <code>λ ~/app $ ls -la --color=auto 0123456789</code>
+                </div>
                 <label class="field">
                   <span><span data-i18n="field.fontSize">Font size</span> <output id="fontSizeValue"></output></span>
                   <input id="fontSize" type="range" min="11" max="22" step="1" />
@@ -211,7 +240,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <input id="lineHeight" type="range" min="1.05" max="1.6" step="0.01" />
                 </label>
               </div>
-              <div class="settings-tab-panel" id="fontUploadPanel" data-settings-panel="font-upload" role="tabpanel" hidden>
+              <div class="settings-tab-panel" id="fontUploadPanel" data-font-panel="font-upload" role="tabpanel" hidden>
                 <div class="font-actions">
                   <label class="file-button icon-only-large" aria-label="Upload font" title="Upload font" data-i18n-aria="action.uploadFont" data-i18n-title="action.uploadFont">
                     <input id="fontUpload" type="file" accept=".woff,.woff2,.ttf,.otf,font/woff,font/woff2,font/ttf,font/otf" />
@@ -223,6 +252,42 @@ export function renderShell(app: HTMLElement): ShellElements {
                 </div>
                 <p id="fontStatus" class="field-status"></p>
               </div>
+            </section>
+
+            <section class="settings-section" id="themeSettingsPanel" data-settings-panel="themes" role="tabpanel" hidden>
+              <div class="section-head">
+                <i data-lucide="palette"></i>
+                <div>
+                  <h3 data-i18n="section.themes">Themes</h3>
+                </div>
+              </div>
+              <label class="field">
+                <span data-i18n="field.theme">Theme</span>
+                <select id="themeSelect"></select>
+              </label>
+              <a class="settings-link" href="https://ghostty-style.vercel.app" target="_blank" rel="noreferrer">
+                <i data-lucide="external-link"></i>
+                <span data-i18n="theme.gallery">Ghostty Style Gallery</span>
+              </a>
+              <label class="field">
+                <span data-i18n="field.themeName">Theme name</span>
+                <input id="customThemeName" type="text" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="field">
+                <span data-i18n="field.themeSource">Ghostty theme</span>
+                <textarea id="customThemeSource" spellcheck="false" rows="10"></textarea>
+              </label>
+              <div class="theme-actions">
+                <button class="command-button" id="saveTheme" type="button">
+                  <i data-lucide="save"></i>
+                  <span data-i18n="action.saveTheme">Save custom theme</span>
+                </button>
+                <button class="command-button" id="removeTheme" type="button">
+                  <i data-lucide="trash-2"></i>
+                  <span data-i18n="action.removeTheme">Remove custom theme</span>
+                </button>
+              </div>
+              <p id="themeStatus" class="field-status"></p>
             </section>
           </div>
         </div>
@@ -249,6 +314,10 @@ export function renderShell(app: HTMLElement): ShellElements {
           <i data-lucide="copy"></i>
           <span data-i18n="action.copySelection">Copy selection</span>
         </button>
+        <button type="button" data-pane-action="paste-clipboard" role="menuitem">
+          <i data-lucide="clipboard-paste"></i>
+          <span data-i18n="action.pasteClipboard">Paste</span>
+        </button>
         <button type="button" data-pane-action="promote-session-to-tab" role="menuitem" hidden>
           <i data-lucide="external-link"></i>
           <span data-i18n="action.promoteSessionToTab">Move session to new tab</span>
@@ -263,6 +332,7 @@ export function renderShell(app: HTMLElement): ShellElements {
 
   return {
     webshell: qs<HTMLElement>("#webshell"),
+    topbar: qs<HTMLElement>(".topbar"),
     instanceList: qs<HTMLDivElement>("#instanceList"),
     instanceSwitcher: qs<HTMLDivElement>("#instanceSwitcher"),
     instanceButton: qs<HTMLButtonElement>("#instanceButton"),
@@ -284,9 +354,16 @@ export function renderShell(app: HTMLElement): ShellElements {
     closeSettings: qs<HTMLButtonElement>("#closeSettings"),
     settingsPage: qs<HTMLElement>("#settingsPage"),
     settingsTabs: qs<HTMLDivElement>("#settingsTabs"),
+    fontTabs: qs<HTMLDivElement>("#fontTabs"),
     localeSelect: qs<HTMLSelectElement>("#localeSelect"),
     themeSelect: qs<HTMLSelectElement>("#themeSelect"),
+    customThemeName: qs<HTMLInputElement>("#customThemeName"),
+    customThemeSource: qs<HTMLTextAreaElement>("#customThemeSource"),
+    saveTheme: qs<HTMLButtonElement>("#saveTheme"),
+    removeTheme: qs<HTMLButtonElement>("#removeTheme"),
+    themeStatus: qs<HTMLElement>("#themeStatus"),
     fontFamily: qs<HTMLSelectElement>("#fontFamily"),
+    fontPreview: qs<HTMLDivElement>("#fontPreview"),
     tabLayout: qs<HTMLSelectElement>("#tabLayout"),
     fontUpload: qs<HTMLInputElement>("#fontUpload"),
     removeFont: qs<HTMLButtonElement>("#removeFont"),
@@ -300,6 +377,8 @@ export function renderShell(app: HTMLElement): ShellElements {
     cursorBlink: qs<HTMLInputElement>("#cursorBlink"),
     cursorShape: qs<HTMLSelectElement>("#cursorShape"),
     copyOnSelect: qs<HTMLInputElement>("#copyOnSelect"),
+    useResttyClipboard: qs<HTMLInputElement>("#useResttyClipboard"),
+    touchSelectionMode: qs<HTMLSelectElement>("#touchSelectionMode"),
     autoRestartSessions: qs<HTMLInputElement>("#autoRestartSessions"),
     debugMode: qs<HTMLInputElement>("#debugMode"),
     paneMenu: qs<HTMLDivElement>("#paneMenu"),

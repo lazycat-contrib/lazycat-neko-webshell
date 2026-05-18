@@ -10,9 +10,12 @@ export type MessageKey =
   | "action.fullscreen"
   | "action.lightosHome"
   | "action.newTab"
+  | "action.pasteClipboard"
   | "action.promoteSessionToTab"
   | "action.refreshInstances"
   | "action.removeFont"
+  | "action.removeTheme"
+  | "action.saveTheme"
   | "action.settings"
   | "action.settingsMenu"
   | "action.closeTab"
@@ -29,6 +32,7 @@ export type MessageKey =
   | "cursor.underline"
   | "field.cursor"
   | "field.font"
+  | "field.fontPreview"
   | "field.fontSize"
   | "field.language"
   | "field.lineHeight"
@@ -36,6 +40,9 @@ export type MessageKey =
   | "field.scrollback"
   | "field.tabs"
   | "field.theme"
+  | "field.themeName"
+  | "field.themeSource"
+  | "field.touchBehavior"
   | "font.builtIn"
   | "font.noUploaded"
   | "font.uploaded"
@@ -49,12 +56,17 @@ export type MessageKey =
   | "menu.pane"
   | "section.appearance"
   | "section.fonts"
+  | "section.themes"
   | "setting.autoRestartSessions"
   | "setting.copyOnSelect"
   | "setting.cursorBlink"
   | "setting.debugAdapter"
+  | "setting.useResttyClipboard"
+  | "tab.appearance"
+  | "tab.fonts"
   | "tab.fontSettings"
   | "tab.fontUpload"
+  | "tab.themes"
   | "status.closed"
   | "status.connected"
   | "status.connectFailed"
@@ -80,6 +92,7 @@ export type MessageKey =
   | "status.noSelection"
   | "status.noSessions"
   | "status.noTarget"
+  | "status.pasteFailed"
   | "status.processExited"
   | "status.reconnecting"
   | "status.selectRunningInstance"
@@ -89,9 +102,22 @@ export type MessageKey =
   | "status.startupFailed"
   | "status.sessionStopped"
   | "status.terminalError"
+  | "status.themeInvalid"
+  | "status.themeRemoved"
+  | "status.themeSaved"
+  | "theme.builtIn"
+  | "theme.custom"
+  | "theme.gallery"
+  | "theme.noCustom"
+  | "theme.recommended"
+  | "touch.drag"
+  | "touch.longPress"
+  | "touch.off"
   | "validation.fontExtension"
   | "validation.fontMime"
-  | "validation.fontSize";
+  | "validation.fontSize"
+  | "validation.themeName"
+  | "validation.themeSource";
 
 const messages: Record<Language, Record<MessageKey, string>> = {
   en: {
@@ -102,9 +128,12 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.fullscreen": "Full screen",
     "action.lightosHome": "LightOS home",
     "action.newTab": "New terminal tab",
+    "action.pasteClipboard": "Paste",
     "action.promoteSessionToTab": "Move session to new tab",
     "action.refreshInstances": "Refresh instances",
     "action.removeFont": "Remove selected font",
+    "action.removeTheme": "Remove custom theme",
+    "action.saveTheme": "Save custom theme",
     "action.settings": "Settings",
     "action.settingsMenu": "Settings menu",
     "action.closeTab": "Close tab",
@@ -121,6 +150,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "cursor.underline": "Underline",
     "field.cursor": "Cursor",
     "field.font": "Font",
+    "field.fontPreview": "Font preview",
     "field.fontSize": "Font size",
     "field.language": "Language",
     "field.lineHeight": "Line height",
@@ -128,6 +158,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.scrollback": "Scrollback",
     "field.tabs": "Tabs",
     "field.theme": "Theme",
+    "field.themeName": "Theme name",
+    "field.themeSource": "Ghostty theme",
+    "field.touchBehavior": "Touch behavior",
     "font.builtIn": "Built in",
     "font.noUploaded": "No uploaded fonts",
     "font.uploaded": "Uploaded",
@@ -141,12 +174,17 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "menu.pane": "Pane menu",
     "section.appearance": "Appearance",
     "section.fonts": "Fonts",
+    "section.themes": "Themes",
     "setting.autoRestartSessions": "Restart sessions after provider restart",
     "setting.copyOnSelect": "Copy on select",
     "setting.cursorBlink": "Cursor blink",
     "setting.debugAdapter": "Debug adapter",
+    "setting.useResttyClipboard": "Use restty clipboard",
+    "tab.appearance": "Appearance",
+    "tab.fonts": "Fonts",
     "tab.fontSettings": "Font settings",
     "tab.fontUpload": "Font upload",
+    "tab.themes": "Themes",
     "status.closed": "Closed",
     "status.connected": "Connected",
     "status.connectFailed": "Connect failed: {message}",
@@ -172,6 +210,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noSelection": "No selection to copy",
     "status.noSessions": "No sessions",
     "status.noTarget": "No instance selected",
+    "status.pasteFailed": "Paste failed: {message}",
     "status.processExited": "Process exited: {code}",
     "status.reconnecting": "Disconnected. Reconnecting in {seconds}s...",
     "status.selectRunningInstance": "Select a running instance first.",
@@ -181,9 +220,22 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.startupFailed": "Startup failed: {message}",
     "status.sessionStopped": "Session stopped",
     "status.terminalError": "Terminal error",
+    "status.themeInvalid": "Theme invalid: {message}",
+    "status.themeRemoved": "{name} removed",
+    "status.themeSaved": "{name} saved",
+    "theme.builtIn": "Built in",
+    "theme.custom": "Custom",
+    "theme.gallery": "Ghostty Style Gallery",
+    "theme.noCustom": "No custom themes",
+    "theme.recommended": "Recommended",
+    "touch.drag": "Drag to select",
+    "touch.longPress": "Pan first, long-press select",
+    "touch.off": "Touch selection off",
     "validation.fontExtension": "only .woff, .woff2, .ttf, and .otf are allowed",
     "validation.fontMime": "unsupported font MIME type: {mimeType}",
     "validation.fontSize": "font must be between 1 byte and 10 MB",
+    "validation.themeName": "theme name is required",
+    "validation.themeSource": "paste a Ghostty theme with background, foreground, or palette entries",
   },
   "zh-CN": {
     "action.closeActiveSession": "关闭当前活动会话",
@@ -191,11 +243,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.copySelection": "复制选区",
     "action.focusTerminal": "聚焦终端",
     "action.fullscreen": "全屏",
-    "action.lightosHome": "返回 LightOS 首页",
+    "action.lightosHome": "LightOS 首页",
     "action.newTab": "新建终端标签",
+    "action.pasteClipboard": "粘贴",
     "action.promoteSessionToTab": "将会话提升为新标签",
     "action.refreshInstances": "刷新实例",
     "action.removeFont": "移除当前字体",
+    "action.removeTheme": "删除自定义主题",
+    "action.saveTheme": "保存自定义主题",
     "action.settings": "设置",
     "action.settingsMenu": "设置菜单",
     "action.closeTab": "关闭标签",
@@ -212,6 +267,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "cursor.underline": "下划线",
     "field.cursor": "光标",
     "field.font": "字体",
+    "field.fontPreview": "字体预览",
     "field.fontSize": "字号",
     "field.language": "语言",
     "field.lineHeight": "行高",
@@ -219,6 +275,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.scrollback": "回滚行数",
     "field.tabs": "标签栏",
     "field.theme": "主题",
+    "field.themeName": "主题名称",
+    "field.themeSource": "Ghostty 主题",
+    "field.touchBehavior": "触控行为",
     "font.builtIn": "内置",
     "font.noUploaded": "暂无上传字体",
     "font.uploaded": "已上传",
@@ -232,12 +291,17 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "menu.pane": "终端面板菜单",
     "section.appearance": "外观",
     "section.fonts": "字体",
+    "section.themes": "主题",
     "setting.autoRestartSessions": "Provider 重启后自动恢复会话",
     "setting.copyOnSelect": "选中即复制",
     "setting.cursorBlink": "光标闪烁",
     "setting.debugAdapter": "调试适配器",
+    "setting.useResttyClipboard": "使用 restty 剪贴板",
+    "tab.appearance": "外观",
+    "tab.fonts": "字体",
     "tab.fontSettings": "字体设置",
     "tab.fontUpload": "字体上传",
+    "tab.themes": "主题",
     "status.closed": "已关闭",
     "status.connected": "已连接",
     "status.connectFailed": "连接失败：{message}",
@@ -263,6 +327,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noSelection": "没有可复制的选区",
     "status.noSessions": "没有会话",
     "status.noTarget": "未选择实例",
+    "status.pasteFailed": "粘贴失败：{message}",
     "status.processExited": "进程已退出：{code}",
     "status.reconnecting": "连接已断开，{seconds}s 后重连...",
     "status.selectRunningInstance": "请先选择运行中的实例。",
@@ -272,9 +337,22 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.startupFailed": "启动失败：{message}",
     "status.sessionStopped": "会话已停止",
     "status.terminalError": "终端错误",
+    "status.themeInvalid": "主题无效：{message}",
+    "status.themeRemoved": "{name} 已删除",
+    "status.themeSaved": "{name} 已保存",
+    "theme.builtIn": "内置",
+    "theme.custom": "自定义",
+    "theme.gallery": "Ghostty 主题库",
+    "theme.noCustom": "暂无自定义主题",
+    "theme.recommended": "推荐",
+    "touch.drag": "拖动选区",
+    "touch.longPress": "滑动优先，长按选区",
+    "touch.off": "关闭触控选区",
     "validation.fontExtension": "只允许 .woff、.woff2、.ttf 和 .otf",
     "validation.fontMime": "不支持的字体 MIME 类型：{mimeType}",
     "validation.fontSize": "字体大小必须在 1 字节到 10 MB 之间",
+    "validation.themeName": "请输入主题名称",
+    "validation.themeSource": "请粘贴包含 background、foreground 或 palette 的 Ghostty 主题",
   },
 };
 

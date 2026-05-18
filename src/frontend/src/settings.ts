@@ -1,5 +1,5 @@
-import { DEFAULT_SETTINGS, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "./config";
-import type { Settings } from "./types";
+import { DEFAULT_SETTINGS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "./config";
+import type { CustomTerminalTheme, Settings } from "./types";
 import { clampNumber } from "./utils";
 
 const SETTINGS_KEY = "lazycat-neko-webshell.settings";
@@ -18,12 +18,15 @@ export function normalizeSettings(value: Partial<Settings>): Settings {
   return {
     locale: value.locale === "en" || value.locale === "zh-CN" ? value.locale : DEFAULT_SETTINGS.locale,
     themeId: typeof value.themeId === "string" ? value.themeId : DEFAULT_SETTINGS.themeId,
+    customThemes: normalizeCustomThemes(value.customThemes),
     fontFamilyId: typeof value.fontFamilyId === "string" ? value.fontFamilyId : DEFAULT_SETTINGS.fontFamilyId,
     fontSize: clampNumber(value.fontSize, 11, 22, DEFAULT_SETTINGS.fontSize),
     lineHeight: clampNumber(value.lineHeight, 1.05, 1.6, DEFAULT_SETTINGS.lineHeight),
     cursorBlink: value.cursorBlink ?? DEFAULT_SETTINGS.cursorBlink,
     cursorShape: value.cursorShape === "bar" || value.cursorShape === "underline" ? value.cursorShape : "block",
     copyOnSelect: value.copyOnSelect ?? DEFAULT_SETTINGS.copyOnSelect,
+    useResttyClipboard: value.useResttyClipboard ?? DEFAULT_SETTINGS.useResttyClipboard,
+    touchSelectionMode: normalizeTouchSelectionMode(value.touchSelectionMode),
     scrollbackLimit: Math.round(
       clampNumber(value.scrollbackLimit, 1000, 100000, DEFAULT_SETTINGS.scrollbackLimit),
     ),
@@ -42,4 +45,27 @@ export function normalizeSettings(value: Partial<Settings>): Settings {
 
 export function saveSettings(settings: Settings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function normalizeTouchSelectionMode(value: unknown): Settings["touchSelectionMode"] {
+  return value === "drag" || value === "off" || value === "long-press"
+    ? value
+    : DEFAULT_SETTINGS.touchSelectionMode;
+}
+
+function normalizeCustomThemes(value: unknown): CustomTerminalTheme[] {
+  if (!Array.isArray(value)) return [];
+  const themes: CustomTerminalTheme[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const theme = item as Partial<CustomTerminalTheme>;
+    const id = typeof theme.id === "string" ? theme.id.trim() : "";
+    const label = typeof theme.label === "string" ? theme.label.trim() : "";
+    const source = typeof theme.ghosttySource === "string" ? theme.ghosttySource.slice(0, MAX_CUSTOM_THEME_SOURCE_BYTES) : "";
+    if (!id || !label || !source || seen.has(id)) continue;
+    seen.add(id);
+    themes.push({ id, label, ghosttySource: source });
+  }
+  return themes;
 }

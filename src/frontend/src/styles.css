@@ -59,7 +59,8 @@ button:disabled {
 
 button:focus-visible,
 select:focus-visible,
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -752,6 +753,8 @@ input:focus-visible {
 .terminal-mount .restty-pane-root {
   background: var(--term-bg, #050a12);
   color: var(--term-fg, #edf2f7);
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
 }
 
 .terminal-mount .pane-canvas {
@@ -852,22 +855,13 @@ input:focus-visible {
   line-height: 1.45;
 }
 
-.settings-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 14px;
-}
-
 .settings-section {
   min-width: 0;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: var(--radius);
-  background: rgba(21, 27, 33, 0.82);
-  padding: 14px;
+  padding: 12px 2px 2px;
 }
 
-.settings-section-wide {
-  grid-column: 1 / -1;
+.settings-panels {
+  min-height: min(520px, calc(100dvh - 172px));
 }
 
 .section-head {
@@ -900,6 +894,15 @@ input:focus-visible {
   background: #10161b;
 }
 
+.settings-main-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 0;
+}
+
+.settings-sub-tabs {
+  margin: 12px 0 4px;
+}
+
 .settings-tabs button {
   min-height: 32px;
   border: 0;
@@ -916,6 +919,72 @@ input:focus-visible {
 }
 
 .settings-tab-panel[hidden] {
+  display: none;
+}
+
+.settings-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  margin-top: 12px;
+  border: 1px solid rgba(110, 231, 183, 0.26);
+  border-radius: 6px;
+  color: #dffbed;
+  padding: 0 10px;
+  text-decoration: none;
+}
+
+.settings-link:hover,
+.settings-link:focus-visible {
+  background: rgba(110, 231, 183, 0.1);
+}
+
+.settings-link svg {
+  width: 15px;
+  height: 15px;
+}
+
+.theme-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.font-preview {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #080c10;
+  color: var(--text);
+  padding: 12px;
+  overflow: hidden;
+}
+
+.font-preview span,
+.font-preview code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+
+.font-preview span {
+  color: #edf2f7;
+  font-weight: 700;
+}
+
+.font-preview code {
+  color: var(--accent);
+  font-family: inherit;
+}
+
+.field.mobile-only-setting {
   display: none;
 }
 
@@ -1167,7 +1236,8 @@ input[type="range"],
 input[type="number"],
 input[type="text"],
 input[type="url"],
-input[type="password"] {
+input[type="password"],
+textarea {
   width: 100%;
 }
 
@@ -1175,13 +1245,22 @@ select,
 input[type="number"],
 input[type="text"],
 input[type="url"],
-input[type="password"] {
+input[type="password"],
+textarea {
   min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #11161a;
   color: var(--text);
   padding: 0 10px;
+}
+
+textarea {
+  min-height: 180px;
+  padding: 10px;
+  resize: vertical;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  line-height: 1.45;
 }
 
 input[type="range"] {
@@ -1313,7 +1392,15 @@ output {
     padding: 14px;
   }
 
-  .settings-grid {
+  .settings-panels {
+    min-height: auto;
+  }
+
+  .field.mobile-only-setting {
+    display: grid;
+  }
+
+  .theme-actions {
     grid-template-columns: 1fr;
   }
 
@@ -1325,9 +1412,14 @@ output {
   input[type="number"],
   input[type="text"],
   input[type="url"],
-  input[type="password"] {
+  input[type="password"],
+  textarea {
     min-height: 44px;
     font-size: 16px;
+  }
+
+  textarea {
+    min-height: 168px;
   }
 
   .terminal-mount {
@@ -1356,6 +1448,10 @@ output {
     border-top: 1px solid rgba(148, 163, 184, 0.22);
     background: rgba(16, 20, 25, 0.96);
     scrollbar-width: none;
+  }
+
+  .webshell.settings-open .mobile-shortcuts {
+    display: none;
   }
 
   .mobile-shortcuts::-webkit-scrollbar {

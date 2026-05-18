@@ -2,7 +2,6 @@ import type { ResttyFontSource } from "restty";
 import type { Terminal } from "restty/xterm";
 
 import type { Session } from "./gen/lazycat/webshell/v1/capability_pb";
-import type { TerminalInputDeduper } from "./terminal-input";
 
 export type Tone = "ok" | "error" | "neutral";
 export type TabLayout = "horizontal" | "vertical";
@@ -10,6 +9,7 @@ export type CursorShape = "block" | "bar" | "underline";
 export type SplitPlacement = "up" | "down" | "left" | "right";
 export type SplitAxis = "rows" | "columns";
 export type LocaleSetting = "auto" | "en" | "zh-CN";
+export type TouchSelectionMode = "long-press" | "drag" | "off";
 
 export type SplitPaneNode = {
   type: "pane";
@@ -27,9 +27,16 @@ export type SplitNode = SplitPaneNode | SplitContainerNode;
 export type TerminalTheme = {
   id: string;
   label: string;
-  ghosttyName: string;
+  ghosttyName?: string;
   ghosttySource?: string;
   className?: string;
+  custom?: boolean;
+};
+
+export type CustomTerminalTheme = {
+  id: string;
+  label: string;
+  ghosttySource: string;
 };
 
 export type FontPreset = {
@@ -49,9 +56,39 @@ export type StoredFont = {
   url: string;
 };
 
+export type TerminalTransport = {
+  connect: (options: {
+    url: string;
+    cols?: number;
+    rows?: number;
+    callbacks: {
+      onConnect?: () => void;
+      onDisconnect?: () => void;
+      onData?: (data: string) => void;
+      onStatus?: (shell: string) => void;
+      onError?: (message: string, errors?: string[]) => void;
+      onExit?: (code: number) => void;
+    };
+  }) => void;
+  disconnect: () => void;
+  sendInput: (data: string) => boolean;
+  resize: (cols: number, rows: number, meta?: unknown) => boolean;
+  isConnected: () => boolean;
+  destroy: () => void;
+};
+
+export type PaneTerminalTransport = TerminalTransport & {
+  notifyConnect: () => void;
+  notifyDisconnect: () => void;
+  notifyData: (data: string) => boolean;
+  notifyError: (message: string, errors?: string[]) => void;
+  notifyExit: (code: number) => void;
+};
+
 export type Settings = {
   locale: LocaleSetting;
   themeId: string;
+  customThemes: CustomTerminalTheme[];
   fontFamilyId: string;
   tabLayout: TabLayout;
   fontSize: number;
@@ -59,6 +96,8 @@ export type Settings = {
   cursorBlink: boolean;
   cursorShape: CursorShape;
   copyOnSelect: boolean;
+  useResttyClipboard: boolean;
+  touchSelectionMode: TouchSelectionMode;
   scrollbackLimit: number;
   outputBufferLimit: number;
   autoRestartSessions: boolean;
@@ -80,8 +119,8 @@ export type TerminalPane = {
   mount: HTMLDivElement;
   session?: Session;
   term?: Terminal;
-  inputDeduper: TerminalInputDeduper;
   socket?: WebSocket;
+  transport?: PaneTerminalTransport;
   decoder?: TextDecoder;
   titleBuffer: string;
   reconnectTimer?: number;

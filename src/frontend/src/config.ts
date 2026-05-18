@@ -7,6 +7,7 @@ export const MAX_FONT_BYTES = 10 * 1024 * 1024;
 export const PREINSTALLED_FONT_BASE = "./fonts/preinstalled/";
 export const MIN_OUTPUT_BUFFER_LIMIT = 128;
 export const MAX_OUTPUT_BUFFER_LIMIT = 20000;
+export const MAX_CUSTOM_THEME_SOURCE_BYTES = 64 * 1024;
 
 export const FONT_EXTENSIONS = [".woff2", ".woff", ".ttf", ".otf"];
 
@@ -25,9 +26,17 @@ export const FONT_MIME_TYPES = new Set([
 export const THEMES: TerminalTheme[] = [
   { id: "ghostty", label: "Ghostty Default", ghosttyName: "Ghostty Default Style Dark" },
   { id: "catppuccin-mocha", label: "Catppuccin Mocha", ghosttyName: "Catppuccin Mocha", className: "theme-catppuccin-mocha" },
-  { id: "tokyo-night", label: "Tokyo Night", ghosttyName: "TokyoNight Night", className: "theme-tokyo-night" },
+  { id: "tokyo-night", label: "TokyoNight Night", ghosttyName: "TokyoNight Night", className: "theme-tokyo-night" },
+  { id: "tokyo-night-storm", label: "TokyoNight Storm", ghosttyName: "TokyoNight Storm" },
+  { id: "kanagawa-wave", label: "Kanagawa Wave", ghosttyName: "Kanagawa Wave" },
+  { id: "kanagawa-dragon", label: "Kanagawa Dragon", ghosttyName: "Kanagawa Dragon" },
+  { id: "rose-pine", label: "Rose Pine", ghosttyName: "Rose Pine" },
+  { id: "rose-pine-moon", label: "Rose Pine Moon", ghosttyName: "Rose Pine Moon" },
+  { id: "ayu-mirage", label: "Ayu Mirage", ghosttyName: "Ayu Mirage" },
   { id: "nord", label: "Nord", ghosttyName: "Nord", className: "theme-nord" },
   { id: "gruvbox-dark", label: "Gruvbox Dark", ghosttyName: "Gruvbox Dark", className: "theme-gruvbox-dark" },
+  { id: "gruvbox-material-dark", label: "Gruvbox Material Dark", ghosttyName: "Gruvbox Material Dark" },
+  { id: "everforest-dark", label: "Everforest Dark", ghosttyName: "Everforest Dark Hard" },
   { id: "dracula", label: "Dracula", ghosttyName: "Dracula", className: "theme-dracula" },
   { id: "one-dark", label: "One Dark", ghosttyName: "One Dark Two", className: "theme-one-dark" },
   {
@@ -107,6 +116,7 @@ export const FONT_PRESETS: FontPreset[] = [
 export const DEFAULT_SETTINGS: Settings = {
   locale: "auto",
   themeId: "catppuccin-mocha",
+  customThemes: [],
   fontFamilyId: "system-mono",
   tabLayout: "horizontal",
   fontSize: 14,
@@ -114,6 +124,8 @@ export const DEFAULT_SETTINGS: Settings = {
   cursorBlink: true,
   cursorShape: "block",
   copyOnSelect: false,
+  useResttyClipboard: true,
+  touchSelectionMode: "long-press",
   scrollbackLimit: 10000,
   outputBufferLimit: 4096,
   autoRestartSessions: false,

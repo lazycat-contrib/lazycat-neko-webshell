@@ -3,7 +3,6 @@ import "./styles.css";
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
 import { createIcons, icons } from "lucide";
-import { getBuiltinTheme, parseGhosttyTheme, type GhosttyTheme, type ResttyFontSource } from "restty";
 import { Terminal } from "restty/xterm";
 
 import {
@@ -13,21 +12,23 @@ import {
   FONT_PRESETS,
   INITIAL_COLS,
   INITIAL_ROWS,
+  MAX_CUSTOM_THEME_SOURCE_BYTES,
   MAX_OUTPUT_BUFFER_LIMIT,
   MAX_FONT_BYTES,
   MIN_OUTPUT_BUFFER_LIMIT,
-  PREINSTALLED_FONT_BASE,
   STATUS_REFRESH_MS,
   THEMES,
 } from "./config";
+import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
 import { CapabilityService, type Instance, type Session } from "./gen/lazycat/webshell/v1/capability_pb";
 import { translate, type MessageKey } from "./i18n";
 import { encodeMobileShortcutKeyInput } from "./keyboard";
 import { loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
-import { TerminalInputDeduper } from "./terminal-input";
+import { nextPaneLayout, paneIdsInLayout, paneLayoutNode, removePaneFromLayout } from "./split-layout";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
-import type { FontPreset, SplitAxis, SplitNode, SplitPlacement, StoredFont, TerminalPane, TerminalTab, TerminalTheme, Tone } from "./types";
+import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX, parseCustomGhosttyTheme, resolveTheme, resttyThemeFor } from "./theme-registry";
+import type { FontPreset, PaneTerminalTransport, SplitNode, SplitPlacement, StoredFont, TerminalPane, TerminalTab, TerminalTheme, Tone } from "./types";
 import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorLabel } from "./utils";
 
 const transport = createConnectTransport({ baseUrl: window.location.origin });
@@ -47,7 +48,6 @@ let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
 let contextPaneId: string | undefined;
 let customFonts: FontPreset[] = [];
-const loadedFontFaces = new Map<string, FontFace>();
 const mobileSticky = {
   ctrl: false,
   alt: false,
@@ -102,9 +102,7 @@ function applyI18n() {
 }
 
 function renderOptions() {
-  elements.themeSelect.innerHTML = THEMES.map(
-    (theme) => `<option value="${theme.id}">${theme.label}</option>`,
-  ).join("");
+  renderThemeOptions();
   const customOptions = customFonts.map(
     (font) => `<option value="${font.id}">${escapeHtml(font.label)}</option>`,
   ).join("");
@@ -114,6 +112,29 @@ function renderOptions() {
     </optgroup>
     <optgroup label="${escapeAttr(tr("font.uploaded"))}">
       ${customOptions || `<option disabled>${escapeHtml(tr("font.noUploaded"))}</option>`}
+    </optgroup>
+  `;
+}
+
+function renderThemeOptions() {
+  const recommended = THEMES.map(
+    (theme) => `<option value="${escapeAttr(theme.id)}">${escapeHtml(theme.label)}</option>`,
+  ).join("");
+  const builtIn = builtInGhosttyThemes().map(
+    (theme) => `<option value="${escapeAttr(theme.id)}">${escapeHtml(theme.label)}</option>`,
+  ).join("");
+  const custom = settings.customThemes.map(
+    (theme) => `<option value="${escapeAttr(theme.id)}">${escapeHtml(theme.label)}</option>`,
+  ).join("");
+  elements.themeSelect.innerHTML = `
+    <optgroup label="${escapeAttr(tr("theme.recommended"))}">
+      ${recommended}
+    </optgroup>
+    <optgroup label="${escapeAttr(tr("theme.builtIn"))}">
+      ${builtIn}
+    </optgroup>
+    <optgroup label="${escapeAttr(tr("theme.custom"))}">
+      ${custom || `<option disabled>${escapeHtml(tr("theme.noCustom"))}</option>`}
     </optgroup>
   `;
 }
@@ -129,9 +150,12 @@ function bindSettings() {
   });
   elements.themeSelect.addEventListener("change", () => {
     settings.themeId = elements.themeSelect.value;
+    syncThemeEditor();
     saveSettings();
     applySettings();
   });
+  elements.saveTheme.addEventListener("click", () => saveCustomTheme());
+  elements.removeTheme.addEventListener("click", () => removeSelectedCustomTheme());
   elements.fontFamily.addEventListener("change", () => {
     settings.fontFamilyId = elements.fontFamily.value;
     saveSettings();
@@ -183,6 +207,17 @@ function bindSettings() {
   elements.copyOnSelect.addEventListener("change", () => {
     settings.copyOnSelect = elements.copyOnSelect.checked;
     saveSettings();
+  });
+  elements.useResttyClipboard.addEventListener("change", () => {
+    settings.useResttyClipboard = elements.useResttyClipboard.checked;
+    saveSettings();
+  });
+  elements.touchSelectionMode.addEventListener("change", () => {
+    settings.touchSelectionMode = elements.touchSelectionMode.value === "drag" || elements.touchSelectionMode.value === "off"
+      ? elements.touchSelectionMode.value
+      : "long-press";
+    saveSettings();
+    void remountTerminalsForTouchMode();
   });
   elements.autoRestartSessions.addEventListener("change", () => {
     settings.autoRestartSessions = elements.autoRestartSessions.checked;
@@ -334,6 +369,12 @@ function bindSettingsTabs() {
       : null;
     if (button) activateSettingsTab(button.dataset.settingsTab ?? "");
   });
+  elements.fontTabs.addEventListener("click", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-font-tab]")
+      : null;
+    if (button) activateFontTab(button.dataset.fontTab ?? "");
+  });
 }
 
 function activateSettingsTab(tabId: string) {
@@ -345,6 +386,18 @@ function activateSettingsTab(tabId: string) {
   });
   elements.settingsPage.querySelectorAll<HTMLElement>("[data-settings-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.settingsPanel !== tabId;
+  });
+}
+
+function activateFontTab(tabId: string) {
+  if (!tabId) return;
+  elements.fontTabs.querySelectorAll<HTMLButtonElement>("[data-font-tab]").forEach((button) => {
+    const active = button.dataset.fontTab === tabId;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  elements.settingsPage.querySelectorAll<HTMLElement>("[data-font-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.fontPanel !== tabId;
   });
 }
 
@@ -364,13 +417,7 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
   }
 
   if (shortcut === "paste") {
-    let text = "";
-    try {
-      text = await navigator.clipboard?.readText?.() ?? "";
-    } catch {
-      text = "";
-    }
-    if (text) sendActivePaneInput(text);
+    await pasteIntoActivePane(false);
     clearMobileSticky();
     activePane()?.term?.focus();
     return;
@@ -378,7 +425,7 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
 
   const data = encodeMobileShortcutKeyInput(shortcut, mobileSticky);
   if (data) {
-    sendActivePaneInput(data);
+    sendActivePaneKeyInput(data);
   }
   if (!options.keepModifiers) {
     clearMobileSticky();
@@ -455,6 +502,8 @@ function referrerHomeUrl(): string {
 
 function openSettings() {
   elements.settingsPage.hidden = false;
+  elements.webshell.classList.add("settings-open");
+  setAppBackgroundInert(true);
   closeInstanceMenu();
   closeSettingsMenu();
   requestAnimationFrame(() => elements.closeSettings.focus());
@@ -462,7 +511,18 @@ function openSettings() {
 
 function closeSettings() {
   elements.settingsPage.hidden = true;
+  elements.webshell.classList.remove("settings-open");
+  setAppBackgroundInert(false);
   activePane()?.term?.focus();
+}
+
+function setAppBackgroundInert(inert: boolean) {
+  for (const element of [elements.topbar, elements.terminalStage]) {
+    if ("inert" in element) {
+      element.inert = inert;
+    }
+    element.setAttribute("aria-hidden", String(inert));
+  }
 }
 
 function toggleSettingsMenu() {
@@ -552,6 +612,8 @@ async function runPaneMenuAction(action: string) {
     await splitActivePane("right");
   } else if (action === "copy-selection") {
     await copySelection(true);
+  } else if (action === "paste-clipboard") {
+    await pasteIntoActivePane(true);
   } else if (action === "promote-session-to-tab" && tab && pane) {
     promoteSessionToNewTab(tab, pane);
   } else if (action === "close-active-session" && tab && pane) {
@@ -564,8 +626,12 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   const font = currentFont();
   applyI18n();
   elements.localeSelect.value = settings.locale;
+  renderThemeOptions();
   elements.themeSelect.value = theme.id;
+  syncThemeEditor();
   elements.fontFamily.value = font.id;
+  elements.fontPreview.style.fontFamily = font.family;
+  elements.fontPreview.style.fontSize = `${settings.fontSize}px`;
   elements.tabLayout.value = settings.tabLayout;
   elements.webshell.dataset.tabLayout = settings.tabLayout;
   elements.removeFont.disabled = !font.custom;
@@ -580,6 +646,8 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.cursorBlink.checked = settings.cursorBlink;
   elements.cursorShape.value = settings.cursorShape;
   elements.copyOnSelect.checked = settings.copyOnSelect;
+  elements.useResttyClipboard.checked = settings.useResttyClipboard;
+  elements.touchSelectionMode.value = settings.touchSelectionMode;
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;
 
@@ -595,7 +663,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
 }
 
 function currentTheme(): TerminalTheme {
-  return THEMES.find((item) => item.id === settings.themeId) ?? THEMES[0];
+  return resolveTheme(settings.themeId, settings.customThemes);
 }
 
 function currentFont(): FontPreset {
@@ -622,35 +690,79 @@ function applyTerminalAppearance(pane: TerminalPane) {
   applyThemeToMount(pane.mount);
   const term = pane.term;
   if (!term?.restty) return;
-  const theme = currentResttyTheme();
+  const theme = resttyThemeFor(currentTheme());
   if (theme) {
     term.restty.applyTheme(theme, currentTheme().label);
   }
   term.restty.setFontSize(settings.fontSize);
-  void term.restty.setFontSources(currentResttyFontSources()).catch((error) => {
+  void term.restty.setFontSources(resttyFontSourcesFor(currentFont())).catch((error) => {
     setFontStatus(tr("status.fontLoadFailed", { message: errorMessage(error) }), "error");
   });
   term.restty.updateSize(true);
 }
 
-function currentResttyTheme(): GhosttyTheme | null {
+function syncThemeEditor() {
   const theme = currentTheme();
-  if (theme.ghosttySource) return parseGhosttyTheme(theme.ghosttySource);
-  return getBuiltinTheme(theme.ghosttyName) ?? getBuiltinTheme("Ghostty Default Style Dark");
+  elements.removeTheme.disabled = !theme.custom;
+  elements.customThemeName.value = theme.custom ? theme.label : "";
+  elements.customThemeSource.value = theme.ghosttySource ?? "";
 }
 
-function currentResttyFontSources(): ResttyFontSource[] {
-  const font = currentFont();
-  const sources = font.resttySources ?? FONT_PRESETS[0]?.resttySources ?? [];
-  return sources.map(resolveResttyFontSource);
+function saveCustomTheme() {
+  const label = elements.customThemeName.value.trim();
+  const source = elements.customThemeSource.value.trim().slice(0, MAX_CUSTOM_THEME_SOURCE_BYTES);
+  if (!label) {
+    setThemeStatus(tr("validation.themeName"), "error");
+    return;
+  }
+  const parsed = validateGhosttyThemeSource(source);
+  if (!parsed.ok) {
+    setThemeStatus(tr("status.themeInvalid", { message: parsed.message }), "error");
+    return;
+  }
+  const current = currentTheme();
+  const id = current.custom ? current.id : `${CUSTOM_THEME_PREFIX}${newId()}`;
+  const next = { id, label, ghosttySource: source };
+  settings.customThemes = [
+    ...settings.customThemes.filter((theme) => theme.id !== id),
+    next,
+  ];
+  settings.themeId = id;
+  saveSettings();
+  renderOptions();
+  applySettings();
+  setThemeStatus(tr("status.themeSaved", { name: label }), "ok");
 }
 
-function resolveResttyFontSource(source: ResttyFontSource): ResttyFontSource {
-  if (source.type !== "url") return source;
-  return {
-    ...source,
-    url: new URL(source.url, window.location.href).toString(),
-  };
+function removeSelectedCustomTheme() {
+  const theme = currentTheme();
+  if (!theme.custom) return;
+  settings.customThemes = settings.customThemes.filter((item) => item.id !== theme.id);
+  settings.themeId = DEFAULT_SETTINGS.themeId;
+  saveSettings();
+  renderOptions();
+  applySettings();
+  setThemeStatus(tr("status.themeRemoved", { name: theme.label }), "ok");
+}
+
+function validateGhosttyThemeSource(source: string): { ok: true } | { ok: false; message: string } {
+  if (!source || !/(^|\n)\s*(background|foreground|palette)\s*=/.test(source)) {
+    return { ok: false, message: tr("validation.themeSource") };
+  }
+  try {
+    const theme = parseCustomGhosttyTheme(source);
+    if (!theme.colors.background && !theme.colors.foreground && !theme.colors.palette.some(Boolean)) {
+      return { ok: false, message: tr("validation.themeSource") };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: errorMessage(error) };
+  }
+}
+
+function setThemeStatus(message: string, tone: Tone = "neutral") {
+  elements.themeStatus.textContent = message;
+  elements.themeStatus.dataset.tone = tone;
 }
 
 async function loadUploadedFonts() {
@@ -662,8 +774,7 @@ async function loadUploadedFonts() {
       throw new Error(await response.text());
     }
     const fonts = await response.json() as StoredFont[];
-    const loaded = await Promise.all(fonts.map(registerStoredFont));
-    customFonts = loaded.filter((font): font is FontPreset => Boolean(font));
+    customFonts = fonts.map(storedFontToResttyPreset).filter((font): font is FontPreset => Boolean(font));
     setFontStatus(customFonts.length ? tr("status.fontsReady", { count: customFonts.length }) : "");
   } catch (error) {
     setFontStatus(tr("status.fontLoadFailed", { message: errorMessage(error) }), "error");
@@ -689,7 +800,7 @@ async function uploadFont() {
       throw new Error(await response.text());
     }
     const stored = await response.json() as StoredFont;
-    const preset = await registerStoredFont(stored);
+    const preset = storedFontToResttyPreset(stored);
     if (!preset) throw new Error(tr("status.fontRegistrationFailed"));
     customFonts = [...customFonts.filter((font) => font.id !== preset.id), preset];
     settings.fontFamilyId = preset.id;
@@ -714,11 +825,6 @@ async function removeSelectedFont() {
     setFontStatus(tr("status.fontDeleteFailed", { message: await response.text() }), "error");
     return;
   }
-  const face = loadedFontFaces.get(font.id);
-  if (face) {
-    document.fonts.delete(face);
-    loadedFontFaces.delete(font.id);
-  }
   customFonts = customFonts.filter((item) => item.id !== font.id);
   settings.fontFamilyId = DEFAULT_SETTINGS.fontFamilyId;
   saveSettings();
@@ -740,38 +846,6 @@ function validateFontFile(file: File) {
   }
 }
 
-async function registerStoredFont(font: StoredFont): Promise<FontPreset | undefined> {
-  try {
-    const presetId = `custom:${font.id}`;
-    const fontUrl = new URL(font.url, window.location.href).toString();
-    const face = new FontFace(font.family, `url("${fontUrl}")`, { display: "swap" });
-    await face.load();
-    const previous = loadedFontFaces.get(presetId);
-    if (previous) {
-      document.fonts.delete(previous);
-    }
-    document.fonts.add(face);
-    loadedFontFaces.set(presetId, face);
-    return {
-      id: presetId,
-      label: font.label,
-      family: quoteFontFamily(font.family),
-      resttySources: [
-        { type: "url", url: fontUrl, label: font.label },
-        {
-          type: "url",
-          url: `${PREINSTALLED_FONT_BASE}SymbolsNerdFontMono-Regular.ttf`,
-          label: "Symbols Nerd Font Mono",
-        },
-      ],
-      custom: true,
-    };
-  } catch (error) {
-    console.warn("failed to load uploaded font", font.label, error);
-    return undefined;
-  }
-}
-
 function mimeTypeForFont(name: string): string {
   const lowerName = name.toLowerCase();
   if (lowerName.endsWith(".woff2")) return "font/woff2";
@@ -779,10 +853,6 @@ function mimeTypeForFont(name: string): string {
   if (lowerName.endsWith(".ttf")) return "font/ttf";
   if (lowerName.endsWith(".otf")) return "font/otf";
   return "application/octet-stream";
-}
-
-function quoteFontFamily(family: string): string {
-  return `"${family.replace(/["\\]/g, "\\$&")}", ui-monospace, monospace`;
 }
 
 function setFontStatus(message: string, tone: Tone = "neutral") {
@@ -912,7 +982,7 @@ async function restorePane(tab: TerminalTab, session: Session) {
   setPaneStatus(pane, tr("status.loadingGhostty"));
   await mountTerminal(pane);
   if (shouldConnectRestoredSession(session)) {
-    openSocket(pane);
+    connectPanePty(pane);
   } else {
     setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
   }
@@ -938,7 +1008,7 @@ async function connectRestoredPanes() {
     if (!pane.term) {
       await mountTerminal(pane);
     }
-    openSocket(pane);
+    connectPanePty(pane);
   }
 }
 
@@ -1042,7 +1112,6 @@ function makePane(tab: TerminalTab): TerminalPane {
     reconnectDelay: 1000,
     pendingInput: [],
     pendingInputBytes: 0,
-    inputDeduper: new TerminalInputDeduper(),
     replaying: false,
     lastOutputSequence: 0,
     exited: false,
@@ -1051,6 +1120,7 @@ function makePane(tab: TerminalTab): TerminalPane {
     cols: INITIAL_COLS,
     rows: INITIAL_ROWS,
   };
+  pane.transport = createPaneTransport(pane);
   mount.addEventListener("mouseup", () => {
     if (settings.copyOnSelect) {
       scheduleCopySelection();
@@ -1063,6 +1133,62 @@ function makePane(tab: TerminalTab): TerminalPane {
   });
   applyThemeToMount(mount);
   return pane;
+}
+
+function createPaneTransport(pane: TerminalPane): PaneTerminalTransport {
+  let callbacks: Parameters<PaneTerminalTransport["connect"]>[0]["callbacks"] | undefined;
+  let connected = false;
+
+  return {
+    connect: (options) => {
+      callbacks = options.callbacks;
+      if (pane.closing) return;
+      if (options.cols && options.rows) {
+        updatePaneTerminalSize(pane, options.cols, options.rows);
+      }
+      if (pane.socket?.readyState === WebSocket.OPEN) {
+        connected = true;
+        callbacks.onConnect?.();
+        return;
+      }
+      if (pane.socket?.readyState === WebSocket.CONNECTING) return;
+      openSocket(pane);
+    },
+    disconnect: () => {
+      connected = false;
+      pane.socket?.close();
+      pane.socket = undefined;
+    },
+    sendInput: (data) => sendPaneInput(pane, data),
+    resize: (cols, rows) => sendPaneResize(pane, cols, rows),
+    isConnected: () => connected && pane.socket?.readyState === WebSocket.OPEN && !pane.closing && !pane.exited,
+    destroy: () => {
+      connected = false;
+      callbacks = undefined;
+      pane.socket?.close();
+      pane.socket = undefined;
+    },
+    notifyConnect: () => {
+      connected = true;
+      callbacks?.onConnect?.();
+    },
+    notifyDisconnect: () => {
+      connected = false;
+      callbacks?.onDisconnect?.();
+    },
+    notifyData: (data) => {
+      if (!data) return false;
+      if (!callbacks?.onData) return false;
+      callbacks.onData(data);
+      return true;
+    },
+    notifyError: (message, errors) => {
+      callbacks?.onError?.(message, errors);
+    },
+    notifyExit: (code) => {
+      callbacks?.onExit?.(code);
+    },
+  };
 }
 
 async function createPane(tab: TerminalTab, placement: SplitPlacement) {
@@ -1098,7 +1224,7 @@ async function createPane(tab: TerminalTab, placement: SplitPlacement) {
     syncAllTabMetadata();
     setPaneStatus(pane, tr("status.loadingGhostty"));
     await mountTerminal(pane);
-    openSocket(pane);
+    connectPanePty(pane);
   } catch (error) {
     setPaneStatus(pane, tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
@@ -1121,60 +1247,6 @@ function renderPaneLayout(tab: TerminalTab) {
   updatePaneActiveState(tab);
 }
 
-function nextPaneLayout(
-  layout: SplitNode | undefined,
-  referencePaneId: string | undefined,
-  newPaneId: string,
-  placement: SplitPlacement,
-): SplitNode {
-  const newPane = paneLayoutNode(newPaneId);
-  if (!layout || !referencePaneId) return newPane;
-
-  const axis = splitAxisForPlacement(placement);
-  const insertBefore = placement === "up" || placement === "left";
-  const result = insertPaneIntoLayout(layout, referencePaneId, newPane, axis, insertBefore);
-  if (result.inserted) return result.node;
-
-  return {
-    type: "split",
-    axis,
-    children: insertBefore ? [newPane, layout] : [layout, newPane],
-  };
-}
-
-function insertPaneIntoLayout(
-  node: SplitNode,
-  referencePaneId: string,
-  newPane: SplitNode,
-  axis: SplitAxis,
-  insertBefore: boolean,
-): { node: SplitNode; inserted: boolean } {
-  if (node.type === "pane") {
-    if (node.paneId !== referencePaneId) return { node, inserted: false };
-    return {
-      node: {
-        type: "split",
-        axis,
-        children: insertBefore ? [newPane, node] : [node, newPane],
-      },
-      inserted: true,
-    };
-  }
-
-  let inserted = false;
-  const children = node.children.map((child) => {
-    if (inserted) return child;
-    const result = insertPaneIntoLayout(child, referencePaneId, newPane, axis, insertBefore);
-    inserted = result.inserted;
-    return result.node;
-  });
-
-  return {
-    node: inserted ? { ...node, children } : node,
-    inserted,
-  };
-}
-
 function renderSplitNode(tab: TerminalTab, node: SplitNode): HTMLElement {
   if (node.type === "pane") {
     const pane = tab.panes.find((item) => item.id === node.paneId);
@@ -1189,14 +1261,6 @@ function renderSplitNode(tab: TerminalTab, node: SplitNode): HTMLElement {
     container.appendChild(renderSplitNode(tab, child));
   }
   return container;
-}
-
-function paneLayoutNode(paneId: string): SplitNode {
-  return { type: "pane", paneId };
-}
-
-function splitAxisForPlacement(placement: SplitPlacement): SplitAxis {
-  return placement === "left" || placement === "right" ? "columns" : "rows";
 }
 
 function missingPaneElement(paneId: string): HTMLElement {
@@ -1234,7 +1298,7 @@ async function mountTerminal(pane: TerminalPane) {
       dividerThicknessPx: 0,
     },
     searchUi: false,
-    fontSources: currentResttyFontSources(),
+    fontSources: resttyFontSourcesFor(currentFont()),
     appOptions: {
       renderer: "auto",
       fontPreset: "none",
@@ -1243,21 +1307,17 @@ async function mountTerminal(pane: TerminalPane) {
       autoResize: true,
       attachWindowEvents: true,
       attachCanvasEvents: true,
-      touchSelectionMode: "long-press",
+      touchSelectionMode: settings.touchSelectionMode,
+      touchSelectionLongPressMs: 450,
+      touchSelectionMoveThresholdPx: 10,
       maxScrollbackBytes: Math.max(1_000_000, settings.scrollbackLimit * 160),
-      beforeInput: ({ text, source }) => {
-        if (source !== "pty" && text && pane.inputDeduper.accept(text)) {
-          sendPaneInput(pane, text);
-        }
-        return null;
-      },
+      ptyTransport: pane.transport,
       callbacks: {
         onGridSize: (cols, rows) => handleTerminalResize(pane, cols, rows),
       },
     },
   });
   if (pane.closing) return;
-  pane.inputDeduper.reset();
   pane.term = term;
   term.open(pane.mount);
   applyTerminalAppearance(pane);
@@ -1267,20 +1327,42 @@ async function mountTerminal(pane: TerminalPane) {
 }
 
 function handleTerminalResize(pane: TerminalPane, cols: number, rows: number) {
-  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return;
+  updatePaneTerminalSize(pane, cols, rows);
+  updateActiveDetails();
+}
+
+function updatePaneTerminalSize(pane: TerminalPane, cols: number, rows: number): boolean {
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return false;
   const nextCols = Math.max(1, Math.trunc(cols));
   const nextRows = Math.max(1, Math.trunc(rows));
-  if (pane.cols === nextCols && pane.rows === nextRows) return;
+  if (pane.cols === nextCols && pane.rows === nextRows) return false;
   pane.cols = nextCols;
   pane.rows = nextRows;
   if (pane.term) {
     pane.term.cols = nextCols;
     pane.term.rows = nextRows;
   }
+  return true;
+}
+
+function sendPaneResize(pane: TerminalPane, cols: number, rows: number): boolean {
+  updatePaneTerminalSize(pane, cols, rows);
   if (pane.socket?.readyState === WebSocket.OPEN) {
-    pane.socket.send(JSON.stringify({ type: "resize", cols: nextCols, rows: nextRows }));
+    pane.socket.send(JSON.stringify({ type: "resize", cols: pane.cols, rows: pane.rows }));
+    updateActiveDetails();
+    return true;
   }
-  updateActiveDetails();
+  return false;
+}
+
+function connectPanePty(pane: TerminalPane) {
+  if (pane.closing || pane.exited || !pane.session?.id) return;
+  const restty = pane.term?.restty;
+  if (restty) {
+    restty.connectPty("");
+    return;
+  }
+  openSocket(pane);
 }
 
 function openSocket(pane: TerminalPane) {
@@ -1305,10 +1387,13 @@ function openSocket(pane: TerminalPane) {
   pane.exited = false;
   pane.replaying = true;
   pane.decoder = new TextDecoder();
-  pane.socket = new WebSocket(url);
-  pane.socket.binaryType = "arraybuffer";
-  pane.socket.addEventListener("open", () => {
+  const socket = new WebSocket(url);
+  pane.socket = socket;
+  socket.binaryType = "arraybuffer";
+  socket.addEventListener("open", () => {
+    if (pane.socket !== socket) return;
     pane.reconnectDelay = 1000;
+    pane.transport?.notifyConnect();
     sendRestartPolicy(pane);
     sendOutputBufferLimit(pane);
     sendPanePlacement(pane);
@@ -1317,13 +1402,21 @@ function openSocket(pane: TerminalPane) {
       pane.term?.focus();
     }
   });
-  pane.socket.addEventListener("message", (event) => handleSocketMessage(pane, event));
-  pane.socket.addEventListener("close", () => {
+  socket.addEventListener("message", (event) => {
+    if (pane.socket === socket) handleSocketMessage(pane, event);
+  });
+  socket.addEventListener("close", () => {
+    if (pane.socket !== socket) return;
     pane.replaying = false;
     flushPaneDecoder(pane);
+    pane.transport?.notifyDisconnect();
     scheduleReconnect(pane);
   });
-  pane.socket.addEventListener("error", () => setPaneStatus(pane, tr("status.socketError"), "error"));
+  socket.addEventListener("error", () => {
+    if (pane.socket !== socket) return;
+    pane.transport?.notifyError(tr("status.socketError"));
+    setPaneStatus(pane, tr("status.socketError"), "error");
+  });
 }
 
 function syncRestartPolicyToServer() {
@@ -1419,6 +1512,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     setPaneStatus(pane, tr("status.shellReady"), "ok");
   } else if (event.type === "error") {
     pane.replaying = false;
+    pane.transport?.notifyError(event.message ?? tr("status.terminalError"));
     setPaneStatus(pane, event.message ?? tr("status.terminalError"), "error");
   } else if (event.type === "process-exit") {
     pane.replaying = false;
@@ -1427,6 +1521,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     if (pane.session) {
       pane.session.status = "exited";
     }
+    pane.transport?.notifyExit(event.exit_code ?? -1);
     setPaneStatus(pane, tr("status.processExited", { code: event.exit_code ?? -1 }), "error");
   } else if (event.type === "output-sequence") {
     pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, event.sequence);
@@ -1451,7 +1546,9 @@ function flushPaneDecoder(pane: TerminalPane) {
 
 function writeTerminalText(pane: TerminalPane, text: string) {
   observeTerminalTitle(pane, text);
-  pane.term?.write(text);
+  if (!pane.transport?.notifyData(text)) {
+    pane.term?.write(text);
+  }
 }
 
 function observeTerminalTitle(pane: TerminalPane, text: string) {
@@ -1471,7 +1568,7 @@ function scheduleReconnect(pane: TerminalPane) {
   const delay = pane.reconnectDelay;
   pane.reconnectDelay = Math.min(pane.reconnectDelay * 2, 30000);
   setPaneStatus(pane, tr("status.reconnecting", { seconds: Math.round(delay / 1000) }), "error");
-  pane.reconnectTimer = window.setTimeout(() => openSocket(pane), delay);
+  pane.reconnectTimer = window.setTimeout(() => connectPanePty(pane), delay);
 }
 
 function scheduleTerminalSizeRefresh() {
@@ -1481,6 +1578,18 @@ function scheduleTerminalSizeRefresh() {
       pane.term?.restty?.updateSize(true);
     }
   }, 80);
+}
+
+async function remountTerminalsForTouchMode() {
+  for (const pane of allPanes()) {
+    if (pane.closing || !pane.term) continue;
+    const shouldReconnect = Boolean(pane.session?.id && !pane.exited);
+    pane.transport?.disconnect();
+    await mountTerminal(pane);
+    if (shouldReconnect) {
+      connectPanePty(pane);
+    }
+  }
 }
 
 function activateTab(tabId: string) {
@@ -1736,19 +1845,6 @@ function closePaneSession(pane: TerminalPane) {
   }
 }
 
-function removePaneFromLayout(node: SplitNode | undefined, paneId: string): SplitNode | undefined {
-  if (!node) return undefined;
-  if (node.type === "pane") {
-    return node.paneId === paneId ? undefined : node;
-  }
-  const children = node.children
-    .map((child) => removePaneFromLayout(child, paneId))
-    .filter((child): child is SplitNode => Boolean(child));
-  if (!children.length) return undefined;
-  if (children.length === 1) return children[0];
-  return { ...node, children };
-}
-
 function updatePaneTitle(pane: TerminalPane, title: string) {
   pane.title = title.trim() || pane.label;
   renderTabs();
@@ -1789,9 +1885,11 @@ function setGlobalStatus(message: string, tone: Tone = "neutral") {
   elements.statusLine.dataset.tone = tone;
 }
 
-function sendActivePaneInput(data: string): boolean {
+function sendActivePaneKeyInput(data: string): boolean {
   const pane = activePane();
-  return Boolean(pane && sendPaneInput(pane, data));
+  if (!pane?.term?.restty || !data) return false;
+  pane.term.restty.sendKeyInput(data);
+  return true;
 }
 
 function sendPaneInput(pane: TerminalPane, data: string): boolean {
@@ -1808,7 +1906,7 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
     return false;
   }
   if (pane.socket?.readyState !== WebSocket.CONNECTING && pane.socket?.readyState !== WebSocket.OPEN) {
-    openSocket(pane);
+    connectPanePty(pane);
   }
   return true;
 }
@@ -1887,19 +1985,13 @@ function paneOrder(tab: TerminalTab | undefined, pane: TerminalPane): number {
   return paneIndex >= 0 ? paneIndex : tab.panes.length;
 }
 
-function paneIdsInLayout(node: SplitNode | undefined): string[] {
-  if (!node) return [];
-  if (node.type === "pane") return [node.paneId];
-  return node.children.flatMap(paneIdsInLayout);
-}
-
 function scheduleCopySelection() {
   requestAnimationFrame(() => void copySelection(false));
 }
 
 async function copySelection(report: boolean): Promise<boolean> {
   const restty = activePane()?.term?.restty;
-  if (restty) {
+  if (settings.useResttyClipboard && restty) {
     try {
       if (await restty.copySelectionToClipboard()) {
         if (report) setGlobalStatus(tr("status.selectionCopied"), "ok");
@@ -1927,6 +2019,33 @@ async function copySelection(report: boolean): Promise<boolean> {
     return true;
   } catch (error) {
     if (report) setGlobalStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
+    return false;
+  }
+}
+
+async function pasteIntoActivePane(report: boolean): Promise<boolean> {
+  const pane = activePane();
+  if (!pane?.term?.restty) return false;
+  if (settings.useResttyClipboard) {
+    try {
+      if (await pane.term.restty.pasteFromClipboard()) {
+        pane.term.focus();
+        return true;
+      }
+    } catch (error) {
+      if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+      return false;
+    }
+  }
+
+  try {
+    const text = await navigator.clipboard?.readText?.() ?? "";
+    if (!text) return false;
+    pane.term.restty.sendKeyInput(text);
+    pane.term.focus();
+    return true;
+  } catch (error) {
+    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
     return false;
   }
 }
