@@ -19,12 +19,24 @@
   --lzc-safe-area-inset-right: var(--lzc-safe-area-right, env(safe-area-inset-right, 0px));
   --lzc-safe-area-inset-bottom: var(--lzc-safe-area-bottom, env(safe-area-inset-bottom, 0px));
   --lzc-safe-area-inset-left: var(--lzc-safe-area-left, env(safe-area-inset-left, 0px));
+  --app-viewport-width: 100vw;
+  --app-viewport-height: 100vh;
+  --app-viewport-offset-top: 0px;
+  --app-viewport-offset-left: 0px;
+  --app-keyboard-inset-bottom: 0px;
+  --mobile-shortcuts-height: 104px;
   font-family:
     "IBM Plex Sans",
     "Aptos",
     "Segoe UI",
     system-ui,
     sans-serif;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --app-viewport-height: 100dvh;
+  }
 }
 
 * {
@@ -35,7 +47,7 @@ html,
 body,
 #app {
   width: 100%;
-  height: 100%;
+  height: var(--app-viewport-height);
   margin: 0;
 }
 
@@ -71,9 +83,12 @@ textarea:focus-visible {
 
 .webshell {
   position: fixed;
-  inset: 0;
+  top: var(--app-viewport-offset-top);
+  left: var(--app-viewport-offset-left);
   display: flex;
   flex-direction: column;
+  width: var(--app-viewport-width);
+  height: var(--app-viewport-height);
   min-width: 0;
   min-height: 0;
   background: var(--bg);
@@ -493,7 +508,7 @@ textarea:focus-visible {
   top: calc(100% + 8px);
   right: 0;
   width: min(320px, calc(100vw - 20px));
-  max-height: min(480px, calc(100vh - 56px));
+  max-height: min(480px, calc(var(--app-viewport-height) - 56px));
   overflow: auto;
   padding: 8px;
   border: 1px solid rgba(148, 163, 184, 0.22);
@@ -833,7 +848,7 @@ textarea:focus-visible {
 
 .settings-dialog {
   width: min(760px, calc(100vw - 28px));
-  max-height: min(760px, calc(100dvh - 28px));
+  max-height: min(760px, calc(var(--app-viewport-height) - 28px));
   overflow: auto;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 8px;
@@ -876,7 +891,7 @@ textarea:focus-visible {
 }
 
 .settings-panels {
-  min-height: min(520px, calc(100dvh - 172px));
+  min-height: min(520px, calc(var(--app-viewport-height) - 172px));
 }
 
 .settings-tabs {
@@ -1383,7 +1398,7 @@ output {
     right: 8px;
     left: 8px;
     width: auto;
-    max-height: min(420px, calc(100dvh - 64px));
+    max-height: min(420px, calc(var(--app-viewport-height) - 64px));
   }
 
   .settings-menu {
@@ -1398,7 +1413,7 @@ output {
 
   .settings-dialog {
     width: min(100%, calc(100vw - 20px));
-    max-height: calc(100dvh - 20px);
+    max-height: calc(var(--app-viewport-height) - 20px);
     padding: 14px;
   }
 
@@ -1433,27 +1448,31 @@ output {
   }
 
   .terminal-mount {
-    padding: 7px 8px;
+    padding:
+      7px
+      max(8px, var(--lzc-safe-area-inset-right))
+      7px
+      max(8px, var(--lzc-safe-area-inset-left));
   }
 
   .tab-mount {
-    bottom: calc(104px + var(--lzc-safe-area-inset-bottom));
+    bottom: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
   }
 
   .empty-state {
-    bottom: calc(104px + var(--lzc-safe-area-inset-bottom));
+    bottom: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
   }
 
   .mobile-shortcuts {
-    position: absolute;
+    position: fixed;
     right: 0;
-    bottom: 0;
+    bottom: var(--app-keyboard-inset-bottom);
     left: 0;
     z-index: 18;
     display: grid;
     grid-template-rows: 32px minmax(0, auto);
     gap: 5px;
-    min-height: calc(104px + var(--lzc-safe-area-inset-bottom));
+    min-height: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
     padding:
       5px
       max(6px, var(--lzc-safe-area-inset-right))

@@ -45,6 +45,7 @@ import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorL
 
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
+const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
 
@@ -71,17 +72,20 @@ const mobileSticky = {
 };
 let mobileRepeatTimer: number | undefined;
 let mobileRepeatInterval: number | undefined;
-let terminalResizeTimer: number | undefined;
+let terminalResizeTimers: number[] = [];
 
+updateViewportMetrics();
 init().catch((error) => setGlobalStatus(tr("status.startupFailed", { message: errorMessage(error) }), "error"));
 
 async function init() {
+  updateViewportMetrics();
   settings = await loadSettings();
   await loadUploadedFonts();
   renderOptions();
   bindSettings();
   bindActions();
   applySettings();
+  void document.fonts?.ready.then(() => handleViewportChange()).catch(() => {});
   createIcons({ icons });
   setInterval(updateActiveDetails, STATUS_REFRESH_MS);
   await loadInstances();
@@ -479,17 +483,40 @@ function bindLifecycleEvents() {
     }
   });
   window.addEventListener("focus", () => {
-    scheduleTerminalSizeRefresh();
+    handleViewportChange();
     void connectRestoredPanes();
   });
-  window.addEventListener("resize", scheduleTerminalSizeRefresh);
-  window.addEventListener("orientationchange", scheduleTerminalSizeRefresh);
-  window.visualViewport?.addEventListener("resize", scheduleTerminalSizeRefresh);
+  window.addEventListener("resize", handleViewportChange);
+  window.addEventListener("orientationchange", handleViewportChange);
+  window.visualViewport?.addEventListener("resize", handleViewportChange);
+  window.visualViewport?.addEventListener("scroll", handleViewportChange);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
-    scheduleTerminalSizeRefresh();
+    handleViewportChange();
     void connectRestoredPanes();
   });
+}
+
+function updateViewportMetrics() {
+  const viewport = window.visualViewport;
+  const width = Math.max(1, Math.floor(viewport?.width ?? window.innerWidth));
+  const height = Math.max(1, Math.floor(viewport?.height ?? window.innerHeight));
+  const offsetTop = Math.max(0, Math.floor(viewport?.offsetTop ?? 0));
+  const offsetLeft = Math.max(0, Math.floor(viewport?.offsetLeft ?? 0));
+  const keyboardInset = viewport
+    ? Math.max(0, Math.floor((window.innerHeight || 0) - viewport.height - viewport.offsetTop))
+    : 0;
+  const style = document.documentElement.style;
+  style.setProperty("--app-viewport-width", `${width}px`);
+  style.setProperty("--app-viewport-height", `${height}px`);
+  style.setProperty("--app-viewport-offset-top", `${offsetTop}px`);
+  style.setProperty("--app-viewport-offset-left", `${offsetLeft}px`);
+  style.setProperty("--app-keyboard-inset-bottom", `${keyboardInset}px`);
+}
+
+function handleViewportChange() {
+  updateViewportMetrics();
+  scheduleTerminalSizeRefresh();
 }
 
 function bindMobileShortcuts() {
@@ -1384,13 +1411,19 @@ function preparePaneForFullReplay(pane: TerminalPane) {
 }
 
 function shouldConnectRestoredPane(pane: TerminalPane): boolean {
-  return Boolean(pane.sessionId && pane.sessionStatus !== "exited");
+  if (!pane.sessionId || pane.sessionStatus === "exited") return false;
+  if (pane.sessionStatus === "running" || pane.sessionStatus === "starting") return true;
+  return settings.autoRestartSessions;
 }
 
 async function connectRestoredPanes() {
   for (const pane of allPanes()) {
     if (pane.closing || pane.exited || !pane.sessionId) continue;
     if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) continue;
+    if (!shouldConnectRestoredPane(pane)) {
+      setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
+      continue;
+    }
     setPaneStatus(pane, tr("status.loadingGhostty"));
     if (!pane.term) {
       await mountTerminal(pane);
@@ -1672,6 +1705,8 @@ async function mountTerminal(pane: TerminalPane) {
   if (pane.closing) return;
   pane.term = term;
   term.open(pane.mount);
+  installPaneViewportGuard(pane);
+  schedulePaneViewportReset(pane);
   applyTerminalAppearance(pane);
   if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
     term.focus();
@@ -1847,6 +1882,11 @@ function handleServerText(pane: TerminalPane, text: string) {
     clearReplayInputLock(pane);
     pane.transport?.notifyError(event.message ?? tr("status.terminalError"));
     setPaneStatus(pane, event.message ?? tr("status.terminalError"), "error");
+    if (event.fatal) {
+      pane.exited = true;
+      pane.sessionStatus = "stopped";
+      clearPendingInput(pane);
+    }
   } else if (event.type === "process-exit") {
     clearReplayInputLock(pane);
     pane.exited = true;
@@ -1918,18 +1958,67 @@ function scheduleReconnect(pane: TerminalPane) {
 }
 
 function scheduleTerminalSizeRefresh() {
-  window.clearTimeout(terminalResizeTimer);
-  terminalResizeTimer = window.setTimeout(() => {
-    for (const pane of allPanes()) {
-      pane.term?.restty?.updateSize(true);
-    }
-  }, 80);
+  for (const timer of terminalResizeTimers) {
+    window.clearTimeout(timer);
+  }
+  terminalResizeTimers = TERMINAL_SIZE_REFRESH_DELAYS_MS.map((delay) => (
+    window.setTimeout(refreshTerminalSizes, delay)
+  ));
+}
+
+function refreshTerminalSizes() {
+  for (const pane of allPanes()) {
+    refreshPaneTerminalSize(pane);
+  }
+}
+
+function refreshPaneTerminalSize(pane: TerminalPane) {
+  resetPaneViewport(pane);
+  pane.term?.restty?.updateSize(true);
+  const cols = pane.term?.cols ?? pane.cols;
+  const rows = pane.term?.rows ?? pane.rows;
+  if (pane.socket?.readyState === WebSocket.OPEN && Number.isFinite(cols) && Number.isFinite(rows)) {
+    sendPaneResize(pane, cols, rows);
+  }
+}
+
+function installPaneViewportGuard(pane: TerminalPane) {
+  if (pane.viewportGuardInstalled) return;
+  const resetAndResize = () => {
+    schedulePaneViewportReset(pane);
+    scheduleTerminalSizeRefresh();
+  };
+  const resetOnly = () => schedulePaneViewportReset(pane);
+  pane.mount.addEventListener("beforeinput", resetAndResize, true);
+  pane.mount.addEventListener("input", resetAndResize, true);
+  pane.mount.addEventListener("compositionstart", resetAndResize, true);
+  pane.mount.addEventListener("compositionupdate", resetAndResize, true);
+  pane.mount.addEventListener("compositionend", resetAndResize, true);
+  pane.mount.addEventListener("scroll", resetOnly, true);
+  pane.mount.addEventListener("blur", resetAndResize, true);
+  pane.viewportGuardInstalled = true;
+}
+
+function schedulePaneViewportReset(pane: TerminalPane) {
+  resetPaneViewport(pane);
+  window.requestAnimationFrame(() => resetPaneViewport(pane));
+}
+
+function resetPaneViewport(pane: TerminalPane) {
+  const hosts = [
+    pane.mount,
+    ...pane.mount.querySelectorAll<HTMLElement>(".restty-pane-root, textarea, [contenteditable='true']"),
+  ];
+  for (const host of hosts) {
+    if (host.scrollTop !== 0) host.scrollTop = 0;
+    if (host.scrollLeft !== 0) host.scrollLeft = 0;
+  }
 }
 
 async function remountTerminalsForTouchMode() {
   for (const pane of allPanes()) {
     if (pane.closing || !pane.term) continue;
-    const shouldReconnect = Boolean(pane.sessionId && !pane.exited);
+    const shouldReconnect = shouldConnectRestoredPane(pane);
     pane.transport?.disconnect();
     await mountTerminal(pane);
     if (shouldReconnect) {

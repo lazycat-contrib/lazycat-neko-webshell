@@ -163,6 +163,7 @@ export type TerminalPane = {
   pendingInputBytes: number;
   replaying: boolean;
   lastOutputSequence: number;
+  viewportGuardInstalled?: boolean;
   exited: boolean;
   closing: boolean;
   cols: number;

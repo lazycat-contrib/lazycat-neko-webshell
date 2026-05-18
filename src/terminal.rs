@@ -56,6 +56,7 @@ enum TerminalServerMessage<'a> {
     },
     Error {
         message: String,
+        fatal: bool,
     },
     ProcessExit {
         exit_code: i32,
@@ -111,7 +112,15 @@ async fn handle_terminal_socket(
     state: Arc<AppState>,
     query: TerminalQuery,
 ) -> anyhow::Result<()> {
-    let target = resolve_terminal_target(&state, &query).await?;
+    let (mut sender, mut receiver) = socket.split();
+    let target = match resolve_terminal_target(&state, &query).await {
+        Ok(target) => target,
+        Err(err) => {
+            let message = err.to_string();
+            let _ = send_terminal_error(&mut sender, message, true).await;
+            return Err(err);
+        }
+    };
     let ready_cols = target.spec.cols;
     let ready_rows = target.spec.rows;
     let replay_after = target.replay_after;
@@ -126,12 +135,13 @@ async fn handle_terminal_socket(
             if allow_spawn {
                 state.sessions.mark_status(&session_id, "stopped");
             }
+            let message = err.to_string();
+            let _ = send_terminal_error(&mut sender, message, true).await;
             return Err(err);
         }
     };
     mark_session_status(&state, terminal.session_id(), "running");
 
-    let (mut sender, mut receiver) = socket.split();
     let mut event_rx = terminal.subscribe();
     send_control(
         &mut sender,
@@ -229,15 +239,14 @@ async fn handle_terminal_event(
             Ok(false)
         }
         Ok(TerminalEvent::Error(message)) => {
-            send_control(sender, &TerminalServerMessage::Error { message }).await?;
+            send_terminal_error(sender, message, true).await?;
             Ok(false)
         }
         Err(broadcast::error::RecvError::Lagged(_)) => {
-            send_control(
+            send_terminal_error(
                 sender,
-                &TerminalServerMessage::Error {
-                    message: "terminal output backlog exceeded; reconnecting".to_owned(),
-                },
+                "terminal output backlog exceeded; reconnecting".to_owned(),
+                false,
             )
             .await?;
             Ok(false)
@@ -361,6 +370,14 @@ async fn send_control(
     let text = serde_json::to_string(message)?;
     sender.send(Message::Text(text.into())).await?;
     Ok(())
+}
+
+async fn send_terminal_error(
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    message: String,
+    fatal: bool,
+) -> anyhow::Result<()> {
+    send_control(sender, &TerminalServerMessage::Error { message, fatal }).await
 }
 
 async fn send_output_frame(
