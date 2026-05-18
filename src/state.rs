@@ -106,6 +106,24 @@ impl AppState {
             warn!(error = %err, session_id = %session_id, "failed to remove terminal output history");
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(
+        session_path: PathBuf,
+        workspace_path: PathBuf,
+        output_history_dir: PathBuf,
+    ) -> Self {
+        Self {
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            plugins: Arc::new(RwLock::new(HashMap::new())),
+            terminals: Arc::new(TerminalRegistry::new()),
+            output_buffers: Arc::new(RwLock::new(HashMap::new())),
+            output_history_dir,
+            session_store: Arc::new(SessionStore::new(session_path)),
+            workspaces: Arc::new(RwLock::new(HashMap::new())),
+            workspace_store: Arc::new(WorkspaceStore::new(workspace_path)),
+        }
+    }
 }
 
 fn prune_unreferenced_sessions(
@@ -405,23 +423,6 @@ pub fn host_from_selector(selector: &str) -> String {
         .to_owned()
 }
 
-pub fn session_id_for_host(host: &str) -> String {
-    let mut clean = host
-        .chars()
-        .map(|char| {
-            if char.is_ascii_alphanumeric() || matches!(char, '.' | '_' | '-') {
-                char
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    clean.truncate(64);
-    let clean = clean.trim_matches('-');
-    let prefix = if clean.is_empty() { "host" } else { clean };
-    format!("{prefix}-{}", uuid::Uuid::new_v4())
-}
-
 pub fn default_session_command(selector: &str) -> (String, Vec<String>) {
     (
         LIGHTOSCTL.to_owned(),
@@ -637,18 +638,13 @@ mod tests {
     }
 
     fn test_app_state() -> AppState {
-        AppState {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
-            terminals: Arc::new(TerminalRegistry::new()),
-            output_buffers: Arc::new(RwLock::new(HashMap::new())),
-            output_history_dir: std::env::temp_dir().join(format!(
+        AppState::new_for_test(
+            temp_session_path(),
+            temp_session_path(),
+            std::env::temp_dir().join(format!(
                 "lazycat-neko-webshell-output-history-{}",
                 uuid::Uuid::new_v4()
             )),
-            session_store: Arc::new(SessionStore::new(temp_session_path())),
-            workspaces: Arc::new(RwLock::new(HashMap::new())),
-            workspace_store: Arc::new(WorkspaceStore::new(temp_session_path())),
-        }
+        )
     }
 }

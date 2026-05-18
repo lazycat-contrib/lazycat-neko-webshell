@@ -17,10 +17,10 @@ use crate::proto::lazycat::webshell::v1::{
     ProviderDescriptor, ReleaseControlResponse, RequestControlResponse,
 };
 use crate::state::{
-    AppState, PluginRecord, SessionRecord, bool_flag, default_session_command, host_from_selector,
-    session_id_for_host,
+    AppState, PluginRecord, SessionRecord, bool_flag, output_frame_limit_from_metadata,
 };
 use crate::validation::{normalize_dimension, required_field, validate_selector};
+use crate::workspace::{WorkspaceSessionError, close_workspace_session, create_workspace_session};
 
 pub struct CapabilityServiceImpl {
     state: Arc<AppState>,
@@ -88,10 +88,7 @@ impl CapabilityService for CapabilityServiceImpl {
         lightos::authorize_selector(selector, true).await?;
         let cols = normalize_dimension(request.cols, DEFAULT_COLS, MAX_COLS, "cols")?;
         let rows = normalize_dimension(request.rows, DEFAULT_ROWS, MAX_ROWS, "rows")?;
-        let host = host_from_selector(selector);
-        let id = session_id_for_host(&host);
-        let (command, args) = default_session_command(selector);
-        let mut metadata: HashMap<String, String> = request
+        let metadata: HashMap<String, String> = request
             .metadata
             .iter()
             .map(|entry| (entry.0.to_owned(), entry.1.to_owned()))
@@ -101,36 +98,35 @@ impl CapabilityService for CapabilityServiceImpl {
             .or_else(|| metadata.get("restartable"))
             .and_then(|value| bool_flag(value))
             .unwrap_or(false);
-        metadata.insert("host".to_owned(), host.clone());
-        metadata.insert("restartable".to_owned(), restartable.to_string());
-        let record = SessionRecord {
-            id: id.clone(),
-            host,
-            selector: selector.to_owned(),
-            status: "running".to_owned(),
+        let output_limit = output_frame_limit_from_metadata(&metadata);
+        let created = create_workspace_session(
+            &self.state,
+            selector,
             cols,
             rows,
-            command,
-            args,
-            control: None,
+            output_limit,
+            restartable,
             metadata,
-        };
+        )
+        .map_err(connect_workspace_error)?;
+        let record = created.session;
         let output = self
             .state
             .output_buffer(&record.id, record.output_frame_limit());
-        self.state
+        if let Err(err) = self
+            .state
             .terminals
             .open(record.terminal_spec(cols, rows), true, output)
-            .map_err(|err| ConnectError::internal(err.to_string()))?;
+        {
+            if let Ok(closed) = close_workspace_session(&self.state, &record.id) {
+                for session_id in closed.closed_session_ids {
+                    self.state.terminals.close(&session_id);
+                    self.state.remove_output_buffer(&session_id);
+                }
+            }
+            return Err(ConnectError::internal(err.to_string()));
+        }
         let session = record.to_proto();
-        let snapshot = {
-            let mut sessions = self.sessions_write()?;
-            sessions.insert(id, record);
-            sessions.clone()
-        };
-        self.state
-            .persist_sessions_snapshot(&snapshot)
-            .map_err(|err| ConnectError::internal(err.to_string()))?;
         ConnectResponse::ok(CreateSessionResponse {
             session: MessageField::some(session),
             ..Default::default()
@@ -143,22 +139,15 @@ impl CapabilityService for CapabilityServiceImpl {
         request: OwnedCloseSessionRequestView,
     ) -> ServiceResult<CloseSessionResponse> {
         let session_id = required_field(request.session_id, "session_id")?;
-        self.state.terminals.close(session_id);
-        self.state.remove_output_buffer(session_id);
-        let (status, snapshot) = {
-            let mut sessions = self.sessions_write()?;
-            let Some(mut record) = sessions.remove(session_id) else {
-                return Err(ConnectError::not_found("session not found"));
-            };
-            "closed".clone_into(&mut record.status);
-            (record.status.clone(), sessions.clone())
-        };
-        self.state
-            .persist_sessions_snapshot(&snapshot)
-            .map_err(|err| ConnectError::internal(err.to_string()))?;
+        let closed =
+            close_workspace_session(&self.state, session_id).map_err(connect_workspace_error)?;
+        for session_id in &closed.closed_session_ids {
+            self.state.terminals.close(session_id);
+            self.state.remove_output_buffer(session_id);
+        }
         ConnectResponse::ok(CloseSessionResponse {
-            session_id: Some(session_id.to_owned()),
-            status: Some(status),
+            session_id: Some(closed.session_id),
+            status: Some(closed.status),
             ..Default::default()
         })
     }
@@ -387,5 +376,12 @@ fn provider_descriptor() -> ProviderDescriptor {
             },
         ],
         ..Default::default()
+    }
+}
+
+fn connect_workspace_error(error: WorkspaceSessionError) -> ConnectError {
+    match error {
+        WorkspaceSessionError::NotFound(message) => ConnectError::not_found(message),
+        WorkspaceSessionError::Internal(message) => ConnectError::internal(message),
     }
 }

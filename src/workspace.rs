@@ -136,6 +136,24 @@ struct WorkspaceTerminalDefaults {
     auto_restart: bool,
 }
 
+#[derive(Debug)]
+pub struct CreatedWorkspaceSession {
+    pub session: SessionRecord,
+}
+
+#[derive(Debug)]
+pub struct ClosedWorkspaceSession {
+    pub session_id: String,
+    pub status: String,
+    pub closed_session_ids: Vec<String>,
+}
+
+#[derive(Debug)]
+pub enum WorkspaceSessionError {
+    NotFound(String),
+    Internal(String),
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceAction {
@@ -310,6 +328,83 @@ fn ensure_workspace_state(
     };
     persist_snapshots(state, persist_workspaces, persist_sessions)?;
     Ok(workspace)
+}
+
+pub fn create_workspace_session(
+    state: &AppState,
+    selector: &str,
+    cols: u16,
+    rows: u16,
+    output_limit: usize,
+    auto_restart: bool,
+    metadata: HashMap<String, String>,
+) -> Result<CreatedWorkspaceSession, WorkspaceSessionError> {
+    let (session, workspace_snapshot, sessions_snapshot) = {
+        let mut workspaces = state.workspaces.write().map_err(|_| {
+            WorkspaceSessionError::Internal("workspace store lock poisoned".to_owned())
+        })?;
+        let mut sessions = state.sessions.write().map_err(|_| {
+            WorkspaceSessionError::Internal("session store lock poisoned".to_owned())
+        })?;
+        let workspace = workspaces
+            .entry(selector.to_owned())
+            .or_insert_with(|| WorkspaceRecord::new(selector));
+        workspace.repair();
+        let session = workspace.create_tab_with_metadata(
+            &mut sessions,
+            cols,
+            rows,
+            output_limit,
+            auto_restart,
+            metadata,
+        );
+        (session, workspaces.clone(), sessions.clone())
+    };
+    persist_snapshots(state, Some(workspace_snapshot), Some(sessions_snapshot))
+        .map_err(WorkspaceSessionError::Internal)?;
+    Ok(CreatedWorkspaceSession { session })
+}
+
+pub fn close_workspace_session(
+    state: &AppState,
+    session_id: &str,
+) -> Result<ClosedWorkspaceSession, WorkspaceSessionError> {
+    let mut closed_session_ids = Vec::new();
+    let (workspace_snapshot, sessions_snapshot) = {
+        let mut workspaces = state.workspaces.write().map_err(|_| {
+            WorkspaceSessionError::Internal("workspace store lock poisoned".to_owned())
+        })?;
+        let mut sessions = state.sessions.write().map_err(|_| {
+            WorkspaceSessionError::Internal("session store lock poisoned".to_owned())
+        })?;
+
+        if let Some(selector) = workspace_selector_for_session(&workspaces, session_id) {
+            let workspace = workspaces.get_mut(&selector).ok_or_else(|| {
+                WorkspaceSessionError::Internal("workspace disappeared during close".to_owned())
+            })?;
+            workspace
+                .close_session_pane(session_id, &mut sessions, &mut closed_session_ids)
+                .map_err(WorkspaceSessionError::Internal)?;
+            workspace.repair();
+            (Some(workspaces.clone()), Some(sessions.clone()))
+        } else {
+            let Some(mut record) = sessions.remove(session_id) else {
+                return Err(WorkspaceSessionError::NotFound(
+                    "session not found".to_owned(),
+                ));
+            };
+            "closed".clone_into(&mut record.status);
+            closed_session_ids.push(session_id.to_owned());
+            (None, Some(sessions.clone()))
+        }
+    };
+    persist_snapshots(state, workspace_snapshot, sessions_snapshot)
+        .map_err(WorkspaceSessionError::Internal)?;
+    Ok(ClosedWorkspaceSession {
+        session_id: session_id.to_owned(),
+        status: "closed".to_owned(),
+        closed_session_ids,
+    })
 }
 
 fn apply_workspace_action(
@@ -535,21 +630,41 @@ impl WorkspaceRecord {
         rows: u16,
         output_limit: usize,
         auto_restart: bool,
-    ) {
+    ) -> SessionRecord {
+        self.create_tab_with_metadata(
+            sessions,
+            cols,
+            rows,
+            output_limit,
+            auto_restart,
+            HashMap::new(),
+        )
+    }
+
+    fn create_tab_with_metadata(
+        &mut self,
+        sessions: &mut HashMap<String, SessionRecord>,
+        cols: u16,
+        rows: u16,
+        output_limit: usize,
+        auto_restart: bool,
+        metadata: HashMap<String, String>,
+    ) -> SessionRecord {
         let tab_id = Self::next_tab_id();
         let pane = Self::new_pane(cols, rows, output_limit, auto_restart);
-        sessions.insert(
-            pane.session_id.clone(),
-            session_record(
-                &self.selector,
-                &pane.session_id,
-                pane.cols,
-                pane.rows,
-                "running",
+        let record = session_record_with_metadata(
+            &self.selector,
+            &pane.session_id,
+            WorkspaceTerminalDefaults {
+                cols: pane.cols,
+                rows: pane.rows,
                 output_limit,
                 auto_restart,
-            ),
+            },
+            "running",
+            metadata,
         );
+        sessions.insert(pane.session_id.clone(), record.clone());
         let pane_id = pane.id.clone();
         let tab = WorkspaceTab {
             id: tab_id.clone(),
@@ -560,6 +675,7 @@ impl WorkspaceRecord {
         };
         self.tabs.push(tab);
         self.active_tab_id = Some(tab_id);
+        record
     }
 
     fn close_tab(
@@ -689,6 +805,18 @@ impl WorkspaceRecord {
         }
         self.active_tab_id = Some(tab_id.to_owned());
         Ok(())
+    }
+
+    fn close_session_pane(
+        &mut self,
+        session_id: &str,
+        sessions: &mut HashMap<String, SessionRecord>,
+        closed_sessions: &mut Vec<String>,
+    ) -> Result<(), String> {
+        let Some((tab_id, pane_id)) = self.pane_for_session(session_id) else {
+            return Err("session not found in workspace".to_owned());
+        };
+        self.close_pane(&tab_id, &pane_id, sessions, closed_sessions)
     }
 
     fn activate_pane(&mut self, tab_id: &str, pane_id: &str) -> Result<(), String> {
@@ -871,6 +999,27 @@ impl WorkspaceRecord {
             .position(|tab| tab.id == tab_id)
             .map(|index| (index, self.tabs[index].clone()))
     }
+
+    fn pane_for_session(&self, session_id: &str) -> Option<(String, String)> {
+        self.tabs.iter().find_map(|tab| {
+            tab.panes
+                .iter()
+                .find(|pane| pane.session_id == session_id)
+                .map(|pane| (tab.id.clone(), pane.id.clone()))
+        })
+    }
+}
+
+fn workspace_selector_for_session(
+    workspaces: &HashMap<String, WorkspaceRecord>,
+    session_id: &str,
+) -> Option<String> {
+    workspaces.iter().find_map(|(selector, workspace)| {
+        workspace
+            .pane_for_session(session_id)
+            .is_some()
+            .then_some(selector.clone())
+    })
 }
 
 fn ensure_pane_session(
@@ -908,17 +1057,37 @@ fn session_record(
     output_limit: usize,
     auto_restart: bool,
 ) -> SessionRecord {
+    session_record_with_metadata(
+        selector,
+        session_id,
+        WorkspaceTerminalDefaults {
+            cols,
+            rows,
+            output_limit,
+            auto_restart,
+        },
+        status,
+        HashMap::new(),
+    )
+}
+
+fn session_record_with_metadata(
+    selector: &str,
+    session_id: &str,
+    defaults: WorkspaceTerminalDefaults,
+    status: &str,
+    extra_metadata: HashMap<String, String>,
+) -> SessionRecord {
     let host = host_from_selector(selector);
     let (command, args) = default_session_command(selector);
-    let mut metadata = HashMap::from([
-        ("host".to_owned(), host.clone()),
-        ("restartable".to_owned(), auto_restart.to_string()),
-        (
-            "outputBufferLimit".to_owned(),
-            normalize_output_frame_limit(Some(output_limit)).to_string(),
-        ),
-    ]);
-    if output_limit == DEFAULT_OUTPUT_FRAME_LIMIT {
+    let mut metadata = extra_metadata;
+    metadata.insert("host".to_owned(), host.clone());
+    metadata.insert("restartable".to_owned(), defaults.auto_restart.to_string());
+    metadata.insert(
+        "outputBufferLimit".to_owned(),
+        normalize_output_frame_limit(Some(defaults.output_limit)).to_string(),
+    );
+    if defaults.output_limit == DEFAULT_OUTPUT_FRAME_LIMIT {
         metadata.insert(
             "outputBufferLimit".to_owned(),
             output_frame_limit_from_metadata(&metadata).to_string(),
@@ -929,8 +1098,8 @@ fn session_record(
         host,
         selector: selector.to_owned(),
         status: status.to_owned(),
-        cols,
-        rows,
+        cols: defaults.cols,
+        rows: defaults.rows,
         command,
         args,
         control: None,
@@ -1348,5 +1517,128 @@ mod tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn workspace_session_api_creates_workspace_owned_session() {
+        let state = test_app_state();
+        let created = create_workspace_session(
+            &state,
+            "demo@owner",
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            DEFAULT_OUTPUT_FRAME_LIMIT,
+            true,
+            HashMap::from([("client".to_owned(), "connect".to_owned())]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            created.session.metadata.get("client").map(String::as_str),
+            Some("connect")
+        );
+        assert_eq!(
+            created
+                .session
+                .metadata
+                .get("restartable")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert!(
+            state
+                .sessions
+                .read()
+                .unwrap()
+                .contains_key(&created.session.id)
+        );
+        assert!(
+            state
+                .workspaces
+                .read()
+                .unwrap()
+                .get("demo@owner")
+                .is_some_and(|workspace| workspace.tabs.len() == 1
+                    && workspace.tabs[0].panes.len() == 1
+                    && workspace.pane_for_session(&created.session.id).is_some())
+        );
+    }
+
+    #[test]
+    fn workspace_session_api_closes_owned_session_and_keeps_siblings() {
+        let state = test_app_state();
+        let first = create_workspace_session(
+            &state,
+            "demo@owner",
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            DEFAULT_OUTPUT_FRAME_LIMIT,
+            false,
+            HashMap::new(),
+        )
+        .unwrap();
+        let second = create_workspace_session(
+            &state,
+            "demo@owner",
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            DEFAULT_OUTPUT_FRAME_LIMIT,
+            false,
+            HashMap::new(),
+        )
+        .unwrap();
+
+        let closed = close_workspace_session(&state, &first.session.id).unwrap();
+
+        assert_eq!(closed.status, "closed");
+        assert_eq!(closed.closed_session_ids, vec![first.session.id.clone()]);
+        let sessions = state.sessions.read().unwrap();
+        assert!(!sessions.contains_key(&first.session.id));
+        assert!(sessions.contains_key(&second.session.id));
+        drop(sessions);
+        let workspaces = state.workspaces.read().unwrap();
+        let workspace = workspaces.get("demo@owner").unwrap();
+        assert!(workspace.pane_for_session(&first.session.id).is_none());
+        assert!(workspace.pane_for_session(&second.session.id).is_some());
+    }
+
+    #[test]
+    fn workspace_session_api_closes_last_pane_as_last_tab() {
+        let state = test_app_state();
+        let created = create_workspace_session(
+            &state,
+            "demo@owner",
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            DEFAULT_OUTPUT_FRAME_LIMIT,
+            false,
+            HashMap::new(),
+        )
+        .unwrap();
+
+        close_workspace_session(&state, &created.session.id).unwrap();
+
+        assert!(state.sessions.read().unwrap().is_empty());
+        assert!(
+            state
+                .workspaces
+                .read()
+                .unwrap()
+                .get("demo@owner")
+                .is_some_and(
+                    |workspace| workspace.tabs.is_empty() && workspace.active_tab_id.is_none()
+                )
+        );
+    }
+
+    fn test_app_state() -> AppState {
+        let suffix = Uuid::new_v4();
+        AppState::new_for_test(
+            std::env::temp_dir().join(format!("lazycat-neko-webshell-session-test-{suffix}.json")),
+            std::env::temp_dir().join(format!(
+                "lazycat-neko-webshell-workspace-test-{suffix}.json"
+            )),
+            std::env::temp_dir().join(format!("lazycat-neko-webshell-output-test-{suffix}")),
+        )
     }
 }
