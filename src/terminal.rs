@@ -9,7 +9,7 @@ use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
-use tracing::warn;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS};
@@ -258,6 +258,15 @@ async fn send_replay_snapshot(
     .await?;
 
     let (frames, last_sequence) = output.snapshot_after(replay_after);
+    info!(
+        session_id = terminal.session_id(),
+        selector = terminal.selector(),
+        pane_id = pane_id.unwrap_or(""),
+        replay_after,
+        last_sequence,
+        frame_count = frames.len(),
+        "replaying terminal output history"
+    );
     let mut last_sent_sequence = replay_after.max(last_sequence);
     for frame in frames {
         if !send_output_frame(sender, &frame).await? {

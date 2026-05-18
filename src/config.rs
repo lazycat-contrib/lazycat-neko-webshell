@@ -13,6 +13,7 @@ pub const MAX_OUTPUT_BUFFER_BYTES: usize = 16 * 1024 * 1024;
 pub const DEFAULT_FONT_DIR: &str = "/lzcapp/var/fonts";
 pub const DEFAULT_SESSION_STATE_FILE: &str = "/lzcapp/var/sessions.json";
 pub const DEFAULT_WORKSPACE_STATE_FILE: &str = "/lzcapp/var/workspaces.json";
+pub const DEFAULT_OUTPUT_HISTORY_DIR: &str = "/lzcapp/var/output-history";
 pub const DEFAULT_USER_SETTINGS_FILE: &str = "/lzcapp/var/settings.json";
 pub const MAX_USER_SETTINGS_BYTES: usize = 128 * 1024;
 pub const SHELL_BOOTSTRAP_SCRIPT: &str = concat!(

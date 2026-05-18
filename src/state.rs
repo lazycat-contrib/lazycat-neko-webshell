@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::{fs, io};
@@ -8,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::config::{
-    DEFAULT_SESSION_STATE_FILE, LIGHTOSCTL, MAX_COLS, MAX_ROWS, SHELL_BOOTSTRAP_SCRIPT,
+    DEFAULT_OUTPUT_HISTORY_DIR, DEFAULT_SESSION_STATE_FILE, LIGHTOSCTL, MAX_COLS, MAX_ROWS,
+    SHELL_BOOTSTRAP_SCRIPT,
 };
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
 use crate::terminal_manager::{OutputBuffer, TerminalRegistry, TerminalSpec};
@@ -25,6 +27,7 @@ pub struct AppState {
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
     pub terminals: Arc<TerminalRegistry>,
     output_buffers: Arc<RwLock<HashMap<String, Arc<OutputBuffer>>>>,
+    output_history_dir: PathBuf,
     session_store: Arc<SessionStore>,
     pub workspaces: Arc<RwLock<HashMap<String, WorkspaceRecord>>>,
     workspace_store: Arc<WorkspaceStore>,
@@ -34,6 +37,7 @@ impl AppState {
     pub fn new() -> Self {
         let session_store = Arc::new(SessionStore::new(session_state_path()));
         let workspace_store = Arc::new(default_workspace_store());
+        let output_history_dir = output_history_dir();
         let workspaces = workspace_store.load().unwrap_or_else(|err| {
             warn!(error = %err, "failed to load persisted terminal workspaces");
             HashMap::new()
@@ -42,7 +46,11 @@ impl AppState {
             warn!(error = %err, "failed to load persisted terminal sessions");
             HashMap::new()
         });
-        prune_unreferenced_sessions(&mut sessions, &workspaces);
+        for session_id in prune_unreferenced_sessions(&mut sessions, &workspaces) {
+            if let Err(err) = remove_output_history_file_at(&output_history_dir, &session_id) {
+                warn!(error = %err, session_id = %session_id, "failed to remove unreferenced terminal output history");
+            }
+        }
         if let Err(err) = session_store.save(&sessions) {
             warn!(error = %err, "failed to prune unreferenced terminal sessions");
         }
@@ -51,6 +59,7 @@ impl AppState {
             plugins: Arc::new(RwLock::new(builtin_plugins())),
             terminals: Arc::new(TerminalRegistry::new()),
             output_buffers: Arc::new(RwLock::new(HashMap::new())),
+            output_history_dir,
             session_store,
             workspaces: Arc::new(RwLock::new(workspaces)),
             workspace_store,
@@ -78,7 +87,12 @@ impl AppState {
             .write()
             .expect("terminal output buffer registry poisoned")
             .entry(session_id.to_owned())
-            .or_insert_with(|| Arc::new(OutputBuffer::new(normalized_limit)))
+            .or_insert_with(|| {
+                Arc::new(OutputBuffer::persistent(
+                    normalized_limit,
+                    output_history_file_at(&self.output_history_dir, session_id),
+                ))
+            })
             .clone();
         buffer.set_limit(normalized_limit);
         buffer
@@ -88,20 +102,31 @@ impl AppState {
         if let Ok(mut buffers) = self.output_buffers.write() {
             buffers.remove(session_id);
         }
+        if let Err(err) = remove_output_history_file_at(&self.output_history_dir, session_id) {
+            warn!(error = %err, session_id = %session_id, "failed to remove terminal output history");
+        }
     }
 }
 
 fn prune_unreferenced_sessions(
     sessions: &mut HashMap<String, SessionRecord>,
     workspaces: &HashMap<String, WorkspaceRecord>,
-) {
+) -> Vec<String> {
     let referenced = workspaces
         .values()
         .flat_map(|workspace| &workspace.tabs)
         .flat_map(|tab| &tab.panes)
         .map(|pane| pane.session_id.as_str())
         .collect::<HashSet<_>>();
-    sessions.retain(|session_id, _| referenced.contains(session_id.as_str()));
+    let mut removed = Vec::new();
+    sessions.retain(|session_id, _| {
+        let keep = referenced.contains(session_id.as_str());
+        if !keep {
+            removed.push(session_id.clone());
+        }
+        keep
+    });
+    removed
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -332,6 +357,36 @@ fn valid_persisted_session(session: &SessionRecord) -> bool {
 fn session_state_path() -> PathBuf {
     std::env::var_os("PURE_TERMINAL_SESSION_STATE_FILE")
         .map_or_else(|| PathBuf::from(DEFAULT_SESSION_STATE_FILE), PathBuf::from)
+}
+
+fn output_history_dir() -> PathBuf {
+    std::env::var_os("PURE_TERMINAL_OUTPUT_HISTORY_DIR")
+        .map_or_else(|| PathBuf::from(DEFAULT_OUTPUT_HISTORY_DIR), PathBuf::from)
+}
+
+fn output_history_file_at(dir: &Path, session_id: &str) -> PathBuf {
+    dir.join(format!("{}.history", output_history_filename(session_id)))
+}
+
+fn output_history_filename(session_id: &str) -> String {
+    let trimmed = session_id.trim();
+    if uuid::Uuid::parse_str(trimmed).is_ok() {
+        return trimmed.to_ascii_lowercase();
+    }
+
+    let mut encoded = String::from("legacy-");
+    for byte in trimmed.as_bytes() {
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    if encoded == "legacy-" {
+        "legacy-empty".to_owned()
+    } else {
+        encoded
+    }
+}
+
+fn remove_output_history_file_at(dir: &Path, session_id: &str) -> io::Result<()> {
+    remove_session_file(&output_history_file_at(dir, session_id))
 }
 
 fn temp_path_for(path: &Path) -> PathBuf {
@@ -587,6 +642,10 @@ mod tests {
             plugins: Arc::new(RwLock::new(HashMap::new())),
             terminals: Arc::new(TerminalRegistry::new()),
             output_buffers: Arc::new(RwLock::new(HashMap::new())),
+            output_history_dir: std::env::temp_dir().join(format!(
+                "lazycat-neko-webshell-output-history-{}",
+                uuid::Uuid::new_v4()
+            )),
             session_store: Arc::new(SessionStore::new(temp_session_path())),
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             workspace_store: Arc::new(WorkspaceStore::new(temp_session_path())),

@@ -1,5 +1,7 @@
 use std::collections::{HashMap, VecDeque};
-use std::io::{Read, Write};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Write};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
@@ -12,6 +14,9 @@ use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES};
 use crate::validation::{normalize_output_frame_limit, validate_size};
 
 const EVENT_CAPACITY: usize = 1024;
+const HISTORY_MAGIC: &[u8; 8] = b"LCWSH01\n";
+const HISTORY_RECORD_HEADER_BYTES: usize = 12;
+const HISTORY_COMPACT_BYTES: u64 = (MAX_OUTPUT_BUFFER_BYTES as u64) * 2;
 
 #[derive(Clone, Debug)]
 pub struct TerminalSpec {
@@ -339,6 +344,8 @@ fn spawn_exit_thread(
 
 pub struct OutputBuffer {
     inner: Mutex<OutputBufferInner>,
+    history_lock: Mutex<()>,
+    store: Option<OutputHistoryStore>,
 }
 
 struct OutputBufferInner {
@@ -357,19 +364,58 @@ impl OutputBuffer {
                 next_sequence: 0,
                 max_frames: normalize_output_frame_limit(Some(max_frames)),
             }),
+            history_lock: Mutex::new(()),
+            store: None,
         }
     }
 
-    fn push(&self, data: Vec<u8>) -> OutputFrame {
-        let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
-        inner.total_bytes = inner.total_bytes.saturating_add(data.len());
-        inner.next_sequence = inner.next_sequence.saturating_add(1);
-        let frame = OutputFrame {
-            sequence: inner.next_sequence,
-            data,
+    pub fn persistent(max_frames: usize, path: PathBuf) -> Self {
+        let store = OutputHistoryStore { path };
+        let max_frames = normalize_output_frame_limit(Some(max_frames));
+        let loaded = match store.load() {
+            Ok(loaded) => loaded,
+            Err(err) => {
+                warn!(error = %err, path = %store.path.display(), "failed to load terminal output history");
+                let _ = store.remove();
+                LoadedHistory::default()
+            }
         };
-        inner.frames.push_back(frame.clone());
+        let mut inner = OutputBufferInner {
+            frames: loaded.frames,
+            total_bytes: loaded.total_bytes,
+            next_sequence: loaded.next_sequence,
+            max_frames,
+        };
         prune_output_buffer(&mut inner);
+        let output = Self {
+            inner: Mutex::new(inner),
+            history_lock: Mutex::new(()),
+            store: Some(store),
+        };
+        output.compact_history();
+        output
+    }
+
+    fn push(&self, data: Vec<u8>) -> OutputFrame {
+        let _history_guard = self
+            .history_lock
+            .lock()
+            .expect("terminal output history lock poisoned");
+        let frame = {
+            let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
+            inner.total_bytes = inner.total_bytes.saturating_add(data.len());
+            inner.next_sequence = inner.next_sequence.saturating_add(1);
+            let frame = OutputFrame {
+                sequence: inner.next_sequence,
+                data,
+            };
+            inner.frames.push_back(frame.clone());
+            prune_output_buffer(&mut inner);
+            frame
+        };
+        if self.append_history(&frame) {
+            self.compact_history_locked();
+        }
         frame
     }
 
@@ -377,6 +423,8 @@ impl OutputBuffer {
         let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
         inner.max_frames = normalize_output_frame_limit(Some(max_frames));
         prune_output_buffer(&mut inner);
+        drop(inner);
+        self.compact_history();
     }
 
     pub fn snapshot_after(&self, sequence: u64) -> (Vec<OutputFrame>, u64) {
@@ -393,6 +441,48 @@ impl OutputBuffer {
                 .back()
                 .map_or(sequence, |frame| frame.sequence.max(sequence)),
         )
+    }
+
+    fn append_history(&self, frame: &OutputFrame) -> bool {
+        let Some(store) = &self.store else {
+            return false;
+        };
+        if let Err(err) = store.append(frame) {
+            warn!(error = %err, path = %store.path.display(), "failed to append terminal output history");
+            return false;
+        }
+        match store.needs_compaction() {
+            Ok(true) => true,
+            Ok(false) => false,
+            Err(err) => {
+                warn!(error = %err, path = %store.path.display(), "failed to inspect terminal output history");
+                false
+            }
+        }
+    }
+
+    fn compact_history(&self) {
+        if self.store.is_none() {
+            return;
+        }
+        let _history_guard = self
+            .history_lock
+            .lock()
+            .expect("terminal output history lock poisoned");
+        self.compact_history_locked();
+    }
+
+    fn compact_history_locked(&self) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let frames = {
+            let inner = self.inner.lock().expect("terminal output buffer poisoned");
+            inner.frames.iter().cloned().collect::<Vec<_>>()
+        };
+        if let Err(err) = store.compact(&frames) {
+            warn!(error = %err, path = %store.path.display(), "failed to compact terminal output history");
+        }
     }
 }
 
@@ -411,9 +501,132 @@ fn prune_output_buffer(inner: &mut OutputBufferInner) {
     }
 }
 
+#[derive(Clone)]
+struct OutputHistoryStore {
+    path: PathBuf,
+}
+
+#[derive(Default)]
+struct LoadedHistory {
+    frames: VecDeque<OutputFrame>,
+    total_bytes: usize,
+    next_sequence: u64,
+}
+
+impl OutputHistoryStore {
+    fn load(&self) -> io::Result<LoadedHistory> {
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                return Ok(LoadedHistory::default());
+            }
+            Err(err) => return Err(err),
+        };
+        if bytes.is_empty() {
+            return Ok(LoadedHistory::default());
+        }
+        if !bytes.starts_with(HISTORY_MAGIC) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "terminal output history has an invalid header",
+            ));
+        }
+
+        let mut loaded = LoadedHistory::default();
+        let mut offset = HISTORY_MAGIC.len();
+        while offset + HISTORY_RECORD_HEADER_BYTES <= bytes.len() {
+            let sequence = read_u64(&bytes[offset..offset + 8]);
+            let length = read_u32(&bytes[offset + 8..offset + 12]) as usize;
+            offset += HISTORY_RECORD_HEADER_BYTES;
+            let Some(end) = offset.checked_add(length) else {
+                break;
+            };
+            if end > bytes.len() {
+                break;
+            }
+            let data = bytes[offset..end].to_vec();
+            offset = end;
+            loaded.next_sequence = loaded.next_sequence.max(sequence);
+            loaded.total_bytes = loaded.total_bytes.saturating_add(data.len());
+            loaded.frames.push_back(OutputFrame { sequence, data });
+        }
+        Ok(loaded)
+    }
+
+    fn append(&self, frame: &OutputFrame) -> io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let needs_header = fs::metadata(&self.path).map_or(true, |metadata| metadata.len() == 0);
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        if needs_header {
+            file.write_all(HISTORY_MAGIC)?;
+        }
+        write_frame(&mut file, frame)?;
+        file.flush()
+    }
+
+    fn compact(&self, frames: &[OutputFrame]) -> io::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let temp_path = self.path.with_extension("tmp");
+        {
+            let mut file = fs::File::create(&temp_path)?;
+            file.write_all(HISTORY_MAGIC)?;
+            for frame in frames {
+                write_frame(&mut file, frame)?;
+            }
+            file.flush()?;
+        }
+        fs::rename(temp_path, &self.path)
+    }
+
+    fn needs_compaction(&self) -> io::Result<bool> {
+        fs::metadata(&self.path).map(|metadata| metadata.len() > HISTORY_COMPACT_BYTES)
+    }
+
+    fn remove(&self) -> io::Result<()> {
+        match fs::remove_file(&self.path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+}
+
+fn write_frame(writer: &mut impl Write, frame: &OutputFrame) -> io::Result<()> {
+    let length = u32::try_from(frame.data.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "terminal output history frame is too large",
+        )
+    })?;
+    writer.write_all(&frame.sequence.to_le_bytes())?;
+    writer.write_all(&length.to_le_bytes())?;
+    writer.write_all(&frame.data)
+}
+
+fn read_u64(bytes: &[u8]) -> u64 {
+    let mut value = [0_u8; 8];
+    value.copy_from_slice(bytes);
+    u64::from_le_bytes(value)
+}
+
+fn read_u32(bytes: &[u8]) -> u32 {
+    let mut value = [0_u8; 4];
+    value.copy_from_slice(bytes);
+    u32::from_le_bytes(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::OutputBuffer;
+    use std::fs;
+    use std::path::PathBuf;
 
     #[test]
     fn snapshots_output_after_sequence() {
@@ -445,5 +658,55 @@ mod tests {
         assert_eq!(frames.len(), 128);
         assert_eq!(frames[0].sequence, 3);
         assert_eq!(frames[0].data, vec![2]);
+    }
+
+    #[test]
+    fn persistent_output_round_trips_history() {
+        let path = temp_history_path();
+        let output = OutputBuffer::persistent(128, path.clone());
+
+        output.push(b"one".to_vec());
+        output.push(b"two".to_vec());
+
+        let reloaded = OutputBuffer::persistent(128, path.clone());
+        let (frames, last_sequence) = reloaded.snapshot_after(0);
+
+        assert_eq!(last_sequence, 2);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].sequence, 1);
+        assert_eq!(frames[0].data, b"one");
+        assert_eq!(frames[1].sequence, 2);
+        assert_eq!(frames[1].data, b"two");
+
+        let third = reloaded.push(b"three".to_vec());
+        assert_eq!(third.sequence, 3);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn persistent_output_prunes_history_on_load() {
+        let path = temp_history_path();
+        let output = OutputBuffer::persistent(128, path.clone());
+        for index in 0..130 {
+            output.push(vec![index]);
+        }
+
+        let reloaded = OutputBuffer::persistent(128, path.clone());
+        let (frames, last_sequence) = reloaded.snapshot_after(0);
+
+        assert_eq!(last_sequence, 130);
+        assert_eq!(frames.len(), 128);
+        assert_eq!(frames[0].sequence, 3);
+        assert_eq!(frames[0].data, vec![2]);
+
+        let _ = fs::remove_file(path);
+    }
+
+    fn temp_history_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "lazycat-neko-webshell-output-history-{}.bin",
+            uuid::Uuid::new_v4()
+        ))
     }
 }
