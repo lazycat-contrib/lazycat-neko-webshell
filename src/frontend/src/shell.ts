@@ -87,11 +87,11 @@ export function renderShell(app: HTMLElement): ShellElements {
           </button>
           <div class="settings-menu-shell" id="settingsMenuShell">
             <button class="icon-button" id="settingsButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Settings menu" title="Settings menu" data-i18n-aria="action.settingsMenu" data-i18n-title="action.settingsMenu">
-              <i data-lucide="settings"></i>
+              <i data-lucide="menu"></i>
             </button>
             <div class="settings-menu" id="settingsMenu" role="menu" aria-label="Settings menu" data-i18n-aria="action.settingsMenu" hidden>
               <button id="openSettingsItem" type="button" role="menuitem">
-                <i data-lucide="sliders-horizontal"></i>
+                <i data-lucide="settings"></i>
                 <span data-i18n="action.settings">Settings</span>
               </button>
               <button id="homeButton" type="button" role="menuitem">
@@ -137,19 +137,22 @@ export function renderShell(app: HTMLElement): ShellElements {
           </header>
 
           <div class="settings-tabs settings-main-tabs" id="settingsTabs" role="tablist" aria-label="Settings" data-i18n-aria="action.settings">
-            <button type="button" role="tab" aria-selected="true" aria-controls="appearanceSettingsPanel" data-settings-tab="appearance" data-i18n="tab.appearance">Appearance</button>
-            <button type="button" role="tab" aria-selected="false" aria-controls="fontSettingsRootPanel" data-settings-tab="fonts" data-i18n="tab.fonts">Fonts</button>
-            <button type="button" role="tab" aria-selected="false" aria-controls="themeSettingsPanel" data-settings-tab="themes" data-i18n="tab.themes">Themes</button>
+            <button type="button" role="tab" aria-selected="true" aria-controls="appearanceSettingsPanel" data-settings-tab="appearance">
+              <i data-lucide="monitor-cog"></i>
+              <span data-i18n="tab.appearance">Appearance</span>
+            </button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="fontSettingsRootPanel" data-settings-tab="fonts">
+              <i data-lucide="type"></i>
+              <span data-i18n="tab.fonts">Fonts</span>
+            </button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="themeSettingsPanel" data-settings-tab="themes">
+              <i data-lucide="palette"></i>
+              <span data-i18n="tab.themes">Themes</span>
+            </button>
           </div>
 
           <div class="settings-panels">
             <section class="settings-section" id="appearanceSettingsPanel" data-settings-panel="appearance" role="tabpanel">
-              <div class="section-head">
-                <i data-lucide="sliders-horizontal"></i>
-                <div>
-                  <h3 data-i18n="section.appearance">Appearance</h3>
-                </div>
-              </div>
               <label class="field">
                 <span data-i18n="field.language">Language</span>
                 <select id="localeSelect">
@@ -212,12 +215,6 @@ export function renderShell(app: HTMLElement): ShellElements {
             </section>
 
             <section class="settings-section" id="fontSettingsRootPanel" data-settings-panel="fonts" role="tabpanel" hidden>
-              <div class="section-head">
-                <i data-lucide="type"></i>
-                <div>
-                  <h3 data-i18n="section.fonts">Fonts</h3>
-                </div>
-              </div>
               <div class="settings-tabs settings-sub-tabs" id="fontTabs" role="tablist" aria-label="Fonts" data-i18n-aria="section.fonts">
                 <button type="button" role="tab" aria-selected="true" aria-controls="fontSettingsPanel" data-font-tab="font-settings" data-i18n="tab.fontSettings">Font settings</button>
                 <button type="button" role="tab" aria-selected="false" aria-controls="fontUploadPanel" data-font-tab="font-upload" data-i18n="tab.fontUpload">Font upload</button>
@@ -255,12 +252,6 @@ export function renderShell(app: HTMLElement): ShellElements {
             </section>
 
             <section class="settings-section" id="themeSettingsPanel" data-settings-panel="themes" role="tabpanel" hidden>
-              <div class="section-head">
-                <i data-lucide="palette"></i>
-                <div>
-                  <h3 data-i18n="section.themes">Themes</h3>
-                </div>
-              </div>
               <label class="field">
                 <span data-i18n="field.theme">Theme</span>
                 <select id="themeSelect"></select>

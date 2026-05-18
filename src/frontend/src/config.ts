@@ -80,7 +80,7 @@ export const FONT_PRESETS: FontPreset[] = [
     label: "Source Code Pro",
     family: "\"Source Code Pro\", \"SFMono-Regular\", \"Cascadia Mono\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}SourceCodePro-Regular.woff2`, label: "Source Code Pro Regular" },
+      { type: "url", url: `${PREINSTALLED_FONT_BASE}SourceCodePro-Regular.ttf`, label: "Source Code Pro Regular" },
       SYMBOLS_SOURCE,
     ],
   },
@@ -89,7 +89,7 @@ export const FONT_PRESETS: FontPreset[] = [
     label: "Fira Code",
     family: "\"Fira Code\", \"SFMono-Regular\", \"Cascadia Mono\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}FiraCode-Regular.woff2`, label: "Fira Code Regular" },
+      { type: "url", url: `${PREINSTALLED_FONT_BASE}FiraCode-Regular.ttf`, label: "Fira Code Regular" },
       SYMBOLS_SOURCE,
     ],
   },
@@ -98,7 +98,7 @@ export const FONT_PRESETS: FontPreset[] = [
     label: "Source Code Pro Alt",
     family: "\"Source Code Pro\", \"SFMono-Regular\", \"Cascadia Mono\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}SourceCodePro-Regular.woff2`, label: "Source Code Pro Regular" },
+      { type: "url", url: `${PREINSTALLED_FONT_BASE}SourceCodePro-Regular.ttf`, label: "Source Code Pro Regular" },
       SYMBOLS_SOURCE,
     ],
   },

@@ -180,20 +180,21 @@ async fn store_font(
         .filter(|value| !value.is_empty())
         .unwrap_or("application/octet-stream");
     validate_font_mime(mime_type)?;
+    let normalized = normalize_font_upload(&extension, &body)?;
 
     let id = Uuid::new_v4().to_string();
     let metadata = FontMetadata {
         id: id.clone(),
         label: font_label(filename),
         family: format!("PureTerminal-{id}"),
-        mime_type: mime_type.to_owned(),
-        size: u64::try_from(body.len()).unwrap_or(u64::MAX),
+        mime_type: normalized.mime_type,
+        size: u64::try_from(normalized.bytes.len()).unwrap_or(u64::MAX),
         filename: sanitize_font_filename(filename),
-        extension,
+        extension: normalized.extension,
     };
 
     let dir = ensure_font_dir().await?;
-    tokio::fs::write(font_data_path(&dir, &metadata), body).await?;
+    tokio::fs::write(font_data_path(&dir, &metadata), normalized.bytes).await?;
     let metadata_bytes = serde_json::to_vec_pretty(&metadata)
         .map_err(|err| std::io::Error::other(err.to_string()))?;
     tokio::fs::write(font_metadata_path(&dir, &metadata.id), metadata_bytes).await?;
@@ -279,6 +280,56 @@ fn validate_font_mime(mime_type: &str) -> Result<(), FontError> {
     )))
 }
 
+#[derive(Debug)]
+struct NormalizedFont {
+    bytes: Vec<u8>,
+    extension: String,
+    mime_type: String,
+}
+
+fn normalize_font_upload(extension: &str, body: &[u8]) -> Result<NormalizedFont, FontError> {
+    let bytes = match extension {
+        "woff2" => wuff::decompress_woff2(body)
+            .map_err(|err| FontError::BadRequest(format!("failed to decode WOFF2 font: {err}")))?,
+        "woff" => wuff::decompress_woff1(body)
+            .map_err(|err| FontError::BadRequest(format!("failed to decode WOFF font: {err}")))?,
+        "ttf" | "otf" => body.to_vec(),
+        _ => {
+            return Err(FontError::BadRequest(
+                "only .woff, .woff2, .ttf, and .otf are allowed".to_owned(),
+            ));
+        }
+    };
+    let format = sfnt_format(&bytes).ok_or_else(|| {
+        FontError::BadRequest("font file is not a valid TTF or OTF font".to_owned())
+    })?;
+    Ok(NormalizedFont {
+        bytes,
+        extension: format.extension.to_owned(),
+        mime_type: format.mime_type.to_owned(),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SfntFormat {
+    extension: &'static str,
+    mime_type: &'static str,
+}
+
+fn sfnt_format(bytes: &[u8]) -> Option<SfntFormat> {
+    match bytes.get(..4)? {
+        b"OTTO" => Some(SfntFormat {
+            extension: "otf",
+            mime_type: "font/otf",
+        }),
+        b"\0\x01\0\0" | b"true" | b"ttcf" => Some(SfntFormat {
+            extension: "ttf",
+            mime_type: "font/ttf",
+        }),
+        _ => None,
+    }
+}
+
 fn validate_font_id(id: &str) -> Result<(), FontError> {
     if valid_font_id(id) {
         Ok(())
@@ -324,7 +375,10 @@ fn sanitize_font_filename(filename: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_font_filename, validate_font_id, validate_font_mime};
+    use super::{
+        normalize_font_upload, sfnt_format, validate_font_filename, validate_font_id,
+        validate_font_mime,
+    };
 
     #[test]
     fn validates_font_upload_boundaries() {
@@ -338,5 +392,23 @@ mod tests {
         assert!(validate_font_mime("text/html").is_err());
         assert!(validate_font_id("1d76747b-88ff-449f-9e19-cc89fb1a7a67").is_ok());
         assert!(validate_font_id("../escape").is_err());
+    }
+
+    #[test]
+    fn detects_sfnt_format() {
+        assert_eq!(sfnt_format(b"OTTOrest").unwrap().extension, "otf");
+        assert_eq!(sfnt_format(b"\0\x01\0\0rest").unwrap().extension, "ttf");
+        assert_eq!(sfnt_format(b"ttcfrest").unwrap().extension, "ttf");
+        assert!(sfnt_format(b"wOF2rest").is_none());
+    }
+
+    #[test]
+    fn normalizes_woff2_upload_to_sfnt() {
+        let bytes = include_bytes!("../src/frontend/public/fonts/preinstalled/Hack-Regular.woff2");
+        let font = normalize_font_upload("woff2", bytes).unwrap();
+        assert_eq!(font.extension, "ttf");
+        assert_eq!(font.mime_type, "font/ttf");
+        assert!(font.bytes.len() > bytes.len());
+        assert_eq!(sfnt_format(&font.bytes).unwrap().extension, "ttf");
     }
 }
