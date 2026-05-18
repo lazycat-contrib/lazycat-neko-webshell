@@ -1,7 +1,5 @@
 import "./styles.css";
 
-import { createClient } from "@connectrpc/connect";
-import { createConnectTransport } from "@connectrpc/connect-web";
 import { createIcons, icons } from "lucide";
 import { Terminal } from "restty/xterm";
 
@@ -20,7 +18,7 @@ import {
   THEMES,
 } from "./config";
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
-import { CapabilityService, type Instance } from "./gen/lazycat/webshell/v1/capability_pb";
+import type { Instance } from "./gen/lazycat/webshell/v1/capability_pb";
 import { translate, type MessageKey } from "./i18n";
 import { encodeMobileShortcutKeyInput } from "./keyboard";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
@@ -45,8 +43,6 @@ import type {
 } from "./types";
 import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorLabel } from "./utils";
 
-const transport = createConnectTransport({ baseUrl: window.location.origin });
-const client = createClient(CapabilityService, transport);
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
@@ -1032,8 +1028,7 @@ function setFontStatus(message: string, tone: Tone = "neutral") {
 async function loadInstances() {
   setGlobalStatus(tr("status.loadingInstances"));
   try {
-    const response = await client.listInstances({});
-    instances = response.instances;
+    instances = await fetchInstances();
     reconcileSelectedInstance();
     renderInstances();
     setGlobalStatus(instances.length ? tr("status.instancesLoaded") : tr("status.noInstances"));
@@ -1041,6 +1036,21 @@ async function loadInstances() {
     renderInstances();
     setGlobalStatus(tr("status.instanceLoadFailed", { message: errorMessage(error) }), "error");
   }
+}
+
+async function fetchInstances(): Promise<Instance[]> {
+  const response = await fetch(new URL("./api/instances", window.location.href), {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  const payload = await response.json() as unknown;
+  if (!Array.isArray(payload)) {
+    throw new Error("invalid instances response");
+  }
+  return payload as Instance[];
 }
 
 function reconcileSelectedInstance(): boolean {

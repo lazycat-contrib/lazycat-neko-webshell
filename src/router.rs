@@ -13,7 +13,7 @@ use crate::config::MAX_FONT_BYTES;
 use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
 use crate::lightos::{self, AdminInfo};
 use crate::preferences::{get_settings, put_settings};
-use crate::proto::lazycat::webshell::v1::CapabilityServiceExt;
+use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
 use crate::service::CapabilityServiceImpl;
 use crate::state::AppState;
 use crate::terminal::terminal_ws;
@@ -30,6 +30,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/ws/terminal", get(terminal_ws))
         .route("/assets/{*path}", get(frontend_asset))
         .route("/fonts/{*path}", get(frontend_font))
+        .route("/api/instances", get(list_instances))
         .route("/api/lightos-admin-info", get(lightos_admin_info))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
@@ -60,6 +61,16 @@ async fn lightos_admin_info() -> Result<Json<AdminInfo>, (StatusCode, String)> {
             StatusCode::BAD_GATEWAY,
             err.message
                 .unwrap_or_else(|| "failed to resolve LightOS admin info".to_owned()),
+        )
+    })
+}
+
+async fn list_instances() -> Result<Json<Vec<Instance>>, (StatusCode, String)> {
+    lightos::list_instances().await.map(Json).map_err(|err| {
+        (
+            StatusCode::BAD_GATEWAY,
+            err.message
+                .unwrap_or_else(|| "failed to list LightOS instances".to_owned()),
         )
     })
 }
