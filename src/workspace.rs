@@ -18,8 +18,8 @@ use crate::config::{
 };
 use crate::lightos;
 use crate::state::{
-    AppState, SessionRecord, default_session_command, host_from_selector,
-    output_frame_limit_from_metadata,
+    AppState, METADATA_LOGIN_USER, SessionRecord, default_session_command_for_user,
+    host_from_selector, output_frame_limit_from_metadata, sync_session_login_user,
 };
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
@@ -128,12 +128,31 @@ pub struct WorkspaceActionRequest {
     auto_restart: Option<bool>,
 }
 
-#[derive(Clone, Copy)]
-struct WorkspaceTerminalDefaults {
+#[derive(Clone)]
+pub(crate) struct WorkspaceTerminalDefaults {
     cols: u16,
     rows: u16,
     output_limit: usize,
     auto_restart: bool,
+    login_user: String,
+}
+
+impl WorkspaceTerminalDefaults {
+    pub(crate) fn new(
+        cols: u16,
+        rows: u16,
+        output_limit: usize,
+        auto_restart: bool,
+        login_user: &str,
+    ) -> Self {
+        Self {
+            cols,
+            rows,
+            output_limit,
+            auto_restart,
+            login_user: login_user.trim().to_owned(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -242,9 +261,10 @@ pub async fn get_workspace(
     Query(query): Query<WorkspaceQuery>,
 ) -> Response {
     let selector = query.name.trim();
-    if let Err(response) = authorize_workspace_selector(selector, true).await {
-        return response.into_response();
-    }
+    let login_user = match authorize_workspace_selector(selector, true).await {
+        Ok(login_user) => login_user,
+        Err(response) => return response.into_response(),
+    };
     let (cols, rows) = match request_size(query.cols, query.rows) {
         Ok(size) => size,
         Err(response) => return response.into_response(),
@@ -252,7 +272,10 @@ pub async fn get_workspace(
     let output_limit = normalize_output_frame_limit(query.output_limit);
     let auto_restart = query.auto_restart.unwrap_or(false);
 
-    match ensure_workspace_state(&state, selector, cols, rows, output_limit, auto_restart) {
+    let defaults =
+        WorkspaceTerminalDefaults::new(cols, rows, output_limit, auto_restart, &login_user);
+
+    match ensure_workspace_state(&state, selector, &defaults) {
         Ok(workspace) => Json(workspace).into_response(),
         Err(message) => internal_error(message),
     }
@@ -263,9 +286,10 @@ pub async fn put_workspace_action(
     Json(request): Json<WorkspaceActionRequest>,
 ) -> Response {
     let selector = request.name.trim().to_owned();
-    if let Err(response) = authorize_workspace_selector(&selector, true).await {
-        return response.into_response();
-    }
+    let login_user = match authorize_workspace_selector(&selector, true).await {
+        Ok(login_user) => login_user,
+        Err(response) => return response.into_response(),
+    };
     let (cols, rows) = match request_size(request.cols, request.rows) {
         Ok(size) => size,
         Err(response) => return response.into_response(),
@@ -273,15 +297,10 @@ pub async fn put_workspace_action(
     let output_limit = normalize_output_frame_limit(request.output_limit);
     let auto_restart = request.auto_restart.unwrap_or(false);
 
-    match apply_workspace_action(
-        &state,
-        &selector,
-        cols,
-        rows,
-        output_limit,
-        auto_restart,
-        &request,
-    ) {
+    let defaults =
+        WorkspaceTerminalDefaults::new(cols, rows, output_limit, auto_restart, &login_user);
+
+    match apply_workspace_action(&state, &selector, &defaults, &request) {
         Ok((workspace, closed_sessions)) => {
             state
                 .sessions
@@ -298,10 +317,7 @@ pub async fn put_workspace_action(
 fn ensure_workspace_state(
     state: &AppState,
     selector: &str,
-    cols: u16,
-    rows: u16,
-    output_limit: usize,
-    auto_restart: bool,
+    defaults: &WorkspaceTerminalDefaults,
 ) -> Result<WorkspaceState, String> {
     let mut persist_workspaces = None;
     let mut persist_sessions = None;
@@ -317,7 +333,7 @@ fn ensure_workspace_state(
         let workspace = workspaces
             .entry(selector.to_owned())
             .or_insert_with(|| WorkspaceRecord::new(selector));
-        let changed = workspace.ensure_ready(&mut sessions, cols, rows, output_limit, auto_restart);
+        let changed = workspace.ensure_ready(&mut sessions, defaults);
         let snapshot = workspace.snapshot(&sessions);
         if changed {
             persist_workspaces = Some(workspaces.clone());
@@ -329,13 +345,10 @@ fn ensure_workspace_state(
     Ok(workspace)
 }
 
-pub fn create_workspace_session(
+pub(crate) fn create_workspace_session(
     state: &AppState,
     selector: &str,
-    cols: u16,
-    rows: u16,
-    output_limit: usize,
-    auto_restart: bool,
+    defaults: &WorkspaceTerminalDefaults,
     metadata: HashMap<String, String>,
 ) -> Result<CreatedWorkspaceSession, WorkspaceSessionError> {
     let (session, workspace_snapshot, sessions_snapshot) = {
@@ -349,14 +362,7 @@ pub fn create_workspace_session(
             .entry(selector.to_owned())
             .or_insert_with(|| WorkspaceRecord::new(selector));
         workspace.repair();
-        let session = workspace.create_tab_with_metadata(
-            &mut sessions,
-            cols,
-            rows,
-            output_limit,
-            auto_restart,
-            metadata,
-        );
+        let session = workspace.create_tab_with_metadata(&mut sessions, defaults, metadata);
         (session, workspaces.clone(), sessions.clone())
     };
     persist_snapshots(state, Some(workspace_snapshot), Some(sessions_snapshot))
@@ -409,18 +415,9 @@ pub fn close_workspace_session(
 fn apply_workspace_action(
     state: &AppState,
     selector: &str,
-    cols: u16,
-    rows: u16,
-    output_limit: usize,
-    auto_restart: bool,
+    defaults: &WorkspaceTerminalDefaults,
     request: &WorkspaceActionRequest,
 ) -> Result<(WorkspaceState, Vec<String>), WorkspaceActionError> {
-    let defaults = WorkspaceTerminalDefaults {
-        cols,
-        rows,
-        output_limit,
-        auto_restart,
-    };
     let mut closed_sessions = Vec::new();
     let (workspace, workspace_snapshot, sessions_snapshot) = {
         let mut workspaces = state.workspaces.write().map_err(|_| {
@@ -432,7 +429,7 @@ fn apply_workspace_action(
         let workspace = workspaces
             .entry(selector.to_owned())
             .or_insert_with(|| WorkspaceRecord::new(selector));
-        workspace.ensure_ready(&mut sessions, cols, rows, output_limit, auto_restart);
+        workspace.ensure_ready(&mut sessions, defaults);
         workspace
             .apply_action(request, &mut sessions, defaults, &mut closed_sessions)
             .map_err(WorkspaceActionError::BadRequest)?;
@@ -474,27 +471,17 @@ impl WorkspaceRecord {
     fn ensure_ready(
         &mut self,
         sessions: &mut HashMap<String, SessionRecord>,
-        cols: u16,
-        rows: u16,
-        output_limit: usize,
-        auto_restart: bool,
+        defaults: &WorkspaceTerminalDefaults,
     ) -> bool {
         self.repair();
         let mut changed = false;
         if self.tabs.is_empty() {
-            self.create_tab(sessions, cols, rows, output_limit, auto_restart);
+            self.create_tab(sessions, defaults);
             changed = true;
         }
         for tab in &mut self.tabs {
             for pane in &mut tab.panes {
-                changed |= ensure_pane_session(
-                    sessions,
-                    &self.selector,
-                    pane,
-                    "stopped",
-                    output_limit,
-                    auto_restart,
-                );
+                changed |= ensure_pane_session(sessions, &self.selector, pane, "stopped", defaults);
             }
         }
         changed
@@ -504,18 +491,12 @@ impl WorkspaceRecord {
         &mut self,
         request: &WorkspaceActionRequest,
         sessions: &mut HashMap<String, SessionRecord>,
-        defaults: WorkspaceTerminalDefaults,
+        defaults: &WorkspaceTerminalDefaults,
         closed_sessions: &mut Vec<String>,
     ) -> Result<(), String> {
         match request.action {
             WorkspaceAction::CreateTab => {
-                self.create_tab(
-                    sessions,
-                    defaults.cols,
-                    defaults.rows,
-                    defaults.output_limit,
-                    defaults.auto_restart,
-                );
+                self.create_tab(sessions, defaults);
             }
             WorkspaceAction::CloseTab => {
                 let tab_id = self.request_tab_id(request)?;
@@ -625,41 +606,28 @@ impl WorkspaceRecord {
     fn create_tab(
         &mut self,
         sessions: &mut HashMap<String, SessionRecord>,
-        cols: u16,
-        rows: u16,
-        output_limit: usize,
-        auto_restart: bool,
+        defaults: &WorkspaceTerminalDefaults,
     ) -> SessionRecord {
-        self.create_tab_with_metadata(
-            sessions,
-            cols,
-            rows,
-            output_limit,
-            auto_restart,
-            HashMap::new(),
-        )
+        self.create_tab_with_metadata(sessions, defaults, HashMap::new())
     }
 
     fn create_tab_with_metadata(
         &mut self,
         sessions: &mut HashMap<String, SessionRecord>,
-        cols: u16,
-        rows: u16,
-        output_limit: usize,
-        auto_restart: bool,
+        defaults: &WorkspaceTerminalDefaults,
         metadata: HashMap<String, String>,
     ) -> SessionRecord {
         let tab_id = Self::next_tab_id();
-        let pane = Self::new_pane(cols, rows, output_limit, auto_restart);
+        let pane = Self::new_pane(
+            defaults.cols,
+            defaults.rows,
+            defaults.output_limit,
+            defaults.auto_restart,
+        );
         let record = session_record_with_metadata(
             &self.selector,
             &pane.session_id,
-            WorkspaceTerminalDefaults {
-                cols: pane.cols,
-                rows: pane.rows,
-                output_limit,
-                auto_restart,
-            },
+            defaults,
             "starting",
             metadata,
         );
@@ -729,7 +697,7 @@ impl WorkspaceRecord {
         pane_id: Option<&str>,
         direction: SplitDirection,
         sessions: &mut HashMap<String, SessionRecord>,
-        defaults: WorkspaceTerminalDefaults,
+        defaults: &WorkspaceTerminalDefaults,
     ) -> Result<(), String> {
         let pane = Self::new_pane(
             defaults.cols,
@@ -739,15 +707,7 @@ impl WorkspaceRecord {
         );
         sessions.insert(
             pane.session_id.clone(),
-            session_record(
-                &self.selector,
-                &pane.session_id,
-                pane.cols,
-                pane.rows,
-                "starting",
-                defaults.output_limit,
-                defaults.auto_restart,
-            ),
+            session_record(&self.selector, &pane.session_id, "starting", defaults),
         );
         let tab = self
             .find_tab_mut(tab_id)
@@ -1026,23 +986,14 @@ fn ensure_pane_session(
     selector: &str,
     pane: &WorkspacePane,
     status: &str,
-    output_limit: usize,
-    auto_restart: bool,
+    defaults: &WorkspaceTerminalDefaults,
 ) -> bool {
-    if sessions.contains_key(&pane.session_id) {
-        return false;
+    if let Some(session) = sessions.get_mut(&pane.session_id) {
+        return sync_session_login_user(session, &defaults.login_user);
     }
     sessions.insert(
         pane.session_id.clone(),
-        session_record(
-            selector,
-            &pane.session_id,
-            pane.cols,
-            pane.rows,
-            status,
-            output_limit,
-            auto_restart,
-        ),
+        session_record(selector, &pane.session_id, status, defaults),
     );
     true
 }
@@ -1050,38 +1001,30 @@ fn ensure_pane_session(
 fn session_record(
     selector: &str,
     session_id: &str,
-    cols: u16,
-    rows: u16,
     status: &str,
-    output_limit: usize,
-    auto_restart: bool,
+    defaults: &WorkspaceTerminalDefaults,
 ) -> SessionRecord {
-    session_record_with_metadata(
-        selector,
-        session_id,
-        WorkspaceTerminalDefaults {
-            cols,
-            rows,
-            output_limit,
-            auto_restart,
-        },
-        status,
-        HashMap::new(),
-    )
+    session_record_with_metadata(selector, session_id, defaults, status, HashMap::new())
 }
 
 fn session_record_with_metadata(
     selector: &str,
     session_id: &str,
-    defaults: WorkspaceTerminalDefaults,
+    defaults: &WorkspaceTerminalDefaults,
     status: &str,
     extra_metadata: HashMap<String, String>,
 ) -> SessionRecord {
     let host = host_from_selector(selector);
-    let (command, args) = default_session_command(selector);
     let mut metadata = extra_metadata;
+    let login_user = defaults.login_user.trim();
+    let (command, args) = default_session_command_for_user(selector, login_user);
     metadata.insert("host".to_owned(), host.clone());
     metadata.insert("restartable".to_owned(), defaults.auto_restart.to_string());
+    if login_user.is_empty() {
+        metadata.remove(METADATA_LOGIN_USER);
+    } else {
+        metadata.insert(METADATA_LOGIN_USER.to_owned(), login_user.to_owned());
+    }
     metadata.insert(
         "outputBufferLimit".to_owned(),
         normalize_output_frame_limit(Some(defaults.output_limit)).to_string(),
@@ -1333,7 +1276,7 @@ fn request_size(cols: Option<u16>, rows: Option<u16>) -> Result<(u16, u16), (Sta
 async fn authorize_workspace_selector(
     selector: &str,
     require_running: bool,
-) -> Result<(), (StatusCode, String)> {
+) -> Result<String, (StatusCode, String)> {
     if selector.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "name is required".to_owned()));
     }
@@ -1343,7 +1286,7 @@ async fn authorize_workspace_selector(
             err.message.unwrap_or_else(|| "invalid selector".to_owned()),
         )
     })?;
-    lightos::authorize_selector(selector, require_running)
+    lightos::login_user_for_selector(selector, require_running)
         .await
         .map_err(|err| {
             (
@@ -1398,13 +1341,14 @@ mod tests {
     fn workspace_split_and_rename_are_persisted() {
         let mut sessions = HashMap::new();
         let mut workspace = WorkspaceRecord::new("demo@owner");
-        assert!(workspace.ensure_ready(
-            &mut sessions,
+        let defaults = WorkspaceTerminalDefaults::new(
             DEFAULT_COLS,
             DEFAULT_ROWS,
             DEFAULT_OUTPUT_FRAME_LIMIT,
             false,
-        ));
+            "",
+        );
+        assert!(workspace.ensure_ready(&mut sessions, &defaults));
 
         let active_tab = workspace.active_tab_id.clone().unwrap();
         let active_pane = workspace.tabs[0].active_pane_id.clone();
@@ -1435,15 +1379,16 @@ mod tests {
             output_limit: None,
             auto_restart: None,
         };
-        let defaults = WorkspaceTerminalDefaults {
-            cols: DEFAULT_COLS,
-            rows: DEFAULT_ROWS,
-            output_limit: DEFAULT_OUTPUT_FRAME_LIMIT,
-            auto_restart: false,
-        };
+        let defaults = WorkspaceTerminalDefaults::new(
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            DEFAULT_OUTPUT_FRAME_LIMIT,
+            false,
+            "admin",
+        );
         let mut closed_sessions = Vec::new();
         workspace
-            .apply_action(&request, &mut sessions, defaults, &mut closed_sessions)
+            .apply_action(&request, &mut sessions, &defaults, &mut closed_sessions)
             .unwrap();
         let request = WorkspaceActionRequest {
             action: WorkspaceAction::RenameTab,
@@ -1452,7 +1397,7 @@ mod tests {
             ..request
         };
         workspace
-            .apply_action(&request, &mut sessions, defaults, &mut closed_sessions)
+            .apply_action(&request, &mut sessions, &defaults, &mut closed_sessions)
             .unwrap();
 
         assert_eq!(workspace.tabs[0].panes.len(), 2);
@@ -1521,13 +1466,17 @@ mod tests {
     #[test]
     fn workspace_session_api_creates_workspace_owned_session() {
         let state = test_app_state();
-        let created = create_workspace_session(
-            &state,
-            "demo@owner",
+        let defaults = WorkspaceTerminalDefaults::new(
             DEFAULT_COLS,
             DEFAULT_ROWS,
             DEFAULT_OUTPUT_FRAME_LIMIT,
             true,
+            "admin",
+        );
+        let created = create_workspace_session(
+            &state,
+            "demo@owner",
+            &defaults,
             HashMap::from([("client".to_owned(), "connect".to_owned())]),
         )
         .unwrap();
@@ -1544,6 +1493,21 @@ mod tests {
                 .get("restartable")
                 .map(String::as_str),
             Some("true")
+        );
+        assert_eq!(
+            created
+                .session
+                .metadata
+                .get("loginUser")
+                .map(String::as_str),
+            Some("admin")
+        );
+        assert!(
+            created
+                .session
+                .args
+                .last()
+                .is_some_and(|script| script.contains("setpriv --reuid \"$uid\""))
         );
         assert!(
             state
@@ -1568,26 +1532,17 @@ mod tests {
     #[test]
     fn workspace_session_api_closes_owned_session_and_keeps_siblings() {
         let state = test_app_state();
-        let first = create_workspace_session(
-            &state,
-            "demo@owner",
+        let defaults = WorkspaceTerminalDefaults::new(
             DEFAULT_COLS,
             DEFAULT_ROWS,
             DEFAULT_OUTPUT_FRAME_LIMIT,
             false,
-            HashMap::new(),
-        )
-        .unwrap();
-        let second = create_workspace_session(
-            &state,
-            "demo@owner",
-            DEFAULT_COLS,
-            DEFAULT_ROWS,
-            DEFAULT_OUTPUT_FRAME_LIMIT,
-            false,
-            HashMap::new(),
-        )
-        .unwrap();
+            "",
+        );
+        let first =
+            create_workspace_session(&state, "demo@owner", &defaults, HashMap::new()).unwrap();
+        let second =
+            create_workspace_session(&state, "demo@owner", &defaults, HashMap::new()).unwrap();
 
         let closed = close_workspace_session(&state, &first.session.id).unwrap();
 
@@ -1606,16 +1561,15 @@ mod tests {
     #[test]
     fn workspace_session_api_closes_last_pane_as_last_tab() {
         let state = test_app_state();
-        let created = create_workspace_session(
-            &state,
-            "demo@owner",
+        let defaults = WorkspaceTerminalDefaults::new(
             DEFAULT_COLS,
             DEFAULT_ROWS,
             DEFAULT_OUTPUT_FRAME_LIMIT,
             false,
-            HashMap::new(),
-        )
-        .unwrap();
+            "",
+        );
+        let created =
+            create_workspace_session(&state, "demo@owner", &defaults, HashMap::new()).unwrap();
 
         close_workspace_session(&state, &created.session.id).unwrap();
 

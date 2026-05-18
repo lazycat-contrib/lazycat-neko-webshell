@@ -20,7 +20,10 @@ use crate::state::{
     AppState, PluginRecord, SessionRecord, bool_flag, output_frame_limit_from_metadata,
 };
 use crate::validation::{normalize_dimension, required_field, validate_selector};
-use crate::workspace::{WorkspaceSessionError, close_workspace_session, create_workspace_session};
+use crate::workspace::{
+    WorkspaceSessionError, WorkspaceTerminalDefaults, close_workspace_session,
+    create_workspace_session,
+};
 
 pub struct CapabilityServiceImpl {
     state: Arc<AppState>,
@@ -85,7 +88,7 @@ impl CapabilityService for CapabilityServiceImpl {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| ConnectError::invalid_argument("selector is required"))?;
         validate_selector(selector)?;
-        lightos::authorize_selector(selector, true).await?;
+        let login_user = lightos::login_user_for_selector(selector, true).await?;
         let cols = normalize_dimension(request.cols, DEFAULT_COLS, MAX_COLS, "cols")?;
         let rows = normalize_dimension(request.rows, DEFAULT_ROWS, MAX_ROWS, "rows")?;
         let metadata: HashMap<String, String> = request
@@ -99,16 +102,10 @@ impl CapabilityService for CapabilityServiceImpl {
             .and_then(|value| bool_flag(value))
             .unwrap_or(false);
         let output_limit = output_frame_limit_from_metadata(&metadata);
-        let created = create_workspace_session(
-            &self.state,
-            selector,
-            cols,
-            rows,
-            output_limit,
-            restartable,
-            metadata,
-        )
-        .map_err(connect_workspace_error)?;
+        let defaults =
+            WorkspaceTerminalDefaults::new(cols, rows, output_limit, restartable, &login_user);
+        let created = create_workspace_session(&self.state, selector, &defaults, metadata)
+            .map_err(connect_workspace_error)?;
         let mut record = created.session;
         if let Err(err) = self
             .state

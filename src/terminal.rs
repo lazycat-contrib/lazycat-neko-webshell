@@ -15,7 +15,8 @@ use uuid::Uuid;
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS};
 use crate::lightos;
 use crate::state::{
-    AppState, bool_flag, default_session_command, host_from_selector, mark_session_status,
+    AppState, bool_flag, default_session_command_for_user, host_from_selector, mark_session_status,
+    sync_session_login_user,
 };
 use crate::terminal_manager::{
     ManagedTerminal, OutputBuffer, OutputFrame, TerminalEvent, TerminalSpec,
@@ -423,7 +424,8 @@ async fn resolve_terminal_target(
         let (spec, status) = persisted_terminal_target(state, query, session_id, restart)?;
         let allow_spawn =
             restart.unwrap_or(false) || matches!(status.as_str(), "running" | "starting");
-        authorize_terminal_selector(&spec.selector, allow_spawn).await?;
+        let login_user = authorize_terminal_selector(&spec.selector, allow_spawn).await?;
+        let spec = refresh_persisted_terminal_login_user(state, session_id, spec, &login_user)?;
         let output = state.output_buffer(session_id, spec.output_frame_limit);
         return Ok(TerminalAttachTarget {
             spec,
@@ -446,8 +448,8 @@ async fn resolve_terminal_target(
     let rows = query.rows.unwrap_or(DEFAULT_ROWS);
     validate_size(cols, rows)?;
     let host = host_from_selector(selector);
-    authorize_terminal_selector(selector, true).await?;
-    let (command, args) = default_session_command(selector);
+    let login_user = authorize_terminal_selector(selector, true).await?;
+    let (command, args) = default_session_command_for_user(selector, &login_user);
     let output_limit = normalize_output_frame_limit(query.output_limit);
     let session_id = Uuid::new_v4().to_string();
     let output = state.output_buffer(&session_id, output_limit);
@@ -521,8 +523,37 @@ fn persisted_terminal_target(
     Ok(target)
 }
 
-async fn authorize_terminal_selector(selector: &str, require_running: bool) -> anyhow::Result<()> {
-    lightos::authorize_selector(selector, require_running)
+fn refresh_persisted_terminal_login_user(
+    state: &AppState,
+    session_id: &str,
+    mut spec: TerminalSpec,
+    login_user: &str,
+) -> anyhow::Result<TerminalSpec> {
+    let mut snapshot = None;
+    {
+        let mut sessions = state
+            .sessions
+            .write()
+            .map_err(|_| anyhow!("session store lock poisoned"))?;
+        if let Some(session) = sessions.get_mut(session_id) {
+            let changed = sync_session_login_user(session, login_user);
+            spec = session.terminal_spec(spec.cols, spec.rows);
+            if changed {
+                snapshot = Some(sessions.clone());
+            }
+        }
+    }
+    if let Some(snapshot) = snapshot {
+        state.persist_sessions_snapshot(&snapshot)?;
+    }
+    Ok(spec)
+}
+
+async fn authorize_terminal_selector(
+    selector: &str,
+    require_running: bool,
+) -> anyhow::Result<String> {
+    lightos::login_user_for_selector(selector, require_running)
         .await
         .map_err(|err| {
             anyhow!(

@@ -10,7 +10,6 @@ use tracing::warn;
 
 use crate::config::{
     DEFAULT_OUTPUT_HISTORY_DIR, DEFAULT_SESSION_STATE_FILE, LIGHTOSCTL, MAX_COLS, MAX_ROWS,
-    SHELL_BOOTSTRAP_SCRIPT,
 };
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
 use crate::session_manager::SessionManager;
@@ -21,6 +20,7 @@ use crate::workspace::{WorkspaceRecord, WorkspaceStore, default_workspace_store}
 const METADATA_RESTARTABLE: &str = "restartable";
 const METADATA_HOST: &str = "host";
 const METADATA_OUTPUT_BUFFER_LIMIT: &str = "outputBufferLimit";
+pub const METADATA_LOGIN_USER: &str = "loginUser";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -176,10 +176,18 @@ impl SessionRecord {
         if self.host.trim().is_empty() {
             self.host = host_from_selector(&self.selector);
         }
+        let login_user = self
+            .metadata
+            .get(METADATA_LOGIN_USER)
+            .map(String::as_str)
+            .unwrap_or_default()
+            .to_owned();
         if self.command.trim().is_empty() {
-            let (command, args) = default_session_command(&self.selector);
+            let (command, args) = default_session_command_for_user(&self.selector, &login_user);
             self.command = command;
             self.args = args;
+        } else if !login_user.trim().is_empty() {
+            sync_session_login_user(&mut self, &login_user);
         }
         if self.status != "closed" {
             "stopped".clone_into(&mut self.status);
@@ -385,7 +393,12 @@ pub fn host_from_selector(selector: &str) -> String {
         .to_owned()
 }
 
+#[cfg(test)]
 pub fn default_session_command(selector: &str) -> (String, Vec<String>) {
+    default_session_command_for_user(selector, "")
+}
+
+pub fn default_session_command_for_user(selector: &str, login_user: &str) -> (String, Vec<String>) {
     (
         LIGHTOSCTL.to_owned(),
         vec![
@@ -394,9 +407,152 @@ pub fn default_session_command(selector: &str) -> (String, Vec<String>) {
             selector.to_owned(),
             "/bin/sh".to_owned(),
             "-lc".to_owned(),
-            SHELL_BOOTSTRAP_SCRIPT.to_owned(),
+            shell_bootstrap_script(login_user),
         ],
     )
+}
+
+pub fn sync_session_login_user(session: &mut SessionRecord, login_user: &str) -> bool {
+    let normalized = login_user.trim();
+    let (command, args) = default_session_command_for_user(&session.selector, normalized);
+    let mut changed = false;
+    if session.command != command {
+        session.command = command;
+        changed = true;
+    }
+    if session.args != args {
+        session.args = args;
+        changed = true;
+    }
+    match (
+        normalized.is_empty(),
+        session.metadata.get(METADATA_LOGIN_USER),
+    ) {
+        (true, Some(_)) => {
+            session.metadata.remove(METADATA_LOGIN_USER);
+            changed = true;
+        }
+        (false, Some(value)) if value == normalized => {}
+        (false, _) => {
+            session
+                .metadata
+                .insert(METADATA_LOGIN_USER.to_owned(), normalized.to_owned());
+            changed = true;
+        }
+        (true, None) => {}
+    }
+    changed
+}
+
+fn shell_bootstrap_script(login_user: &str) -> String {
+    let login_user = login_user.trim();
+    if login_user_needs_switch(login_user) {
+        return user_login_shell_bootstrap_script(login_user);
+    }
+    current_user_shell_bootstrap_script()
+}
+
+fn login_user_needs_switch(login_user: &str) -> bool {
+    !matches!(login_user.trim(), "" | "root")
+}
+
+fn current_user_shell_bootstrap_script() -> String {
+    [
+        "__webshell_user=\"$(id -un 2>/dev/null || true)\"",
+        "__webshell_entry=\"$(getent passwd \"$__webshell_user\" 2>/dev/null || true)\"",
+        "__webshell_shell=\"$(printf '%s\\n' \"$__webshell_entry\" | cut -d: -f7)\"",
+        "if [ -z \"$__webshell_shell\" ]; then __webshell_shell=\"${SHELL:-/bin/sh}\"; fi",
+        "case \"$__webshell_shell\" in */*) ;; *) __webshell_shell=\"$(command -v \"$__webshell_shell\" 2>/dev/null || printf '%s' \"$__webshell_shell\")\";; esac",
+        terminal_session_bootstrap_script(),
+        "unset __webshell_user __webshell_entry",
+        "exec \"$__webshell_shell\"",
+    ]
+    .join("\n")
+}
+
+fn user_login_shell_bootstrap_script(login_user: &str) -> String {
+    format!(
+        r#"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+user={}
+uid=$(id -u "$user" 2>/dev/null) || {{
+  echo "webshell user was not found."
+  exit 127
+}}
+gid=$(id -g "$user" 2>/dev/null) || {{
+  echo "webshell user was not found."
+  exit 127
+}}
+entry=$(getent passwd "$user" 2>/dev/null) || {{
+  echo "webshell user entry was not found."
+  exit 127
+}}
+home=$(printf '%s\n' "$entry" | cut -d: -f6)
+shell=$(printf '%s\n' "$entry" | cut -d: -f7)
+if [ -z "$home" ]; then
+  home=/
+fi
+if [ -z "$shell" ]; then
+  shell=/bin/sh
+fi
+if [ ! -d "$home" ]; then
+  mkdir -p "$home"
+fi
+if [ "$(stat -c '%u' "$home" 2>/dev/null || true)" != "$uid" ] || [ "$(stat -c '%g' "$home" 2>/dev/null || true)" != "$gid" ]; then
+  chown "$uid:$gid" "$home"
+fi
+xdg_config_home="$home/.config"
+if [ ! -d "$xdg_config_home" ]; then
+  mkdir -p "$xdg_config_home" 2>/dev/null || true
+fi
+if [ -d "$xdg_config_home" ]; then
+  chown "$uid:$gid" "$xdg_config_home" 2>/dev/null || true
+fi
+xdg_runtime_dir="/run/user/$uid"
+if [ ! -d "$xdg_runtime_dir" ]; then
+  xdg_runtime_dir=""
+fi
+__webshell_shell="$shell"
+{}
+export XDG_CONFIG_HOME="$xdg_config_home"
+if [ -n "$xdg_runtime_dir" ]; then
+  export XDG_RUNTIME_DIR="$xdg_runtime_dir"
+else
+  unset XDG_RUNTIME_DIR
+fi
+if command -v setpriv >/dev/null 2>&1; then
+  exec env HOME="$home" USER="$user" LOGNAME="$user" SHELL="$__webshell_shell" XDG_CONFIG_HOME="$xdg_config_home" setpriv --reuid "$uid" --regid "$gid" --init-groups "$__webshell_shell"
+fi
+if command -v su >/dev/null 2>&1; then
+  export HOME="$home" USER="$user" LOGNAME="$user" SHELL="$__webshell_shell"
+  exec su -s "$__webshell_shell" "$user"
+fi
+echo "setpriv or su is required for webshell login session."
+exit 127"#,
+        shell_script_quote(login_user),
+        terminal_session_bootstrap_script(),
+    )
+}
+
+fn terminal_session_bootstrap_script() -> &'static str {
+    concat!(
+        "if [ -z \"${LANG:-}\" ] || [ \"$LANG\" = C ] || [ \"$LANG\" = POSIX ]; then export LANG=C.UTF-8; fi\n",
+        "if [ -f /run/catlink/shell-env.sh ]; then . /run/catlink/shell-env.sh; fi\n",
+        "export SHELL=\"$__webshell_shell\""
+    )
+}
+
+fn shell_script_quote(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\"'\"'");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 pub fn bool_flag(value: &str) -> Option<bool> {
@@ -552,6 +708,31 @@ mod tests {
         assert!(script.contains("exec \"$__webshell_shell\""));
         assert!(!script.contains("exec \"${SHELL:-/bin/sh}\""));
         assert!(!script.contains("LC_ALL"));
+    }
+
+    #[test]
+    fn default_session_command_uses_configured_login_user() {
+        let (_, args) = default_session_command_for_user("demo@owner", "admin");
+        let script = args.last().expect("bootstrap script argument");
+
+        assert!(script.contains("user='admin'"));
+        assert!(script.contains("__webshell_shell=\"$shell\""));
+        assert!(script.contains("export SHELL=\"$__webshell_shell\""));
+        assert!(script.contains(
+            "setpriv --reuid \"$uid\" --regid \"$gid\" --init-groups \"$__webshell_shell\""
+        ));
+        assert!(script.contains("exec su -s \"$__webshell_shell\" \"$user\""));
+        assert!(script.contains("/run/catlink/shell-env.sh"));
+        assert!(script.contains("XDG_CONFIG_HOME=\"$xdg_config_home\""));
+        assert!(!script.contains("__webshell_user=\"$(id -un"));
+    }
+
+    #[test]
+    fn default_session_command_shell_quotes_login_user() {
+        let (_, args) = default_session_command_for_user("demo@owner", "dev'user");
+        let script = args.last().expect("bootstrap script argument");
+
+        assert!(script.contains("user='dev'\"'\"'user'"));
     }
 
     #[test]

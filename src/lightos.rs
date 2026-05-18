@@ -10,7 +10,7 @@ use crate::config::LIGHTOSCTL;
 use crate::proto::lazycat::webshell::v1::Instance;
 use crate::validation::validate_selector;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct LightOsInstance {
     #[serde(default)]
     name: String,
@@ -18,6 +18,8 @@ struct LightOsInstance {
     owner_deploy_id: String,
     #[serde(default)]
     status: String,
+    #[serde(default)]
+    username: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -57,6 +59,23 @@ pub async fn authorized_selectors() -> Result<HashSet<String>, ConnectError> {
 }
 
 pub async fn authorize_selector(selector: &str, require_running: bool) -> Result<(), ConnectError> {
+    authorized_instance(selector, require_running)
+        .await
+        .map(|_| ())
+}
+
+pub async fn login_user_for_selector(
+    selector: &str,
+    require_running: bool,
+) -> Result<String, ConnectError> {
+    let instance = authorized_instance(selector, require_running).await?;
+    Ok(instance.username.trim().to_owned())
+}
+
+async fn authorized_instance(
+    selector: &str,
+    require_running: bool,
+) -> Result<LightOsInstance, ConnectError> {
     validate_selector(selector)?;
     let instances = load_lightos_instances().await?;
     let Some(instance) = instances
@@ -73,7 +92,7 @@ pub async fn authorize_selector(selector: &str, require_running: bool) -> Result
             instance.status
         )));
     }
-    Ok(())
+    Ok(instance.clone())
 }
 
 async fn load_lightos_instances() -> Result<Vec<LightOsInstance>, ConnectError> {
@@ -159,7 +178,7 @@ mod tests {
     fn parses_lightos_instances_and_trims_selector_parts() {
         let instances = parse_lightos_instances(
             br#"[
-                {"name":" app ","owner_deploy_id":" owner ","status":"running"},
+                {"name":" app ","owner_deploy_id":" owner ","status":"running","username":" admin "},
                 {"name":"","owner_deploy_id":"skip","status":"running"}
             ]"#,
         )
@@ -168,6 +187,10 @@ mod tests {
         assert_eq!(
             instances.first().and_then(selector_for_instance).as_deref(),
             Some("app@owner")
+        );
+        assert_eq!(
+            instances.first().map(|item| item.username.trim()),
+            Some("admin")
         );
         assert_eq!(instances.get(1).and_then(selector_for_instance), None);
     }
