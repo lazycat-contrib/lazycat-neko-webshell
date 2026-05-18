@@ -45,10 +45,12 @@ import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorL
 
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
+const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
 
 const params = new URLSearchParams(window.location.search);
 const initialSelector = normalizeSelector(params.get("name") ?? "");
+const initialSelectorExplicit = params.has("name") && Boolean(initialSelector);
 
 const elements = renderShell(qs<HTMLDivElement>("#app"));
 
@@ -56,6 +58,7 @@ let settings = loadLocalSettings();
 let instances: Instance[] = [];
 let selectedSelector = initialSelector;
 let selectedSelectorGeneration = 0;
+let selectedSelectorExplicit = initialSelectorExplicit;
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
@@ -188,6 +191,24 @@ function readRememberedTabId(selector: string): string {
     return normalizeSelector(window.localStorage.getItem(lastTabStorageKey(selector)) ?? "");
   } catch {
     return "";
+  }
+}
+
+function readRememberedSelector(): string {
+  try {
+    return normalizeSelector(window.localStorage.getItem(LAST_SELECTOR_STORAGE_KEY) ?? "");
+  } catch {
+    return "";
+  }
+}
+
+function rememberSelector(selector: string) {
+  const normalized = normalizeSelector(selector);
+  if (!normalized) return;
+  try {
+    window.localStorage.setItem(LAST_SELECTOR_STORAGE_KEY, normalized);
+  } catch {
+    // localStorage is best-effort; URL and server workspace state remain authoritative.
   }
 }
 
@@ -443,7 +464,7 @@ function bindLifecycleEvents() {
     const nextParams = new URLSearchParams(window.location.search);
     const nextSelector = normalizeSelector(nextParams.get("name") ?? "");
     const nextTabId = normalizeSelector(nextParams.get("tab") ?? "");
-    if (!nextSelector) return;
+    selectedSelectorExplicit = nextParams.has("name") && Boolean(nextSelector);
     if (nextSelector === selectedSelector) {
       if (nextTabId && tabs.some((tab) => tab.id === nextTabId)) {
         activateTab(nextTabId, { updateLocation: false });
@@ -472,12 +493,28 @@ function bindLifecycleEvents() {
 }
 
 function bindMobileShortcuts() {
-  elements.mobileShortcuts.addEventListener("click", (event) => {
+  elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
     const button = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-mobile-shortcut]")
       : null;
     if (!button || button.dataset.mobileRepeat === "true") return;
+    event.preventDefault();
     void runMobileShortcut(button.dataset.mobileShortcut ?? "");
+  });
+
+  elements.mobileShortcuts.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-mobile-shortcut], [data-mobile-page]")) {
+      event.preventDefault();
+    }
+  });
+
+  elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-mobile-page]")
+      : null;
+    if (!button) return;
+    event.preventDefault();
+    activateMobileKeyboardPage(button.dataset.mobilePage ?? "");
   });
 
   elements.mobileShortcuts.querySelectorAll<HTMLButtonElement>("[data-mobile-repeat='true']").forEach((button) => {
@@ -501,6 +538,18 @@ function bindMobileShortcuts() {
     button.addEventListener("lostpointercapture", stopRepeat);
   });
   updateMobileShortcutState();
+}
+
+function activateMobileKeyboardPage(page: string) {
+  if (!page) return;
+  elements.mobileShortcuts.querySelectorAll<HTMLButtonElement>("[data-mobile-page]").forEach((button) => {
+    const active = button.dataset.mobilePage === page;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  elements.mobileShortcuts.querySelectorAll<HTMLElement>("[data-mobile-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.mobilePanel !== page;
+  });
 }
 
 function bindSettingsTabs() {
@@ -1029,9 +1078,13 @@ async function loadInstances() {
   setGlobalStatus(tr("status.loadingInstances"));
   try {
     instances = await fetchInstances();
-    reconcileSelectedInstance();
+    const reconcile = reconcileSelectedInstance();
     renderInstances();
-    setGlobalStatus(instances.length ? tr("status.instancesLoaded") : tr("status.noInstances"));
+    if (reconcile.explicitFallback && selectedSelector) {
+      setGlobalStatus(tr("status.instanceFallback", { selector: selectorLabel(selectedSelector) }));
+    } else {
+      setGlobalStatus(instances.length ? tr("status.instancesLoaded") : tr("status.noInstances"));
+    }
   } catch (error) {
     renderInstances();
     setGlobalStatus(tr("status.instanceLoadFailed", { message: errorMessage(error) }), "error");
@@ -1053,7 +1106,7 @@ async function fetchInstances(): Promise<Instance[]> {
   return payload as Instance[];
 }
 
-function reconcileSelectedInstance(): boolean {
+function reconcileSelectedInstance(): { selected: boolean; explicitFallback: boolean } {
   const current = normalizeSelector(selectedSelector);
   const selected = current ? instances.find((instance) => instanceSelector(instance) === current) : undefined;
   if (selected && isRunningInstance(selected)) {
@@ -1062,20 +1115,26 @@ function reconcileSelectedInstance(): boolean {
       tabId: activeTabId ?? requestedTabIdFromLocation(),
       updateLocation: true,
     });
+    rememberSelector(current);
     updateSelectedInstanceChrome();
-    return true;
+    return { selected: true, explicitFallback: false };
   }
 
-  const runningSelector = instanceSelector(instances.find(isRunningInstance));
+  const rememberedSelector = selectedSelectorExplicit ? "" : readRememberedSelector();
+  const rememberedRunning = rememberedSelector
+    ? instances.find((instance) => instanceSelector(instance) === rememberedSelector && isRunningInstance(instance))
+    : undefined;
+  const runningSelector = instanceSelector(rememberedRunning ?? instances.find(isRunningInstance));
   if (runningSelector) {
     setSelectedSelector(runningSelector, { updateLocation: true, replaceLocation: true, tabId: "" });
+    rememberSelector(runningSelector);
     updateSelectedInstanceChrome();
-    return true;
+    return { selected: true, explicitFallback: selectedSelectorExplicit && Boolean(current) };
   }
 
   setSelectedSelector(current, { updateLocation: false });
   updateSelectedInstanceChrome();
-  return false;
+  return { selected: false, explicitFallback: false };
 }
 
 function updateSelectedInstanceChrome() {
@@ -1104,7 +1163,9 @@ function renderInstances() {
   elements.instanceList.querySelectorAll<HTMLButtonElement>(".instance-row").forEach((button) => {
     button.addEventListener("click", () => {
       const selector = normalizeSelector(button.dataset.selector ?? "");
+      selectedSelectorExplicit = true;
       setSelectedSelector(selector, { updateLocation: true, replaceLocation: false, tabId: "" });
+      rememberSelector(selector);
       updateSelectedInstanceChrome();
       closeInstanceMenu();
       renderInstances();
@@ -1129,7 +1190,7 @@ async function loadWorkspace(selector: string, options: { allowReconcileRetry?: 
     if (
       options.allowReconcileRetry !== false
       && isCurrentSelectorRequest(requestSelector, generation)
-      && reconcileSelectedInstance()
+      && reconcileSelectedInstance().selected
       && selectedSelector !== requestSelector
     ) {
       renderInstances();

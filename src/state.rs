@@ -13,7 +13,8 @@ use crate::config::{
     SHELL_BOOTSTRAP_SCRIPT,
 };
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
-use crate::terminal_manager::{OutputBuffer, TerminalRegistry, TerminalSpec};
+use crate::session_manager::SessionManager;
+use crate::terminal_manager::{OutputBuffer, TerminalSpec};
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 use crate::workspace::{WorkspaceRecord, WorkspaceStore, default_workspace_store};
 
@@ -23,12 +24,8 @@ const METADATA_OUTPUT_BUFFER_LIMIT: &str = "outputBufferLimit";
 
 #[derive(Clone)]
 pub struct AppState {
-    pub sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
+    pub sessions: Arc<SessionManager>,
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
-    pub terminals: Arc<TerminalRegistry>,
-    output_buffers: Arc<RwLock<HashMap<String, Arc<OutputBuffer>>>>,
-    output_history_dir: PathBuf,
-    session_store: Arc<SessionStore>,
     pub workspaces: Arc<RwLock<HashMap<String, WorkspaceRecord>>>,
     workspace_store: Arc<WorkspaceStore>,
 }
@@ -55,12 +52,12 @@ impl AppState {
             warn!(error = %err, "failed to prune unreferenced terminal sessions");
         }
         Self {
-            sessions: Arc::new(RwLock::new(sessions)),
+            sessions: Arc::new(SessionManager::new(
+                sessions,
+                Arc::clone(&session_store),
+                output_history_dir,
+            )),
             plugins: Arc::new(RwLock::new(builtin_plugins())),
-            terminals: Arc::new(TerminalRegistry::new()),
-            output_buffers: Arc::new(RwLock::new(HashMap::new())),
-            output_history_dir,
-            session_store,
             workspaces: Arc::new(RwLock::new(workspaces)),
             workspace_store,
         }
@@ -70,7 +67,7 @@ impl AppState {
         &self,
         sessions: &HashMap<String, SessionRecord>,
     ) -> io::Result<()> {
-        self.session_store.save(sessions)
+        self.sessions.persist_snapshot(sessions)
     }
 
     pub fn persist_workspaces_snapshot(
@@ -81,30 +78,7 @@ impl AppState {
     }
 
     pub fn output_buffer(&self, session_id: &str, limit: usize) -> Arc<OutputBuffer> {
-        let normalized_limit = normalize_output_frame_limit(Some(limit));
-        let buffer = self
-            .output_buffers
-            .write()
-            .expect("terminal output buffer registry poisoned")
-            .entry(session_id.to_owned())
-            .or_insert_with(|| {
-                Arc::new(OutputBuffer::persistent(
-                    normalized_limit,
-                    output_history_file_at(&self.output_history_dir, session_id),
-                ))
-            })
-            .clone();
-        buffer.set_limit(normalized_limit);
-        buffer
-    }
-
-    pub fn remove_output_buffer(&self, session_id: &str) {
-        if let Ok(mut buffers) = self.output_buffers.write() {
-            buffers.remove(session_id);
-        }
-        if let Err(err) = remove_output_history_file_at(&self.output_history_dir, session_id) {
-            warn!(error = %err, session_id = %session_id, "failed to remove terminal output history");
-        }
+        self.sessions.output_buffer(session_id, limit)
     }
 
     #[cfg(test)]
@@ -114,12 +88,12 @@ impl AppState {
         output_history_dir: PathBuf,
     ) -> Self {
         Self {
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            sessions: Arc::new(SessionManager::new(
+                HashMap::new(),
+                Arc::new(SessionStore::new(session_path)),
+                output_history_dir,
+            )),
             plugins: Arc::new(RwLock::new(HashMap::new())),
-            terminals: Arc::new(TerminalRegistry::new()),
-            output_buffers: Arc::new(RwLock::new(HashMap::new())),
-            output_history_dir,
-            session_store: Arc::new(SessionStore::new(session_path)),
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             workspace_store: Arc::new(WorkspaceStore::new(workspace_path)),
         }
@@ -262,19 +236,7 @@ impl PluginRecord {
 }
 
 pub fn mark_session_status(state: &AppState, session_id: &str, status: &str) {
-    let snapshot = {
-        let Ok(mut sessions) = state.sessions.write() else {
-            return;
-        };
-        let Some(session) = sessions.get_mut(session_id) else {
-            return;
-        };
-        status.clone_into(&mut session.status);
-        sessions.clone()
-    };
-    if let Err(err) = state.persist_sessions_snapshot(&snapshot) {
-        warn!(error = %err, "failed to persist terminal session status");
-    }
+    state.sessions.mark_status(session_id, status);
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -283,16 +245,16 @@ struct PersistedSessionState {
     sessions: Vec<SessionRecord>,
 }
 
-struct SessionStore {
+pub(crate) struct SessionStore {
     path: PathBuf,
 }
 
 impl SessionStore {
-    fn new(path: PathBuf) -> Self {
+    pub(crate) fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
-    fn load(&self) -> io::Result<HashMap<String, SessionRecord>> {
+    pub(crate) fn load(&self) -> io::Result<HashMap<String, SessionRecord>> {
         match fs::read(&self.path) {
             Ok(bytes) => {
                 let sessions = Self::decode(&bytes)?;
@@ -323,7 +285,7 @@ impl SessionStore {
         Ok(sessions)
     }
 
-    fn save(&self, sessions: &HashMap<String, SessionRecord>) -> io::Result<()> {
+    pub(crate) fn save(&self, sessions: &HashMap<String, SessionRecord>) -> io::Result<()> {
         let sessions = persistable_sessions(sessions);
         if sessions.is_empty() {
             return remove_session_file(&self.path);
@@ -382,7 +344,7 @@ fn output_history_dir() -> PathBuf {
         .map_or_else(|| PathBuf::from(DEFAULT_OUTPUT_HISTORY_DIR), PathBuf::from)
 }
 
-fn output_history_file_at(dir: &Path, session_id: &str) -> PathBuf {
+pub(crate) fn output_history_file_at(dir: &Path, session_id: &str) -> PathBuf {
     dir.join(format!("{}.history", output_history_filename(session_id)))
 }
 
@@ -403,7 +365,7 @@ fn output_history_filename(session_id: &str) -> String {
     }
 }
 
-fn remove_output_history_file_at(dir: &Path, session_id: &str) -> io::Result<()> {
+pub(crate) fn remove_output_history_file_at(dir: &Path, session_id: &str) -> io::Result<()> {
     remove_session_file(&output_history_file_at(dir, session_id))
 }
 
@@ -603,7 +565,7 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &second));
         assert!(!Arc::ptr_eq(&first, &other));
 
-        state.remove_output_buffer("session-one");
+        state.sessions.remove_output_buffer("session-one");
         let recreated = state.output_buffer("session-one", 128);
 
         assert!(!Arc::ptr_eq(&first, &recreated));

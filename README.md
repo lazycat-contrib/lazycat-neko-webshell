@@ -28,7 +28,7 @@ Tabs can be horizontal or vertical. Each tab can also be split into stacked pane
 
 Themes are applied through Restty's Ghostty theme API and mirrored into local CSS variables for the shell chrome. Built-in terminal fonts are served from the app bundle so the CSP does not depend on CDN font loading. Uploaded fonts are stored under `/lzcapp/var/fonts` in LazyCat; local development can override this with `PURE_TERMINAL_FONT_DIR`.
 
-On mobile, the terminal surface exposes a compact shortcut row for Esc, Tab, modifiers, arrows, Enter, and paste. Restty owns desktop keyboard, paste, and IME input so terminal input is not duplicated by global document handlers.
+On touch/coarse-pointer mobile devices, the terminal surface exposes a Termux-style paged extra keyboard for Esc, Tab, sticky modifiers, arrows, Enter, paste, navigation/editing keys, symbols, and F1-F12. Restty owns desktop keyboard, paste, and IME input so terminal input is not duplicated by global document handlers.
 
 ## Development
 
@@ -52,7 +52,7 @@ Open `http://127.0.0.1:5173`. The Vite dev server proxies Connect and WebSocket 
 
 Required LazyCat provider pieces are included:
 
-- `package.yml` grants `lightos.manage`. The app is visible in the launcher and can select the first running instance when opened without `?name=`.
+- `package.yml` grants `lightos.manage`. The app is visible in the launcher and resolves a running selector when opened without `?name=` by preferring the remembered last running instance, then the first running instance.
 - `lzc-build.yml` builds the Rust binary, builds frontend assets, and exports `lightos.webshell`.
 - `resources/lightos.webshell/default/webshell-provider.json` declares `root_path: "/"` and `support_home: true`.
 - `lzc-manifest.yml` routes `/` to the provider executable and enables multi-instance app metadata.

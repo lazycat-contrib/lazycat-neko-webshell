@@ -118,10 +118,17 @@ async fn handle_terminal_socket(
     let replay = target.replay;
     let replay_output = Arc::clone(&target.output);
     let pane_id = target.pane_id.clone();
-    let terminal =
-        state
-            .terminals
-            .open(target.spec, target.allow_spawn, Arc::clone(&target.output))?;
+    let allow_spawn = target.allow_spawn;
+    let session_id = target.spec.session_id.clone();
+    let terminal = match state.sessions.open_terminal(target.spec, allow_spawn) {
+        Ok(terminal) => terminal,
+        Err(err) => {
+            if allow_spawn {
+                state.sessions.mark_status(&session_id, "stopped");
+            }
+            return Err(err);
+        }
+    };
     mark_session_status(&state, terminal.session_id(), "running");
 
     let (mut sender, mut receiver) = socket.split();
@@ -210,7 +217,7 @@ async fn handle_terminal_event(
         }
         Ok(TerminalEvent::Exit(info)) => {
             mark_session_status(state, terminal.session_id(), "exited");
-            state.terminals.forget(terminal.session_id());
+            state.sessions.forget_terminal(terminal.session_id());
             send_control(
                 sender,
                 &TerminalServerMessage::ProcessExit {
@@ -311,15 +318,22 @@ fn handle_terminal_control_message(
         }
         Ok(TerminalClientMessage::Resize { cols, rows }) => {
             terminal.resize(cols, rows)?;
+            state
+                .sessions
+                .persist_resize(terminal.session_id(), cols, rows)?;
             Ok(true)
         }
         Ok(TerminalClientMessage::RestartPolicy { enabled }) => {
-            set_session_restartable(state, terminal.session_id(), enabled)?;
+            state
+                .sessions
+                .set_restartable(terminal.session_id(), enabled)?;
             Ok(true)
         }
         Ok(TerminalClientMessage::OutputBuffer { limit }) => {
+            let limit = state
+                .sessions
+                .set_output_frame_limit(terminal.session_id(), limit)?;
             terminal.set_output_frame_limit(limit);
-            set_session_output_buffer_limit(state, terminal.session_id(), limit)?;
             Ok(true)
         }
         Ok(TerminalClientMessage::Close) => Ok(false),
@@ -389,40 +403,9 @@ async fn resolve_terminal_target(
         .map(str::trim)
         .filter(|v| !v.is_empty())
     {
-        let mut snapshot = None;
-        let (spec, status) = {
-            let mut sessions = state
-                .sessions
-                .write()
-                .map_err(|_| anyhow!("session store lock poisoned"))?;
-            let session = sessions
-                .get_mut(session_id)
-                .ok_or_else(|| anyhow!("unknown session id"))?;
-            let cols = query.cols.unwrap_or(session.cols);
-            let rows = query.rows.unwrap_or(session.rows);
-            validate_size(cols, rows)?;
-            if let Some(restartable) = restart {
-                session.set_restartable(restartable);
-            }
-            let spec = session.terminal_spec(cols, rows);
-            let mut spec = spec;
-            if let Some(output_limit) = query.output_limit {
-                spec.output_frame_limit = normalize_output_frame_limit(Some(output_limit));
-                session.metadata.insert(
-                    "outputBufferLimit".to_owned(),
-                    spec.output_frame_limit.to_string(),
-                );
-            }
-            let status = session.status.clone();
-            if restart.is_some() || query.output_limit.is_some() {
-                snapshot = Some(sessions.clone());
-            }
-            (spec, status)
-        };
-        if let Some(snapshot) = snapshot {
-            state.persist_sessions_snapshot(&snapshot)?;
-        }
-        let allow_spawn = restart.unwrap_or(false) || status == "running";
+        let (spec, status) = persisted_terminal_target(state, query, session_id, restart)?;
+        let allow_spawn =
+            restart.unwrap_or(false) || matches!(status.as_str(), "running" | "starting");
         authorize_terminal_selector(&spec.selector, allow_spawn).await?;
         let output = state.output_buffer(session_id, spec.output_frame_limit);
         return Ok(TerminalAttachTarget {
@@ -470,13 +453,14 @@ async fn resolve_terminal_target(
     })
 }
 
-fn set_session_output_buffer_limit(
+fn persisted_terminal_target(
     state: &AppState,
+    query: &TerminalQuery,
     session_id: &str,
-    limit: usize,
-) -> anyhow::Result<()> {
-    let limit = normalize_output_frame_limit(Some(limit));
-    let snapshot = {
+    restart: Option<bool>,
+) -> anyhow::Result<(TerminalSpec, String)> {
+    let mut snapshot = None;
+    let target = {
         let mut sessions = state
             .sessions
             .write()
@@ -484,13 +468,40 @@ fn set_session_output_buffer_limit(
         let session = sessions
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("unknown session id"))?;
-        session
-            .metadata
-            .insert("outputBufferLimit".to_owned(), limit.to_string());
-        sessions.clone()
+        let cols = query.cols.unwrap_or(session.cols);
+        let rows = query.rows.unwrap_or(session.rows);
+        validate_size(cols, rows)?;
+
+        let mut changed = false;
+        if session.cols != cols || session.rows != rows {
+            session.cols = cols;
+            session.rows = rows;
+            changed = true;
+        }
+        if let Some(restartable) = restart {
+            session.set_restartable(restartable);
+            changed = true;
+        }
+
+        let mut spec = session.terminal_spec(cols, rows);
+        if let Some(output_limit) = query.output_limit {
+            spec.output_frame_limit = normalize_output_frame_limit(Some(output_limit));
+            session.metadata.insert(
+                "outputBufferLimit".to_owned(),
+                spec.output_frame_limit.to_string(),
+            );
+            changed = true;
+        }
+        let status = session.status.clone();
+        if changed {
+            snapshot = Some(sessions.clone());
+        }
+        (spec, status)
     };
-    state.persist_sessions_snapshot(&snapshot)?;
-    Ok(())
+    if let Some(snapshot) = snapshot {
+        state.persist_sessions_snapshot(&snapshot)?;
+    }
+    Ok(target)
 }
 
 async fn authorize_terminal_selector(selector: &str, require_running: bool) -> anyhow::Result<()> {
@@ -502,26 +513,6 @@ async fn authorize_terminal_selector(selector: &str, require_running: bool) -> a
                     .unwrap_or_else(|| "selector is not authorized".to_owned())
             )
         })
-}
-
-fn set_session_restartable(
-    state: &AppState,
-    session_id: &str,
-    restartable: bool,
-) -> anyhow::Result<()> {
-    let snapshot = {
-        let mut sessions = state
-            .sessions
-            .write()
-            .map_err(|_| anyhow!("session store lock poisoned"))?;
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| anyhow!("unknown session id"))?;
-        session.set_restartable(restartable);
-        sessions.clone()
-    };
-    state.persist_sessions_snapshot(&snapshot)?;
-    Ok(())
 }
 
 fn parse_query_bool(value: Option<&str>, name: &str) -> anyhow::Result<Option<bool>> {

@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
@@ -346,6 +347,7 @@ pub struct OutputBuffer {
     inner: Mutex<OutputBufferInner>,
     history_lock: Mutex<()>,
     store: Option<OutputHistoryStore>,
+    history_closed: AtomicBool,
 }
 
 struct OutputBufferInner {
@@ -366,6 +368,7 @@ impl OutputBuffer {
             }),
             history_lock: Mutex::new(()),
             store: None,
+            history_closed: AtomicBool::new(false),
         }
     }
 
@@ -391,6 +394,7 @@ impl OutputBuffer {
             inner: Mutex::new(inner),
             history_lock: Mutex::new(()),
             store: Some(store),
+            history_closed: AtomicBool::new(false),
         };
         output.compact_history();
         output
@@ -444,6 +448,9 @@ impl OutputBuffer {
     }
 
     fn append_history(&self, frame: &OutputFrame) -> bool {
+        if self.history_closed.load(Ordering::Relaxed) {
+            return false;
+        }
         let Some(store) = &self.store else {
             return false;
         };
@@ -462,7 +469,7 @@ impl OutputBuffer {
     }
 
     fn compact_history(&self) {
-        if self.store.is_none() {
+        if self.store.is_none() || self.history_closed.load(Ordering::Relaxed) {
             return;
         }
         let _history_guard = self
@@ -473,6 +480,9 @@ impl OutputBuffer {
     }
 
     fn compact_history_locked(&self) {
+        if self.history_closed.load(Ordering::Relaxed) {
+            return;
+        }
         let Some(store) = &self.store else {
             return;
         };
@@ -482,6 +492,19 @@ impl OutputBuffer {
         };
         if let Err(err) = store.compact(&frames) {
             warn!(error = %err, path = %store.path.display(), "failed to compact terminal output history");
+        }
+    }
+
+    pub fn close_history(&self) {
+        self.history_closed.store(true, Ordering::Relaxed);
+        let _history_guard = self
+            .history_lock
+            .lock()
+            .expect("terminal output history lock poisoned");
+        if let Some(store) = &self.store
+            && let Err(err) = store.remove()
+        {
+            warn!(error = %err, path = %store.path.display(), "failed to remove terminal output history");
         }
     }
 }

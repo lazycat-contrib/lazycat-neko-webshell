@@ -83,6 +83,7 @@ export type MessageKey =
   | "status.instance"
   | "status.instanceLoadFailed"
   | "status.instancesLoaded"
+  | "status.instanceFallback"
   | "status.lightosHomeFailed"
   | "status.lightosHomeLoading"
   | "status.loadingGhostty"
@@ -201,6 +202,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.instance": "Instance",
     "status.instanceLoadFailed": "Instance load failed: {message}",
     "status.instancesLoaded": "Instances loaded",
+    "status.instanceFallback": "Requested instance is not running. Opened {selector}.",
     "status.lightosHomeFailed": "LightOS home failed: {message}",
     "status.lightosHomeLoading": "Opening LightOS home...",
     "status.loadingGhostty": "Loading terminal renderer...",
@@ -318,6 +320,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.instance": "实例",
     "status.instanceLoadFailed": "实例加载失败：{message}",
     "status.instancesLoaded": "实例已加载",
+    "status.instanceFallback": "请求的实例未运行，已打开 {selector}。",
     "status.lightosHomeFailed": "返回 LightOS 首页失败：{message}",
     "status.lightosHomeLoading": "正在打开 LightOS 首页...",
     "status.loadingGhostty": "正在加载终端渲染器...",

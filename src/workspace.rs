@@ -283,10 +283,9 @@ pub async fn put_workspace_action(
         &request,
     ) {
         Ok((workspace, closed_sessions)) => {
-            for session_id in closed_sessions {
-                state.terminals.close(&session_id);
-                state.remove_output_buffer(&session_id);
-            }
+            state
+                .sessions
+                .close_sessions(closed_sessions.iter().map(String::as_str));
             Json(workspace).into_response()
         }
         Err(WorkspaceActionError::BadRequest(message)) => {
@@ -661,7 +660,7 @@ impl WorkspaceRecord {
                 output_limit,
                 auto_restart,
             },
-            "running",
+            "starting",
             metadata,
         );
         sessions.insert(pane.session_id.clone(), record.clone());
@@ -745,7 +744,7 @@ impl WorkspaceRecord {
                 &pane.session_id,
                 pane.cols,
                 pane.rows,
-                "running",
+                "starting",
                 defaults.output_limit,
                 defaults.auto_restart,
             ),
@@ -1533,6 +1532,7 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(created.session.status, "starting");
         assert_eq!(
             created.session.metadata.get("client").map(String::as_str),
             Some("connect")
@@ -1550,7 +1550,8 @@ mod tests {
                 .sessions
                 .read()
                 .unwrap()
-                .contains_key(&created.session.id)
+                .get(&created.session.id)
+                .is_some_and(|session| session.status == "starting")
         );
         assert!(
             state

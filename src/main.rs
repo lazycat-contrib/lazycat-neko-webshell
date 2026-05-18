@@ -14,6 +14,7 @@ mod preferences;
 mod proto;
 mod router;
 mod service;
+mod session_manager;
 mod state;
 mod terminal;
 mod terminal_manager;

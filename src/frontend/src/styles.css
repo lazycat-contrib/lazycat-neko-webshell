@@ -804,7 +804,8 @@ textarea:focus-visible {
   color: var(--danger);
 }
 
-.mobile-shortcuts {
+.mobile-shortcuts,
+.field.mobile-only-setting {
   display: none;
 }
 
@@ -1291,7 +1292,7 @@ output {
   color: var(--danger);
 }
 
-@media (max-width: 760px) {
+@media (hover: none) and (pointer: coarse) {
   :root {
     --mobile-touch: 40px;
   }
@@ -1420,11 +1421,11 @@ output {
   }
 
   .tab-mount {
-    bottom: calc(44px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(104px + env(safe-area-inset-bottom, 0px));
   }
 
   .empty-state {
-    bottom: calc(44px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(104px + env(safe-area-inset-bottom, 0px));
   }
 
   .mobile-shortcuts {
@@ -1433,11 +1434,12 @@ output {
     bottom: 0;
     left: 0;
     z-index: 18;
-    display: flex;
-    gap: 4px;
-    min-height: calc(44px + env(safe-area-inset-bottom, 0px));
-    padding: 4px 6px calc(4px + env(safe-area-inset-bottom, 0px));
-    overflow-x: auto;
+    display: grid;
+    grid-template-rows: 32px minmax(0, auto);
+    gap: 5px;
+    min-height: calc(104px + env(safe-area-inset-bottom, 0px));
+    padding: 5px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    overflow: hidden;
     border-top: 1px solid rgba(148, 163, 184, 0.22);
     background: rgba(16, 20, 25, 0.96);
     scrollbar-width: none;
@@ -1451,7 +1453,21 @@ output {
     display: none;
   }
 
-  .mobile-shortcuts button {
+  .mobile-keyboard-pages,
+  .mobile-keyboard-panel {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .mobile-keyboard-pages::-webkit-scrollbar,
+  .mobile-keyboard-panel::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mobile-keyboard-pages button,
+  .mobile-keyboard-panel button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1466,6 +1482,22 @@ output {
     font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
     font-size: 12px;
     font-weight: 700;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  .mobile-keyboard-pages button {
+    min-width: 48px;
+    height: 28px;
+    border-color: rgba(148, 163, 184, 0.16);
+    background: #0c1115;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .mobile-keyboard-panel[hidden] {
+    display: none;
   }
 
   .mobile-shortcuts button.active {

@@ -111,17 +111,72 @@ export function renderShell(app: HTMLElement): ShellElements {
           <p id="statusLine" aria-live="polite" data-i18n="status.idle">Idle</p>
         </div>
         <div class="mobile-shortcuts" id="mobileShortcuts" aria-label="Terminal shortcuts" data-i18n-aria="menu.mobileShortcuts">
-          <button type="button" data-mobile-shortcut="escape" aria-label="Escape">Esc</button>
-          <button type="button" data-mobile-shortcut="tab" aria-label="Tab">Tab</button>
-          <button type="button" data-mobile-shortcut="ctrl" data-mobile-modifier="ctrl" aria-label="Control">Ctrl</button>
-          <button type="button" data-mobile-shortcut="alt" data-mobile-modifier="alt" aria-label="Alt">Alt</button>
-          <button type="button" data-mobile-shortcut="shift" data-mobile-modifier="shift" aria-label="Shift">Shift</button>
-          <button type="button" data-mobile-shortcut="left" data-mobile-repeat="true" aria-label="Left"><i data-lucide="arrow-left"></i></button>
-          <button type="button" data-mobile-shortcut="down" data-mobile-repeat="true" aria-label="Down"><i data-lucide="arrow-down"></i></button>
-          <button type="button" data-mobile-shortcut="up" data-mobile-repeat="true" aria-label="Up"><i data-lucide="arrow-up"></i></button>
-          <button type="button" data-mobile-shortcut="right" data-mobile-repeat="true" aria-label="Right"><i data-lucide="arrow-right"></i></button>
-          <button type="button" data-mobile-shortcut="enter" data-mobile-repeat="true" aria-label="Enter"><i data-lucide="corner-down-left"></i></button>
-          <button type="button" data-mobile-shortcut="paste" aria-label="Paste"><i data-lucide="clipboard-paste"></i></button>
+          <div class="mobile-keyboard-pages" role="tablist" aria-label="Terminal shortcut pages" data-i18n-aria="menu.mobileShortcuts">
+            <button type="button" class="active" data-mobile-page="main" aria-pressed="true">Main</button>
+            <button type="button" data-mobile-page="nav" aria-pressed="false">Nav</button>
+            <button type="button" data-mobile-page="fn" aria-pressed="false">Fn</button>
+            <button type="button" data-mobile-page="sym" aria-pressed="false">Sym</button>
+          </div>
+          <div class="mobile-keyboard-panel" data-mobile-panel="main">
+            <button type="button" data-mobile-shortcut="escape" aria-label="Escape">Esc</button>
+            <button type="button" data-mobile-shortcut="tab" aria-label="Tab">Tab</button>
+            <button type="button" data-mobile-shortcut="ctrl" data-mobile-modifier="ctrl" aria-label="Control">Ctrl</button>
+            <button type="button" data-mobile-shortcut="alt" data-mobile-modifier="alt" aria-label="Alt">Alt</button>
+            <button type="button" data-mobile-shortcut="shift" data-mobile-modifier="shift" aria-label="Shift">Shift</button>
+            <button type="button" data-mobile-shortcut="-" aria-label="Hyphen">-</button>
+            <button type="button" data-mobile-shortcut="/" aria-label="Slash">/</button>
+            <button type="button" data-mobile-shortcut="left" data-mobile-repeat="true" aria-label="Left"><i data-lucide="arrow-left"></i></button>
+            <button type="button" data-mobile-shortcut="down" data-mobile-repeat="true" aria-label="Down"><i data-lucide="arrow-down"></i></button>
+            <button type="button" data-mobile-shortcut="up" data-mobile-repeat="true" aria-label="Up"><i data-lucide="arrow-up"></i></button>
+            <button type="button" data-mobile-shortcut="right" data-mobile-repeat="true" aria-label="Right"><i data-lucide="arrow-right"></i></button>
+            <button type="button" data-mobile-shortcut="enter" data-mobile-repeat="true" aria-label="Enter"><i data-lucide="corner-down-left"></i></button>
+            <button type="button" data-mobile-shortcut="paste" aria-label="Paste"><i data-lucide="clipboard-paste"></i></button>
+          </div>
+          <div class="mobile-keyboard-panel" data-mobile-panel="nav" hidden>
+            <button type="button" data-mobile-shortcut="home" data-mobile-repeat="true" aria-label="Home">Home</button>
+            <button type="button" data-mobile-shortcut="end" data-mobile-repeat="true" aria-label="End">End</button>
+            <button type="button" data-mobile-shortcut="pageUp" data-mobile-repeat="true" aria-label="Page up">PgUp</button>
+            <button type="button" data-mobile-shortcut="pageDown" data-mobile-repeat="true" aria-label="Page down">PgDn</button>
+            <button type="button" data-mobile-shortcut="insert" aria-label="Insert">Ins</button>
+            <button type="button" data-mobile-shortcut="delete" data-mobile-repeat="true" aria-label="Delete">Del</button>
+            <button type="button" data-mobile-shortcut="backspace" data-mobile-repeat="true" aria-label="Backspace">Bksp</button>
+            <button type="button" data-mobile-shortcut="left" data-mobile-repeat="true" aria-label="Left"><i data-lucide="arrow-left"></i></button>
+            <button type="button" data-mobile-shortcut="down" data-mobile-repeat="true" aria-label="Down"><i data-lucide="arrow-down"></i></button>
+            <button type="button" data-mobile-shortcut="up" data-mobile-repeat="true" aria-label="Up"><i data-lucide="arrow-up"></i></button>
+            <button type="button" data-mobile-shortcut="right" data-mobile-repeat="true" aria-label="Right"><i data-lucide="arrow-right"></i></button>
+          </div>
+          <div class="mobile-keyboard-panel" data-mobile-panel="fn" hidden>
+            <button type="button" data-mobile-shortcut="f1" aria-label="F1">F1</button>
+            <button type="button" data-mobile-shortcut="f2" aria-label="F2">F2</button>
+            <button type="button" data-mobile-shortcut="f3" aria-label="F3">F3</button>
+            <button type="button" data-mobile-shortcut="f4" aria-label="F4">F4</button>
+            <button type="button" data-mobile-shortcut="f5" aria-label="F5">F5</button>
+            <button type="button" data-mobile-shortcut="f6" aria-label="F6">F6</button>
+            <button type="button" data-mobile-shortcut="f7" aria-label="F7">F7</button>
+            <button type="button" data-mobile-shortcut="f8" aria-label="F8">F8</button>
+            <button type="button" data-mobile-shortcut="f9" aria-label="F9">F9</button>
+            <button type="button" data-mobile-shortcut="f10" aria-label="F10">F10</button>
+            <button type="button" data-mobile-shortcut="f11" aria-label="F11">F11</button>
+            <button type="button" data-mobile-shortcut="f12" aria-label="F12">F12</button>
+          </div>
+          <div class="mobile-keyboard-panel" data-mobile-panel="sym" hidden>
+            <button type="button" data-mobile-shortcut="|" aria-label="Pipe">|</button>
+            <button type="button" data-mobile-shortcut="\\" aria-label="Backslash">\\</button>
+            <button type="button" data-mobile-shortcut="~" aria-label="Tilde">~</button>
+            <button type="button" data-mobile-shortcut="\`" aria-label="Backtick">\`</button>
+            <button type="button" data-mobile-shortcut="[" aria-label="Left bracket">[</button>
+            <button type="button" data-mobile-shortcut="]" aria-label="Right bracket">]</button>
+            <button type="button" data-mobile-shortcut="{" aria-label="Left brace">{</button>
+            <button type="button" data-mobile-shortcut="}" aria-label="Right brace">}</button>
+            <button type="button" data-mobile-shortcut="(" aria-label="Left parenthesis">(</button>
+            <button type="button" data-mobile-shortcut=")" aria-label="Right parenthesis">)</button>
+            <button type="button" data-mobile-shortcut="&" aria-label="Ampersand">&amp;</button>
+            <button type="button" data-mobile-shortcut=";" aria-label="Semicolon">;</button>
+            <button type="button" data-mobile-shortcut=":" aria-label="Colon">:</button>
+            <button type="button" data-mobile-shortcut="$" aria-label="Dollar">$</button>
+            <button type="button" data-mobile-shortcut="*" aria-label="Asterisk">*</button>
+            <button type="button" data-mobile-shortcut="?" aria-label="Question mark">?</button>
+          </div>
         </div>
       </section>
 

@@ -109,23 +109,21 @@ impl CapabilityService for CapabilityServiceImpl {
             metadata,
         )
         .map_err(connect_workspace_error)?;
-        let record = created.session;
-        let output = self
-            .state
-            .output_buffer(&record.id, record.output_frame_limit());
+        let mut record = created.session;
         if let Err(err) = self
             .state
-            .terminals
-            .open(record.terminal_spec(cols, rows), true, output)
+            .sessions
+            .open_terminal(record.terminal_spec(cols, rows), true)
         {
             if let Ok(closed) = close_workspace_session(&self.state, &record.id) {
-                for session_id in closed.closed_session_ids {
-                    self.state.terminals.close(&session_id);
-                    self.state.remove_output_buffer(&session_id);
-                }
+                self.state
+                    .sessions
+                    .close_sessions(closed.closed_session_ids.iter().map(String::as_str));
             }
             return Err(ConnectError::internal(err.to_string()));
         }
+        self.state.sessions.mark_status(&record.id, "running");
+        "running".clone_into(&mut record.status);
         let session = record.to_proto();
         ConnectResponse::ok(CreateSessionResponse {
             session: MessageField::some(session),
@@ -141,10 +139,9 @@ impl CapabilityService for CapabilityServiceImpl {
         let session_id = required_field(request.session_id, "session_id")?;
         let closed =
             close_workspace_session(&self.state, session_id).map_err(connect_workspace_error)?;
-        for session_id in &closed.closed_session_ids {
-            self.state.terminals.close(session_id);
-            self.state.remove_output_buffer(session_id);
-        }
+        self.state
+            .sessions
+            .close_sessions(closed.closed_session_ids.iter().map(String::as_str));
         ConnectResponse::ok(CloseSessionResponse {
             session_id: Some(closed.session_id),
             status: Some(closed.status),
