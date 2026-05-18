@@ -56,6 +56,12 @@ const SYMBOLS_SOURCE = {
   label: "Symbols Nerd Font Mono",
 };
 
+export const CJK_FONT_SOURCE = {
+  type: "url" as const,
+  url: `${PREINSTALLED_FONT_BASE}MapleMono-NF-CN-Regular.ttf`,
+  label: "Maple Mono NF CN Regular",
+};
+
 export const FONT_PRESETS: FontPreset[] = [
   {
     id: "system-mono",

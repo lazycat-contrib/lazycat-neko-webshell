@@ -124,6 +124,7 @@ export type TerminalPane = {
   decoder?: TextDecoder;
   titleBuffer: string;
   reconnectTimer?: number;
+  replayTimer?: number;
   reconnectDelay: number;
   pendingInput: string[];
   pendingInputBytes: number;

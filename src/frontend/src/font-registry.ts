@@ -1,11 +1,11 @@
 import type { ResttyFontSource } from "restty";
 
-import { FONT_PRESETS, PREINSTALLED_FONT_BASE } from "./config";
+import { CJK_FONT_SOURCE, FONT_PRESETS, PREINSTALLED_FONT_BASE } from "./config";
 import type { FontPreset, StoredFont } from "./types";
 
 export function resttyFontSourcesFor(font: FontPreset): ResttyFontSource[] {
   const sources = font.resttySources ?? FONT_PRESETS[0]?.resttySources ?? [];
-  return sources.map(resolveResttyFontSource);
+  return [...sources, CJK_FONT_SOURCE].map(resolveResttyFontSource);
 }
 
 export function storedFontToResttyPreset(font: StoredFont): FontPreset | undefined {

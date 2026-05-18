@@ -160,6 +160,7 @@ impl ManagedTerminal {
             command.arg(arg);
         }
         command.env("TERM", "xterm-256color");
+        command.env("LANG", "C.UTF-8");
 
         let child = pair
             .slave

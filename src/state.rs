@@ -454,6 +454,18 @@ mod tests {
         assert_eq!(output_frame_limit_from_metadata(&metadata), 512);
     }
 
+    #[test]
+    fn default_session_command_resolves_login_shell_before_exec() {
+        let (_, args) = default_session_command("demo@owner");
+        let script = args.last().expect("bootstrap script argument");
+
+        assert!(script.contains("__webshell_entry=\"$(getent passwd \"$__webshell_user\""));
+        assert!(script.contains("export SHELL=\"$__webshell_shell\""));
+        assert!(script.contains("exec \"$__webshell_shell\""));
+        assert!(!script.contains("exec \"${SHELL:-/bin/sh}\""));
+        assert!(!script.contains("LC_ALL"));
+    }
+
     fn test_session(id: &str, status: &str, restartable: Option<bool>) -> SessionRecord {
         let selector = format!("{id}@owner");
         let (command, args) = default_session_command(&selector);

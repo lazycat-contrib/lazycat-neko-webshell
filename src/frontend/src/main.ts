@@ -34,6 +34,7 @@ import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorL
 const transport = createConnectTransport({ baseUrl: window.location.origin });
 const client = createClient(CapabilityService, transport);
 const terminalEncoder = new TextEncoder();
+const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
 
 const params = new URLSearchParams(window.location.search);
 const initialSelector = params.get("name") ?? "";
@@ -254,6 +255,9 @@ function bindActions() {
   bindSettingsTabs();
   bindLifecycleEvents();
   bindMobileShortcuts();
+  document.addEventListener("keydown", handleTerminalInterruptCapture, true);
+  document.addEventListener("keydown", handleTerminalClipboardCapture, true);
+  document.addEventListener("paste", handleTerminalPasteEvent, true);
   elements.instanceButton.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleInstanceMenu();
@@ -417,7 +421,7 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
   }
 
   if (shortcut === "paste") {
-    await pasteIntoActivePane(false);
+    await pasteIntoPane(activePane(), false);
     clearMobileSticky();
     activePane()?.term?.focus();
     return;
@@ -611,9 +615,9 @@ async function runPaneMenuAction(action: string) {
   } else if (action === "split-right") {
     await splitActivePane("right");
   } else if (action === "copy-selection") {
-    await copySelection(true);
+    await copySelection(true, pane);
   } else if (action === "paste-clipboard") {
-    await pasteIntoActivePane(true);
+    await pasteIntoPane(pane, true);
   } else if (action === "promote-session-to-tab" && tab && pane) {
     promoteSessionToNewTab(tab, pane);
   } else if (action === "close-active-session" && tab && pane) {
@@ -1393,6 +1397,7 @@ function openSocket(pane: TerminalPane) {
   socket.addEventListener("open", () => {
     if (pane.socket !== socket) return;
     pane.reconnectDelay = 1000;
+    beginReplayInputLock(pane, socket);
     pane.transport?.notifyConnect();
     sendRestartPolicy(pane);
     sendOutputBufferLimit(pane);
@@ -1407,16 +1412,37 @@ function openSocket(pane: TerminalPane) {
   });
   socket.addEventListener("close", () => {
     if (pane.socket !== socket) return;
-    pane.replaying = false;
+    clearReplayInputLock(pane);
     flushPaneDecoder(pane);
     pane.transport?.notifyDisconnect();
     scheduleReconnect(pane);
   });
   socket.addEventListener("error", () => {
     if (pane.socket !== socket) return;
+    clearReplayInputLock(pane);
     pane.transport?.notifyError(tr("status.socketError"));
     setPaneStatus(pane, tr("status.socketError"), "error");
   });
+}
+
+function beginReplayInputLock(pane: TerminalPane, socket: WebSocket) {
+  window.clearTimeout(pane.replayTimer);
+  pane.replaying = true;
+  pane.replayTimer = window.setTimeout(() => {
+    if (pane.socket !== socket || pane.closing || !pane.replaying) return;
+    finishReplayInputLock(pane);
+  }, REPLAY_INPUT_LOCK_TIMEOUT_MS);
+}
+
+function clearReplayInputLock(pane: TerminalPane) {
+  window.clearTimeout(pane.replayTimer);
+  pane.replayTimer = undefined;
+  pane.replaying = false;
+}
+
+function finishReplayInputLock(pane: TerminalPane) {
+  clearReplayInputLock(pane);
+  flushPendingInput(pane);
 }
 
 function syncRestartPolicyToServer() {
@@ -1511,11 +1537,11 @@ function handleServerText(pane: TerminalPane, text: string) {
   if (event.type === "ready") {
     setPaneStatus(pane, tr("status.shellReady"), "ok");
   } else if (event.type === "error") {
-    pane.replaying = false;
+    clearReplayInputLock(pane);
     pane.transport?.notifyError(event.message ?? tr("status.terminalError"));
     setPaneStatus(pane, event.message ?? tr("status.terminalError"), "error");
   } else if (event.type === "process-exit") {
-    pane.replaying = false;
+    clearReplayInputLock(pane);
     pane.exited = true;
     clearPendingInput(pane);
     if (pane.session) {
@@ -1527,8 +1553,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, event.sequence);
   } else if (event.type === "replay-complete") {
     pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, event.last_sequence);
-    pane.replaying = false;
-    flushPendingInput(pane);
+    finishReplayInputLock(pane);
   }
 }
 
@@ -1834,6 +1859,7 @@ function promoteSessionToNewTab(sourceTab: TerminalTab, pane: TerminalPane) {
 function closePaneSession(pane: TerminalPane) {
   pane.closing = true;
   window.clearTimeout(pane.reconnectTimer);
+  clearReplayInputLock(pane);
   pane.socket?.close();
   pane.socket = undefined;
   flushPaneDecoder(pane);
@@ -1892,10 +1918,114 @@ function sendActivePaneKeyInput(data: string): boolean {
   return true;
 }
 
+function handleTerminalInterruptCapture(event: KeyboardEvent) {
+  if (!isCtrlCKeyEvent(event)) return;
+  const pane = paneForEventTarget(event.target);
+  if (!pane) return;
+  const imeActive = event.isComposing || hasPaneImePreedit(pane);
+  if (!imeActive && !pane.replaying) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  cancelPaneImeComposition(pane, imeActive);
+  sendPaneInput(pane, "\x03");
+  pane.term?.focus();
+}
+
+function handleTerminalClipboardCapture(event: KeyboardEvent) {
+  const shortcut = terminalClipboardShortcut(event);
+  if (!shortcut) return;
+  const pane = paneForShortcutTarget(event.target);
+  if (!pane) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (shortcut === "copy") {
+    void copySelection(false, pane);
+  } else {
+    void pasteIntoPane(pane, false);
+  }
+}
+
+function handleTerminalPasteEvent(event: ClipboardEvent) {
+  const pane = paneForShortcutTarget(event.target);
+  if (!pane || event.target === paneImeInput(pane)) return;
+  event.preventDefault();
+  const text = event.clipboardData?.getData("text/plain") ?? "";
+  if (text) {
+    pasteTextIntoPane(pane, text);
+  } else {
+    void pasteIntoPane(pane, false);
+  }
+}
+
+function terminalClipboardShortcut(event: KeyboardEvent): "copy" | "paste" | undefined {
+  if (event.altKey || event.repeat) return undefined;
+  const key = event.key.toLowerCase();
+  const superShortcut = event.metaKey && !isApplePlatform() && !event.ctrlKey && !event.shiftKey;
+  const ctrlShiftShortcut = event.ctrlKey && event.shiftKey && !event.metaKey;
+  if (!superShortcut && !ctrlShiftShortcut) return undefined;
+  if (key === "c") return "copy";
+  if (key === "v") return "paste";
+  return undefined;
+}
+
+function isApplePlatform(): boolean {
+  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+}
+
+function isCtrlCKeyEvent(event: KeyboardEvent): boolean {
+  return event.ctrlKey
+    && !event.altKey
+    && !event.metaKey
+    && !event.shiftKey
+    && (event.code === "KeyC" || event.key.toLowerCase() === "c");
+}
+
+function paneForEventTarget(target: EventTarget | null): TerminalPane | undefined {
+  if (!(target instanceof Node)) return undefined;
+  return allPanes().find((pane) => pane.mount.contains(target));
+}
+
+function paneForShortcutTarget(target: EventTarget | null): TerminalPane | undefined {
+  const targetedPane = paneForEventTarget(target);
+  if (targetedPane) return targetedPane;
+  if (target instanceof Element && target.closest("input, textarea, select, button, [contenteditable='true']")) {
+    return undefined;
+  }
+  if (!elements.settingsPage.hidden || !activeTabId) return undefined;
+  return activePane();
+}
+
+function paneImeInput(pane: TerminalPane): HTMLTextAreaElement | null {
+  return pane.term?.restty?.activePane()?.getRawPane().imeInput ?? null;
+}
+
+function hasPaneImePreedit(pane: TerminalPane): boolean {
+  return Boolean(paneImeInput(pane)?.value);
+}
+
+function cancelPaneImeComposition(pane: TerminalPane, force: boolean): boolean {
+  const input = paneImeInput(pane);
+  if (!input || (!force && !input.value)) return false;
+  input.value = "";
+  try {
+    input.dispatchEvent(new CompositionEvent("compositionend", { data: "" }));
+  } catch {
+    input.dispatchEvent(new Event("compositionend"));
+  }
+  input.value = "";
+  return true;
+}
+
 function sendPaneInput(pane: TerminalPane, data: string): boolean {
   if (!pane || pane.closing || pane.exited || !pane.session?.id) {
     activePane()?.term?.focus();
     return false;
+  }
+  if (isInterruptInput(data) && pane.socket?.readyState === WebSocket.OPEN) {
+    clearPendingInput(pane);
+    clearReplayInputLock(pane);
+    pane.socket.send(terminalEncoder.encode(data));
+    return true;
   }
   if (pane.socket?.readyState === WebSocket.OPEN && !pane.replaying) {
     pane.socket.send(terminalEncoder.encode(data));
@@ -1909,6 +2039,10 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
     connectPanePty(pane);
   }
   return true;
+}
+
+function isInterruptInput(data: string): boolean {
+  return data === "\x03";
 }
 
 function queuePaneInput(pane: TerminalPane, data: string): boolean {
@@ -1989,8 +2123,8 @@ function scheduleCopySelection() {
   requestAnimationFrame(() => void copySelection(false));
 }
 
-async function copySelection(report: boolean): Promise<boolean> {
-  const restty = activePane()?.term?.restty;
+async function copySelection(report: boolean, pane = activePane()): Promise<boolean> {
+  const restty = pane?.term?.restty;
   if (settings.useResttyClipboard && restty) {
     try {
       if (await restty.copySelectionToClipboard()) {
@@ -2023,8 +2157,7 @@ async function copySelection(report: boolean): Promise<boolean> {
   }
 }
 
-async function pasteIntoActivePane(report: boolean): Promise<boolean> {
-  const pane = activePane();
+async function pasteIntoPane(pane: TerminalPane | undefined, report: boolean): Promise<boolean> {
   if (!pane?.term?.restty) return false;
   if (settings.useResttyClipboard) {
     try {
@@ -2041,13 +2174,18 @@ async function pasteIntoActivePane(report: boolean): Promise<boolean> {
   try {
     const text = await navigator.clipboard?.readText?.() ?? "";
     if (!text) return false;
-    pane.term.restty.sendKeyInput(text);
-    pane.term.focus();
-    return true;
+    return pasteTextIntoPane(pane, text);
   } catch (error) {
     if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
     return false;
   }
+}
+
+function pasteTextIntoPane(pane: TerminalPane | undefined, text: string): boolean {
+  if (!pane?.term?.restty || !text) return false;
+  pane.term.restty.sendKeyInput(text);
+  pane.term.focus();
+  return true;
 }
 
 function fallbackCopyText(text: string) {
