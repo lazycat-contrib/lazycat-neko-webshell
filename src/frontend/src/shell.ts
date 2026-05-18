@@ -43,7 +43,7 @@ export type ShellElements = {
 
 export function renderShell(app: HTMLElement): ShellElements {
   app.innerHTML = `
-    <main class="webshell" id="webshell" aria-label="Pure Terminal workspace" data-i18n-aria="app.title">
+    <main class="webshell" id="webshell" aria-label="LazyCat Neko WebShell workspace" data-i18n-aria="app.title">
       <header class="topbar" aria-label="Terminal controls" data-i18n-aria="app.title">
         <div class="tabs-shell">
           <div id="tabList" class="tab-list" role="tablist" aria-label="Terminal tabs" data-i18n-aria="action.newTab"></div>

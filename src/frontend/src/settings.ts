@@ -2,7 +2,7 @@ import { DEFAULT_SETTINGS } from "./config";
 import type { Settings } from "./types";
 import { clampNumber } from "./utils";
 
-const SETTINGS_KEY = "pure-terminal.settings";
+const SETTINGS_KEY = "lazycat-neko-webshell.settings";
 
 export function loadSettings(): Settings {
   const raw = localStorage.getItem(SETTINGS_KEY);

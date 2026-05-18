@@ -455,7 +455,7 @@ mod tests {
 
     fn temp_session_path() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "lazycat-pure-terminal-sessions-{}.json",
+            "lazycat-neko-webshell-sessions-{}.json",
             uuid::Uuid::new_v4()
         ))
     }

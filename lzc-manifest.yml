@@ -1,5 +1,5 @@
 application:
   multi_instance: true
-  subdomain: pure-terminal
+  subdomain: neko-webshell
   routes:
-    - /=exec://8080,/lzcapp/pkg/content/lazycat-pure-terminal
+    - /=exec://8080,/lzcapp/pkg/content/lazycat-neko-webshell

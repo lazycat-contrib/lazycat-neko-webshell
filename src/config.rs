@@ -1,5 +1,5 @@
-pub const APP_ID: &str = "cloud.lazycat.webshell.pure-terminal";
-pub const APP_NAME: &str = "Pure Terminal";
+pub const APP_ID: &str = "lazycat-neko-webshell";
+pub const APP_NAME: &str = "LazyCat Neko WebShell";
 pub const LIGHTOSCTL: &str = "/lzcinit/lightosctl";
 pub const DEFAULT_COLS: u16 = 120;
 pub const DEFAULT_ROWS: u16 = 32;

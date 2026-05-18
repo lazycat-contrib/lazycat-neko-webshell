@@ -1,10 +1,10 @@
-# Pure Terminal
+# LazyCat Neko WebShell
 
 Rust + Restty/Ghostty WebShell provider for LazyCat/LightOS.
 
 ## Architecture
 
-Pure Terminal uses two protocol lanes:
+LazyCat Neko WebShell uses two protocol lanes:
 
 - WebSocket data plane: `/ws/terminal` carries terminal bytes, resize events, and process lifecycle notices. Browser terminal input is sent as binary UTF-8 frames; text frames are reserved for JSON control messages such as resize and close.
 - Connect control plane: `lazycat.webshell.v1.CapabilityService` manages instances, sessions, plugin descriptors, plugin enablement, and control leases.

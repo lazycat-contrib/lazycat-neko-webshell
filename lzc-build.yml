@@ -14,7 +14,7 @@ buildscript: |
     CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$RUST_LLD" \
     RUSTFLAGS="-C target-feature=+crt-static" \
     cargo build --release --target x86_64-unknown-linux-musl
-  cp target/x86_64-unknown-linux-musl/release/lazycat-pure-terminal "$CONTENT_DIR/lazycat-pure-terminal"
+  cp target/x86_64-unknown-linux-musl/release/lazycat-neko-webshell "$CONTENT_DIR/lazycat-neko-webshell"
 contentdir: ./dist/content
 resource_exports:
   - kind: lightos.webshell

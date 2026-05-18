@@ -1,5 +1,5 @@
 [package]
-name = "lazycat-pure-terminal"
+name = "lazycat-neko-webshell"
 version = "0.2.3"
 edition = "2024"
 rust-version = "1.88"
