@@ -17,7 +17,9 @@ use crate::lightos;
 use crate::state::{
     AppState, bool_flag, default_session_command, host_from_selector, mark_session_status,
 };
-use crate::terminal_manager::{ManagedTerminal, TerminalEvent, TerminalSpec};
+use crate::terminal_manager::{
+    ManagedTerminal, OutputBuffer, OutputFrame, TerminalEvent, TerminalSpec,
+};
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +32,7 @@ pub struct TerminalQuery {
     replay: Option<String>,
     after: Option<u64>,
     output_limit: Option<usize>,
+    pane_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,7 +64,18 @@ enum TerminalServerMessage<'a> {
     OutputSequence {
         sequence: u64,
     },
+    ReplayStart {
+        session_id: &'a str,
+        selector: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pane_id: Option<&'a str>,
+        replay_after: u64,
+    },
     ReplayComplete {
+        session_id: &'a str,
+        selector: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pane_id: Option<&'a str>,
         last_sequence: u64,
     },
 }
@@ -71,6 +85,8 @@ struct TerminalAttachTarget {
     allow_spawn: bool,
     replay: bool,
     replay_after: u64,
+    pane_id: Option<String>,
+    output: Arc<OutputBuffer>,
 }
 
 pub async fn terminal_ws(
@@ -98,10 +114,18 @@ async fn handle_terminal_socket(
     let target = resolve_terminal_target(&state, &query).await?;
     let ready_cols = target.spec.cols;
     let ready_rows = target.spec.rows;
-    let terminal = state.terminals.open(target.spec, target.allow_spawn)?;
+    let replay_after = target.replay_after;
+    let replay = target.replay;
+    let replay_output = Arc::clone(&target.output);
+    let pane_id = target.pane_id.clone();
+    let terminal =
+        state
+            .terminals
+            .open(target.spec, target.allow_spawn, Arc::clone(&target.output))?;
     mark_session_status(&state, terminal.session_id(), "running");
 
     let (mut sender, mut receiver) = socket.split();
+    let mut event_rx = terminal.subscribe();
     send_control(
         &mut sender,
         &TerminalServerMessage::Ready {
@@ -113,58 +137,33 @@ async fn handle_terminal_socket(
     )
     .await?;
 
-    if target.replay {
-        let (frames, last_sequence) = terminal.replay_snapshot_after(target.replay_after);
-        for frame in frames {
-            if !send_output_frame(&mut sender, frame).await? {
-                return Ok(());
-            }
-        }
-        send_control(
+    let mut last_sent_sequence = replay_after;
+    if replay {
+        let Some(sequence) = send_replay_snapshot(
             &mut sender,
-            &TerminalServerMessage::ReplayComplete { last_sequence },
+            &terminal,
+            pane_id.as_deref(),
+            &replay_output,
+            replay_after,
         )
-        .await?;
+        .await?
+        else {
+            return Ok(());
+        };
+        last_sent_sequence = sequence;
     }
 
-    let mut event_rx = terminal.subscribe();
     loop {
         tokio::select! {
             event = event_rx.recv() => {
-                match event {
-                    Ok(TerminalEvent::Output(frame)) => {
-                        if !send_output_frame(&mut sender, frame).await? {
-                            break;
-                        }
-                    }
-                    Ok(TerminalEvent::Exit(info)) => {
-                        mark_session_status(&state, terminal.session_id(), "exited");
-                        state.terminals.forget(terminal.session_id());
-                        send_control(
-                            &mut sender,
-                            &TerminalServerMessage::ProcessExit {
-                                exit_code: info.exit_code,
-                                message: info.message,
-                            },
-                        )
-                        .await?;
-                        break;
-                    }
-                    Ok(TerminalEvent::Error(message)) => {
-                        send_control(&mut sender, &TerminalServerMessage::Error { message }).await?;
-                        break;
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        send_control(
-                            &mut sender,
-                            &TerminalServerMessage::Error {
-                                message: "terminal output backlog exceeded; reconnecting".to_owned(),
-                            },
-                        )
-                        .await?;
-                        break;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
+                if !handle_terminal_event(
+                    &mut sender,
+                    &state,
+                    &terminal,
+                    event,
+                    &mut last_sent_sequence,
+                ).await? {
+                    break;
                 }
             }
             Some(message) = receiver.next() => {
@@ -189,6 +188,95 @@ async fn handle_terminal_socket(
     }
 
     Ok(())
+}
+
+async fn handle_terminal_event(
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    state: &AppState,
+    terminal: &ManagedTerminal,
+    event: Result<TerminalEvent, broadcast::error::RecvError>,
+    last_sent_sequence: &mut u64,
+) -> anyhow::Result<bool> {
+    match event {
+        Ok(TerminalEvent::Output(frame)) => {
+            if frame.sequence <= *last_sent_sequence {
+                return Ok(true);
+            }
+            if !send_output_frame(sender, &frame).await? {
+                return Ok(false);
+            }
+            *last_sent_sequence = frame.sequence;
+            Ok(true)
+        }
+        Ok(TerminalEvent::Exit(info)) => {
+            mark_session_status(state, terminal.session_id(), "exited");
+            state.terminals.forget(terminal.session_id());
+            send_control(
+                sender,
+                &TerminalServerMessage::ProcessExit {
+                    exit_code: info.exit_code,
+                    message: info.message,
+                },
+            )
+            .await?;
+            Ok(false)
+        }
+        Ok(TerminalEvent::Error(message)) => {
+            send_control(sender, &TerminalServerMessage::Error { message }).await?;
+            Ok(false)
+        }
+        Err(broadcast::error::RecvError::Lagged(_)) => {
+            send_control(
+                sender,
+                &TerminalServerMessage::Error {
+                    message: "terminal output backlog exceeded; reconnecting".to_owned(),
+                },
+            )
+            .await?;
+            Ok(false)
+        }
+        Err(broadcast::error::RecvError::Closed) => Ok(false),
+    }
+}
+
+async fn send_replay_snapshot(
+    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    terminal: &ManagedTerminal,
+    pane_id: Option<&str>,
+    output: &OutputBuffer,
+    replay_after: u64,
+) -> anyhow::Result<Option<u64>> {
+    send_control(
+        sender,
+        &TerminalServerMessage::ReplayStart {
+            session_id: terminal.session_id(),
+            selector: terminal.selector(),
+            pane_id,
+            replay_after,
+        },
+    )
+    .await?;
+
+    let (frames, last_sequence) = output.snapshot_after(replay_after);
+    let mut last_sent_sequence = replay_after.max(last_sequence);
+    for frame in frames {
+        if !send_output_frame(sender, &frame).await? {
+            return Ok(None);
+        }
+        last_sent_sequence = last_sent_sequence.max(frame.sequence);
+    }
+
+    send_control(
+        sender,
+        &TerminalServerMessage::ReplayComplete {
+            session_id: terminal.session_id(),
+            selector: terminal.selector(),
+            pane_id,
+            last_sequence,
+        },
+    )
+    .await?;
+    Ok(Some(last_sent_sequence))
 }
 
 fn handle_terminal_control_message(
@@ -254,10 +342,10 @@ async fn send_control(
 
 async fn send_output_frame(
     sender: &mut futures::stream::SplitSink<WebSocket, Message>,
-    frame: crate::terminal_manager::OutputFrame,
+    frame: &OutputFrame,
 ) -> anyhow::Result<bool> {
     if sender
-        .send(Message::Binary(frame.data.into()))
+        .send(Message::Binary(frame.data.clone().into()))
         .await
         .is_err()
     {
@@ -280,6 +368,12 @@ async fn resolve_terminal_target(
     let restart = parse_query_bool(query.restart.as_deref(), "restart")?;
     let replay = parse_query_bool(query.replay.as_deref(), "replay")?.unwrap_or(true);
     let replay_after = query.after.unwrap_or(0);
+    let pane_id = query
+        .pane_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
     if let Some(session_id) = query
         .session_id
         .as_deref()
@@ -321,11 +415,14 @@ async fn resolve_terminal_target(
         }
         let allow_spawn = restart.unwrap_or(false) || status == "running";
         authorize_terminal_selector(&spec.selector, allow_spawn).await?;
+        let output = state.output_buffer(session_id, spec.output_frame_limit);
         return Ok(TerminalAttachTarget {
             spec,
             allow_spawn,
             replay,
             replay_after,
+            pane_id,
+            output,
         });
     }
 
@@ -342,20 +439,25 @@ async fn resolve_terminal_target(
     let host = host_from_selector(selector);
     authorize_terminal_selector(selector, true).await?;
     let (command, args) = default_session_command(selector);
+    let output_limit = normalize_output_frame_limit(query.output_limit);
+    let session_id = Uuid::new_v4().to_string();
+    let output = state.output_buffer(&session_id, output_limit);
     Ok(TerminalAttachTarget {
         spec: TerminalSpec {
-            session_id: Uuid::new_v4().to_string(),
+            session_id,
             host,
             selector: selector.to_owned(),
             command,
             args,
             cols,
             rows,
-            output_frame_limit: normalize_output_frame_limit(query.output_limit),
+            output_frame_limit: output_limit,
         },
         allow_spawn: true,
         replay,
         replay_after,
+        pane_id,
+        output,
     })
 }
 

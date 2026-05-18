@@ -11,7 +11,7 @@ use crate::config::{
     DEFAULT_SESSION_STATE_FILE, LIGHTOSCTL, MAX_COLS, MAX_ROWS, SHELL_BOOTSTRAP_SCRIPT,
 };
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
-use crate::terminal_manager::{TerminalRegistry, TerminalSpec};
+use crate::terminal_manager::{OutputBuffer, TerminalRegistry, TerminalSpec};
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 use crate::workspace::{WorkspaceRecord, WorkspaceStore, default_workspace_store};
 
@@ -24,6 +24,7 @@ pub struct AppState {
     pub sessions: Arc<RwLock<HashMap<String, SessionRecord>>>,
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
     pub terminals: Arc<TerminalRegistry>,
+    output_buffers: Arc<RwLock<HashMap<String, Arc<OutputBuffer>>>>,
     session_store: Arc<SessionStore>,
     pub workspaces: Arc<RwLock<HashMap<String, WorkspaceRecord>>>,
     workspace_store: Arc<WorkspaceStore>,
@@ -49,6 +50,7 @@ impl AppState {
             sessions: Arc::new(RwLock::new(sessions)),
             plugins: Arc::new(RwLock::new(builtin_plugins())),
             terminals: Arc::new(TerminalRegistry::new()),
+            output_buffers: Arc::new(RwLock::new(HashMap::new())),
             session_store,
             workspaces: Arc::new(RwLock::new(workspaces)),
             workspace_store,
@@ -67,6 +69,25 @@ impl AppState {
         workspaces: &HashMap<String, WorkspaceRecord>,
     ) -> io::Result<()> {
         self.workspace_store.save(workspaces)
+    }
+
+    pub fn output_buffer(&self, session_id: &str, limit: usize) -> Arc<OutputBuffer> {
+        let normalized_limit = normalize_output_frame_limit(Some(limit));
+        let buffer = self
+            .output_buffers
+            .write()
+            .expect("terminal output buffer registry poisoned")
+            .entry(session_id.to_owned())
+            .or_insert_with(|| Arc::new(OutputBuffer::new(normalized_limit)))
+            .clone();
+        buffer.set_limit(normalized_limit);
+        buffer
+    }
+
+    pub fn remove_output_buffer(&self, session_id: &str) {
+        if let Ok(mut buffers) = self.output_buffers.write() {
+            buffers.remove(session_id);
+        }
     }
 }
 
@@ -515,6 +536,23 @@ mod tests {
         assert!(!script.contains("LC_ALL"));
     }
 
+    #[test]
+    fn output_buffers_are_session_scoped_until_removed() {
+        let state = test_app_state();
+
+        let first = state.output_buffer("session-one", 128);
+        let second = state.output_buffer("session-one", 512);
+        let other = state.output_buffer("session-two", 128);
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &other));
+
+        state.remove_output_buffer("session-one");
+        let recreated = state.output_buffer("session-one", 128);
+
+        assert!(!Arc::ptr_eq(&first, &recreated));
+    }
+
     fn test_session(id: &str, status: &str, restartable: Option<bool>) -> SessionRecord {
         let selector = format!("{id}@owner");
         let (command, args) = default_session_command(&selector);
@@ -541,5 +579,17 @@ mod tests {
             "lazycat-neko-webshell-sessions-{}.json",
             uuid::Uuid::new_v4()
         ))
+    }
+
+    fn test_app_state() -> AppState {
+        AppState {
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            plugins: Arc::new(RwLock::new(HashMap::new())),
+            terminals: Arc::new(TerminalRegistry::new()),
+            output_buffers: Arc::new(RwLock::new(HashMap::new())),
+            session_store: Arc::new(SessionStore::new(temp_session_path())),
+            workspaces: Arc::new(RwLock::new(HashMap::new())),
+            workspace_store: Arc::new(WorkspaceStore::new(temp_session_path())),
+        }
     }
 }

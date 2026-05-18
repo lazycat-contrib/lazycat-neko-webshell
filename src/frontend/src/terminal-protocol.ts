@@ -5,7 +5,8 @@ export type TerminalServerEvent =
   | { type: "error"; message?: string }
   | { type: "process-exit"; exit_code?: number; message?: string }
   | { type: "output-sequence"; sequence?: number }
-  | { type: "replay-complete"; last_sequence?: number };
+  | { type: "replay-start"; session_id?: string; pane_id?: string; replay_after?: number }
+  | { type: "replay-complete"; session_id?: string; pane_id?: string; last_sequence?: number };
 
 export function parseTerminalServerMessage(text: string): TerminalServerEvent | undefined {
   try {

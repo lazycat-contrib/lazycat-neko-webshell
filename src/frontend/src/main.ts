@@ -1432,6 +1432,7 @@ function openSocket(pane: TerminalPane) {
   const url = new URL("./ws/terminal", window.location.href);
   url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("session_id", pane.sessionId);
+  url.searchParams.set("pane_id", pane.id);
   url.searchParams.set("cols", String(pane.cols || pane.term?.cols || INITIAL_COLS));
   url.searchParams.set("rows", String(pane.rows || pane.term?.rows || INITIAL_ROWS));
   url.searchParams.set("restart", String(settings.autoRestartSessions));
@@ -1543,6 +1544,14 @@ function handleServerText(pane: TerminalPane, text: string) {
     pane.sessionStatus = "running";
     pane.exited = false;
     setPaneStatus(pane, tr("status.shellReady"), "ok");
+  } else if (event.type === "replay-start") {
+    if (!matchesPaneReplay(pane, event)) {
+      clearReplayInputLock(pane);
+      pane.socket?.close();
+      setPaneStatus(pane, tr("status.terminalError"), "error");
+      return;
+    }
+    pane.replaying = true;
   } else if (event.type === "error") {
     clearReplayInputLock(pane);
     pane.transport?.notifyError(event.message ?? tr("status.terminalError"));
@@ -1557,9 +1566,21 @@ function handleServerText(pane: TerminalPane, text: string) {
   } else if (event.type === "output-sequence") {
     pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, event.sequence);
   } else if (event.type === "replay-complete") {
+    if (!matchesPaneReplay(pane, event)) {
+      clearReplayInputLock(pane);
+      pane.socket?.close();
+      setPaneStatus(pane, tr("status.terminalError"), "error");
+      return;
+    }
     pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, event.last_sequence);
     finishReplayInputLock(pane);
   }
+}
+
+function matchesPaneReplay(pane: TerminalPane, event: { session_id?: string; pane_id?: string }): boolean {
+  if (event.session_id && event.session_id !== pane.sessionId) return false;
+  if (event.pane_id && event.pane_id !== pane.id) return false;
+  return true;
 }
 
 function writeTerminalBytes(pane: TerminalPane, bytes: Uint8Array) {

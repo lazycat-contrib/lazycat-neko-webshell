@@ -267,6 +267,7 @@ pub async fn put_workspace_action(
         Ok((workspace, closed_sessions)) => {
             for session_id in closed_sessions {
                 state.terminals.close(&session_id);
+                state.remove_output_buffer(&session_id);
             }
             Json(workspace).into_response()
         }

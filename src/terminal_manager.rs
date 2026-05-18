@@ -59,6 +59,7 @@ impl TerminalRegistry {
         &self,
         spec: TerminalSpec,
         allow_spawn: bool,
+        output: Arc<OutputBuffer>,
     ) -> anyhow::Result<Arc<ManagedTerminal>> {
         if let Some(existing) = self.existing(&spec.session_id)? {
             existing.resize(spec.cols, spec.rows)?;
@@ -70,7 +71,7 @@ impl TerminalRegistry {
             return Err(anyhow!("terminal process is not running"));
         }
 
-        let terminal = Arc::new(ManagedTerminal::spawn(spec)?);
+        let terminal = Arc::new(ManagedTerminal::spawn(spec, output)?);
 
         let mut sessions = self
             .sessions
@@ -135,11 +136,12 @@ pub struct ManagedTerminal {
 }
 
 impl ManagedTerminal {
-    fn spawn(spec: TerminalSpec) -> anyhow::Result<Self> {
+    fn spawn(spec: TerminalSpec, output: Arc<OutputBuffer>) -> anyhow::Result<Self> {
         validate_size(spec.cols, spec.rows)?;
         if spec.command.trim().is_empty() {
             return Err(anyhow!("terminal command must not be empty"));
         }
+        output.set_limit(spec.output_frame_limit);
         info!(
             session_id = %spec.session_id,
             host = %spec.host,
@@ -173,7 +175,6 @@ impl ManagedTerminal {
         let writer = pair.master.take_writer()?;
         let (writer_tx, writer_rx) = std::sync::mpsc::channel::<WriterCommand>();
         let (event_tx, _) = broadcast::channel::<TerminalEvent>(EVENT_CAPACITY);
-        let output = Arc::new(OutputBuffer::new(spec.output_frame_limit));
         let exit = Arc::new(Mutex::new(None));
 
         spawn_output_thread(reader, event_tx.clone(), Arc::clone(&output));
@@ -212,10 +213,6 @@ impl ManagedTerminal {
 
     pub fn subscribe(&self) -> broadcast::Receiver<TerminalEvent> {
         self.event_tx.subscribe()
-    }
-
-    pub fn replay_snapshot_after(&self, sequence: u64) -> (Vec<OutputFrame>, u64) {
-        self.output.snapshot_after(sequence)
     }
 
     pub fn exit_info(&self) -> Option<ExitInfo> {
@@ -340,7 +337,7 @@ fn spawn_exit_thread(
     });
 }
 
-struct OutputBuffer {
+pub struct OutputBuffer {
     inner: Mutex<OutputBufferInner>,
 }
 
@@ -352,7 +349,7 @@ struct OutputBufferInner {
 }
 
 impl OutputBuffer {
-    fn new(max_frames: usize) -> Self {
+    pub fn new(max_frames: usize) -> Self {
         Self {
             inner: Mutex::new(OutputBufferInner {
                 frames: VecDeque::new(),
@@ -376,13 +373,13 @@ impl OutputBuffer {
         frame
     }
 
-    fn set_limit(&self, max_frames: usize) {
+    pub fn set_limit(&self, max_frames: usize) {
         let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
         inner.max_frames = normalize_output_frame_limit(Some(max_frames));
         prune_output_buffer(&mut inner);
     }
 
-    fn snapshot_after(&self, sequence: u64) -> (Vec<OutputFrame>, u64) {
+    pub fn snapshot_after(&self, sequence: u64) -> (Vec<OutputFrame>, u64) {
         let inner = self.inner.lock().expect("terminal output buffer poisoned");
         (
             inner

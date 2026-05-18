@@ -115,9 +115,12 @@ impl CapabilityService for CapabilityServiceImpl {
             control: None,
             metadata,
         };
+        let output = self
+            .state
+            .output_buffer(&record.id, record.output_frame_limit());
         self.state
             .terminals
-            .open(record.terminal_spec(cols, rows), true)
+            .open(record.terminal_spec(cols, rows), true, output)
             .map_err(|err| ConnectError::internal(err.to_string()))?;
         let session = record.to_proto();
         let snapshot = {
@@ -141,6 +144,7 @@ impl CapabilityService for CapabilityServiceImpl {
     ) -> ServiceResult<CloseSessionResponse> {
         let session_id = required_field(request.session_id, "session_id")?;
         self.state.terminals.close(session_id);
+        self.state.remove_output_buffer(session_id);
         let (status, snapshot) = {
             let mut sessions = self.sessions_write()?;
             let Some(mut record) = sessions.remove(session_id) else {
