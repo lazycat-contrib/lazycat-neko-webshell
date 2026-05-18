@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use connectrpc::ConnectError;
 
-use crate::config::{MAX_COLS, MAX_ROWS};
+use crate::config::{MAX_COLS, MAX_OUTPUT_FRAME_LIMIT, MAX_ROWS, MIN_OUTPUT_FRAME_LIMIT};
 
 pub fn validate_selector(selector: &str) -> Result<(), ConnectError> {
     let selector = selector.trim();
@@ -54,6 +54,12 @@ pub fn validate_size(cols: u16, rows: u16) -> anyhow::Result<()> {
         ));
     }
     Ok(())
+}
+
+pub fn normalize_output_frame_limit(value: Option<usize>) -> usize {
+    value
+        .unwrap_or(crate::config::DEFAULT_OUTPUT_FRAME_LIMIT)
+        .clamp(MIN_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_FRAME_LIMIT)
 }
 
 #[cfg(test)]

@@ -7,12 +7,14 @@ export type MessageKey =
   | "action.closeSettings"
   | "action.copySelection"
   | "action.focusTerminal"
+  | "action.fullscreen"
   | "action.lightosHome"
   | "action.newTab"
   | "action.promoteSessionToTab"
   | "action.refreshInstances"
   | "action.removeFont"
   | "action.settings"
+  | "action.settingsMenu"
   | "action.closeTab"
   | "action.renameTab"
   | "action.splitDown"
@@ -30,6 +32,7 @@ export type MessageKey =
   | "field.fontSize"
   | "field.language"
   | "field.lineHeight"
+  | "field.outputBuffer"
   | "field.scrollback"
   | "field.tabs"
   | "field.theme"
@@ -45,10 +48,13 @@ export type MessageKey =
   | "menu.mobileShortcuts"
   | "menu.pane"
   | "section.appearance"
+  | "section.fonts"
   | "setting.autoRestartSessions"
   | "setting.copyOnSelect"
   | "setting.cursorBlink"
   | "setting.debugAdapter"
+  | "tab.fontSettings"
+  | "tab.fontUpload"
   | "status.closed"
   | "status.connected"
   | "status.connectFailed"
@@ -93,12 +99,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closeSettings": "Close settings",
     "action.copySelection": "Copy selection",
     "action.focusTerminal": "Focus terminal",
+    "action.fullscreen": "Full screen",
     "action.lightosHome": "LightOS home",
     "action.newTab": "New terminal tab",
     "action.promoteSessionToTab": "Move session to new tab",
     "action.refreshInstances": "Refresh instances",
     "action.removeFont": "Remove selected font",
     "action.settings": "Settings",
+    "action.settingsMenu": "Settings menu",
     "action.closeTab": "Close tab",
     "action.renameTab": "Rename tab",
     "action.splitDown": "Split down",
@@ -116,6 +124,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.fontSize": "Font size",
     "field.language": "Language",
     "field.lineHeight": "Line height",
+    "field.outputBuffer": "Output buffer",
     "field.scrollback": "Scrollback",
     "field.tabs": "Tabs",
     "field.theme": "Theme",
@@ -131,10 +140,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "menu.mobileShortcuts": "Terminal shortcuts",
     "menu.pane": "Pane menu",
     "section.appearance": "Appearance",
+    "section.fonts": "Fonts",
     "setting.autoRestartSessions": "Restart sessions after provider restart",
     "setting.copyOnSelect": "Copy on select",
     "setting.cursorBlink": "Cursor blink",
     "setting.debugAdapter": "Debug adapter",
+    "tab.fontSettings": "Font settings",
+    "tab.fontUpload": "Font upload",
     "status.closed": "Closed",
     "status.connected": "Connected",
     "status.connectFailed": "Connect failed: {message}",
@@ -178,12 +190,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closeSettings": "关闭设置",
     "action.copySelection": "复制选区",
     "action.focusTerminal": "聚焦终端",
+    "action.fullscreen": "全屏",
     "action.lightosHome": "返回 LightOS 首页",
     "action.newTab": "新建终端标签",
     "action.promoteSessionToTab": "将会话提升为新标签",
     "action.refreshInstances": "刷新实例",
     "action.removeFont": "移除当前字体",
     "action.settings": "设置",
+    "action.settingsMenu": "设置菜单",
     "action.closeTab": "关闭标签",
     "action.renameTab": "重命名标签",
     "action.splitDown": "向下拆分",
@@ -201,6 +215,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.fontSize": "字号",
     "field.language": "语言",
     "field.lineHeight": "行高",
+    "field.outputBuffer": "输出缓冲",
     "field.scrollback": "回滚行数",
     "field.tabs": "标签栏",
     "field.theme": "主题",
@@ -216,10 +231,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "menu.mobileShortcuts": "终端快捷键",
     "menu.pane": "终端面板菜单",
     "section.appearance": "外观",
+    "section.fonts": "字体",
     "setting.autoRestartSessions": "Provider 重启后自动恢复会话",
     "setting.copyOnSelect": "选中即复制",
     "setting.cursorBlink": "光标闪烁",
     "setting.debugAdapter": "调试适配器",
+    "tab.fontSettings": "字体设置",
+    "tab.fontUpload": "字体上传",
     "status.closed": "已关闭",
     "status.connected": "已连接",
     "status.connectFailed": "连接失败：{message}",

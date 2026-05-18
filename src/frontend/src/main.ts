@@ -13,7 +13,9 @@ import {
   FONT_PRESETS,
   INITIAL_COLS,
   INITIAL_ROWS,
+  MAX_OUTPUT_BUFFER_LIMIT,
   MAX_FONT_BYTES,
+  MIN_OUTPUT_BUFFER_LIMIT,
   PREINSTALLED_FONT_BASE,
   STATUS_REFRESH_MS,
   THEMES,
@@ -23,6 +25,7 @@ import { translate, type MessageKey } from "./i18n";
 import { encodeMobileShortcutKeyInput } from "./keyboard";
 import { loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
+import { TerminalInputDeduper } from "./terminal-input";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
 import type { FontPreset, SplitAxis, SplitNode, SplitPlacement, StoredFont, TerminalPane, TerminalTab, TerminalTheme, Tone } from "./types";
 import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorLabel } from "./utils";
@@ -66,7 +69,7 @@ async function init() {
   setInterval(updateActiveDetails, STATUS_REFRESH_MS);
   await loadInstances();
   await restoreSessions();
-  if (selectedSelector) {
+  if (selectedSelector && (initialSelector || !tabs.length)) {
     elements.targetLabel.textContent = selectorLabel(selectedSelector);
     if (!tabs.some((tab) => tab.selector === selectedSelector)) {
       await createTerminalTab(selectedSelector);
@@ -157,6 +160,14 @@ function bindSettings() {
     saveSettings();
     applySettings();
   });
+  elements.outputBufferLimit.addEventListener("change", () => {
+    settings.outputBufferLimit = Math.round(
+      clampNumber(elements.outputBufferLimit.value, MIN_OUTPUT_BUFFER_LIMIT, MAX_OUTPUT_BUFFER_LIMIT, DEFAULT_SETTINGS.outputBufferLimit),
+    );
+    saveSettings();
+    syncOutputBufferLimitToServer();
+    applySettings();
+  });
   elements.cursorBlink.addEventListener("change", () => {
     settings.cursorBlink = elements.cursorBlink.checked;
     saveSettings();
@@ -192,10 +203,20 @@ function bindActions() {
   elements.newTabButton.addEventListener("click", () => void createSelectedTab());
   elements.emptyNewTab.addEventListener("click", () => void createSelectedTab());
   elements.removeFont.addEventListener("click", () => void removeSelectedFont());
-  elements.fitTerminal.addEventListener("click", () => activePane()?.term?.focus());
+  elements.fitTerminal.addEventListener("click", () => void toggleFullscreen());
   elements.homeButton.addEventListener("click", () => void navigateLightOSHome());
-  elements.settingsButton.addEventListener("click", () => openSettings());
+  elements.settingsButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleSettingsMenu();
+  });
+  elements.openSettingsItem.addEventListener("click", () => openSettings());
   elements.closeSettings.addEventListener("click", () => closeSettings());
+  elements.settingsPage.addEventListener("click", (event) => {
+    if (event.target === elements.settingsPage) {
+      closeSettings();
+    }
+  });
+  bindSettingsTabs();
   bindLifecycleEvents();
   bindMobileShortcuts();
   elements.instanceButton.addEventListener("click", (event) => {
@@ -210,6 +231,9 @@ function bindActions() {
     if (event.target instanceof Node && !elements.instanceSwitcher.contains(event.target)) {
       closeInstanceMenu();
     }
+    if (event.target instanceof Node && !elements.settingsMenu.contains(event.target) && event.target !== elements.settingsButton) {
+      closeSettingsMenu();
+    }
     if (event.target instanceof Node && !elements.paneMenu.contains(event.target)) {
       closePaneMenu();
     }
@@ -222,6 +246,7 @@ function bindActions() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeInstanceMenu();
+      closeSettingsMenu();
       closePaneMenu();
       closeSettings();
       return;
@@ -302,6 +327,27 @@ function bindMobileShortcuts() {
   updateMobileShortcutState();
 }
 
+function bindSettingsTabs() {
+  elements.settingsTabs.addEventListener("click", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-settings-tab]")
+      : null;
+    if (button) activateSettingsTab(button.dataset.settingsTab ?? "");
+  });
+}
+
+function activateSettingsTab(tabId: string) {
+  if (!tabId) return;
+  elements.settingsTabs.querySelectorAll<HTMLButtonElement>("[data-settings-tab]").forEach((button) => {
+    const active = button.dataset.settingsTab === tabId;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  elements.settingsPage.querySelectorAll<HTMLElement>("[data-settings-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.settingsPanel !== tabId;
+  });
+}
+
 function stopMobileShortcutRepeat() {
   window.clearTimeout(mobileRepeatTimer);
   window.clearInterval(mobileRepeatInterval);
@@ -359,6 +405,7 @@ function updateMobileShortcutState() {
 async function navigateLightOSHome() {
   closeInstanceMenu();
   closePaneMenu();
+  closeSettingsMenu();
   elements.homeButton.disabled = true;
   setGlobalStatus(tr("status.lightosHomeLoading"));
   try {
@@ -409,6 +456,7 @@ function referrerHomeUrl(): string {
 function openSettings() {
   elements.settingsPage.hidden = false;
   closeInstanceMenu();
+  closeSettingsMenu();
   requestAnimationFrame(() => elements.closeSettings.focus());
 }
 
@@ -417,8 +465,32 @@ function closeSettings() {
   activePane()?.term?.focus();
 }
 
+function toggleSettingsMenu() {
+  const open = elements.settingsMenu.hidden;
+  elements.settingsMenu.hidden = !open;
+  elements.settingsButton.setAttribute("aria-expanded", String(open));
+}
+
+function closeSettingsMenu() {
+  elements.settingsMenu.hidden = true;
+  elements.settingsButton.setAttribute("aria-expanded", "false");
+}
+
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      await elements.webshell.requestFullscreen();
+    }
+  } catch {
+    activePane()?.term?.focus();
+  }
+}
+
 function toggleInstanceMenu() {
   const open = elements.instanceMenu.hidden;
+  closeSettingsMenu();
   elements.instanceMenu.hidden = !open;
   elements.instanceSwitcher.classList.toggle("is-open", open);
   elements.instanceButton.setAttribute("aria-expanded", String(open));
@@ -504,6 +576,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.lineHeight.value = String(settings.lineHeight);
   elements.lineHeightValue.textContent = settings.lineHeight.toFixed(2);
   elements.scrollbackLimit.value = String(settings.scrollbackLimit);
+  elements.outputBufferLimit.value = String(settings.outputBufferLimit);
   elements.cursorBlink.checked = settings.cursorBlink;
   elements.cursorShape.value = settings.cursorShape;
   elements.copyOnSelect.checked = settings.copyOnSelect;
@@ -969,6 +1042,7 @@ function makePane(tab: TerminalTab): TerminalPane {
     reconnectDelay: 1000,
     pendingInput: [],
     pendingInputBytes: 0,
+    inputDeduper: new TerminalInputDeduper(),
     replaying: false,
     lastOutputSequence: 0,
     exited: false,
@@ -1010,6 +1084,7 @@ async function createPane(tab: TerminalTab, placement: SplitPlacement) {
         frontend: "restty-xterm",
         tabId: tab.id,
         paneId: pane.id,
+        outputBufferLimit: String(settings.outputBufferLimit),
         tabTitle: tab.customTitle?.trim() ?? "",
         tabCustomTitle: String(Boolean(tab.customTitle?.trim())),
         tabOrder: String(tabOrder(tab)),
@@ -1170,15 +1245,19 @@ async function mountTerminal(pane: TerminalPane) {
       attachCanvasEvents: true,
       touchSelectionMode: "long-press",
       maxScrollbackBytes: Math.max(1_000_000, settings.scrollbackLimit * 160),
+      beforeInput: ({ text, source }) => {
+        if (source !== "pty" && text && pane.inputDeduper.accept(text)) {
+          sendPaneInput(pane, text);
+        }
+        return null;
+      },
       callbacks: {
         onGridSize: (cols, rows) => handleTerminalResize(pane, cols, rows),
       },
     },
   });
   if (pane.closing) return;
-  term.onData((data) => {
-    sendPaneInput(pane, data);
-  });
+  pane.inputDeduper.reset();
   pane.term = term;
   term.open(pane.mount);
   applyTerminalAppearance(pane);
@@ -1215,6 +1294,7 @@ function openSocket(pane: TerminalPane) {
   url.searchParams.set("restart", String(settings.autoRestartSessions));
   url.searchParams.set("replay", "true");
   url.searchParams.set("after", String(pane.lastOutputSequence));
+  url.searchParams.set("output_limit", String(settings.outputBufferLimit));
   url.searchParams.set("tab_id", pane.tabId);
   url.searchParams.set("pane_id", pane.id);
   url.searchParams.set("tab_title", tabForPane(pane)?.customTitle?.trim() ?? "");
@@ -1230,6 +1310,7 @@ function openSocket(pane: TerminalPane) {
   pane.socket.addEventListener("open", () => {
     pane.reconnectDelay = 1000;
     sendRestartPolicy(pane);
+    sendOutputBufferLimit(pane);
     sendPanePlacement(pane);
     setPaneStatus(pane, tr("status.connected"), "ok");
     if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
@@ -1254,6 +1335,20 @@ function syncRestartPolicyToServer() {
   }
 }
 
+function syncOutputBufferLimitToServer() {
+  for (const pane of allPanes()) {
+    if (pane.session) {
+      pane.session.metadata.outputBufferLimit = String(settings.outputBufferLimit);
+    }
+    sendOutputBufferLimit(pane);
+  }
+}
+
+function sendOutputBufferLimit(pane: TerminalPane) {
+  if (pane.socket?.readyState !== WebSocket.OPEN) return;
+  pane.socket.send(JSON.stringify({ type: "output-buffer", limit: settings.outputBufferLimit }));
+}
+
 function sendRestartPolicy(pane: TerminalPane) {
   if (pane.socket?.readyState !== WebSocket.OPEN) return;
   pane.socket.send(JSON.stringify({ type: "restart-policy", enabled: settings.autoRestartSessions }));
@@ -1264,6 +1359,7 @@ function syncPanePlacement(pane: TerminalPane) {
   if (pane.session) {
     pane.session.metadata.tabId = pane.tabId;
     pane.session.metadata.paneId = pane.id;
+    pane.session.metadata.outputBufferLimit = String(settings.outputBufferLimit);
     pane.session.metadata.tabOrder = String(tabOrder(tab));
     pane.session.metadata.paneOrder = String(paneOrder(tab, pane));
     const title = tab?.customTitle?.trim() ?? "";

@@ -19,7 +19,7 @@ use crate::state::{
     AppState, bool_flag, default_session_command, host_from_selector, mark_session_status,
 };
 use crate::terminal_manager::{ManagedTerminal, TerminalEvent, TerminalSpec};
-use crate::validation::{validate_selector, validate_size};
+use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
 #[derive(Debug, Deserialize)]
 pub struct TerminalQuery {
@@ -30,6 +30,7 @@ pub struct TerminalQuery {
     restart: Option<String>,
     replay: Option<String>,
     after: Option<u64>,
+    output_limit: Option<usize>,
     tab_id: Option<String>,
     pane_id: Option<String>,
     tab_title: Option<String>,
@@ -58,6 +59,9 @@ enum TerminalClientMessage {
         tab_custom_title: Option<String>,
         tab_order: Option<String>,
         pane_order: Option<String>,
+    },
+    OutputBuffer {
+        limit: usize,
     },
     Close,
 }
@@ -250,6 +254,11 @@ fn handle_terminal_control_message(
             set_session_restartable(state, terminal.session_id(), enabled)?;
             Ok(true)
         }
+        Ok(TerminalClientMessage::OutputBuffer { limit }) => {
+            terminal.set_output_frame_limit(limit);
+            set_session_output_buffer_limit(state, terminal.session_id(), limit)?;
+            Ok(true)
+        }
         Ok(TerminalClientMessage::SessionPlacement {
             tab_id,
             pane_id,
@@ -360,8 +369,16 @@ async fn resolve_terminal_target(
                 },
             );
             let spec = session.terminal_spec(cols, rows);
+            let mut spec = spec;
+            if let Some(output_limit) = query.output_limit {
+                spec.output_frame_limit = normalize_output_frame_limit(Some(output_limit));
+                session.metadata.insert(
+                    "outputBufferLimit".to_owned(),
+                    spec.output_frame_limit.to_string(),
+                );
+            }
             let status = session.status.clone();
-            if restart.is_some() || placement_changed {
+            if restart.is_some() || placement_changed || query.output_limit.is_some() {
                 snapshot = Some(sessions.clone());
             }
             (spec, status)
@@ -401,11 +418,35 @@ async fn resolve_terminal_target(
             args,
             cols,
             rows,
+            output_frame_limit: normalize_output_frame_limit(query.output_limit),
         },
         allow_spawn: true,
         replay,
         replay_after,
     })
+}
+
+fn set_session_output_buffer_limit(
+    state: &AppState,
+    session_id: &str,
+    limit: usize,
+) -> anyhow::Result<()> {
+    let limit = normalize_output_frame_limit(Some(limit));
+    let snapshot = {
+        let mut sessions = state
+            .sessions
+            .write()
+            .map_err(|_| anyhow!("session store lock poisoned"))?;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("unknown session id"))?;
+        session
+            .metadata
+            .insert("outputBufferLimit".to_owned(), limit.to_string());
+        sessions.clone()
+    };
+    state.persist_sessions_snapshot(&snapshot)?;
+    Ok(())
 }
 
 async fn authorize_terminal_selector(selector: &str, require_running: bool) -> anyhow::Result<()> {

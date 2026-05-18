@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS } from "./config";
+import { DEFAULT_SETTINGS, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "./config";
 import type { Settings } from "./types";
 import { clampNumber } from "./utils";
 
@@ -26,6 +26,9 @@ export function normalizeSettings(value: Partial<Settings>): Settings {
     copyOnSelect: value.copyOnSelect ?? DEFAULT_SETTINGS.copyOnSelect,
     scrollbackLimit: Math.round(
       clampNumber(value.scrollbackLimit, 1000, 100000, DEFAULT_SETTINGS.scrollbackLimit),
+    ),
+    outputBufferLimit: Math.round(
+      clampNumber(value.outputBufferLimit, MIN_OUTPUT_BUFFER_LIMIT, MAX_OUTPUT_BUFFER_LIMIT, DEFAULT_SETTINGS.outputBufferLimit),
     ),
     autoRestartSessions: value.autoRestartSessions ?? DEFAULT_SETTINGS.autoRestartSessions,
     tabLayout: value.tabLayout === "vertical" ? "vertical" : DEFAULT_SETTINGS.tabLayout,

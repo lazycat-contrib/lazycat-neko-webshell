@@ -2,6 +2,7 @@ import type { ResttyFontSource } from "restty";
 import type { Terminal } from "restty/xterm";
 
 import type { Session } from "./gen/lazycat/webshell/v1/capability_pb";
+import type { TerminalInputDeduper } from "./terminal-input";
 
 export type Tone = "ok" | "error" | "neutral";
 export type TabLayout = "horizontal" | "vertical";
@@ -59,6 +60,7 @@ export type Settings = {
   cursorShape: CursorShape;
   copyOnSelect: boolean;
   scrollbackLimit: number;
+  outputBufferLimit: number;
   autoRestartSessions: boolean;
   debugMode: boolean;
   aiProvider: string;
@@ -78,6 +80,7 @@ export type TerminalPane = {
   mount: HTMLDivElement;
   session?: Session;
   term?: Terminal;
+  inputDeduper: TerminalInputDeduper;
   socket?: WebSocket;
   decoder?: TextDecoder;
   titleBuffer: string;

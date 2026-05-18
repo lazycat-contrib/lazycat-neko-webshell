@@ -8,10 +8,10 @@ use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySyste
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 
-use crate::validation::validate_size;
+use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES};
+use crate::validation::{normalize_output_frame_limit, validate_size};
 
 const EVENT_CAPACITY: usize = 1024;
-const REPLAY_BYTE_LIMIT: usize = 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct TerminalSpec {
@@ -22,6 +22,7 @@ pub struct TerminalSpec {
     pub args: Vec<String>,
     pub cols: u16,
     pub rows: u16,
+    pub output_frame_limit: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +62,7 @@ impl TerminalRegistry {
     ) -> anyhow::Result<Arc<ManagedTerminal>> {
         if let Some(existing) = self.existing(&spec.session_id)? {
             existing.resize(spec.cols, spec.rows)?;
+            existing.set_output_frame_limit(spec.output_frame_limit);
             return Ok(existing);
         }
 
@@ -170,7 +172,7 @@ impl ManagedTerminal {
         let writer = pair.master.take_writer()?;
         let (writer_tx, writer_rx) = std::sync::mpsc::channel::<WriterCommand>();
         let (event_tx, _) = broadcast::channel::<TerminalEvent>(EVENT_CAPACITY);
-        let output = Arc::new(OutputBuffer::default());
+        let output = Arc::new(OutputBuffer::new(spec.output_frame_limit));
         let exit = Arc::new(Mutex::new(None));
 
         spawn_output_thread(reader, event_tx.clone(), Arc::clone(&output));
@@ -238,6 +240,10 @@ impl ManagedTerminal {
             pixel_height: 0,
         })?;
         Ok(())
+    }
+
+    pub fn set_output_frame_limit(&self, limit: usize) {
+        self.output.set_limit(limit);
     }
 
     fn close(&self) {
@@ -333,19 +339,29 @@ fn spawn_exit_thread(
     });
 }
 
-#[derive(Default)]
 struct OutputBuffer {
     inner: Mutex<OutputBufferInner>,
 }
 
-#[derive(Default)]
 struct OutputBufferInner {
     frames: VecDeque<OutputFrame>,
     total_bytes: usize,
     next_sequence: u64,
+    max_frames: usize,
 }
 
 impl OutputBuffer {
+    fn new(max_frames: usize) -> Self {
+        Self {
+            inner: Mutex::new(OutputBufferInner {
+                frames: VecDeque::new(),
+                total_bytes: 0,
+                next_sequence: 0,
+                max_frames: normalize_output_frame_limit(Some(max_frames)),
+            }),
+        }
+    }
+
     fn push(&self, data: Vec<u8>) -> OutputFrame {
         let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
         inner.total_bytes = inner.total_bytes.saturating_add(data.len());
@@ -355,13 +371,14 @@ impl OutputBuffer {
             data,
         };
         inner.frames.push_back(frame.clone());
-        while inner.total_bytes > REPLAY_BYTE_LIMIT {
-            let Some(removed) = inner.frames.pop_front() else {
-                break;
-            };
-            inner.total_bytes = inner.total_bytes.saturating_sub(removed.data.len());
-        }
+        prune_output_buffer(&mut inner);
         frame
+    }
+
+    fn set_limit(&self, max_frames: usize) {
+        let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
+        inner.max_frames = normalize_output_frame_limit(Some(max_frames));
+        prune_output_buffer(&mut inner);
     }
 
     fn snapshot_after(&self, sequence: u64) -> (Vec<OutputFrame>, u64) {
@@ -378,6 +395,21 @@ impl OutputBuffer {
                 .back()
                 .map_or(sequence, |frame| frame.sequence.max(sequence)),
         )
+    }
+}
+
+impl Default for OutputBuffer {
+    fn default() -> Self {
+        Self::new(DEFAULT_OUTPUT_FRAME_LIMIT)
+    }
+}
+
+fn prune_output_buffer(inner: &mut OutputBufferInner) {
+    while inner.frames.len() > inner.max_frames || inner.total_bytes > MAX_OUTPUT_BUFFER_BYTES {
+        let Some(removed) = inner.frames.pop_front() else {
+            break;
+        };
+        inner.total_bytes = inner.total_bytes.saturating_sub(removed.data.len());
     }
 }
 
@@ -400,5 +432,20 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].sequence, 2);
         assert_eq!(frames[0].data, b"two");
+    }
+
+    #[test]
+    fn prunes_output_by_frame_limit() {
+        let output = OutputBuffer::new(128);
+        for index in 0..130 {
+            output.push(vec![index]);
+        }
+
+        let (frames, last_sequence) = output.snapshot_after(0);
+
+        assert_eq!(last_sequence, 130);
+        assert_eq!(frames.len(), 128);
+        assert_eq!(frames[0].sequence, 3);
+        assert_eq!(frames[0].data, vec![2]);
     }
 }

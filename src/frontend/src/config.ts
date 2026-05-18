@@ -5,6 +5,8 @@ export const INITIAL_ROWS = 32;
 export const STATUS_REFRESH_MS = 700;
 export const MAX_FONT_BYTES = 10 * 1024 * 1024;
 export const PREINSTALLED_FONT_BASE = "./fonts/preinstalled/";
+export const MIN_OUTPUT_BUFFER_LIMIT = 128;
+export const MAX_OUTPUT_BUFFER_LIMIT = 20000;
 
 export const FONT_EXTENSIONS = [".woff2", ".woff", ".ttf", ".otf"];
 
@@ -113,6 +115,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cursorShape: "block",
   copyOnSelect: false,
   scrollbackLimit: 10000,
+  outputBufferLimit: 4096,
   autoRestartSessions: false,
   debugMode: false,
   aiProvider: "openai-compatible",

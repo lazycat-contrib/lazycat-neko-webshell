@@ -18,8 +18,11 @@ export type ShellElements = {
   emptyState: HTMLDivElement;
   homeButton: HTMLButtonElement;
   settingsButton: HTMLButtonElement;
+  settingsMenu: HTMLDivElement;
+  openSettingsItem: HTMLButtonElement;
   closeSettings: HTMLButtonElement;
   settingsPage: HTMLElement;
+  settingsTabs: HTMLDivElement;
   localeSelect: HTMLSelectElement;
   themeSelect: HTMLSelectElement;
   fontFamily: HTMLSelectElement;
@@ -32,6 +35,7 @@ export type ShellElements = {
   lineHeight: HTMLInputElement;
   lineHeightValue: HTMLOutputElement;
   scrollbackLimit: HTMLInputElement;
+  outputBufferLimit: HTMLInputElement;
   cursorBlink: HTMLInputElement;
   cursorShape: HTMLSelectElement;
   copyOnSelect: HTMLInputElement;
@@ -68,15 +72,24 @@ export function renderShell(app: HTMLElement): ShellElements {
               <div id="instanceList" class="instance-list" role="listbox" aria-label="Running instances" aria-live="polite"></div>
             </div>
           </div>
-          <button class="icon-button" id="fitTerminal" type="button" aria-label="Focus terminal" title="Focus terminal" data-i18n-aria="action.focusTerminal" data-i18n-title="action.focusTerminal">
-            <i data-lucide="scan"></i>
+          <button class="icon-button" id="fitTerminal" type="button" aria-label="Full screen" title="Full screen" data-i18n-aria="action.fullscreen" data-i18n-title="action.fullscreen">
+            <i data-lucide="maximize"></i>
           </button>
-          <button class="icon-button" id="homeButton" type="button" aria-label="LightOS home" title="LightOS home" data-i18n-aria="action.lightosHome" data-i18n-title="action.lightosHome">
-            <i data-lucide="house"></i>
-          </button>
-          <button class="icon-button" id="settingsButton" type="button" aria-label="Settings" title="Settings" data-i18n-aria="action.settings" data-i18n-title="action.settings">
-            <i data-lucide="settings"></i>
-          </button>
+          <div class="settings-menu-shell" id="settingsMenuShell">
+            <button class="icon-button" id="settingsButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Settings menu" title="Settings menu" data-i18n-aria="action.settingsMenu" data-i18n-title="action.settingsMenu">
+              <i data-lucide="settings"></i>
+            </button>
+            <div class="settings-menu" id="settingsMenu" role="menu" aria-label="Settings menu" data-i18n-aria="action.settingsMenu" hidden>
+              <button id="openSettingsItem" type="button" role="menuitem">
+                <i data-lucide="sliders-horizontal"></i>
+                <span data-i18n="action.settings">Settings</span>
+              </button>
+              <button id="homeButton" type="button" role="menuitem">
+                <i data-lucide="house"></i>
+                <span data-i18n="action.lightosHome">LightOS home</span>
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -103,93 +116,115 @@ export function renderShell(app: HTMLElement): ShellElements {
       </section>
 
       <section class="settings-page" id="settingsPage" hidden aria-label="Settings" data-i18n-aria="action.settings">
-        <header class="settings-header">
-          <div>
-            <h2 data-i18n="action.settings">Settings</h2>
-          </div>
-          <button class="icon-button" id="closeSettings" type="button" aria-label="Close settings" title="Close settings" data-i18n-aria="action.closeSettings" data-i18n-title="action.closeSettings">
-            <i data-lucide="x"></i>
-          </button>
-        </header>
+        <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+          <header class="settings-header">
+            <div>
+              <h2 id="settingsTitle" data-i18n="action.settings">Settings</h2>
+            </div>
+            <button class="icon-button" id="closeSettings" type="button" aria-label="Close settings" title="Close settings" data-i18n-aria="action.closeSettings" data-i18n-title="action.closeSettings">
+              <i data-lucide="x"></i>
+            </button>
+          </header>
 
-        <div class="settings-grid">
-          <section class="settings-section">
-            <div class="section-head">
-              <i data-lucide="palette"></i>
-              <div>
-                <h3 data-i18n="section.appearance">Appearance</h3>
+          <div class="settings-grid">
+            <section class="settings-section">
+              <div class="section-head">
+                <i data-lucide="palette"></i>
+                <div>
+                  <h3 data-i18n="section.appearance">Appearance</h3>
+                </div>
               </div>
-            </div>
-            <label class="field">
-              <span data-i18n="field.language">Language</span>
-              <select id="localeSelect">
-                <option value="auto" data-i18n="locale.auto">Auto</option>
-                <option value="en" data-i18n="locale.en">English</option>
-                <option value="zh-CN" data-i18n="locale.zhCN">Chinese</option>
-              </select>
-            </label>
-            <label class="field">
-              <span data-i18n="field.theme">Theme</span>
-              <select id="themeSelect"></select>
-            </label>
-            <label class="field">
-              <span data-i18n="field.font">Font</span>
-              <select id="fontFamily"></select>
-            </label>
-            <label class="field">
-              <span data-i18n="field.tabs">Tabs</span>
-              <select id="tabLayout">
-                <option value="horizontal" data-i18n="layout.horizontal">Horizontal</option>
-                <option value="vertical" data-i18n="layout.vertical">Vertical</option>
-              </select>
-            </label>
-            <label class="field">
-              <span data-i18n="field.cursor">Cursor</span>
-              <select id="cursorShape">
-                <option value="block" data-i18n="cursor.block">Block</option>
-                <option value="bar" data-i18n="cursor.bar">Bar</option>
-                <option value="underline" data-i18n="cursor.underline">Underline</option>
-              </select>
-            </label>
-            <div class="font-actions">
-              <label class="file-button icon-only-large" aria-label="Upload font" title="Upload font" data-i18n-aria="action.uploadFont" data-i18n-title="action.uploadFont">
-                <input id="fontUpload" type="file" accept=".woff,.woff2,.ttf,.otf,font/woff,font/woff2,font/ttf,font/otf" />
-                <i data-lucide="upload"></i>
+              <label class="field">
+                <span data-i18n="field.language">Language</span>
+                <select id="localeSelect">
+                  <option value="auto" data-i18n="locale.auto">Auto</option>
+                  <option value="en" data-i18n="locale.en">English</option>
+                  <option value="zh-CN" data-i18n="locale.zhCN">Chinese</option>
+                </select>
               </label>
-              <button class="command-button icon-only-large" id="removeFont" type="button" aria-label="Remove selected font" title="Remove selected font" data-i18n-aria="action.removeFont" data-i18n-title="action.removeFont">
-                <i data-lucide="trash-2"></i>
-              </button>
-            </div>
-            <p id="fontStatus" class="field-status"></p>
-            <label class="field">
-              <span><span data-i18n="field.fontSize">Font size</span> <output id="fontSizeValue"></output></span>
-              <input id="fontSize" type="range" min="11" max="22" step="1" />
-            </label>
-            <label class="field">
-              <span><span data-i18n="field.lineHeight">Line height</span> <output id="lineHeightValue"></output></span>
-              <input id="lineHeight" type="range" min="1.05" max="1.6" step="0.01" />
-            </label>
-            <label class="field">
-              <span data-i18n="field.scrollback">Scrollback</span>
-              <input id="scrollbackLimit" type="number" min="1000" max="100000" step="1000" />
-            </label>
-            <label class="switch">
-              <input id="cursorBlink" type="checkbox" />
-              <span data-i18n="setting.cursorBlink">Cursor blink</span>
-            </label>
-            <label class="switch">
-              <input id="copyOnSelect" type="checkbox" />
-              <span data-i18n="setting.copyOnSelect">Copy on select</span>
-            </label>
-            <label class="switch">
-              <input id="autoRestartSessions" type="checkbox" />
-              <span data-i18n="setting.autoRestartSessions">Restart sessions after provider restart</span>
-            </label>
-            <label class="switch">
-              <input id="debugMode" type="checkbox" />
-              <span data-i18n="setting.debugAdapter">Debug adapter</span>
-            </label>
-          </section>
+              <label class="field">
+                <span data-i18n="field.theme">Theme</span>
+                <select id="themeSelect"></select>
+              </label>
+              <label class="field">
+                <span data-i18n="field.tabs">Tabs</span>
+                <select id="tabLayout">
+                  <option value="horizontal" data-i18n="layout.horizontal">Horizontal</option>
+                  <option value="vertical" data-i18n="layout.vertical">Vertical</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="field.cursor">Cursor</span>
+                <select id="cursorShape">
+                  <option value="block" data-i18n="cursor.block">Block</option>
+                  <option value="bar" data-i18n="cursor.bar">Bar</option>
+                  <option value="underline" data-i18n="cursor.underline">Underline</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="field.scrollback">Scrollback</span>
+                <input id="scrollbackLimit" type="number" min="1000" max="100000" step="1000" />
+              </label>
+              <label class="field">
+                <span data-i18n="field.outputBuffer">Output buffer</span>
+                <input id="outputBufferLimit" type="number" min="128" max="20000" step="128" />
+              </label>
+              <label class="switch">
+                <input id="cursorBlink" type="checkbox" />
+                <span data-i18n="setting.cursorBlink">Cursor blink</span>
+              </label>
+              <label class="switch">
+                <input id="copyOnSelect" type="checkbox" />
+                <span data-i18n="setting.copyOnSelect">Copy on select</span>
+              </label>
+              <label class="switch">
+                <input id="autoRestartSessions" type="checkbox" />
+                <span data-i18n="setting.autoRestartSessions">Restart sessions after provider restart</span>
+              </label>
+              <label class="switch">
+                <input id="debugMode" type="checkbox" />
+                <span data-i18n="setting.debugAdapter">Debug adapter</span>
+              </label>
+            </section>
+            <section class="settings-section">
+              <div class="section-head">
+                <i data-lucide="type"></i>
+                <div>
+                  <h3 data-i18n="section.fonts">Fonts</h3>
+                </div>
+              </div>
+              <div class="settings-tabs" id="settingsTabs" role="tablist" aria-label="Fonts" data-i18n-aria="section.fonts">
+                <button type="button" role="tab" aria-selected="true" aria-controls="fontSettingsPanel" data-settings-tab="font-settings" data-i18n="tab.fontSettings">Font settings</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="fontUploadPanel" data-settings-tab="font-upload" data-i18n="tab.fontUpload">Font upload</button>
+              </div>
+              <div class="settings-tab-panel" id="fontSettingsPanel" data-settings-panel="font-settings" role="tabpanel">
+                <label class="field">
+                  <span data-i18n="field.font">Font</span>
+                  <select id="fontFamily"></select>
+                </label>
+                <label class="field">
+                  <span><span data-i18n="field.fontSize">Font size</span> <output id="fontSizeValue"></output></span>
+                  <input id="fontSize" type="range" min="11" max="22" step="1" />
+                </label>
+                <label class="field">
+                  <span><span data-i18n="field.lineHeight">Line height</span> <output id="lineHeightValue"></output></span>
+                  <input id="lineHeight" type="range" min="1.05" max="1.6" step="0.01" />
+                </label>
+              </div>
+              <div class="settings-tab-panel" id="fontUploadPanel" data-settings-panel="font-upload" role="tabpanel" hidden>
+                <div class="font-actions">
+                  <label class="file-button icon-only-large" aria-label="Upload font" title="Upload font" data-i18n-aria="action.uploadFont" data-i18n-title="action.uploadFont">
+                    <input id="fontUpload" type="file" accept=".woff,.woff2,.ttf,.otf,font/woff,font/woff2,font/ttf,font/otf" />
+                    <i data-lucide="upload"></i>
+                  </label>
+                  <button class="command-button icon-only-large" id="removeFont" type="button" aria-label="Remove selected font" title="Remove selected font" data-i18n-aria="action.removeFont" data-i18n-title="action.removeFont">
+                    <i data-lucide="trash-2"></i>
+                  </button>
+                </div>
+                <p id="fontStatus" class="field-status"></p>
+              </div>
+            </section>
+          </div>
         </div>
       </section>
 
@@ -244,8 +279,11 @@ export function renderShell(app: HTMLElement): ShellElements {
     emptyState: qs<HTMLDivElement>("#emptyState"),
     homeButton: qs<HTMLButtonElement>("#homeButton"),
     settingsButton: qs<HTMLButtonElement>("#settingsButton"),
+    settingsMenu: qs<HTMLDivElement>("#settingsMenu"),
+    openSettingsItem: qs<HTMLButtonElement>("#openSettingsItem"),
     closeSettings: qs<HTMLButtonElement>("#closeSettings"),
     settingsPage: qs<HTMLElement>("#settingsPage"),
+    settingsTabs: qs<HTMLDivElement>("#settingsTabs"),
     localeSelect: qs<HTMLSelectElement>("#localeSelect"),
     themeSelect: qs<HTMLSelectElement>("#themeSelect"),
     fontFamily: qs<HTMLSelectElement>("#fontFamily"),
@@ -258,6 +296,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     lineHeight: qs<HTMLInputElement>("#lineHeight"),
     lineHeightValue: qs<HTMLOutputElement>("#lineHeightValue"),
     scrollbackLimit: qs<HTMLInputElement>("#scrollbackLimit"),
+    outputBufferLimit: qs<HTMLInputElement>("#outputBufferLimit"),
     cursorBlink: qs<HTMLInputElement>("#cursorBlink"),
     cursorShape: qs<HTMLSelectElement>("#cursorShape"),
     copyOnSelect: qs<HTMLInputElement>("#copyOnSelect"),

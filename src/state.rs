@@ -12,10 +12,11 @@ use crate::config::{
 };
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
 use crate::terminal_manager::{TerminalRegistry, TerminalSpec};
-use crate::validation::{validate_selector, validate_size};
+use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
 const METADATA_RESTARTABLE: &str = "restartable";
 const METADATA_HOST: &str = "host";
+const METADATA_OUTPUT_BUFFER_LIMIT: &str = "outputBufferLimit";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -140,7 +141,12 @@ impl SessionRecord {
             args: self.args.clone(),
             cols,
             rows,
+            output_frame_limit: self.output_frame_limit(),
         }
+    }
+
+    pub fn output_frame_limit(&self) -> usize {
+        output_frame_limit_from_metadata(&self.metadata)
     }
 }
 
@@ -337,6 +343,13 @@ pub fn bool_flag(value: &str) -> Option<bool> {
     }
 }
 
+pub fn output_frame_limit_from_metadata(metadata: &HashMap<String, String>) -> usize {
+    let limit = metadata
+        .get(METADATA_OUTPUT_BUFFER_LIMIT)
+        .and_then(|value| value.trim().parse::<usize>().ok());
+    normalize_output_frame_limit(limit)
+}
+
 fn builtin_plugins() -> HashMap<String, PluginRecord> {
     [
         PluginRecord {
@@ -430,6 +443,15 @@ mod tests {
         store.save(&sessions).unwrap();
 
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn normalizes_output_frame_limit_from_metadata() {
+        let metadata = HashMap::from([("outputBufferLimit".to_owned(), "64".to_owned())]);
+        assert_eq!(output_frame_limit_from_metadata(&metadata), 128);
+
+        let metadata = HashMap::from([("outputBufferLimit".to_owned(), "512".to_owned())]);
+        assert_eq!(output_frame_limit_from_metadata(&metadata), 512);
     }
 
     fn test_session(id: &str, status: &str, restartable: Option<bool>) -> SessionRecord {
