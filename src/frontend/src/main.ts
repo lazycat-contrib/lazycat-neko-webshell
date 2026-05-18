@@ -1066,6 +1066,9 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
       disposePaneLocal(pane);
     }
   }
+  await nextAnimationFrame();
+  connectWorkspacePanes();
+  scheduleTerminalSizeRefresh();
 }
 
 async function restoreWorkspacePane(
@@ -1093,10 +1096,10 @@ async function restoreWorkspacePane(
     setPaneStatus(pane, tr("status.loadingGhostty"));
     await mountTerminal(pane);
   }
-  if (shouldConnectRestoredPane(pane) && pane.socket?.readyState !== WebSocket.OPEN && pane.socket?.readyState !== WebSocket.CONNECTING) {
-    connectPanePty(pane);
-  } else {
+  if (!shouldConnectRestoredPane(pane)) {
     setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
+  } else if (pane.socket?.readyState !== WebSocket.OPEN && pane.socket?.readyState !== WebSocket.CONNECTING) {
+    setPaneStatus(pane, tr("status.loadingGhostty"));
   }
   return pane;
 }
@@ -1128,6 +1131,28 @@ async function connectRestoredPanes() {
     }
     connectPanePty(pane);
   }
+}
+
+function connectWorkspacePanes() {
+  for (const pane of allPanes()) {
+    if (!shouldConnectRestoredPane(pane)) {
+      if (!pane.exited) {
+        setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
+      }
+      continue;
+    }
+    if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) {
+      continue;
+    }
+    setPaneStatus(pane, tr("status.loadingGhostty"));
+    connectPanePty(pane);
+  }
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
 }
 
 async function createSelectedTab() {
