@@ -1,6 +1,6 @@
 use axum::body::{Body, Bytes};
 use axum::extract::Path;
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, EXPIRES, PRAGMA};
 use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -16,13 +16,24 @@ pub fn security_header(
 
 pub async fn index() -> Response {
     match embedded_asset("index.html") {
-        Some(asset) => Html(String::from_utf8_lossy(asset).into_owned()).into_response(),
+        Some(asset) => no_store(Html(String::from_utf8_lossy(asset).into_owned()).into_response()),
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             "frontend assets are not embedded; run npm run build before cargo build",
         )
             .into_response(),
     }
+}
+
+fn no_store(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
+    );
+    headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+    headers.insert(EXPIRES, HeaderValue::from_static("0"));
+    response
 }
 
 pub async fn frontend_asset(Path(path): Path<String>) -> Response {
