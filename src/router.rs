@@ -4,7 +4,7 @@ use axum::Json;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::http::header::{CONTENT_SECURITY_POLICY, HeaderName};
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, put};
 use connectrpc::Router as ConnectRouter;
 use tower_http::trace::TraceLayer;
 
@@ -12,8 +12,10 @@ use crate::assets::{frontend_asset, frontend_font, index, security_header};
 use crate::config::MAX_FONT_BYTES;
 use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
 use crate::lightos::{self, AdminInfo};
+use crate::preferences::{get_settings, put_settings};
 use crate::proto::lazycat::webshell::v1::CapabilityServiceExt;
 use crate::service::CapabilityServiceImpl;
+use crate::session_api::put_session_placement;
 use crate::state::AppState;
 use crate::terminal::terminal_ws;
 
@@ -29,6 +31,8 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/assets/{*path}", get(frontend_asset))
         .route("/fonts/{*path}", get(frontend_font))
         .route("/api/lightos-admin-info", get(lightos_admin_info))
+        .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/sessions/{id}/placement", put(put_session_placement))
         .route("/api/fonts", get(list_fonts).post(upload_font))
         .route("/api/fonts/{id}", delete(delete_font))
         .route("/api/fonts/{id}/file", get(font_file))

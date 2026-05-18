@@ -23,7 +23,7 @@ import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry"
 import { CapabilityService, type Instance, type Session } from "./gen/lazycat/webshell/v1/capability_pb";
 import { translate, type MessageKey } from "./i18n";
 import { encodeMobileShortcutKeyInput } from "./keyboard";
-import { loadSettings, saveSettings as persistSettings } from "./settings";
+import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
 import { nextPaneLayout, paneIdsInLayout, paneLayoutNode, removePaneFromLayout } from "./split-layout";
 import { cursorStyleSequence, terminalThemeCssVars } from "./terminal-appearance";
@@ -42,7 +42,7 @@ const initialSelector = params.get("name") ?? "";
 
 const elements = renderShell(qs<HTMLDivElement>("#app"));
 
-let settings = loadSettings();
+let settings = loadLocalSettings();
 let instances: Instance[] = [];
 let selectedSelector = initialSelector;
 let tabs: TerminalTab[] = [];
@@ -62,6 +62,7 @@ let terminalResizeTimer: number | undefined;
 init().catch((error) => setGlobalStatus(tr("status.startupFailed", { message: errorMessage(error) }), "error"));
 
 async function init() {
+  settings = await loadSettings();
   await loadUploadedFonts();
   renderOptions();
   bindSettings();
@@ -946,10 +947,6 @@ async function restoreSessions() {
     let sessions = response.sessions
       .filter((session) => session.id && session.selector && session.status !== "closed")
       .sort(compareSessionsForRestore);
-    if (!settings.autoRestartSessions) {
-      await cleanupStoppedSessions(sessions);
-      sessions = sessions.filter((session) => session.status === "running");
-    }
     if (!sessions.length) return;
 
     const restoredTabs = new Map<string, { tabId?: string; host: string; title?: string; order: number; sessions: Session[] }>();
@@ -1019,14 +1016,6 @@ async function restorePane(tab: TerminalTab, session: Session) {
 
 function shouldConnectRestoredSession(session: Session): boolean {
   return session.status === "running" || settings.autoRestartSessions;
-}
-
-async function cleanupStoppedSessions(sessions: Session[]) {
-  await Promise.allSettled(
-    sessions
-      .filter((session) => session.id && session.status !== "running")
-      .map((session) => client.closeSession({ sessionId: session.id })),
-  );
 }
 
 async function connectRestoredPanes() {
@@ -1504,22 +1493,23 @@ function sendRestartPolicy(pane: TerminalPane) {
 
 function syncPanePlacement(pane: TerminalPane) {
   const tab = tabForPane(pane);
+  const placement = panePlacementPayload(tab, pane);
   if (pane.session) {
-    pane.session.metadata.tabId = pane.tabId;
-    pane.session.metadata.paneId = pane.id;
+    pane.session.metadata.tabId = placement.tab_id;
+    pane.session.metadata.paneId = placement.pane_id;
     pane.session.metadata.outputBufferLimit = String(settings.outputBufferLimit);
-    pane.session.metadata.tabOrder = String(tabOrder(tab));
-    pane.session.metadata.paneOrder = String(paneOrder(tab, pane));
-    const title = tab?.customTitle?.trim() ?? "";
-    if (title) {
-      pane.session.metadata.tabTitle = title;
-      pane.session.metadata.tabCustomTitle = "true";
+    pane.session.metadata.tabOrder = placement.tab_order;
+    pane.session.metadata.paneOrder = placement.pane_order;
+    if (placement.tab_title) {
+      pane.session.metadata.tabTitle = placement.tab_title;
+      pane.session.metadata.tabCustomTitle = placement.tab_custom_title;
     } else {
       delete pane.session.metadata.tabTitle;
-      pane.session.metadata.tabCustomTitle = "false";
+      pane.session.metadata.tabCustomTitle = placement.tab_custom_title;
     }
+    persistPanePlacement(pane, placement);
   }
-  sendPanePlacement(pane);
+  sendPanePlacement(pane, placement);
 }
 
 function syncAllTabMetadata() {
@@ -1528,17 +1518,44 @@ function syncAllTabMetadata() {
   }
 }
 
-function sendPanePlacement(pane: TerminalPane) {
-  if (pane.socket?.readyState !== WebSocket.OPEN) return;
-  const tab = tabForPane(pane);
-  pane.socket.send(JSON.stringify({
-    type: "session-placement",
+type PanePlacementPayload = {
+  tab_id: string;
+  pane_id: string;
+  tab_title: string;
+  tab_custom_title: string;
+  tab_order: string;
+  pane_order: string;
+};
+
+function panePlacementPayload(tab: TerminalTab | undefined, pane: TerminalPane): PanePlacementPayload {
+  const title = tab?.customTitle?.trim() ?? "";
+  return {
     tab_id: pane.tabId,
     pane_id: pane.id,
-    tab_title: tab?.customTitle?.trim() ?? "",
-    tab_custom_title: String(Boolean(tab?.customTitle?.trim())),
+    tab_title: title,
+    tab_custom_title: String(Boolean(title)),
     tab_order: String(tabOrder(tab)),
     pane_order: String(paneOrder(tab, pane)),
+  };
+}
+
+function persistPanePlacement(pane: TerminalPane, placement: PanePlacementPayload) {
+  if (!pane.session?.id) return;
+  const body = JSON.stringify(placement);
+  void fetch(new URL(`./api/sessions/${encodeURIComponent(pane.session.id)}/placement`, window.location.href), {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body,
+    keepalive: body.length < 64 * 1024,
+  }).catch(() => undefined);
+}
+
+function sendPanePlacement(pane: TerminalPane, placement = panePlacementPayload(tabForPane(pane), pane)) {
+  if (pane.socket?.readyState !== WebSocket.OPEN) return;
+  pane.socket.send(JSON.stringify({
+    type: "session-placement",
+    ...placement,
   }));
 }
 

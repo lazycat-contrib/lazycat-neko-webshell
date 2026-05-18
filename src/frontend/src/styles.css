@@ -165,7 +165,8 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  width: 54px;
+  width: 82px;
+  min-width: 82px;
   height: 100%;
   color: rgba(237, 242, 247, 0.62);
 }
@@ -277,6 +278,11 @@ textarea:focus-visible {
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
+}
+
+.tab:not(.named) .tab-title {
+  min-width: 5ch;
+  text-align: center;
 }
 
 .webshell[data-tab-layout="vertical"].has-named-tabs .tab-title {

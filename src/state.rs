@@ -121,12 +121,6 @@ impl SessionRecord {
         self
     }
 
-    pub fn restartable(&self) -> bool {
-        self.metadata
-            .get(METADATA_RESTARTABLE)
-            .is_some_and(|value| bool_flag(value).unwrap_or(false))
-    }
-
     pub fn set_restartable(&mut self, restartable: bool) {
         self.metadata
             .insert(METADATA_RESTARTABLE.to_owned(), restartable.to_string());
@@ -220,13 +214,10 @@ impl SessionStore {
         let mut sessions = HashMap::new();
         for session in persisted.sessions {
             let session = session.normalize_for_startup();
-            if session.status != "closed"
-                && session.restartable()
-                && valid_persisted_session(&session)
-            {
+            if session.status != "closed" && valid_persisted_session(&session) {
                 sessions.insert(session.id.clone(), session);
-            } else if !session.restartable() || session.status == "closed" {
-                warn!(session_id = %session.id, "pruned non-restartable persisted terminal session");
+            } else if session.status == "closed" {
+                warn!(session_id = %session.id, "pruned closed persisted terminal session");
             } else {
                 warn!(session_id = %session.id, "ignored invalid persisted terminal session");
             }
@@ -235,7 +226,7 @@ impl SessionStore {
     }
 
     fn save(&self, sessions: &HashMap<String, SessionRecord>) -> io::Result<()> {
-        let sessions = restartable_sessions(sessions);
+        let sessions = persistable_sessions(sessions);
         if sessions.is_empty() {
             return remove_session_file(&self.path);
         }
@@ -255,10 +246,10 @@ impl SessionStore {
     }
 }
 
-fn restartable_sessions(sessions: &HashMap<String, SessionRecord>) -> Vec<SessionRecord> {
+fn persistable_sessions(sessions: &HashMap<String, SessionRecord>) -> Vec<SessionRecord> {
     let mut sessions = sessions
         .values()
-        .filter(|session| session.status != "closed" && session.restartable())
+        .filter(|session| session.status != "closed" && valid_persisted_session(session))
         .cloned()
         .collect::<Vec<_>>();
     sessions.sort_by(|left, right| left.id.cmp(&right.id));
@@ -402,14 +393,14 @@ mod tests {
     use crate::config::{DEFAULT_COLS, DEFAULT_ROWS};
 
     #[test]
-    fn load_prunes_sessions_without_restart_permission() {
+    fn load_keeps_non_restartable_sessions_as_stopped() {
         let path = temp_session_path();
         let store = SessionStore::new(path.clone());
         let persisted = PersistedSessionState {
             version: 1,
             sessions: vec![
                 test_session("keep", "running", Some(true)),
-                test_session("drop", "running", Some(false)),
+                test_session("keep-non-restartable", "running", Some(false)),
                 test_session("legacy-default", "running", None),
             ],
         };
@@ -417,21 +408,33 @@ mod tests {
 
         let sessions = store.load().unwrap();
 
-        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions.len(), 3);
         assert_eq!(
             sessions.get("keep").map(|session| session.status.as_str()),
             Some("stopped")
         );
+        assert_eq!(
+            sessions
+                .get("keep-non-restartable")
+                .map(|session| session.status.as_str()),
+            Some("stopped")
+        );
+        assert_eq!(
+            sessions
+                .get("legacy-default")
+                .and_then(|session| session.metadata.get("restartable"))
+                .map(String::as_str),
+            Some("false")
+        );
         let persisted =
             serde_json::from_slice::<PersistedSessionState>(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(persisted.sessions.len(), 1);
-        assert_eq!(persisted.sessions[0].id, "keep");
+        assert_eq!(persisted.sessions.len(), 3);
 
         let _ = fs::remove_file(path);
     }
 
     #[test]
-    fn save_removes_state_file_when_no_sessions_are_restartable() {
+    fn save_keeps_non_restartable_session_records() {
         let path = temp_session_path();
         let store = SessionStore::new(path.clone());
         fs::write(&path, b"stale").unwrap();
@@ -442,7 +445,19 @@ mod tests {
 
         store.save(&sessions).unwrap();
 
-        assert!(!path.exists());
+        let persisted =
+            serde_json::from_slice::<PersistedSessionState>(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(persisted.sessions.len(), 1);
+        assert_eq!(persisted.sessions[0].id, "drop");
+        assert_eq!(
+            persisted.sessions[0]
+                .metadata
+                .get("restartable")
+                .map(String::as_str),
+            Some("false")
+        );
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]
