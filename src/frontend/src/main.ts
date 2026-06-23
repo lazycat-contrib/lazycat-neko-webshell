@@ -3,7 +3,6 @@ import "./styles.css";
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
 import { createIcons, icons } from "lucide";
-import { Terminal } from "restty/xterm";
 
 import { AIChatStore } from "./ai-chat-store";
 import {
@@ -111,6 +110,7 @@ import {
   resetPaneViewport,
   schedulePaneViewportReset,
 } from "./terminal-viewport";
+import { createPaneTerminal } from "./terminal-options";
 import {
   applyCursorAppearance,
   applyTerminalAppearance,
@@ -3484,43 +3484,18 @@ async function mountTerminal(pane: TerminalPane) {
   applyThemeToMount(pane.mount, currentAppearanceContext());
   pane.decoder = new TextDecoder();
 
-  const term = new Terminal({
+  const term = createPaneTerminal({
     cols: pane.cols || INITIAL_COLS,
     rows: pane.rows || INITIAL_ROWS,
-    createInitialPane: true,
-    shortcuts: false,
-    defaultContextMenu: false,
-    paneStyles: {
-      enabled: true,
-      splitBackground: "var(--term-bg, #050a12)",
-      paneBackground: "var(--term-bg, #050a12)",
-      inactivePaneOpacity: 1,
-      activePaneOpacity: 1,
-      opacityTransitionMs: 0,
-      dividerThicknessPx: 0,
-    },
-    searchUi: false,
     fontSources: resttyFontSourcesFor(currentFont()),
-    appOptions: {
-      renderer: "auto",
-      fontPreset: "none",
-      fontSize: settings.fontSize,
-      ligatures: true,
-      autoResize: true,
-      attachWindowEvents: true,
-      attachCanvasEvents: true,
-      touchSelectionMode: settings.touchSelectionMode,
-      touchSelectionLongPressMs: 450,
-      touchSelectionMoveThresholdPx: 10,
-      beforeInput: ({ text, source }) => transformMobileStickyInput(text, source),
-      maxScrollbackBytes: Math.max(1_000_000, settings.scrollbackLimit * 160),
-      ptyTransport: pane.transport,
-      callbacks: {
-        onGridSize: (cols, rows) => {
-          handleTerminalResize(pane, cols, rows);
-          applyCursorAppearance(pane, settings);
-        },
-      },
+    fontSize: settings.fontSize,
+    scrollbackLimit: settings.scrollbackLimit,
+    touchSelectionMode: settings.touchSelectionMode,
+    transport: pane.transport,
+    beforeInput: ({ text, source }) => transformMobileStickyInput(text, source),
+    onGridSize: (cols, rows) => {
+      handleTerminalResize(pane, cols, rows);
+      applyCursorAppearance(pane, settings);
     },
   });
   if (pane.closing) return;
