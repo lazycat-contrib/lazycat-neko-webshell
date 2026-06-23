@@ -59,6 +59,7 @@ import {
   renderHerdrWorkspaceMenuRow,
 } from "./herdr-views";
 import { translate, type MessageKey } from "./i18n";
+import { renderInstanceListView } from "./instance-views";
 import {
   base64ToBytes,
   boolField,
@@ -2529,23 +2530,7 @@ function updateSelectedInstanceChrome() {
 }
 
 function renderInstances() {
-  if (!instances.length) {
-    elements.instanceList.innerHTML = `<div class="empty">${escapeHtml(tr("status.noInstancesVisible"))}</div>`;
-    return;
-  }
-  elements.instanceList.innerHTML = instances.map((instance) => {
-    const selector = instanceSelector(instance);
-    const running = isRunningInstance(instance);
-    const active = selector === selectedSelector;
-    return `
-      <button class="instance-row ${active ? "selected" : ""}" data-selector="${escapeAttr(selector)}" ${running ? "" : "disabled"} type="button">
-        <span>
-          <strong>${escapeHtml(instance.name || selector)}</strong>
-        </span>
-        <em class="${running ? "ok" : "muted"}">${escapeHtml(instance.status ?? "unknown")}</em>
-      </button>
-    `;
-  }).join("");
+  elements.instanceList.innerHTML = renderInstanceListView(instances, selectedSelector, tr);
   elements.instanceList.querySelectorAll<HTMLButtonElement>(".instance-row").forEach((button) => {
     button.addEventListener("click", () => {
       const selector = normalizeSelector(button.dataset.selector ?? "");
