@@ -77,6 +77,13 @@ import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from
 import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
+import {
+  installPaneTouchKeyboardGuard,
+  installPaneViewportGuard,
+  paneImeInput,
+  resetPaneViewport,
+  schedulePaneViewportReset,
+} from "./terminal-viewport";
 import { cursorStyleSequence, terminalThemeCssVars, withTransparentBackground } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
 import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX, parseCustomGhosttyTheme, resolveTheme, resttyThemeFor } from "./theme-registry";
@@ -4059,8 +4066,13 @@ async function mountTerminal(pane: TerminalPane) {
   installPaneScrollbackFallback(pane, {
     touchSelectionMode: () => settings.touchSelectionMode,
   });
-  installPaneTouchKeyboardGuard(pane);
-  installPaneViewportGuard(pane);
+  installPaneTouchKeyboardGuard(pane, {
+    scrollLockThresholdPx: MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX,
+    scrollAxisRatio: MOBILE_TERMINAL_SCROLL_AXIS_RATIO,
+  });
+  installPaneViewportGuard(pane, {
+    scheduleSizeRefresh: scheduleTerminalSizeRefresh,
+  });
   schedulePaneViewportReset(pane);
   applyTerminalAppearance(pane);
   if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
@@ -4339,90 +4351,6 @@ function refreshPaneTerminalSize(pane: TerminalPane) {
   const rows = pane.term?.rows ?? pane.rows;
   if (pane.socket?.readyState === WebSocket.OPEN && Number.isFinite(cols) && Number.isFinite(rows)) {
     sendPaneResize(pane, cols, rows);
-  }
-}
-
-function installPaneViewportGuard(pane: TerminalPane) {
-  if (pane.viewportGuardInstalled) return;
-  const resetAndResize = () => {
-    schedulePaneViewportReset(pane);
-    scheduleTerminalSizeRefresh();
-  };
-  const resetOnly = () => schedulePaneViewportReset(pane);
-  pane.mount.addEventListener("beforeinput", resetAndResize, true);
-  pane.mount.addEventListener("input", resetAndResize, true);
-  pane.mount.addEventListener("compositionstart", resetAndResize, true);
-  pane.mount.addEventListener("compositionupdate", resetAndResize, true);
-  pane.mount.addEventListener("compositionend", resetAndResize, true);
-  pane.mount.addEventListener("scroll", resetOnly, true);
-  pane.mount.addEventListener("blur", resetAndResize, true);
-  pane.viewportGuardInstalled = true;
-}
-
-function installPaneTouchKeyboardGuard(pane: TerminalPane) {
-  if (pane.touchKeyboardGuardInstalled) return;
-  let touchPointerId: number | undefined;
-  let startX = 0;
-  let startY = 0;
-  let suppressInput: HTMLTextAreaElement | null = null;
-  let suppressInputReadOnly = false;
-  let scrollLocked = false;
-
-  const restoreInput = () => {
-    if (!suppressInput) return;
-    suppressInput.readOnly = suppressInputReadOnly;
-    suppressInput = null;
-  };
-
-  const stopTouch = (pointerId: number) => {
-    if (touchPointerId !== pointerId) return;
-    touchPointerId = undefined;
-    scrollLocked = false;
-    restoreInput();
-  };
-
-  pane.mount.addEventListener("pointerdown", (event) => {
-    if (event.pointerType !== "touch") return;
-    touchPointerId = event.pointerId;
-    startX = event.clientX;
-    startY = event.clientY;
-    scrollLocked = false;
-    suppressInput = paneImeInput(pane);
-    if (suppressInput) {
-      suppressInputReadOnly = suppressInput.readOnly;
-      suppressInput.readOnly = true;
-    }
-  }, { capture: true, passive: true });
-
-  pane.mount.addEventListener("pointermove", (event) => {
-    if (touchPointerId !== event.pointerId || scrollLocked) return;
-    const dx = event.clientX - startX;
-    const dy = event.clientY - startY;
-    const absDx = Math.abs(dx);
-    const absDy = Math.abs(dy);
-    if (Math.hypot(dx, dy) < MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX) return;
-    if (absDy < absDx * MOBILE_TERMINAL_SCROLL_AXIS_RATIO) return;
-    scrollLocked = true;
-  }, { capture: true, passive: true });
-
-  pane.mount.addEventListener("pointerup", (event) => stopTouch(event.pointerId), true);
-  pane.mount.addEventListener("pointercancel", (event) => stopTouch(event.pointerId), true);
-  pane.mount.addEventListener("lostpointercapture", (event) => stopTouch(event.pointerId), true);
-  pane.touchKeyboardGuardInstalled = true;
-}
-
-function schedulePaneViewportReset(pane: TerminalPane) {
-  resetPaneViewport(pane);
-  window.requestAnimationFrame(() => resetPaneViewport(pane));
-}
-
-function resetPaneViewport(pane: TerminalPane) {
-  const hosts = [
-    ...pane.mount.querySelectorAll<HTMLElement>("textarea, [contenteditable='true']"),
-  ];
-  for (const host of hosts) {
-    if (host.scrollTop !== 0) host.scrollTop = 0;
-    if (host.scrollLeft !== 0) host.scrollLeft = 0;
   }
 }
 
@@ -5011,10 +4939,6 @@ function paneForShortcutTarget(target: EventTarget | null): TerminalPane | undef
   }
   if (!elements.settingsPage.hidden || !activeTabId) return undefined;
   return activePane();
-}
-
-function paneImeInput(pane: TerminalPane): HTMLTextAreaElement | null {
-  return pane.term?.restty?.activePane()?.getRawPane().imeInput ?? null;
 }
 
 function hasPaneImePreedit(pane: TerminalPane): boolean {
