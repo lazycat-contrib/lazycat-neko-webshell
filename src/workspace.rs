@@ -15,7 +15,8 @@ use crate::database::{AppDatabase, KV_KEY_WORKSPACES, KV_NAMESPACE_STATE};
 use crate::lightos;
 use crate::state::{
     AppState, METADATA_LOGIN_USER, SessionRecord, default_session_command_for_user,
-    host_from_selector, output_frame_limit_from_metadata, sync_session_login_user,
+    host_from_selector, output_frame_limit_from_metadata, session_command_for_backend_id,
+    sync_session_login_user,
 };
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
@@ -1100,72 +1101,9 @@ fn session_command_for_backend(
 ) -> (String, Vec<String>) {
     match backend {
         SessionBackend::Webshell => default_session_command_for_user(selector, login_user),
-        SessionBackend::Herdr => {
-            let (command, mut args) = default_session_command_for_user(selector, login_user);
-            if let Some(script) = args.last_mut() {
-                *script = herdr_bootstrap_script(script);
-            }
-            (command, args)
-        }
-        SessionBackend::Zellij => {
-            let (command, mut args) = default_session_command_for_user(selector, login_user);
-            if let Some(script) = args.last_mut() {
-                *script = zellij_bootstrap_script(script, selector);
-            }
-            (command, args)
-        }
+        SessionBackend::Herdr => session_command_for_backend_id(selector, login_user, "herdr"),
+        SessionBackend::Zellij => session_command_for_backend_id(selector, login_user, "zellij"),
     }
-}
-
-fn herdr_bootstrap_script(shell_bootstrap: &str) -> String {
-    format!(
-        r#"{shell_bootstrap}
-if ! command -v herdr >/dev/null 2>&1; then
-  echo "Herdr is not installed in this instance."
-  exit 127
-fi
-exec herdr"#
-    )
-}
-
-fn zellij_bootstrap_script(shell_bootstrap: &str, selector: &str) -> String {
-    let session_name = format!("webshell-{}", zellij_session_suffix(selector));
-    format!(
-        r#"{shell_bootstrap}
-if ! command -v zellij >/dev/null 2>&1; then
-  echo "zellij is not installed in this instance."
-  exit 127
-fi
-exec zellij attach --create {}"#,
-        shell_quote(&session_name),
-    )
-}
-
-fn zellij_session_suffix(selector: &str) -> String {
-    selector
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect()
-}
-
-fn shell_quote(value: &str) -> String {
-    let mut quoted = String::with_capacity(value.len() + 2);
-    quoted.push('\'');
-    for ch in value.chars() {
-        if ch == '\'' {
-            quoted.push_str("'\"'\"'");
-        } else {
-            quoted.push(ch);
-        }
-    }
-    quoted.push('\'');
-    quoted
 }
 
 fn next_pane_layout(

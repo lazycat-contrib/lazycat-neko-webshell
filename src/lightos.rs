@@ -84,7 +84,7 @@ pub async fn target_command_available(
         return Err(ConnectError::invalid_argument("invalid command name"));
     }
     authorize_selector(selector, true).await?;
-    let script = format!("command -v {command_name} >/dev/null 2>&1");
+    let script = target_command_probe_script(command_name);
     let mut command = tokio::process::Command::new(LIGHTOSCTL);
     command.args(["exec", "-i", selector, "/bin/sh", "-lc", script.as_str()]);
     let output = timeout(Duration::from_secs(5), command.output())
@@ -92,6 +92,15 @@ pub async fn target_command_available(
         .map_err(|_| ConnectError::deadline_exceeded("lightosctl exec timed out"))?
         .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
     Ok(output.status.success())
+}
+
+fn target_command_probe_script(command_name: &str) -> String {
+    match command_name {
+        "zellij" => {
+            "command -v zellij >/dev/null 2>&1 && zellij --version >/dev/null 2>&1".to_owned()
+        }
+        _ => format!("command -v {command_name} >/dev/null 2>&1"),
+    }
 }
 
 async fn authorized_instance(
@@ -194,7 +203,10 @@ async fn run_lightosctl<const N: usize>(args: [&str; N]) -> Result<Vec<u8>, Conn
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_admin_info, parse_lightos_instances, selector_for_instance};
+    use super::{
+        parse_admin_info, parse_lightos_instances, selector_for_instance,
+        target_command_probe_script,
+    };
 
     #[test]
     fn parses_lightos_instances_and_trims_selector_parts() {
@@ -215,6 +227,18 @@ mod tests {
             Some("admin")
         );
         assert_eq!(instances.get(1).and_then(selector_for_instance), None);
+    }
+
+    #[test]
+    fn zellij_probe_requires_executable_version() {
+        assert_eq!(
+            target_command_probe_script("zellij"),
+            "command -v zellij >/dev/null 2>&1 && zellij --version >/dev/null 2>&1"
+        );
+        assert_eq!(
+            target_command_probe_script("herdr"),
+            "command -v herdr >/dev/null 2>&1"
+        );
     }
 
     #[test]

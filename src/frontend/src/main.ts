@@ -2740,8 +2740,13 @@ async function createSelectedTab() {
 }
 
 async function createTerminalTab(selector: string) {
+  const mode = currentSessionMode();
+  if (mode !== "webshell") {
+    await ensureSessionModeTab(mode);
+    return;
+  }
   try {
-    await runWorkspaceAction("create_tab", { selector, sessionBackend: currentSessionMode() });
+    await runWorkspaceAction("create_tab", { selector, sessionBackend: mode });
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
@@ -2898,13 +2903,18 @@ function createPaneTransport(pane: TerminalPane): PaneTerminalTransport {
 }
 
 async function createPane(tab: TerminalTab, placement: SplitPlacement) {
+  const mode = currentSessionMode();
+  if (mode !== "webshell") {
+    await ensureSessionModeTab(mode);
+    return;
+  }
   try {
     await runWorkspaceAction("split_pane", {
       selector: tab.selector,
       tabId: tab.id,
       paneId: activePane(tab)?.id,
       direction: placement,
-      sessionBackend: currentSessionMode(),
+      sessionBackend: mode,
     });
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
