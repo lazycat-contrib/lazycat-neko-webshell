@@ -22,7 +22,7 @@ import {
   validateTerminalBackgroundFile,
 } from "./appearance-settings";
 import { updateViewportMetrics as applyViewportMetrics } from "./app-viewport";
-import { TerminalActionWSClient, type ActionResponseMeta } from "./action-ws-client";
+import { TerminalActionWSClient } from "./action-ws-client";
 import { appendAIContextText, recentAIContextText } from "./ai-context";
 import {
   clipboardImageFile,
@@ -64,8 +64,6 @@ import { translate, type MessageKey } from "./i18n";
 import {
   base64ToBytes,
   boolField,
-  metaBoolean,
-  metaNumber,
   metaString,
   metaStringArray,
   stringField,
@@ -81,6 +79,16 @@ import {
 } from "./mobile-shortcuts";
 import { renderNewTabMenuView, renderTabsView, type TabViewItem } from "./navigation-views";
 import { createPaneTransport } from "./pane-transport";
+import {
+  AI_CHAT_PLUGIN_ID,
+  downloadPluginPayload,
+  FILE_TRANSFER_PLUGIN_ID,
+  pluginDescription,
+  pluginDisplayName,
+  pluginIcon,
+  pluginMetaLabel,
+  transferProgressText,
+} from "./plugin-utils";
 import { fileNameFromPath, normalizeRemotePath, parentRemotePath, parseFileBrowserEntries, uploadTargetPath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
@@ -171,8 +179,6 @@ const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
 const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
-const FILE_TRANSFER_PLUGIN_ID = "file-transfer";
-const AI_CHAT_PLUGIN_ID = "ai-chat";
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -1969,7 +1975,7 @@ async function configurePlugin(pluginId: string, enabled: boolean) {
     const updated = response.plugin ?? { ...plugin, enabled };
     plugins = plugins.map((item) => item.id === pluginId ? updated : item);
     setPluginStatus(
-      tr(enabled ? "status.pluginEnabled" : "status.pluginDisabled", { name: pluginDisplayName(updated) }),
+      tr(enabled ? "status.pluginEnabled" : "status.pluginDisabled", { name: pluginDisplayName(updated, tr) }),
       "ok",
     );
   } catch (error) {
@@ -2003,17 +2009,17 @@ function renderPlugin(plugin: PluginDescriptor): string {
   const saving = pluginSaveInFlight.has(plugin.id);
   const status = plugin.enabled ? tr("setting.pluginEnabled") : tr("setting.pluginDisabled");
   const meta = Array.from(new Set([plugin.kind, ...plugin.scopes].filter(Boolean)))
-    .map((item) => pluginMetaLabel(item));
+    .map((item) => pluginMetaLabel(item, tr));
   const settingsTool = plugin.id === AI_CHAT_PLUGIN_ID ? renderAIAccessSettings(plugin) : "";
   return `
     <div class="plugin-item" role="listitem">
       <div class="plugin-content">
         <div class="plugin-title-row">
           <span class="plugin-icon"><i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i></span>
-          <span class="plugin-name">${escapeHtml(pluginDisplayName(plugin))}</span>
+          <span class="plugin-name">${escapeHtml(pluginDisplayName(plugin, tr))}</span>
           <code>${escapeHtml(plugin.id)}</code>
         </div>
-        <p class="plugin-description">${escapeHtml(pluginDescription(plugin))}</p>
+        <p class="plugin-description">${escapeHtml(pluginDescription(plugin, tr))}</p>
         <div class="plugin-meta">
           ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
         </div>
@@ -2109,9 +2115,9 @@ function renderPluginTools() {
     activePluginToolId = tools[0]?.id ?? "";
   }
   elements.pluginToolTabs.innerHTML = tools.map((plugin) => `
-    <button type="button" role="tab" data-plugin-tool="${escapeAttr(plugin.id)}" aria-selected="${plugin.id === activePluginToolId}" aria-label="${escapeAttr(pluginDisplayName(plugin))}" title="${escapeAttr(pluginDisplayName(plugin))}">
+    <button type="button" role="tab" data-plugin-tool="${escapeAttr(plugin.id)}" aria-selected="${plugin.id === activePluginToolId}" aria-label="${escapeAttr(pluginDisplayName(plugin, tr))}" title="${escapeAttr(pluginDisplayName(plugin, tr))}">
       <i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i>
-      <span class="tool-tip">${escapeHtml(pluginDisplayName(plugin))}</span>
+      <span class="tool-tip">${escapeHtml(pluginDisplayName(plugin, tr))}</span>
     </button>
   `).join("");
   const activePlugin = tools.find((plugin) => plugin.id === activePluginToolId);
@@ -2151,7 +2157,7 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
   return renderAIChatToolView({
     disabled,
     title: tr("plugin.aiChat.name"),
-    description: pluginDescription(plugin),
+    description: pluginDescription(plugin, tr),
     session,
     messages: session.messages,
     streaming: aiChat.streaming,
@@ -2606,54 +2612,6 @@ function setFileTransferOutput(message: string, tone: Tone = "neutral") {
   if (!output) return;
   output.textContent = message;
   output.dataset.tone = tone;
-}
-
-function downloadPluginPayload(payload: Uint8Array, name: string, contentType: string) {
-  const bytes = new Uint8Array(payload);
-  const blob = new Blob([bytes.buffer], { type: contentType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = name;
-  anchor.rel = "noreferrer";
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function transferProgressText(meta: ActionResponseMeta | undefined): string {
-  const name = metaString(meta, "name");
-  const percent = metaNumber(meta, "percent");
-  const done = metaBoolean(meta, "done");
-  const status = `${Number.isFinite(percent) ? `${percent}%` : "..."}`;
-  return [name, done ? `${status} complete` : status].filter(Boolean).join(": ");
-}
-
-function pluginDisplayName(plugin: PluginDescriptor): string {
-  if (plugin.id === AI_CHAT_PLUGIN_ID) return tr("plugin.aiChat.name");
-  if (plugin.id === FILE_TRANSFER_PLUGIN_ID) return tr("plugin.fileTransfer.name");
-  return plugin.displayName || plugin.id;
-}
-
-function pluginIcon(pluginId: string): string {
-  if (pluginId === AI_CHAT_PLUGIN_ID) return "message-square-text";
-  if (pluginId === FILE_TRANSFER_PLUGIN_ID) return "folder-up";
-  return "plug";
-}
-
-function pluginDescription(plugin: PluginDescriptor): string {
-  if (plugin.id === AI_CHAT_PLUGIN_ID) return tr("plugin.aiChat.description");
-  if (plugin.id === FILE_TRANSFER_PLUGIN_ID) return tr("plugin.fileTransfer.description");
-  return plugin.description || plugin.kind || plugin.id;
-}
-
-function pluginMetaLabel(value: string): string {
-  if (value === "ai") return tr("plugin.meta.ai");
-  if (value === "filesystem") return tr("plugin.meta.filesystem");
-  if (value === "session") return tr("plugin.meta.session");
-  if (value === "transfer") return tr("plugin.meta.transfer");
-  return value;
 }
 
 function setPluginStatus(message: string, tone: Tone = "neutral") {
