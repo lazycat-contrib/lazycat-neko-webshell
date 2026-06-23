@@ -91,6 +91,15 @@ import {
 import { fileNameFromPath, normalizeRemotePath, parentRemotePath, parseFileBrowserEntries, uploadTargetPath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderFontFamilyOptions, renderThemeSelectOptions } from "./settings-options-view";
+import {
+  normalizeSessionMode,
+  renderSessionBackendSelectOptions,
+  selectableSessionBackends,
+  sessionBackendInstalled,
+  sessionBackendIsSelectable,
+  sessionBackendLabel,
+  type SessionMode,
+} from "./session-backends";
 import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
@@ -193,8 +202,6 @@ const capabilityClient = createClient(
   }),
 );
 const actionClient = new TerminalActionWSClient();
-
-type SessionMode = SessionBackendId;
 
 const params = new URLSearchParams(window.location.search);
 const initialSelector = normalizeSelector(params.get("name") ?? "");
@@ -365,7 +372,7 @@ function bindSettings() {
   });
   elements.defaultSessionBackend.addEventListener("change", () => {
     const backend = normalizeSessionMode(elements.defaultSessionBackend.value);
-    settings.defaultSessionBackend = sessionBackendIsSelectable(backend) ? backend : "webshell";
+    settings.defaultSessionBackend = sessionBackendIsSelectable(sessionBackendsState, backend) ? backend : "webshell";
     saveSettings();
     applySettings();
   });
@@ -632,7 +639,7 @@ function bindActions() {
   elements.refreshInstances.addEventListener("click", () => void loadInstances());
   elements.newTabButton.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (selectableSessionBackends().length <= 1) {
+    if (selectableSessionBackends(sessionBackendsState).length <= 1) {
       void createSelectedTab();
       return;
     }
@@ -1558,7 +1565,7 @@ function sendZellijPaneModeKey(pane: TerminalPane, key: string): boolean {
 function setBackendActionUnavailable(pane: TerminalPane) {
   setGlobalStatus(
     tr("status.backendActionUnavailable", {
-      backend: sessionBackendLabel(pane.sessionBackend, pane.sessionBackend),
+      backend: sessionBackendLabel(pane.sessionBackend, pane.sessionBackend, tr),
     }),
     "neutral",
   );
@@ -1567,7 +1574,7 @@ function setBackendActionUnavailable(pane: TerminalPane) {
 function setBackendActionFailed(pane: TerminalPane, message: string) {
   setGlobalStatus(
     tr("status.backendActionFailed", {
-      backend: sessionBackendLabel(pane.sessionBackend, pane.sessionBackend),
+      backend: sessionBackendLabel(pane.sessionBackend, pane.sessionBackend, tr),
       message,
     }),
     "error",
@@ -1667,7 +1674,7 @@ function currentTheme(): TerminalTheme {
 }
 
 function updateSessionBackendSettings() {
-  const selectable = selectableSessionBackends();
+  const selectable = selectableSessionBackends(sessionBackendsState);
   const hasOptionalBackend = selectable.some((backend) => backend.id !== "webshell");
   const hasHerdr = selectable.some((backend) => backend.id === "herdr");
   elements.sessionBackendSettings.hidden = !hasOptionalBackend;
@@ -1682,7 +1689,7 @@ function updateSessionBackendSettings() {
   );
   if (!hasOptionalBackend) {
     settings.defaultSessionBackend = "webshell";
-    elements.defaultSessionBackend.innerHTML = `<option value="webshell">${escapeHtml(tr("backend.webshell"))}</option>`;
+    elements.defaultSessionBackend.innerHTML = renderSessionBackendSelectOptions(selectable, tr);
     elements.defaultSessionBackend.value = "webshell";
     renderNewTabMenu();
     updateHerdrWorkspaceEntry();
@@ -1694,25 +1701,14 @@ function updateSessionBackendSettings() {
   if (settings.defaultSessionBackend !== selected) {
     settings.defaultSessionBackend = selected;
   }
-  elements.defaultSessionBackend.innerHTML = selectable
-    .map((backend) => `<option value="${escapeAttr(backend.id)}">${escapeHtml(sessionBackendLabel(backend.id, backend.label))}</option>`)
-    .join("");
+  elements.defaultSessionBackend.innerHTML = renderSessionBackendSelectOptions(selectable, tr);
   elements.defaultSessionBackend.value = selected;
   renderNewTabMenu();
   updateHerdrWorkspaceEntry();
 }
 
-function selectableSessionBackends(): SessionBackendInfo[] {
-  const backends = sessionBackendsState?.backends ?? [{ id: "webshell" as const, label: "WebShell native", available: true }];
-  return backends.filter((backend) => backend.available || backend.id === "webshell");
-}
-
-function backendInstalled(mode: SessionMode): boolean {
-  return selectableSessionBackends().some((backend) => backend.id === mode);
-}
-
 function updateHerdrWorkspaceEntry() {
-  const hasHerdr = backendInstalled("herdr");
+  const hasHerdr = sessionBackendInstalled(sessionBackendsState, "herdr");
   elements.herdrWorkspaceSwitcher.hidden = !hasHerdr;
   if (!hasHerdr) {
     closeHerdrWorkspaceMenu();
@@ -2699,7 +2695,7 @@ async function refreshHerdrState(
 async function maybeAutoRestoreHerdrEntry(selector: string) {
   const normalized = normalizeSelector(selector);
   if (!normalized || settings.defaultSessionBackend !== "herdr") return;
-  if (!backendInstalled("herdr") || !herdrState?.available || !herdrState.workspaces.length) return;
+  if (!sessionBackendInstalled(sessionBackendsState, "herdr") || !herdrState?.available || !herdrState.workspaces.length) return;
   if (findPaneBySessionBackend(normalized, "herdr")) return;
   if (herdrAutoRestoredSelectors.has(normalized)) return;
   herdrAutoRestoredSelectors.add(normalized);
@@ -2741,7 +2737,7 @@ async function runHerdrAction(
 
 async function ensureHerdrEntry(selector = selectedSelector): Promise<boolean> {
   const normalized = normalizeSelector(selector);
-  if (!normalized || !sessionBackendIsSelectable("herdr")) return false;
+  if (!normalized || !sessionBackendIsSelectable(sessionBackendsState, "herdr")) return false;
   const existing = findPaneBySessionBackend(normalized, "herdr");
   if (existing) {
     activatePane(existing.tab.id, existing.pane.id);
@@ -2992,15 +2988,6 @@ function renderHerdrDock() {
   updateIcons();
 }
 
-function normalizeSessionMode(value: unknown): SessionMode {
-  return value === "herdr" || value === "zellij" ? value : "webshell";
-}
-
-function sessionBackendIsSelectable(mode: SessionMode): boolean {
-  if (mode === "webshell") return true;
-  return selectableSessionBackends().some((backend) => backend.id === mode);
-}
-
 function findPaneBySessionBackend(
   selector: string,
   mode: SessionMode,
@@ -3018,20 +3005,13 @@ function findPaneBySessionBackend(
   return undefined;
 }
 
-function sessionBackendLabel(id: SessionBackendId, fallback: string): string {
-  if (id === "webshell") return tr("backend.webshell");
-  if (id === "herdr") return tr("backend.herdr");
-  if (id === "zellij") return tr("backend.zellij");
-  return fallback;
-}
-
 function renderNewTabMenu() {
-  const selectable = selectableSessionBackends();
+  const selectable = selectableSessionBackends(sessionBackendsState);
   const preferred = preferredBackendForNewTab();
   elements.newTabMenu.innerHTML = renderNewTabMenuView(
     selectable.map((backend) => ({
       id: backend.id,
-      label: sessionBackendLabel(backend.id, backend.label),
+      label: sessionBackendLabel(backend.id, backend.label, tr),
       selected: backend.id === preferred,
     })),
     tr("status.defaultBackend"),
@@ -3108,7 +3088,7 @@ function closeHerdrWorkspaceMenu() {
 }
 
 function renderHerdrWorkspaceMenu() {
-  if (!backendInstalled("herdr")) {
+  if (!sessionBackendInstalled(sessionBackendsState, "herdr")) {
     elements.herdrWorkspaceMenuList.replaceChildren();
     elements.herdrWorkspaceMenuStatus.textContent = "";
     return;
@@ -3300,7 +3280,7 @@ async function createSelectedTab(mode?: SessionMode) {
 }
 
 async function createTerminalTab(selector: string, requestedMode?: SessionMode) {
-  const mode = requestedMode && sessionBackendIsSelectable(requestedMode)
+  const mode = requestedMode && sessionBackendIsSelectable(sessionBackendsState, requestedMode)
     ? requestedMode
     : preferredBackendForNewTab();
   try {
@@ -3329,7 +3309,7 @@ async function createTerminalTab(selector: string, requestedMode?: SessionMode) 
 
 function preferredBackendForNewTab(): SessionMode {
   const preferred = normalizeSessionMode(settings.defaultSessionBackend);
-  if (!sessionBackendIsSelectable(preferred)) return "webshell";
+  if (!sessionBackendIsSelectable(sessionBackendsState, preferred)) return "webshell";
   return preferred;
 }
 
