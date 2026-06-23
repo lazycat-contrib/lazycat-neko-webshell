@@ -1,80 +1,108 @@
-# Neko Webshell
+# Neko Webshell / 小橘 WebShell
 
-Rust + Restty/Ghostty WebShell provider for LazyCat/LightOS.
+Neko Webshell 是给 LazyCat / LightOS 使用的远程 Web Shell。它的目标很直接：在浏览器里打开目标应用实例，继续使用你熟悉的 shell、编辑器、AI 编程工具和运维命令，而不用先准备 SSH 客户端。
 
-## Architecture
+## 主要功能
 
-Neko Webshell uses two protocol lanes:
+- 远程终端：从 LightOS 应用入口直接进入目标实例，支持多标签和分屏。
+- 会话恢复：重新打开页面后会恢复已有标签、窗格和最近输出，长时间运行的程序不会因为浏览器关闭而立刻丢失。
+- Herdr 集成：如果设备里安装了 Herdr，可以把 Herdr workspace / tab 接入 WebShell 界面；没有 Herdr 时界面不会打扰用户。
+- zellij 后端预留：新建终端时可以按可用后端选择，方便后续复用 zellij。
+- 文件传输：内置文件浏览器，可在当前终端工作目录附近浏览、上传、读取、下载文件。
+- AI Chat：内置 WebShell 聊天工具，支持模型获取、连接测试、多会话、导出聊天记录，并可选择是否携带最近终端上下文。
+- 图片粘贴：支持把剪贴板图片作为文件写入目标实例，再把路径送入终端输入流程。
+- 终端外观：支持 Ghostty 风格终端主题、字体、字号、行高、光标样式，以及终端背景图、透明度和模糊。
+- 界面风格：软件界面和终端主题分开设置，深色、浅色风格都可独立选择。
+- 移动端操作：提供触屏辅助键盘、Tab/方向键/修饰键/符号/Fn 分页、双击唤起系统键盘、滑动切换标签和误触关闭确认。
 
-- WebSocket data plane: `/ws/terminal` carries terminal bytes, resize events, and process lifecycle notices. Browser terminal input is sent as binary UTF-8 frames; text frames are reserved for JSON control messages such as resize and close.
-- Connect control plane: `lazycat.webshell.v1.CapabilityService` manages instances, sessions, plugin descriptors, plugin enablement, and control leases.
+## 使用方式
 
-The protobuf schema is intentionally generic. It describes capabilities, sessions, plugins, invocations, and control leases. Concrete implementations such as sz/rz, tssh file transfer, or AI shell operation are represented as plugin descriptors and opaque payloads rather than hard-coded protocol fields.
+在 LightOS 的 WebShell 入口选择目标应用实例后打开即可。顶部可以新建标签、切换实例、打开功能菜单；终端区域负责实际输入输出。
 
-## Built-In Plugins
+移动端上，常用操作会尽量收进菜单和底部辅助键盘：
 
-Two built-in plugin descriptors are registered by default:
+- `Main`：Ctrl、Alt、Shift、Tab、Return、方向键、复制、粘贴等常用键。
+- `Ops`：新建/切换/关闭标签、分屏、调整字号等操作。
+- `Nav`：Home、End、PageUp、PageDown、Delete、Backspace。
+- `Fn`：F1-F12。
+- `Sym`：常用 shell 符号。
 
-- `file-transfer`: browses, reads, uploads, downloads, and stats files inside the selected LightOS instance through `/lzcinit/lightosctl exec -i`.
-- `ai-chat`: provides the WebShell chat tool with optional recent terminal context, model discovery, access testing, multi-session chat history, and export.
+插件入口在菜单里。打开插件面板后，顶部关闭按钮会一直保留在可点位置。
 
-Both plugins are exposed through the Connect control plane. Built-in plugin enablement is managed from Settings -> Plugins and persisted in the application database. The frontend avoids a generic plugin invocation form; file movement, image paste, and AI chat are surfaced as product workflows instead of raw payload editors.
+## 内置工具
 
-## Frontend Interaction
+### 文件传输
 
-The default screen is terminal-first: tabs and common actions are compact icon controls, while instance selection, themes, fonts, tab orientation, and reserved AI settings live behind the settings entry.
+文件传输是一个远端文件浏览器，不需要手动记路径。它会优先同步当前 WebShell 的工作目录；也可以回到根目录、进入上级目录或刷新列表。
 
-Tabs can be horizontal or vertical. Each tab can also be split into stacked panes with split up/down actions. A split pane is implemented by creating another WebShell session for the same LightOS selector and rendering another Restty terminal instance; the Rust WebSocket data plane remains the owner of PTY bytes.
+常见操作：
 
-Themes are applied through Restty's Ghostty theme API and mirrored into local CSS variables for the shell chrome. Built-in terminal fonts are served from the app bundle so the CSP does not depend on CDN font loading. Uploaded fonts are stored under `/lzcapp/var/fonts` in LazyCat; local development can override this with `NEKO_WEBSHELL_FONT_DIR`. A single personalized terminal background image is stored under `/lzcapp/var/backgrounds`; local development can override this with `NEKO_WEBSHELL_BACKGROUND_DIR`, while opacity, blur, and enablement stay in the settings database. The SQLite settings/session database defaults to `/lzcapp/var/webshell.db` and can be overridden with `NEKO_WEBSHELL_DATABASE_FILE`.
+- 选择目录后上传多个本地文件。
+- 选择文件后下载；多文件下载会打包。
+- 查看文本文件内容。
+- 查看文件信息。
 
-On touch/coarse-pointer mobile devices, the terminal surface exposes a Termux-style paged extra keyboard for Esc, Tab, sticky modifiers, arrows, Enter, paste, navigation/editing keys, symbols, and F1-F12. Restty owns desktop keyboard, paste, and IME input so terminal input is not duplicated by global document handlers.
+### AI Chat
 
-## Development
+AI Chat 是 WebShell 里的聊天工具，不会自动控制终端。它适合询问命令含义、分析最近输出、生成排查思路或整理操作步骤。
+
+可用能力：
+
+- 获取模型列表并切换模型。
+- 测试当前 AI 配置是否可用。
+- 按模型区分多会话。
+- 复制单条回复或导出整个会话。
+- 可选携带最近终端上下文；关闭后不会发送终端内容。
+
+## Herdr
+
+Neko Webshell 会检测 Herdr 是否安装。检测到后，用户可以在新建标签或设置中选择 Herdr 后端。
+
+Herdr 的 workspace 会以 space 形式显示；当前 space 会保留名称，非当前项在移动端会压缩显示，避免挤占终端空间。通过 Herdr 的接口可以切换 workspace、创建 tab、刷新状态和接收通知。
+
+## 个性化
+
+设置里可以调整：
+
+- 软件界面风格和语言。
+- 默认新建后端。
+- 终端主题、字体、字号、行高、光标。
+- 终端背景图片、透明度和模糊。
+- 历史输出保留数量。
+- 插件启用状态。
+- AI 访问配置和隐私选项。
+
+## 本地开发
+
+安装依赖后构建：
 
 ```bash
 npm install
-npm run proto:ts
 npm run build
 cargo test
 cargo run
 ```
 
-For local UI work, run the Rust service on `127.0.0.1:8080`, then:
+开发前端界面：
 
 ```bash
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The Vite dev server proxies Connect and WebSocket requests to the Rust backend.
+默认打开 `http://127.0.0.1:5173`。Vite 会把接口请求转发到本地后端。
 
-## LPK
+## 打包
 
-Required LazyCat provider pieces are included:
-
-- `package.yml` grants `lightos.manage`. The app is visible in the launcher and resolves a running selector when opened without `?name=` by preferring the remembered last running instance, then the first running instance.
-- `lzc-build.yml` builds the Rust binary, builds frontend assets, and exports `lightos.webshell`.
-- `resources/lightos.webshell/default/webshell-provider.json` declares `root_path: "/"` and `support_home: true`.
-- `lzc-manifest.yml` routes `/` to the provider executable and enables multi-instance app metadata.
-
-Build a release with:
+构建 LazyCat LPK：
 
 ```bash
 lzc-cli project release
 ```
 
-## Runtime Contract
-
-LightOS admin opens:
+项目已经包含 WebShell provider 所需的 LazyCat 元数据。安装后，LightOS 会通过 WebShell 入口打开：
 
 ```text
 https://<provider-domain>/?name=<name>@<owner_deploy_id>
 ```
 
-Selectors must use the exact `<name>@<owner_deploy_id>` shape. Terminal shells run through:
-
-```bash
-/lzcinit/lightosctl exec -ti '<selector>' /bin/sh -lc '<bootstrap>'
-```
-
-The bootstrap sources `/run/catlink/shell-env.sh` when present, then execs the target instance shell.
+目标实例的命令执行由 LightOS 提供，Neko Webshell 只负责界面、会话、转发和使用体验。

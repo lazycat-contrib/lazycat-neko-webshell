@@ -3649,7 +3649,8 @@ output {
   }
 
   .plugin-sidebar {
-    top: calc(var(--app-viewport-offset-top) + 8px);
+    position: absolute;
+    top: 8px;
     right: max(8px, var(--lzc-safe-area-inset-right));
     bottom: max(8px, var(--lzc-safe-area-inset-bottom));
     left: max(8px, var(--lzc-safe-area-inset-left));
@@ -3669,9 +3670,9 @@ output {
   }
 
   .plugin-sidebar-header .icon-button {
-    width: 42px;
-    height: 42px;
-    min-width: 42px;
+    width: 46px;
+    height: 46px;
+    min-width: 46px;
   }
 
   .plugin-tool-tabs {
@@ -3843,21 +3844,15 @@ output {
   }
 
   .mobile-shortcuts {
-    position: fixed;
-    top: calc(
-      var(--app-viewport-offset-top)
-      + var(--app-viewport-height)
-      - var(--mobile-shortcuts-height)
-      - var(--lzc-safe-area-inset-bottom)
-    );
-    right: auto;
-    bottom: auto;
-    left: var(--app-viewport-offset-left);
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 18;
     display: grid;
     grid-template-rows: 32px minmax(0, auto);
     gap: 5px;
-    width: var(--app-viewport-width);
+    width: 100%;
     height: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
     min-height: 0;
     padding:
