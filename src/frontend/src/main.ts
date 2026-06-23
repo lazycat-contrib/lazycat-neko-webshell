@@ -89,9 +89,17 @@ import {
   resetPaneViewport,
   schedulePaneViewportReset,
 } from "./terminal-viewport";
-import { cursorStyleSequence, terminalThemeCssVars, withTransparentBackground } from "./terminal-appearance";
+import {
+  applyCursorAppearance,
+  applyTerminalAppearance,
+  applyThemeToMount,
+  applyThemeVariables,
+  currentTerminalFont,
+  currentTerminalTheme,
+  terminalAppearanceContext,
+} from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
-import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX, resolveTheme, resttyThemeFor } from "./theme-registry";
+import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX } from "./theme-registry";
 import { aiChatTranscript, renderAIChatMessages as renderAIChatMessagesView, renderAIChatToolView, renderFileTransferToolView } from "./plugin-views";
 import type {
   AIChatMessage,
@@ -1653,9 +1661,8 @@ function setTerminalFontSize(value: number) {
 }
 
 function applySettings(options: { resizeTerminals?: boolean } = {}) {
-  const theme = currentTheme();
-  const font = currentFont();
-  const resttyTheme = resttyThemeFor(theme);
+  const appearance = currentAppearanceContext();
+  const { theme, font, resttyTheme } = appearance;
   applyI18n();
   applyThemeVariables(elements.webshell, resttyTheme);
   applyThemeVariables(elements.terminalStage, resttyTheme);
@@ -1700,7 +1707,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   renderPlugins();
 
   for (const pane of allPanes()) {
-    applyTerminalAppearance(pane, resttyTheme);
+    applyTerminalAppearance(pane, appearance, reportFontLoadError);
     if (options.resizeTerminals) {
       pane.term?.restty?.setFontSize(settings.fontSize);
       pane.term?.restty?.updateSize(true);
@@ -1711,7 +1718,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
 }
 
 function currentTheme(): TerminalTheme {
-  return resolveTheme(settings.themeId, settings.customThemes);
+  return currentTerminalTheme(settings);
 }
 
 function currentHerdrActiveBackground(): string {
@@ -1774,80 +1781,15 @@ function updateHerdrWorkspaceEntry() {
 }
 
 function currentFont(): FontPreset {
-  return [...FONT_PRESETS, ...customFonts].find((item) => item.id === settings.fontFamilyId) ?? FONT_PRESETS[0];
+  return currentTerminalFont(settings, customFonts);
 }
 
-function applyThemeVariables(target: HTMLElement, resttyTheme = resttyThemeFor(currentTheme())) {
-  const vars = terminalThemeCssVars(resttyTheme);
-  for (const [name, value] of Object.entries(vars)) {
-    target.style.setProperty(name, value);
-  }
+function currentAppearanceContext() {
+  return terminalAppearanceContext(settings, customFonts);
 }
 
-function applyThemeToMount(mount: HTMLElement, resttyTheme = resttyThemeFor(currentTheme())) {
-  const theme = currentTheme();
-  const font = currentFont();
-  const themeClasses = THEMES.map((item) => item.className).filter((value): value is string => Boolean(value));
-  mount.classList.remove(...themeClasses);
-  if (theme.className) {
-    mount.classList.add(theme.className);
-  }
-  applyThemeVariables(mount, resttyTheme);
-  mount.classList.remove("cursor-shape-block", "cursor-shape-bar", "cursor-shape-underline");
-  mount.classList.add(`cursor-shape-${settings.cursorShape}`);
-  mount.classList.toggle("cursor-blink", settings.cursorBlink);
-  mount.style.setProperty("--term-font-family", font.family);
-  mount.style.setProperty("--term-font-size", `${settings.fontSize}px`);
-  mount.style.setProperty("--term-line-height", String(settings.lineHeight));
-  applyTerminalBackgroundToMount(mount);
-}
-
-function applyTerminalAppearance(pane: TerminalPane, theme = resttyThemeFor(currentTheme())) {
-  applyThemeToMount(pane.mount, theme);
-  const term = pane.term;
-  if (!term?.restty) return;
-  const hasBackground = terminalBackgroundActive();
-  const renderTheme = hasBackground ? withTransparentBackground(theme) : theme;
-  if (renderTheme) {
-    term.restty.applyTheme(renderTheme, currentTheme().label);
-  }
-  const themeVars = terminalThemeCssVars(theme);
-  term.restty.setPaneStyleOptions({
-    splitBackground: hasBackground ? "transparent" : themeVars["--term-bg"],
-    paneBackground: hasBackground ? "transparent" : themeVars["--term-bg"],
-    inactivePaneOpacity: 1,
-    activePaneOpacity: 1,
-    opacityTransitionMs: 0,
-    dividerThicknessPx: 1,
-  });
-  applyCursorAppearance(pane);
-  term.restty.setFontSize(settings.fontSize);
-  void term.restty.setFontSources(resttyFontSourcesFor(currentFont())).catch((error) => {
-    setFontStatus(tr("status.fontLoadFailed", { message: errorMessage(error) }), "error");
-  });
-  term.restty.updateSize(true);
-}
-
-function terminalBackgroundActive(): boolean {
-  return settings.terminalBackgroundEnabled && Boolean(settings.terminalBackgroundUrl);
-}
-
-function applyTerminalBackgroundToMount(mount: HTMLElement) {
-  const active = terminalBackgroundActive();
-  mount.classList.toggle("has-terminal-background", active);
-  if (!active) {
-    mount.style.removeProperty("--terminal-bg-image");
-    mount.style.removeProperty("--terminal-bg-opacity");
-    mount.style.removeProperty("--terminal-bg-blur");
-    return;
-  }
-  mount.style.setProperty("--terminal-bg-image", `url(${JSON.stringify(settings.terminalBackgroundUrl)})`);
-  mount.style.setProperty("--terminal-bg-opacity", String(settings.terminalBackgroundOpacity));
-  mount.style.setProperty("--terminal-bg-blur", `${settings.terminalBackgroundBlur}px`);
-}
-
-function applyCursorAppearance(pane: TerminalPane) {
-  pane.term?.write(cursorStyleSequence(settings.cursorShape, settings.cursorBlink));
+function reportFontLoadError(error: unknown) {
+  setFontStatus(tr("status.fontLoadFailed", { message: errorMessage(error) }), "error");
 }
 
 function syncThemeEditor() {
@@ -3740,7 +3682,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
       scheduleCopySelection();
     }
   });
-  applyThemeToMount(mount);
+  applyThemeToMount(mount, currentAppearanceContext());
   return pane;
 }
 
@@ -3824,7 +3766,7 @@ function updatePaneActiveState(tab: TerminalTab) {
 async function mountTerminal(pane: TerminalPane) {
   pane.term?.dispose();
   pane.mount.innerHTML = "";
-  applyThemeToMount(pane.mount);
+  applyThemeToMount(pane.mount, currentAppearanceContext());
   pane.decoder = new TextDecoder();
 
   const term = new Terminal({
@@ -3861,7 +3803,7 @@ async function mountTerminal(pane: TerminalPane) {
       callbacks: {
         onGridSize: (cols, rows) => {
           handleTerminalResize(pane, cols, rows);
-          applyCursorAppearance(pane);
+          applyCursorAppearance(pane, settings);
         },
       },
     },
@@ -3881,7 +3823,7 @@ async function mountTerminal(pane: TerminalPane) {
     scheduleSizeRefresh: scheduleTerminalSizeRefresh,
   });
   schedulePaneViewportReset(pane);
-  applyTerminalAppearance(pane);
+  applyTerminalAppearance(pane, currentAppearanceContext(), reportFontLoadError);
   if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
     term.focus();
   }
@@ -3992,7 +3934,7 @@ function clearReplayInputLock(pane: TerminalPane) {
 
 function finishReplayInputLock(pane: TerminalPane) {
   clearReplayInputLock(pane);
-  applyCursorAppearance(pane);
+  applyCursorAppearance(pane, settings);
   flushPendingInput(pane);
 }
 
