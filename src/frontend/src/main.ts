@@ -34,6 +34,7 @@ import {
   THEMES,
 } from "./config";
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
+import { FileBrowserStore } from "./file-browser-store";
 import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
 import {
   herdrCurrentPaneId,
@@ -68,7 +69,6 @@ import type {
   AIChatMessage,
   AIChatSession,
   ClipboardImagePayload,
-  FileBrowserContextMenu,
   FileBrowserEntry,
   FontPreset,
   HerdrAction,
@@ -157,13 +157,7 @@ let pluginsLoaded = false;
 let pluginsLoading = false;
 let activePluginToolId = "";
 const aiChat = new AIChatStore();
-let fileBrowserPath = "/";
-let selectedFileBrowserPath = "";
-let fileBrowserEntries: FileBrowserEntry[] = [];
-let fileBrowserLoading = false;
-let fileBrowserLoadedPath = "";
-let fileBrowserPaneId = "";
-let fileBrowserContextMenu: FileBrowserContextMenu | undefined;
+const fileBrowser = new FileBrowserStore();
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
@@ -533,9 +527,9 @@ function bindSettings() {
       ? event.target.closest<HTMLButtonElement>("[data-file-menu-action]")
       : null;
     if (menuButton) {
-      const path = menuButton.dataset.fileMenuPath ?? selectedFileBrowserPath;
-      selectedFileBrowserPath = path;
-      fileBrowserContextMenu = undefined;
+      const path = menuButton.dataset.fileMenuPath ?? fileBrowser.selectedPath;
+      fileBrowser.selectPath(path);
+      fileBrowser.clearContextMenu();
       void runFileTransfer(menuButton.dataset.fileMenuAction ?? "");
       return;
     }
@@ -582,12 +576,7 @@ function bindSettings() {
       : null;
     if (!entryButton) return;
     event.preventDefault();
-    selectedFileBrowserPath = entryButton.dataset.fileEntry ?? "";
-    fileBrowserContextMenu = {
-      path: selectedFileBrowserPath,
-      x: event.clientX,
-      y: event.clientY,
-    };
+    fileBrowser.openContextMenu(entryButton.dataset.fileEntry ?? "", event.clientX, event.clientY);
     renderPluginTools();
   });
   elements.fontFamily.addEventListener("change", () => {
@@ -875,11 +864,11 @@ function bindActions() {
       closePaneMenu();
     }
     if (
-      fileBrowserContextMenu
+      fileBrowser.contextMenu
       && event.target instanceof Element
       && !event.target.closest(".file-browser-context-menu")
     ) {
-      fileBrowserContextMenu = undefined;
+      fileBrowser.clearContextMenu();
       renderPluginTools();
     }
   });
@@ -896,7 +885,7 @@ function bindActions() {
       closeHerdrWorkspaceMenu();
       closeShortcutHelp();
       closePaneMenu();
-      fileBrowserContextMenu = undefined;
+      fileBrowser.clearContextMenu();
       closeSettings();
       closePluginSidebar();
       renderPluginTools();
@@ -2419,8 +2408,8 @@ function renderPluginTools() {
       ? renderAIChatTool(activePlugin)
       : "";
   updateIcons();
-  if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID && !fileBrowserLoading && fileBrowserLoadedPath !== normalizeRemotePath(fileBrowserPath)) {
-    void loadFileBrowserDirectory(fileBrowserPath);
+  if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID && !fileBrowser.loading && fileBrowser.loadedPath !== normalizeRemotePath(fileBrowser.path)) {
+    void loadFileBrowserDirectory(fileBrowser.path);
   }
   if (activePlugin?.id === AI_CHAT_PLUGIN_ID) {
     scrollAIChatToBottom();
@@ -2431,11 +2420,11 @@ function renderFileTransferTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
   return renderFileTransferToolView({
     disabled,
-    fileBrowserPath,
-    selectedFileBrowserPath,
-    fileBrowserEntries,
-    fileBrowserLoading,
-    fileBrowserContextMenu,
+    fileBrowserPath: fileBrowser.path,
+    selectedFileBrowserPath: fileBrowser.selectedPath,
+    fileBrowserEntries: fileBrowser.entries,
+    fileBrowserLoading: fileBrowser.loading,
+    fileBrowserContextMenu: fileBrowser.contextMenu,
     tr,
   });
 }
@@ -2466,15 +2455,15 @@ async function runFileTransfer(action: string) {
   }
   if (action === "sync-cwd") {
     syncFileBrowserPathWithActivePane(true);
-    await loadFileBrowserDirectory(fileBrowserPath);
+    await loadFileBrowserDirectory(fileBrowser.path);
     return;
   }
   if (action === "parent") {
-    await loadFileBrowserDirectory(parentRemotePath(fileBrowserPath));
+    await loadFileBrowserDirectory(parentRemotePath(fileBrowser.path));
     return;
   }
   if (action === "refresh" || action === "list") {
-    await loadFileBrowserDirectory(fileBrowserPath);
+    await loadFileBrowserDirectory(fileBrowser.path);
     return;
   }
   if (action === "open") {
@@ -2485,7 +2474,7 @@ async function runFileTransfer(action: string) {
     return;
   }
   if (action !== "read" && action !== "stat" && action !== "download") return;
-  const path = selectedFileBrowserPath || fileBrowserPath;
+  const path = fileBrowser.selectedPath || fileBrowser.path;
   if (!path) {
     setFileTransferOutput(tr("validation.pluginPath"), "error");
     return;
@@ -2832,10 +2821,10 @@ function appendAIContext(pane: TerminalPane, text: string) {
 }
 
 async function activateFileBrowserEntry(path: string, open = false) {
-  const entry = fileBrowserEntries.find((item) => item.path === path);
+  const entry = fileBrowser.entries.find((item) => item.path === path);
   if (!entry) return;
-  selectedFileBrowserPath = entry.path;
-  fileBrowserContextMenu = undefined;
+  fileBrowser.selectPath(entry.path);
+  fileBrowser.clearContextMenu();
   if (open && (entry.kind === "directory" || entry.kind === "symlink")) {
     await loadFileBrowserDirectory(entry.path);
     return;
@@ -2850,10 +2839,7 @@ async function loadFileBrowserDirectory(path: string) {
     setFileTransferOutput(tr("status.pluginFileNoSession"), "error");
     return;
   }
-  const directory = normalizeRemotePath(path);
-  fileBrowserLoading = true;
-  fileBrowserPath = directory;
-  fileBrowserContextMenu = undefined;
+  const directory = fileBrowser.beginDirectoryLoad(path);
   renderPluginTools();
   try {
     let stream = "";
@@ -2865,40 +2851,28 @@ async function loadFileBrowserDirectory(path: string) {
         stream += chunk;
       },
     });
-    fileBrowserEntries = parseFileBrowserEntries(directory, stream);
-    selectedFileBrowserPath = "";
-    fileBrowserLoadedPath = directory;
+    fileBrowser.finishDirectoryLoad(directory, parseFileBrowserEntries(directory, stream));
     setFileTransferOutput("");
   } catch (error) {
-    fileBrowserEntries = [];
-    fileBrowserLoadedPath = "";
+    fileBrowser.failDirectoryLoad();
     setFileTransferOutput(errorMessage(error), "error");
   } finally {
-    fileBrowserLoading = false;
+    fileBrowser.finishDirectoryLoadWithoutChanges();
     renderPluginTools();
   }
 }
 
 function selectedFileBrowserEntry(): FileBrowserEntry | undefined {
-  return fileBrowserEntries.find((entry) => entry.path === selectedFileBrowserPath);
+  return fileBrowser.selectedEntry();
 }
 
 function fileUploadDirectory(): string {
-  const entry = selectedFileBrowserEntry();
-  if (entry?.kind === "directory") return entry.path;
-  return normalizeRemotePath(fileBrowserPath);
+  return fileBrowser.uploadDirectory();
 }
 
 function syncFileBrowserPathWithActivePane(force = false) {
   const pane = activePane();
-  const cwd = normalizeRemotePath(pane?.workingDirectory || "");
-  if (!pane || !cwd || cwd === "/") return;
-  const paneChanged = fileBrowserPaneId !== pane.id;
-  if (!force && !paneChanged && fileBrowserLoadedPath) return;
-  fileBrowserPaneId = pane.id;
-  fileBrowserPath = cwd;
-  selectedFileBrowserPath = "";
-  fileBrowserLoadedPath = "";
+  fileBrowser.syncPathWithPane(pane?.id ?? "", pane?.workingDirectory || "", force);
 }
 
 function observeWorkingDirectory(pane: TerminalPane, text: string) {
@@ -2906,7 +2880,7 @@ function observeWorkingDirectory(pane: TerminalPane, text: string) {
   const fromPrompt = fromOsc || workingDirectoryFromPrompt(text);
   if (!fromPrompt) return;
   pane.workingDirectory = fromPrompt;
-  if (pane.id === activePane()?.id && activePluginToolId === FILE_TRANSFER_PLUGIN_ID && !fileBrowserLoadedPath) {
+  if (pane.id === activePane()?.id && activePluginToolId === FILE_TRANSFER_PLUGIN_ID && !fileBrowser.loadedPath) {
     syncFileBrowserPathWithActivePane();
   }
 }
