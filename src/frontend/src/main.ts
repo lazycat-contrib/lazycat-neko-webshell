@@ -7,7 +7,6 @@ import { Terminal } from "restty/xterm";
 
 import { AIChatStore } from "./ai-chat-store";
 import {
-  isLightInterfaceStyle,
   mimeTypeForFont,
   mimeTypeForTerminalBackground,
   normalizeHexColorInput,
@@ -111,7 +110,6 @@ import type {
   HerdrBridgeState,
   HerdrSocketEnvelope,
   HerdrWorkspaceInfo,
-  InterfaceStyleId,
   JsonRecord,
   SessionBackendId,
   SessionBackendInfo,
@@ -155,6 +153,7 @@ import {
   requestedTabIdFromLocation,
   updateWorkspaceLocation,
 } from "./workspace-selection";
+import { applyWebshellStyle } from "./webshell-style";
 import { zellijPaneModeInput, zellijSplitKey } from "./zellij-backend";
 
 const terminalEncoder = new TextEncoder();
@@ -1675,11 +1674,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.fontPreview.style.fontFamily = font.family;
   elements.fontPreview.style.fontSize = `${settings.fontSize}px`;
   elements.tabLayout.value = settings.tabLayout;
-  elements.webshell.dataset.tabLayout = settings.tabLayout;
-  elements.webshell.dataset.interfaceStyle = settings.interfaceStyleId;
-  elements.webshell.dataset.interfaceTone = isLightInterfaceStyle(settings.interfaceStyleId) ? "light" : "dark";
-  elements.webshell.style.setProperty("--herdr-active-bg", currentHerdrActiveBackground());
-  elements.webshell.style.setProperty("--herdr-active-fg", isLightInterfaceStyle(settings.interfaceStyleId) ? "#17231d" : "#f4fff8");
+  applyWebshellStyle(elements.webshell, settings);
   elements.removeFont.disabled = !font.custom;
   settings.themeId = theme.id;
   settings.fontFamilyId = font.id;
@@ -1719,12 +1714,6 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
 
 function currentTheme(): TerminalTheme {
   return currentTerminalTheme(settings);
-}
-
-function currentHerdrActiveBackground(): string {
-  return isLightInterfaceStyle(settings.interfaceStyleId)
-    ? settings.herdrActiveBackgroundLight
-    : settings.herdrActiveBackgroundDark;
 }
 
 function updateSessionBackendSettings() {
