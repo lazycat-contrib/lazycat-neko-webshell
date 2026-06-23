@@ -72,6 +72,7 @@ const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
 const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
+const HERDR_TOUCH_WHEEL_STEP_PX = 32;
 const MAX_AI_CONTEXT_CHARS = 12000;
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
@@ -4768,7 +4769,7 @@ async function mountTerminal(pane: TerminalPane) {
   if (pane.closing) return;
   pane.term = term;
   term.open(pane.mount);
-  term.restty?.setMouseMode(pane.sessionBackend === "herdr" ? "off" : "auto");
+  term.restty?.setMouseMode("auto");
   installPaneScrollbackFallback(pane);
   installPaneTouchKeyboardGuard(pane);
   installPaneViewportGuard(pane);
@@ -5076,11 +5077,23 @@ function installPaneScrollbackFallback(pane: TerminalPane) {
   let touchPointerId: number | undefined;
   let lastTouchY = 0;
   let touchScrollActive = false;
+  let herdrTouchPointerId: number | undefined;
+  let herdrTouchStartX = 0;
+  let herdrTouchStartY = 0;
+  let herdrTouchLastY = 0;
+  let herdrTouchWheelActive = false;
+  let herdrTouchWheelRemainderPx = 0;
 
   const stopTouchScroll = (pointerId: number) => {
-    if (touchPointerId !== pointerId) return;
-    touchPointerId = undefined;
-    touchScrollActive = false;
+    if (touchPointerId === pointerId) {
+      touchPointerId = undefined;
+      touchScrollActive = false;
+    }
+    if (herdrTouchPointerId === pointerId) {
+      herdrTouchPointerId = undefined;
+      herdrTouchWheelActive = false;
+      herdrTouchWheelRemainderPx = 0;
+    }
   };
 
   pane.mount.addEventListener("wheel", (event) => {
@@ -5095,23 +5108,66 @@ function installPaneScrollbackFallback(pane: TerminalPane) {
   }, { capture: true, passive: false });
 
   pane.mount.addEventListener("pointerdown", (event) => {
+    if (pane.sessionBackend === "herdr") {
+      if (event.pointerType !== "touch" || !paneMouseReportingActive(pane, event)) return;
+      herdrTouchPointerId = event.pointerId;
+      herdrTouchStartX = event.clientX;
+      herdrTouchStartY = event.clientY;
+      herdrTouchLastY = event.clientY;
+      herdrTouchWheelActive = false;
+      herdrTouchWheelRemainderPx = 0;
+      return;
+    }
     if (paneMouseReportingActive(pane, event)) return;
-    if (event.pointerType !== "touch" || !paneTouchScrollbackFallbackEnabled(pane)) return;
+    if (event.pointerType !== "touch" || !paneTouchScrollbackFallbackEnabled()) return;
     const host = paneScrollbackHost(pane);
     if (!host || !hostCanScroll(host)) return;
     touchPointerId = event.pointerId;
     lastTouchY = event.clientY;
     touchScrollActive = false;
-    if (pane.sessionBackend === "herdr") {
-      trackMobileTerminalSwipeStart(pane, event);
-      event.preventDefault();
-      event.stopPropagation();
-    }
   }, { capture: true, passive: false });
 
   pane.mount.addEventListener("pointermove", (event) => {
+    if (pane.sessionBackend === "herdr") {
+      if (event.pointerType !== "touch" || herdrTouchPointerId !== event.pointerId) return;
+      if (!paneMouseReportingActive(pane, event)) return;
+      const dx = event.clientX - herdrTouchStartX;
+      const dy = event.clientY - herdrTouchStartY;
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      if (!herdrTouchWheelActive) {
+        if (Math.hypot(dx, dy) < MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX) return;
+        if (absDy < absDx * MOBILE_TERMINAL_SCROLL_AXIS_RATIO) {
+          herdrTouchPointerId = undefined;
+          herdrTouchWheelRemainderPx = 0;
+          return;
+        }
+        herdrTouchWheelActive = true;
+      }
+      const deltaPx = herdrTouchLastY - event.clientY;
+      herdrTouchLastY = event.clientY;
+      herdrTouchWheelRemainderPx += deltaPx;
+      const steps = Math.trunc(herdrTouchWheelRemainderPx / HERDR_TOUCH_WHEEL_STEP_PX);
+      if (steps === 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const direction = steps > 0 ? 1 : -1;
+      const count = Math.min(6, Math.abs(steps));
+      let sent = false;
+      for (let index = 0; index < count; index += 1) {
+        sent = sendHerdrTouchWheelInput(pane, event, direction) || sent;
+      }
+      herdrTouchWheelRemainderPx -= steps * HERDR_TOUCH_WHEEL_STEP_PX;
+      if (sent) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
     if (paneMouseReportingActive(pane, event)) return;
-    if (touchPointerId !== event.pointerId || !paneTouchScrollbackFallbackEnabled(pane)) return;
+    if (touchPointerId !== event.pointerId || !paneTouchScrollbackFallbackEnabled()) return;
     const host = paneScrollbackHost(pane);
     if (!host || !hostCanScroll(host)) return;
     const deltaPx = lastTouchY - event.clientY;
@@ -5174,9 +5230,6 @@ function installPaneTouchKeyboardGuard(pane: TerminalPane) {
     if (Math.hypot(dx, dy) < MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX) return;
     if (absDy < absDx * MOBILE_TERMINAL_SCROLL_AXIS_RATIO) return;
     scrollLocked = true;
-    pane.term?.blur();
-    restoreInput();
-    handleViewportChange();
   }, { capture: true, passive: true });
 
   pane.mount.addEventListener("pointerup", (event) => stopTouch(event.pointerId), true);
@@ -5189,13 +5242,72 @@ function paneScrollbackHost(pane: TerminalPane): HTMLElement | null {
   return pane.mount.querySelector<HTMLElement>(".restty-native-scroll-host");
 }
 
-function paneTouchScrollbackFallbackEnabled(pane: TerminalPane): boolean {
-  return pane.sessionBackend === "herdr" || settings.touchSelectionMode !== "drag";
+function paneTouchScrollbackFallbackEnabled(): boolean {
+  return settings.touchSelectionMode !== "drag";
 }
 
 function paneMouseReportingActive(pane: TerminalPane, event: MouseEvent | PointerEvent): boolean {
   if (event.shiftKey) return false;
   return Boolean(pane.term?.restty?.getMouseStatus().active);
+}
+
+type TerminalMouseDetail = "sgr" | "x10" | "utf8" | "urxvt" | "sgr_pixels";
+
+type TerminalPointerPosition = {
+  col: number;
+  row: number;
+  x: number;
+  y: number;
+};
+
+function sendHerdrTouchWheelInput(pane: TerminalPane, event: PointerEvent, direction: 1 | -1): boolean {
+  const restty = pane.term?.restty;
+  const status = restty?.getMouseStatus();
+  if (!restty || !status?.active) return false;
+  const position = terminalPointerPosition(pane, event);
+  if (!position) return false;
+  const buttonCode = direction > 0 ? 65 : 64;
+  const sequence = encodeTerminalWheelMouse(status.detail, buttonCode, position);
+  if (!sequence) return false;
+  restty.sendInput(sequence, "mouse");
+  return true;
+}
+
+function terminalPointerPosition(pane: TerminalPane, event: PointerEvent): TerminalPointerPosition | undefined {
+  const canvas = pane.term?.restty?.activePane()?.getRawPane().canvas;
+  if (!(canvas instanceof HTMLCanvasElement)) return undefined;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return undefined;
+  const cols = Math.max(1, Math.trunc(pane.term?.cols ?? pane.cols ?? INITIAL_COLS));
+  const rows = Math.max(1, Math.trunc(pane.term?.rows ?? pane.rows ?? INITIAL_ROWS));
+  const localX = clampNumber(event.clientX - rect.left, 0, rect.width, rect.width / 2);
+  const localY = clampNumber(event.clientY - rect.top, 0, rect.height, rect.height / 2);
+  return {
+    col: clampNumber(Math.floor(localX / rect.width * cols) + 1, 1, cols, 1),
+    row: clampNumber(Math.floor(localY / rect.height * rows) + 1, 1, rows, 1),
+    x: clampNumber(Math.floor(localX) + 1, 1, Math.max(1, Math.floor(rect.width)), 1),
+    y: clampNumber(Math.floor(localY) + 1, 1, Math.max(1, Math.floor(rect.height)), 1),
+  };
+}
+
+function encodeTerminalWheelMouse(
+  detail: TerminalMouseDetail,
+  buttonCode: 64 | 65,
+  position: TerminalPointerPosition,
+): string {
+  if (detail === "sgr") {
+    return `\x1b[<${buttonCode};${position.col};${position.row}M`;
+  }
+  if (detail === "sgr_pixels") {
+    return `\x1b[<${buttonCode};${position.x};${position.y}M`;
+  }
+  if (detail === "urxvt") {
+    return `\x1b[${32 + buttonCode};${position.col};${position.row}M`;
+  }
+  if ((detail === "x10" || detail === "utf8") && position.col <= 223 && position.row <= 223) {
+    return `\x1b[M${String.fromCharCode(32 + buttonCode, 32 + position.col, 32 + position.row)}`;
+  }
+  return "";
 }
 
 function hostCanScroll(host: HTMLElement): boolean {
