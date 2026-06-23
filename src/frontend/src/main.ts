@@ -5100,7 +5100,6 @@ function installPaneScrollbackFallback(pane: TerminalPane) {
     touchScrollActive = false;
     if (pane.sessionBackend === "herdr") {
       trackMobileTerminalSwipeStart(pane, event);
-      activatePane(pane.tabId, pane.id, { focus: false });
       event.preventDefault();
       event.stopPropagation();
     }
