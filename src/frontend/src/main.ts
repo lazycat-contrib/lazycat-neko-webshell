@@ -85,7 +85,6 @@ import {
   pluginDescription,
   pluginDisplayName,
   pluginIcon,
-  pluginMetaLabel,
   transferProgressText,
 } from "./plugin-utils";
 import { fileNameFromPath, normalizeRemotePath, parentRemotePath, parseFileBrowserEntries, uploadTargetPath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
@@ -112,7 +111,13 @@ import {
 } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
 import { CUSTOM_THEME_PREFIX } from "./theme-registry";
-import { aiChatTranscript, renderAIChatMessages as renderAIChatMessagesView, renderAIChatToolView, renderFileTransferToolView } from "./plugin-views";
+import {
+  aiChatTranscript,
+  renderAIChatMessages as renderAIChatMessagesView,
+  renderAIChatToolView,
+  renderFileTransferToolView,
+  renderPluginSettingsView,
+} from "./plugin-views";
 import type {
   AIChatMessage,
   AIChatSession,
@@ -1930,111 +1935,27 @@ function renderPlugins() {
 }
 
 function renderPluginSettings() {
-  if (!plugins.length) {
-    elements.pluginList.innerHTML = `<div class="empty">${escapeHtml(pluginsLoading ? tr("status.pluginsLoading") : tr("status.noPlugins"))}</div>`;
-    elements.refreshPlugins.disabled = pluginsLoading;
-    return;
-  }
   elements.refreshPlugins.disabled = pluginsLoading;
-  elements.pluginList.innerHTML = plugins.map((plugin) => renderPlugin(plugin)).join("");
+  elements.pluginList.innerHTML = renderPluginSettingsView({
+    plugins,
+    pluginsLoading,
+    savingPluginIds: pluginSaveInFlight,
+    aiAccess: {
+      provider: settings.aiProvider,
+      baseUrl: settings.aiBaseUrl,
+      apiKey: settings.aiApiKey,
+      model: settings.aiModel,
+      modelOptions: aiChat.modelOptions,
+      sendContext: settings.aiSendTerminalContext,
+      contextLines: settings.aiContextLines,
+    },
+    tr,
+  });
   updateIcons();
-}
-
-function renderPlugin(plugin: PluginDescriptor): string {
-  const saving = pluginSaveInFlight.has(plugin.id);
-  const status = plugin.enabled ? tr("setting.pluginEnabled") : tr("setting.pluginDisabled");
-  const meta = Array.from(new Set([plugin.kind, ...plugin.scopes].filter(Boolean)))
-    .map((item) => pluginMetaLabel(item, tr));
-  const settingsTool = plugin.id === AI_CHAT_PLUGIN_ID ? renderAIAccessSettings(plugin) : "";
-  return `
-    <div class="plugin-item" role="listitem">
-      <div class="plugin-content">
-        <div class="plugin-title-row">
-          <span class="plugin-icon"><i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i></span>
-          <span class="plugin-name">${escapeHtml(pluginDisplayName(plugin, tr))}</span>
-          <code>${escapeHtml(plugin.id)}</code>
-        </div>
-        <p class="plugin-description">${escapeHtml(pluginDescription(plugin, tr))}</p>
-        <div class="plugin-meta">
-          ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
-        </div>
-      </div>
-      <label class="switch plugin-switch">
-        <input
-          type="checkbox"
-          data-plugin-toggle="${escapeAttr(plugin.id)}"
-          ${plugin.enabled ? "checked" : ""}
-          ${saving || pluginsLoading ? "disabled" : ""}
-        />
-        <span>${escapeHtml(status)}</span>
-      </label>
-      ${settingsTool}
-    </div>
-  `;
 }
 
 function pluginControlsDisabled(plugin: PluginDescriptor): boolean {
   return !plugin.enabled || pluginSaveInFlight.has(plugin.id) || pluginsLoading;
-}
-
-function renderAIAccessSettings(plugin: PluginDescriptor): string {
-  const disabled = pluginControlsDisabled(plugin);
-  const disabledAttr = disabled ? "disabled" : "";
-  const modelValues = aiChat.modelOptions.includes(settings.aiModel) || !settings.aiModel
-    ? aiChat.modelOptions
-    : [settings.aiModel, ...aiChat.modelOptions];
-  const modelOptions = modelValues.length
-    ? modelValues
-      .map((model) => `<option value="${escapeAttr(model)}" ${model === settings.aiModel ? "selected" : ""}>${escapeHtml(model)}</option>`)
-      .join("")
-    : `<option value="" selected disabled>${escapeHtml(tr("action.aiFetchModels"))}</option>`;
-  return `
-    <div class="plugin-tool ai-access-settings">
-      <div class="settings-group-title">${escapeHtml(tr("section.aiAccess"))}</div>
-      <p class="settings-help">${escapeHtml(tr("ai.accessHelp"))}</p>
-      <div class="ai-config-grid">
-        <label class="field">
-          <span>${escapeHtml(tr("field.aiProvider"))}</span>
-          <select data-ai-setting="provider" ${disabledAttr}>
-            <option value="openai-compatible" ${settings.aiProvider === "openai-compatible" ? "selected" : ""}>${escapeHtml(tr("ai.providerOpenAICompatible"))}</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>${escapeHtml(tr("field.aiBaseUrl"))}</span>
-          <input data-ai-setting="baseUrl" type="url" value="${escapeAttr(settings.aiBaseUrl)}" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" ${disabledAttr} />
-        </label>
-        <label class="field">
-          <span>${escapeHtml(tr("field.aiApiKey"))}</span>
-          <input data-ai-setting="apiKey" type="password" value="${escapeAttr(settings.aiApiKey)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
-        </label>
-        <label class="field">
-          <span>${escapeHtml(tr("field.aiModel"))}</span>
-          <select data-ai-setting="model" ${disabledAttr}>
-            ${modelOptions}
-          </select>
-        </label>
-        <label class="field checkbox-field">
-          <input data-ai-setting="sendContext" type="checkbox" ${settings.aiSendTerminalContext ? "checked" : ""} ${disabledAttr} />
-          <span>${escapeHtml(tr("setting.aiSendTerminalContext"))}</span>
-        </label>
-        <label class="field">
-          <span>${escapeHtml(tr("field.aiContextLines"))}</span>
-          <input data-ai-setting="contextLines" type="number" min="0" max="200" step="1" value="${escapeAttr(String(settings.aiContextLines))}" ${disabledAttr} />
-        </label>
-      </div>
-      <p class="settings-help">${escapeHtml(tr("setting.aiPrivacyHelp"))}</p>
-      <div class="plugin-action-row ai-config-actions">
-        <button class="command-button" type="button" data-ai-action="models" ${disabledAttr}>
-          <i data-lucide="list-filter"></i>
-          <span>${escapeHtml(tr("action.aiFetchModels"))}</span>
-        </button>
-        <button class="command-button" type="button" data-ai-action="test" ${disabledAttr}>
-          <i data-lucide="activity"></i>
-          <span>${escapeHtml(tr("action.aiTest"))}</span>
-        </button>
-      </div>
-    </div>
-  `;
 }
 
 function renderPluginTools() {

@@ -1,4 +1,12 @@
 import type { MessageKey } from "./i18n";
+import type { PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
+import {
+  AI_CHAT_PLUGIN_ID,
+  pluginDescription,
+  pluginDisplayName,
+  pluginIcon,
+  pluginMetaLabel,
+} from "./plugin-utils";
 import { fileEntryIcon, formatFileSize, normalizeRemotePath } from "./remote-files";
 import type { AIChatMessage, AIChatSession, FileBrowserContextMenu, FileBrowserEntry } from "./types";
 import { escapeAttr, escapeHtml } from "./utils";
@@ -33,6 +41,92 @@ export type AIChatViewState = {
   selectedSessionId: string;
   tr: Translate;
 };
+
+export type PluginSettingsViewState = {
+  plugins: PluginDescriptor[];
+  pluginsLoading: boolean;
+  savingPluginIds: Set<string>;
+  aiAccess: AIAccessSettingsViewState;
+  tr: Translate;
+};
+
+export type AIAccessSettingsViewState = {
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  modelOptions: string[];
+  sendContext: boolean;
+  contextLines: number;
+};
+
+export function renderPluginSettingsView(state: PluginSettingsViewState): string {
+  if (!state.plugins.length) {
+    return `<div class="empty">${escapeHtml(state.tr(state.pluginsLoading ? "status.pluginsLoading" : "status.noPlugins"))}</div>`;
+  }
+  return state.plugins.map((plugin) => renderPluginSetting(plugin, state)).join("");
+}
+
+export function renderAIAccessSettingsView(
+  state: AIAccessSettingsViewState & { disabled: boolean; tr: Translate },
+): string {
+  const disabledAttr = state.disabled ? "disabled" : "";
+  const modelValues = state.modelOptions.includes(state.model) || !state.model
+    ? state.modelOptions
+    : [state.model, ...state.modelOptions];
+  const modelOptions = modelValues.length
+    ? modelValues
+      .map((model) => `<option value="${escapeAttr(model)}" ${model === state.model ? "selected" : ""}>${escapeHtml(model)}</option>`)
+      .join("")
+    : `<option value="" selected disabled>${escapeHtml(state.tr("action.aiFetchModels"))}</option>`;
+  return `
+    <div class="plugin-tool ai-access-settings">
+      <div class="settings-group-title">${escapeHtml(state.tr("section.aiAccess"))}</div>
+      <p class="settings-help">${escapeHtml(state.tr("ai.accessHelp"))}</p>
+      <div class="ai-config-grid">
+        <label class="field">
+          <span>${escapeHtml(state.tr("field.aiProvider"))}</span>
+          <select data-ai-setting="provider" ${disabledAttr}>
+            <option value="openai-compatible" ${state.provider === "openai-compatible" ? "selected" : ""}>${escapeHtml(state.tr("ai.providerOpenAICompatible"))}</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>${escapeHtml(state.tr("field.aiBaseUrl"))}</span>
+          <input data-ai-setting="baseUrl" type="url" value="${escapeAttr(state.baseUrl)}" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" ${disabledAttr} />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(state.tr("field.aiApiKey"))}</span>
+          <input data-ai-setting="apiKey" type="password" value="${escapeAttr(state.apiKey)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(state.tr("field.aiModel"))}</span>
+          <select data-ai-setting="model" ${disabledAttr}>
+            ${modelOptions}
+          </select>
+        </label>
+        <label class="field checkbox-field">
+          <input data-ai-setting="sendContext" type="checkbox" ${state.sendContext ? "checked" : ""} ${disabledAttr} />
+          <span>${escapeHtml(state.tr("setting.aiSendTerminalContext"))}</span>
+        </label>
+        <label class="field">
+          <span>${escapeHtml(state.tr("field.aiContextLines"))}</span>
+          <input data-ai-setting="contextLines" type="number" min="0" max="200" step="1" value="${escapeAttr(String(state.contextLines))}" ${disabledAttr} />
+        </label>
+      </div>
+      <p class="settings-help">${escapeHtml(state.tr("setting.aiPrivacyHelp"))}</p>
+      <div class="plugin-action-row ai-config-actions">
+        <button class="command-button" type="button" data-ai-action="models" ${disabledAttr}>
+          <i data-lucide="list-filter"></i>
+          <span>${escapeHtml(state.tr("action.aiFetchModels"))}</span>
+        </button>
+        <button class="command-button" type="button" data-ai-action="test" ${disabledAttr}>
+          <i data-lucide="activity"></i>
+          <span>${escapeHtml(state.tr("action.aiTest"))}</span>
+        </button>
+      </div>
+    </div>
+  `;
+}
 
 export function renderFileTransferToolView(state: FileTransferViewState): string {
   const disabledAttr = state.disabled ? "disabled" : "";
@@ -187,6 +281,45 @@ export function aiChatTranscript(session: AIChatSession): string {
   return session.messages
     .map((message) => `## ${aiChatRoleLabel(message.role)}\n\n${message.content}`)
     .join("\n\n");
+}
+
+function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsViewState): string {
+  const saving = state.savingPluginIds.has(plugin.id);
+  const status = plugin.enabled ? state.tr("setting.pluginEnabled") : state.tr("setting.pluginDisabled");
+  const meta = Array.from(new Set([plugin.kind, ...plugin.scopes].filter(Boolean)))
+    .map((item) => pluginMetaLabel(item, state.tr));
+  const settingsTool = plugin.id === AI_CHAT_PLUGIN_ID
+    ? renderAIAccessSettingsView({
+      ...state.aiAccess,
+      disabled: !plugin.enabled || saving || state.pluginsLoading,
+      tr: state.tr,
+    })
+    : "";
+  return `
+    <div class="plugin-item" role="listitem">
+      <div class="plugin-content">
+        <div class="plugin-title-row">
+          <span class="plugin-icon"><i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i></span>
+          <span class="plugin-name">${escapeHtml(pluginDisplayName(plugin, state.tr))}</span>
+          <code>${escapeHtml(plugin.id)}</code>
+        </div>
+        <p class="plugin-description">${escapeHtml(pluginDescription(plugin, state.tr))}</p>
+        <div class="plugin-meta">
+          ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+        </div>
+      </div>
+      <label class="switch plugin-switch">
+        <input
+          type="checkbox"
+          data-plugin-toggle="${escapeAttr(plugin.id)}"
+          ${plugin.enabled ? "checked" : ""}
+          ${saving || state.pluginsLoading ? "disabled" : ""}
+        />
+        <span>${escapeHtml(status)}</span>
+      </label>
+      ${settingsTool}
+    </div>
+  `;
 }
 
 function renderFileBrowserEntries(state: FileTransferViewState): string {
