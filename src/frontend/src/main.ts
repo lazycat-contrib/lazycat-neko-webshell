@@ -91,6 +91,7 @@ import {
 import { fileNameFromPath, normalizeRemotePath, parentRemotePath, parseFileBrowserEntries, uploadTargetPath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderFontFamilyOptions, renderThemeSelectOptions } from "./settings-options-view";
+import { activateFontPanel, activateSettingsPanel, bindSettingsTabControls } from "./settings-tabs";
 import {
   normalizeSessionMode,
   renderSessionBackendSelectOptions,
@@ -1013,45 +1014,21 @@ function activateMobileKeyboardPage(page: string) {
 }
 
 function bindSettingsTabs() {
-  elements.settingsTabs.addEventListener("click", (event) => {
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-settings-tab]")
-      : null;
-    if (button) activateSettingsTab(button.dataset.settingsTab ?? "");
-  });
-  elements.fontTabs.addEventListener("click", (event) => {
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-font-tab]")
-      : null;
-    if (button) activateFontTab(button.dataset.fontTab ?? "");
+  bindSettingsTabControls(elements, {
+    onSettingsTab: activateSettingsTab,
+    onFontTab: activateFontTab,
   });
 }
 
 function activateSettingsTab(tabId: string) {
-  if (!tabId) return;
-  elements.settingsTabs.querySelectorAll<HTMLButtonElement>("[data-settings-tab]").forEach((button) => {
-    const active = button.dataset.settingsTab === tabId;
-    button.setAttribute("aria-selected", String(active));
-    button.tabIndex = active ? 0 : -1;
-  });
-  elements.settingsPage.querySelectorAll<HTMLElement>("[data-settings-panel]").forEach((panel) => {
-    panel.hidden = panel.dataset.settingsPanel !== tabId;
-  });
+  if (!activateSettingsPanel(elements, tabId)) return;
   if (tabId === "plugins" && !pluginsLoaded && !pluginsLoading) {
     void loadPlugins();
   }
 }
 
 function activateFontTab(tabId: string) {
-  if (!tabId) return;
-  elements.fontTabs.querySelectorAll<HTMLButtonElement>("[data-font-tab]").forEach((button) => {
-    const active = button.dataset.fontTab === tabId;
-    button.setAttribute("aria-selected", String(active));
-    button.tabIndex = active ? 0 : -1;
-  });
-  elements.settingsPage.querySelectorAll<HTMLElement>("[data-font-panel]").forEach((panel) => {
-    panel.hidden = panel.dataset.fontPanel !== tabId;
-  });
+  activateFontPanel(elements, tabId);
 }
 
 function stopMobileShortcutRepeat() {
