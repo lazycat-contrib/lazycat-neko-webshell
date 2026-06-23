@@ -223,6 +223,7 @@ export type TerminalPane = {
   sessionId?: string;
   sessionStatus?: string;
   sessionBackend: SessionBackendId;
+  workingDirectory?: string;
   term?: Terminal;
   socket?: WebSocket;
   transport?: PaneTerminalTransport;

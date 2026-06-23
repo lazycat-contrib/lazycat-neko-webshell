@@ -66,6 +66,8 @@ const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MAX_AI_CONTEXT_CHARS = 12000;
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
+const FILE_TRANSFER_PLUGIN_ID = "file-transfer";
+const AI_CHAT_PLUGIN_ID = "ai-chat";
 const LIGHT_INTERFACE_STYLES = new Set<InterfaceStyleId>(["porcelain", "frost", "champagne", "candy", "lab"]);
 const capabilityClient = createClient(
   CapabilityService,
@@ -77,6 +79,29 @@ const capabilityClient = createClient(
 const actionClient = new TerminalActionWSClient();
 
 type SessionMode = SessionBackendId;
+type FileBrowserEntry = {
+  name: string;
+  path: string;
+  kind: "directory" | "file" | "symlink" | "hardlink" | "other";
+  size: number;
+  linkTarget?: string;
+};
+type AIChatMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+  tone?: Tone;
+};
+type AIChatSession = {
+  id: string;
+  model: string;
+  title: string;
+  messages: AIChatMessage[];
+};
+type FileBrowserContextMenu = {
+  path: string;
+  x: number;
+  y: number;
+};
 type ClipboardImagePayload = {
   extension: string;
   data: ArrayBuffer;
@@ -119,6 +144,16 @@ let pluginsLoaded = false;
 let pluginsLoading = false;
 let activePluginToolId = "";
 let aiModelOptions: string[] = [];
+let fileBrowserPath = "/";
+let selectedFileBrowserPath = "";
+let fileBrowserEntries: FileBrowserEntry[] = [];
+let fileBrowserLoading = false;
+let fileBrowserLoadedPath = "";
+let fileBrowserPaneId = "";
+let fileBrowserContextMenu: FileBrowserContextMenu | undefined;
+let aiChatSessions: AIChatSession[] = [];
+let activeAIChatSessionId = "";
+let aiChatStreaming = false;
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
@@ -440,17 +475,60 @@ function bindSettings() {
     activePluginToolId = button.dataset.pluginTool ?? "";
     renderPluginTools();
   });
+  elements.pluginToolBody.addEventListener("input", (event) => {
+    const aiInput = event.target instanceof Element
+      ? event.target.closest<HTMLTextAreaElement>("#aiChatInput")
+      : null;
+    if (aiInput) {
+      resizeAIChatInput(aiInput);
+    }
+  });
   elements.pluginToolBody.addEventListener("change", (event) => {
     const upload = event.target instanceof Element
-      ? event.target.closest<HTMLInputElement>("#fileTransferUpload")
+      ? event.target.closest<HTMLInputElement>("[data-file-upload]")
       : null;
-    const file = upload?.files?.[0];
-    if (!upload || !file) return;
-    void uploadFileTransfer(file).finally(() => {
-      upload.value = "";
-    });
+    if (upload) {
+      const files = Array.from(upload.files ?? []);
+      if (files.length) {
+        void uploadFileTransfer(files).finally(() => {
+          upload.value = "";
+        });
+      }
+      return;
+    }
+    const aiSetting = event.target instanceof Element
+      ? event.target.closest<HTMLSelectElement>("[data-ai-chat-setting]")
+      : null;
+    if (aiSetting) {
+      updateAISetting(aiSetting.dataset.aiChatSetting ?? "", aiSetting.value);
+    }
+  });
+  elements.pluginToolBody.addEventListener("keydown", (event) => {
+    const input = event.target instanceof Element
+      ? event.target.closest<HTMLTextAreaElement>("#aiChatInput")
+      : null;
+    if (!input || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+    event.preventDefault();
+    void runAIChat();
   });
   elements.pluginToolBody.addEventListener("click", (event) => {
+    const entryButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-file-entry]")
+      : null;
+    if (entryButton) {
+      void activateFileBrowserEntry(entryButton.dataset.fileEntry ?? "", event.detail > 1);
+      return;
+    }
+    const menuButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-file-menu-action]")
+      : null;
+    if (menuButton) {
+      const path = menuButton.dataset.fileMenuPath ?? selectedFileBrowserPath;
+      selectedFileBrowserPath = path;
+      fileBrowserContextMenu = undefined;
+      void runFileTransfer(menuButton.dataset.fileMenuAction ?? "");
+      return;
+    }
     const fileButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-file-transfer-action]")
       : null;
@@ -458,20 +536,49 @@ function bindSettings() {
       void runFileTransfer(fileButton.dataset.fileTransferAction ?? "");
       return;
     }
+    const aiSettingButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-ai-chat-setting]")
+      : null;
+    if (aiSettingButton) {
+      updateAISetting(aiSettingButton.dataset.aiChatSetting ?? "", aiSettingButton.dataset.aiChatValue ?? "");
+      return;
+    }
     const aiButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-ai-action]")
       : null;
     if (!aiButton) return;
     const action = aiButton.dataset.aiAction ?? "";
-    if (action === "insert-output") {
-      insertAIOutputIntoTerminal();
+    if (action === "send-chat") {
+      void runAIChat();
     } else if (action === "copy-output") {
       void copyAIOutput();
+    } else if (action === "copy-message") {
+      void copyAIMessage(Number(aiButton.dataset.aiMessageIndex));
     } else if (action === "clear-output") {
       clearAIOutput();
-    } else {
-      void runAIAction(action);
+    } else if (action === "new-chat") {
+      newAIChatSession();
+    } else if (action === "export-chat") {
+      exportAIChat();
+    } else if (action === "models") {
+      void fetchAIModels();
+    } else if (action === "test") {
+      void testAIAccess();
     }
+  });
+  elements.pluginToolBody.addEventListener("contextmenu", (event) => {
+    const entryButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-file-entry]")
+      : null;
+    if (!entryButton) return;
+    event.preventDefault();
+    selectedFileBrowserPath = entryButton.dataset.fileEntry ?? "";
+    fileBrowserContextMenu = {
+      path: selectedFileBrowserPath,
+      x: event.clientX,
+      y: event.clientY,
+    };
+    renderPluginTools();
   });
   elements.fontFamily.addEventListener("change", () => {
     settings.fontFamilyId = elements.fontFamily.value;
@@ -683,9 +790,15 @@ function bindActions() {
     event.stopPropagation();
     toggleShortcutHelp();
   });
+  elements.shortcutHelpClose.addEventListener("click", () => closeShortcutHelp());
+  elements.shortcutHelp.addEventListener("click", (event) => {
+    if (event.target === elements.shortcutHelp) {
+      closeShortcutHelp();
+    }
+  });
   elements.pluginsButton.addEventListener("click", (event) => {
     event.stopPropagation();
-    openPluginSidebar();
+    togglePluginSidebar();
   });
   elements.closePluginSidebar.addEventListener("click", () => closePluginSidebar());
   elements.homeButton.addEventListener("click", () => void navigateLightOSHome());
@@ -734,6 +847,14 @@ function bindActions() {
     if (event.target instanceof Node && !elements.paneMenu.contains(event.target)) {
       closePaneMenu();
     }
+    if (
+      fileBrowserContextMenu
+      && event.target instanceof Element
+      && !event.target.closest(".file-browser-context-menu")
+    ) {
+      fileBrowserContextMenu = undefined;
+      renderPluginTools();
+    }
   });
   elements.paneMenu.addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-pane-action]") : null;
@@ -748,8 +869,10 @@ function bindActions() {
       closeHerdrWorkspaceMenu();
       closeShortcutHelp();
       closePaneMenu();
+      fileBrowserContextMenu = undefined;
       closeSettings();
       closePluginSidebar();
+      renderPluginTools();
       return;
     }
     if (handleFontZoomShortcut(event)) {
@@ -1159,6 +1282,14 @@ function closeSettingsMenu() {
   elements.settingsButton.setAttribute("aria-expanded", "false");
 }
 
+function togglePluginSidebar() {
+  if (elements.pluginSidebar.hidden) {
+    openPluginSidebar();
+  } else {
+    closePluginSidebar();
+  }
+}
+
 function openPluginSidebar() {
   closeSettingsMenu();
   closeShortcutHelp();
@@ -1189,6 +1320,9 @@ function toggleShortcutHelp() {
   closePaneMenu();
   elements.shortcutHelp.hidden = !open;
   elements.shortcutHelpButton.setAttribute("aria-expanded", String(open));
+  if (open) {
+    requestAnimationFrame(() => elements.shortcutHelpClose.focus());
+  }
 }
 
 function closeShortcutHelp() {
@@ -1862,7 +1996,7 @@ function renderPlugin(plugin: PluginDescriptor): string {
   const status = plugin.enabled ? tr("setting.pluginEnabled") : tr("setting.pluginDisabled");
   const meta = Array.from(new Set([plugin.kind, ...plugin.scopes].filter(Boolean)))
     .map((item) => pluginMetaLabel(item));
-  const settingsTool = plugin.id === "ai-control" ? renderAIAccessSettings(plugin) : "";
+  const settingsTool = plugin.id === AI_CHAT_PLUGIN_ID ? renderAIAccessSettings(plugin) : "";
   return `
     <div class="plugin-item" role="listitem">
       <div class="plugin-content">
@@ -1955,7 +2089,7 @@ function renderAIAccessSettings(plugin: PluginDescriptor): string {
 }
 
 function renderPluginTools() {
-  const tools = plugins.filter((plugin) => plugin.enabled && (plugin.id === "file-transfer" || plugin.id === "ai-control"));
+  const tools = plugins.filter((plugin) => plugin.enabled && (plugin.id === FILE_TRANSFER_PLUGIN_ID || plugin.id === AI_CHAT_PLUGIN_ID));
   if (!tools.length) {
     activePluginToolId = "";
     elements.pluginToolTabs.innerHTML = "";
@@ -1967,95 +2101,126 @@ function renderPluginTools() {
     activePluginToolId = tools[0]?.id ?? "";
   }
   elements.pluginToolTabs.innerHTML = tools.map((plugin) => `
-    <button type="button" role="tab" data-plugin-tool="${escapeAttr(plugin.id)}" aria-selected="${plugin.id === activePluginToolId}">
+    <button type="button" role="tab" data-plugin-tool="${escapeAttr(plugin.id)}" aria-selected="${plugin.id === activePluginToolId}" aria-label="${escapeAttr(pluginDisplayName(plugin))}" title="${escapeAttr(pluginDisplayName(plugin))}">
       <i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i>
-      <span>${escapeHtml(pluginDisplayName(plugin))}</span>
+      <span class="tool-tip">${escapeHtml(pluginDisplayName(plugin))}</span>
     </button>
   `).join("");
   const activePlugin = tools.find((plugin) => plugin.id === activePluginToolId);
-  elements.pluginToolBody.innerHTML = activePlugin?.id === "file-transfer"
+  if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID) {
+    syncFileBrowserPathWithActivePane();
+  }
+  elements.pluginToolBody.innerHTML = activePlugin?.id === FILE_TRANSFER_PLUGIN_ID
     ? renderFileTransferTool(activePlugin)
-    : activePlugin?.id === "ai-control"
-      ? renderAIControlTool(activePlugin)
+    : activePlugin?.id === AI_CHAT_PLUGIN_ID
+      ? renderAIChatTool(activePlugin)
       : "";
   updateIcons();
+  if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID && !fileBrowserLoading && fileBrowserLoadedPath !== normalizeRemotePath(fileBrowserPath)) {
+    void loadFileBrowserDirectory(fileBrowserPath);
+  }
+  if (activePlugin?.id === AI_CHAT_PLUGIN_ID) {
+    scrollAIChatToBottom();
+  }
 }
 
 function renderFileTransferTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
   const disabledAttr = disabled ? "disabled" : "";
+  const currentPath = normalizeRemotePath(fileBrowserPath);
+  const selectedPath = selectedFileBrowserPath || currentPath;
   return `
     <div class="plugin-tool file-transfer-tool">
-      <div class="settings-group-title">${escapeHtml(tr("section.fileTransfer"))}</div>
-      <p class="settings-help">${escapeHtml(tr("plugin.fileTransfer.help"))}</p>
-      <label class="field">
-        <span>${escapeHtml(tr("field.pluginPath"))}</span>
-        <input id="fileTransferPath" type="text" value="/" autocomplete="off" spellcheck="false" ${disabledAttr} />
-      </label>
-      <div class="plugin-action-row">
-        <button class="command-button" type="button" data-file-transfer-action="list" ${disabledAttr}>
-          <i data-lucide="list-tree"></i>
-          <span>${escapeHtml(tr("action.pluginFileList"))}</span>
-        </button>
-        <button class="command-button" type="button" data-file-transfer-action="read" ${disabledAttr}>
-          <i data-lucide="file-text"></i>
-          <span>${escapeHtml(tr("action.pluginFileRead"))}</span>
-        </button>
-        <button class="command-button" type="button" data-file-transfer-action="stat" ${disabledAttr}>
-          <i data-lucide="info"></i>
-          <span>${escapeHtml(tr("action.pluginFileStat"))}</span>
-        </button>
-        <button class="command-button" type="button" data-file-transfer-action="download" ${disabledAttr}>
-          <i data-lucide="download"></i>
-          <span>${escapeHtml(tr("action.pluginFileDownload"))}</span>
-        </button>
-        <label class="file-button ${disabled ? "is-disabled" : ""}">
-          <input id="fileTransferUpload" type="file" ${disabledAttr} />
-          <i data-lucide="upload"></i>
-          <span>${escapeHtml(tr("action.pluginFileUpload"))}</span>
-        </label>
+      <div class="plugin-tool-head">
+        <div>
+          <div class="settings-group-title">${escapeHtml(tr("section.fileTransfer"))}</div>
+          <p class="settings-help">${escapeHtml(tr("plugin.fileTransfer.help"))}</p>
+        </div>
       </div>
-      <pre class="plugin-output" id="fileTransferOutput" aria-label="${escapeAttr(tr("plugin.fileTransfer.output"))}"></pre>
+      <div class="file-browser-shell">
+        <div class="file-browser-toolbar">
+          <button class="icon-button" type="button" data-file-transfer-action="home" aria-label="${escapeAttr(tr("action.pluginFileHome"))}" title="${escapeAttr(tr("action.pluginFileHome"))}" ${disabledAttr}>
+            <i data-lucide="hard-drive"></i>
+          </button>
+          <button class="icon-button" type="button" data-file-transfer-action="parent" aria-label="${escapeAttr(tr("action.pluginFileParent"))}" title="${escapeAttr(tr("action.pluginFileParent"))}" ${disabledAttr}>
+            <i data-lucide="corner-up-left"></i>
+          </button>
+          <button class="icon-button" type="button" data-file-transfer-action="refresh" aria-label="${escapeAttr(tr("action.pluginFileRefresh"))}" title="${escapeAttr(tr("action.pluginFileRefresh"))}" ${disabledAttr}>
+            <i data-lucide="refresh-cw"></i>
+          </button>
+          <button class="icon-button" type="button" data-file-transfer-action="sync-cwd" aria-label="${escapeAttr(tr("action.pluginFileSyncCwd"))}" title="${escapeAttr(tr("action.pluginFileSyncCwd"))}" ${disabledAttr}>
+            <i data-lucide="locate-fixed"></i>
+          </button>
+          <div class="file-browser-path" title="${escapeAttr(currentPath)}">${escapeHtml(currentPath)}</div>
+        </div>
+        <div class="file-browser-list" role="listbox" aria-label="${escapeAttr(tr("section.fileTransfer"))}">
+          ${renderFileBrowserEntries(disabled)}
+        </div>
+        ${renderFileBrowserContextMenu(disabled)}
+      </div>
+      <div class="file-browser-footer">
+        <div class="file-browser-selection" title="${escapeAttr(selectedPath)}">
+          <span>${escapeHtml(selectedPath)}</span>
+        </div>
+        <div class="file-browser-actions" aria-label="${escapeAttr(tr("section.fileTransfer"))}">
+          <button class="file-action-button" type="button" data-file-transfer-action="download" aria-label="${escapeAttr(tr("action.pluginFileDownload"))}" title="${escapeAttr(tr("action.pluginFileDownload"))}" ${disabledAttr}>
+            <i data-lucide="download"></i>
+            <span class="file-action-tip">${escapeHtml(tr("action.pluginFileDownload"))}</span>
+          </button>
+          <button class="file-action-button" type="button" data-file-transfer-action="read" aria-label="${escapeAttr(tr("action.pluginFileRead"))}" title="${escapeAttr(tr("action.pluginFileRead"))}" ${disabledAttr}>
+            <i data-lucide="file-text"></i>
+            <span class="file-action-tip">${escapeHtml(tr("action.pluginFileRead"))}</span>
+          </button>
+          <button class="file-action-button" type="button" data-file-transfer-action="stat" aria-label="${escapeAttr(tr("action.pluginFileStat"))}" title="${escapeAttr(tr("action.pluginFileStat"))}" ${disabledAttr}>
+            <i data-lucide="info"></i>
+            <span class="file-action-tip">${escapeHtml(tr("action.pluginFileStat"))}</span>
+          </button>
+          <label class="file-action-button ${disabled ? "is-disabled" : ""}" aria-label="${escapeAttr(tr("action.pluginFileUpload"))}" title="${escapeAttr(tr("action.pluginFileUpload"))}">
+            <input data-file-upload type="file" multiple ${disabledAttr} />
+            <i data-lucide="upload"></i>
+            <span class="file-action-tip">${escapeHtml(tr("action.pluginFileUpload"))}</span>
+          </label>
+        </div>
+      </div>
+      <pre class="plugin-output file-browser-preview" id="fileTransferOutput" aria-label="${escapeAttr(tr("plugin.fileTransfer.output"))}"></pre>
     </div>
   `;
 }
 
-function renderAIControlTool(plugin: PluginDescriptor): string {
+function renderAIChatTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
   const disabledAttr = disabled ? "disabled" : "";
+  const session = ensureAIChatSession(currentAIModel());
   return `
-    <div class="plugin-tool ai-control-tool">
-      <div class="settings-group-title">${escapeHtml(tr("plugin.aiControl.name"))}</div>
-      <div class="plugin-action-row ai-action-row">
-        <button class="command-button" type="button" data-ai-action="chat" ${disabledAttr}>
-          <i data-lucide="message-square"></i>
-          <span>${escapeHtml(tr("action.aiChat"))}</span>
-        </button>
-        <button class="command-button" type="button" data-ai-action="nl2cmd" ${disabledAttr}>
-          <i data-lucide="terminal"></i>
-          <span>${escapeHtml(tr("action.aiNl2cmd"))}</span>
-        </button>
-        <button class="command-button" type="button" data-ai-action="complete" ${disabledAttr}>
-          <i data-lucide="wand-sparkles"></i>
-          <span>${escapeHtml(tr("action.aiComplete"))}</span>
-        </button>
-        <button class="command-button" type="button" data-ai-action="explain" ${disabledAttr}>
-          <i data-lucide="circle-help"></i>
-          <span>${escapeHtml(tr("action.aiExplain"))}</span>
-        </button>
-        <button class="command-button" type="button" data-ai-action="insert-output" ${disabledAttr}>
-          <i data-lucide="corner-down-left"></i>
-          <span>${escapeHtml(tr("action.aiInsert"))}</span>
-        </button>
+    <div class="plugin-tool ai-chat-tool">
+      <div class="plugin-tool-head">
+        <div>
+          <div class="settings-group-title">${escapeHtml(tr("plugin.aiChat.name"))}</div>
+          <p class="settings-help">${escapeHtml(pluginDescription(plugin))}</p>
+        </div>
+        <div class="ai-chat-actions">
+          <button class="icon-button" type="button" data-ai-action="new-chat" aria-label="${escapeAttr(tr("action.aiNewChat"))}" title="${escapeAttr(tr("action.aiNewChat"))}" ${disabledAttr}>
+            <i data-lucide="message-square-plus"></i>
+          </button>
+          <button class="icon-button" type="button" data-ai-action="export-chat" aria-label="${escapeAttr(tr("action.aiExport"))}" title="${escapeAttr(tr("action.aiExport"))}" ${disabledAttr}>
+            <i data-lucide="download"></i>
+          </button>
+          <button class="icon-button" type="button" data-ai-action="models" aria-label="${escapeAttr(tr("action.aiFetchModels"))}" title="${escapeAttr(tr("action.aiFetchModels"))}" ${disabledAttr}>
+            <i data-lucide="list-filter"></i>
+          </button>
+          <button class="icon-button" type="button" data-ai-action="test" aria-label="${escapeAttr(tr("action.aiTest"))}" title="${escapeAttr(tr("action.aiTest"))}" ${disabledAttr}>
+            <i data-lucide="activity"></i>
+          </button>
+        </div>
       </div>
-      <label class="field ai-prompt-field">
-        <span>${escapeHtml(tr("field.aiPrompt"))}</span>
-        <textarea id="aiPrompt" rows="4" spellcheck="false" ${disabledAttr}></textarea>
-      </label>
-      <div class="ai-block">
-        <div class="ai-block-head">
-          <span><i data-lucide="bot"></i>${escapeHtml(tr("plugin.aiControl.block"))}</span>
-          <div class="ai-block-actions">
+      <div class="ai-chat-box">
+        <div class="ai-chat-history" id="aiChatHistory" aria-live="polite">
+          ${renderAIChatMessages()}
+        </div>
+        <div class="ai-chat-composer">
+          <div class="ai-chat-model-row">
+            ${renderAIChatPicker("model", tr("field.aiModel"), currentAIModel() || tr("action.aiFetchModels"), aiModelValues(), disabled)}
+            ${renderAIChatPicker("session", tr("field.aiSession"), session.title, aiChatSessionsForModel(session.model).map((item) => ({ value: item.id, label: item.title })), disabled)}
             <button class="icon-button" type="button" data-ai-action="copy-output" aria-label="${escapeAttr(tr("action.aiCopy"))}" title="${escapeAttr(tr("action.aiCopy"))}" ${disabledAttr}>
               <i data-lucide="copy"></i>
             </button>
@@ -2063,17 +2228,47 @@ function renderAIControlTool(plugin: PluginDescriptor): string {
               <i data-lucide="x"></i>
             </button>
           </div>
+          <div class="ai-chat-input-row">
+            <textarea id="aiChatInput" rows="1" spellcheck="false" placeholder="${escapeAttr(tr("field.aiPrompt"))}" ${disabledAttr}></textarea>
+            <button class="command-button primary" type="button" data-ai-action="send-chat" ${disabledAttr}>
+              <i data-lucide="send"></i>
+              <span>${escapeHtml(tr("action.aiSend"))}</span>
+            </button>
+          </div>
         </div>
-        <pre class="plugin-output ai-output" id="aiOutput" aria-label="${escapeAttr(tr("plugin.aiControl.output"))}"></pre>
       </div>
     </div>
   `;
 }
 
 async function runFileTransfer(action: string) {
-  if (action !== "list" && action !== "read" && action !== "stat" && action !== "download") return;
-  if (!pluginIsEnabled("file-transfer")) return;
-  const path = fileTransferPath();
+  if (!pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID)) return;
+  if (action === "home") {
+    await loadFileBrowserDirectory("/");
+    return;
+  }
+  if (action === "sync-cwd") {
+    syncFileBrowserPathWithActivePane(true);
+    await loadFileBrowserDirectory(fileBrowserPath);
+    return;
+  }
+  if (action === "parent") {
+    await loadFileBrowserDirectory(parentRemotePath(fileBrowserPath));
+    return;
+  }
+  if (action === "refresh" || action === "list") {
+    await loadFileBrowserDirectory(fileBrowserPath);
+    return;
+  }
+  if (action === "open") {
+    const entry = selectedFileBrowserEntry();
+    if (entry?.kind === "directory" || entry?.kind === "symlink") {
+      await loadFileBrowserDirectory(entry.path);
+    }
+    return;
+  }
+  if (action !== "read" && action !== "stat" && action !== "download") return;
+  const path = selectedFileBrowserPath || fileBrowserPath;
   if (!path) {
     setFileTransferOutput(tr("validation.pluginPath"), "error");
     return;
@@ -2116,25 +2311,31 @@ async function runFileTransfer(action: string) {
   }
 }
 
-async function uploadFileTransfer(file: File) {
-  if (!pluginIsEnabled("file-transfer")) return;
+async function uploadFileTransfer(files: File[]) {
+  if (!pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID) || !files.length) return;
   const pane = activePane();
   if (!pane?.sessionId) {
     setFileTransferOutput(tr("status.pluginFileNoSession"), "error");
     return;
   }
-  const targetPath = uploadTargetPath(fileTransferPath(), file.name);
-  if (!targetPath) {
+  const directory = fileUploadDirectory();
+  if (!directory) {
     setFileTransferOutput(tr("validation.pluginPath"), "error");
     return;
   }
   setFileTransferOutput("");
   try {
-    const done = await actionClient.uploadFile(file, pane.sessionId, targetPath, {
-      onProgress: (meta) => setFileTransferOutput(transferProgressText(meta), "neutral"),
-    });
-    setFileTransferOutput(metaString(done.meta, "content") || transferProgressText(done.meta), "ok");
-    setPluginStatus(tr("status.pluginFileUploadDone", { name: file.name }), "ok");
+    let lastMessage = "";
+    for (const file of files) {
+      const targetPath = uploadTargetPath(directory, file.name);
+      const done = await actionClient.uploadFile(file, pane.sessionId, targetPath, {
+        onProgress: (meta) => setFileTransferOutput(transferProgressText(meta), "neutral"),
+      });
+      lastMessage = metaString(done.meta, "content") || transferProgressText(done.meta);
+      setFileTransferOutput(lastMessage, "ok");
+    }
+    await loadFileBrowserDirectory(directory);
+    setPluginStatus(tr("status.pluginFileUploadDone", { name: files.length === 1 ? files[0]?.name ?? "" : String(files.length) }), "ok");
   } catch (error) {
     setFileTransferOutput(errorMessage(error), "error");
     setPluginStatus(errorMessage(error), "error");
@@ -2152,6 +2353,9 @@ function updateAISetting(field: string, value: string) {
     aiModelOptions = [];
   } else if (field === "model") {
     settings.aiModel = value.trim();
+    activeAIChatSessionId = ensureAIChatSession(currentAIModel()).id;
+  } else if (field === "session") {
+    activeAIChatSessionId = value;
   } else if (field === "sendContext") {
     settings.aiSendTerminalContext = value === "true";
   } else if (field === "contextLines") {
@@ -2162,36 +2366,35 @@ function updateAISetting(field: string, value: string) {
 }
 
 async function fetchAIModels() {
-  if (!pluginIsEnabled("ai-control")) return;
+  if (!pluginIsEnabled(AI_CHAT_PLUGIN_ID)) return;
   if (!aiAccessConfigured()) {
-    setAIOutput(tr("validation.aiAccess"), "error");
+    appendAIChatSystem(tr("validation.aiAccess"), "error");
     return;
   }
-  setAIOutput(tr("status.aiWorking"));
   try {
     const done = await actionClient.send("ai", "models", {});
     const models = metaStringArray(done.meta, "models");
     aiModelOptions = models;
     if (!settings.aiModel && models[0]) {
       settings.aiModel = models[0];
+      activeAIChatSessionId = ensureAIChatSession(models[0]).id;
       saveSettings();
     }
     renderPlugins();
-    setAIOutput(models.join("\n") || tr("status.noSessions"), "ok");
+    appendAIChatSystem(models.join("\n") || tr("status.noSessions"), "ok");
     setPluginStatus(tr("status.aiModelsReady", { count: models.length }), "ok");
   } catch (error) {
-    setAIOutput(errorMessage(error), "error");
+    appendAIChatSystem(errorMessage(error), "error");
     setPluginStatus(errorMessage(error), "error");
   }
 }
 
 async function testAIAccess() {
-  if (!pluginIsEnabled("ai-control")) return;
+  if (!pluginIsEnabled(AI_CHAT_PLUGIN_ID)) return;
   if (!aiAccessConfigured()) {
-    setAIOutput(tr("validation.aiAccess"), "error");
+    appendAIChatSystem(tr("validation.aiAccess"), "error");
     return;
   }
-  setAIOutput(tr("status.aiWorking"));
   try {
     const done = await actionClient.send("ai", "test", {});
     const models = metaStringArray(done.meta, "models");
@@ -2199,66 +2402,93 @@ async function testAIAccess() {
       aiModelOptions = models;
       if (!settings.aiModel && models[0]) {
         settings.aiModel = models[0];
+        activeAIChatSessionId = ensureAIChatSession(models[0]).id;
         saveSettings();
       }
       renderPlugins();
     }
     const message = metaString(done.meta, "message") || tr("status.aiTestOk");
     const content = metaString(done.meta, "content");
-    setAIOutput([message, content].filter(Boolean).join("\n"), "ok");
+    appendAIChatSystem([message, content].filter(Boolean).join("\n"), "ok");
     setPluginStatus(tr("status.aiTestOk"), "ok");
   } catch (error) {
-    setAIOutput(errorMessage(error), "error");
+    appendAIChatSystem(errorMessage(error), "error");
     setPluginStatus(errorMessage(error), "error");
   }
 }
 
-async function runAIAction(action: string) {
-  if (action !== "chat" && action !== "nl2cmd" && action !== "complete" && action !== "explain") return;
-  if (!pluginIsEnabled("ai-control")) return;
+async function runAIChat() {
+  if (!pluginIsEnabled(AI_CHAT_PLUGIN_ID) || aiChatStreaming) return;
   if (!aiAccessConfigured()) {
-    setAIOutput(tr("validation.aiAccess"), "error");
+    appendAIChatSystem(tr("validation.aiAccess"), "error");
     return;
   }
-  const prompt = aiPromptValue();
+  const input = document.querySelector<HTMLTextAreaElement>("#aiChatInput");
+  const prompt = input?.value.trim() ?? "";
   if (!prompt) {
-    setAIOutput(tr("validation.aiPrompt"), "error");
+    appendAIChatSystem(tr("validation.aiPrompt"), "error");
     return;
   }
-  setAIOutput(tr("status.aiWorking"));
-  let output = "";
+  const model = currentAIModel();
+  if (!model) {
+    appendAIChatSystem(tr("action.aiFetchModels"), "error");
+    return;
+  }
+  const session = ensureAIChatSession(model);
+  input!.value = "";
+  resizeAIChatInput(input!);
+  session.messages.push({ role: "user", content: prompt });
+  const assistant: AIChatMessage = { role: "assistant", content: "" };
+  session.messages.push(assistant);
+  aiChatStreaming = true;
+  renderPluginTools();
   try {
-    await actionClient.send("ai", action, aiActionPayload(action, prompt), {
+    await actionClient.send("ai", "chat", {
+      input: prompt,
+      ctx: terminalAIContext(),
+      conversation: session.messages.slice(0, -1).slice(-12),
+    }, {
       onStream: (chunk) => {
-        output += chunk;
-        setAIOutput(output, "ok");
+        assistant.content += chunk;
+        renderAIChatMessagesIntoDom();
       },
     });
+    if (!assistant.content.trim()) {
+      assistant.content = tr("status.aiNoOutput");
+      assistant.tone = "neutral";
+    }
     setPluginStatus(tr("status.aiTestOk"), "ok");
   } catch (error) {
-    setAIOutput(errorMessage(error), "error");
+    assistant.content = errorMessage(error);
+    assistant.tone = "error";
     setPluginStatus(errorMessage(error), "error");
+  } finally {
+    aiChatStreaming = false;
+    renderPluginTools();
   }
-}
-
-function insertAIOutputIntoTerminal() {
-  const output = aiOutputText();
-  const command = commandFromAIOutput(output);
-  if (!command) {
-    setAIOutput(tr("status.aiNoOutput"), "error");
-    return;
-  }
-  if (!sendActivePaneKeyInput(command)) {
-    setAIOutput(tr("status.pluginFileNoSession"), "error");
-    return;
-  }
-  setPluginStatus(tr("status.aiInserted"), "ok");
 }
 
 async function copyAIOutput() {
-  const output = aiOutputText();
+  const session = activeAIChatSession();
+  const output = session ? aiChatTranscript(session) : "";
   if (!output) {
-    setAIOutput(tr("status.aiNoOutput"), "error");
+    appendAIChatSystem(tr("status.aiNoOutput"), "error");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(output);
+    setPluginStatus(tr("status.selectionCopied"), "ok");
+  } catch (error) {
+    setPluginStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+async function copyAIMessage(index: number) {
+  const session = activeAIChatSession();
+  const message = Number.isInteger(index) ? session?.messages[index] : undefined;
+  const output = message?.content.trim() ?? "";
+  if (!output) {
+    appendAIChatSystem(tr("status.aiNoOutput"), "error");
     return;
   }
   try {
@@ -2270,7 +2500,159 @@ async function copyAIOutput() {
 }
 
 function clearAIOutput() {
-  setAIOutput("");
+  const session = activeAIChatSession();
+  if (!session) return;
+  session.messages = [];
+  renderPluginTools();
+}
+
+function currentAIModel(): string {
+  return settings.aiModel.trim() || aiModelOptions[0] || "";
+}
+
+function activeAIChatSession(): AIChatSession | undefined {
+  return aiChatSessions.find((session) => session.id === activeAIChatSessionId);
+}
+
+function ensureAIChatSession(model: string): AIChatSession {
+  const normalizedModel = model.trim() || "default";
+  const active = activeAIChatSession();
+  if (active?.model === normalizedModel) return active;
+  const existing = aiChatSessions.find((session) => session.model === normalizedModel);
+  if (existing) {
+    activeAIChatSessionId = existing.id;
+    return existing;
+  }
+  const count = aiChatSessions.filter((session) => session.model === normalizedModel).length + 1;
+  const session: AIChatSession = {
+    id: newId(),
+    model: normalizedModel,
+    title: `${tr("plugin.aiChat.block")} ${count}`,
+    messages: [],
+  };
+  aiChatSessions = [...aiChatSessions, session];
+  activeAIChatSessionId = session.id;
+  return session;
+}
+
+function newAIChatSession() {
+  const model = currentAIModel() || "default";
+  const count = aiChatSessions.filter((session) => session.model === model).length + 1;
+  const session: AIChatSession = {
+    id: newId(),
+    model,
+    title: `${tr("plugin.aiChat.block")} ${count}`,
+    messages: [],
+  };
+  aiChatSessions = [...aiChatSessions, session];
+  activeAIChatSessionId = session.id;
+  renderPluginTools();
+}
+
+function appendAIChatSystem(content: string, tone: Tone = "neutral") {
+  const session = ensureAIChatSession(currentAIModel());
+  session.messages.push({ role: "system", content, tone });
+  renderPluginTools();
+}
+
+function aiModelValues(): Array<{ value: string; label: string }> {
+  const values = Array.from(new Set([settings.aiModel, ...aiModelOptions].map((value) => value.trim()).filter(Boolean)));
+  if (!values.length) {
+    return [{ value: "", label: tr("action.aiFetchModels") }];
+  }
+  return values.map((model) => ({ value: model, label: model }));
+}
+
+function aiChatSessionsForModel(model: string): AIChatSession[] {
+  return aiChatSessions.filter((item) => item.model === model);
+}
+
+function renderAIChatPicker(
+  field: string,
+  label: string,
+  current: string,
+  options: Array<{ value: string; label: string }>,
+  disabled: boolean,
+): string {
+  const selected = field === "model" ? currentAIModel() : activeAIChatSessionId;
+  const items = options.map((option) => `
+    <button type="button" data-ai-chat-setting="${escapeAttr(field)}" data-ai-chat-value="${escapeAttr(option.value)}" aria-current="${option.value === selected ? "true" : "false"}" ${disabled ? "disabled" : ""}>
+      <span>${escapeHtml(option.label)}</span>
+      ${option.value === selected ? `<i data-lucide="check"></i>` : ""}
+    </button>
+  `).join("");
+  return `
+    <details class="ai-chat-picker">
+      <summary aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}" ${disabled ? "aria-disabled=\"true\"" : ""}>
+        <span>${escapeHtml(current || label)}</span>
+        <i data-lucide="chevron-down"></i>
+      </summary>
+      <div class="ai-chat-picker-menu">
+        ${items}
+      </div>
+    </details>
+  `;
+}
+
+function renderAIChatMessages(): string {
+  const session = ensureAIChatSession(currentAIModel());
+  if (!session.messages.length) {
+    return `<div class="empty">${escapeHtml(tr("plugin.aiChat.description"))}</div>`;
+  }
+  return session.messages.map((message, index) => {
+    const thinking = message.role === "assistant" && !message.content.trim() && aiChatStreaming;
+    const content = thinking
+      ? `<div class="ai-thinking" role="status" aria-label="${escapeAttr(tr("status.aiWorking"))}"><span class="ai-thinking-leds" aria-hidden="true"><i></i><i></i><i></i><i></i></span></div>`
+      : escapeHtml(message.content);
+    return `
+    <article class="ai-chat-message ${escapeAttr(message.role)}" data-tone="${escapeAttr(message.tone ?? "neutral")}">
+      <div class="ai-chat-message-head">
+        <span class="ai-chat-message-role">${escapeHtml(aiChatRoleLabel(message.role))}</span>
+        ${message.content.trim() ? `<button class="ai-message-copy" type="button" data-ai-action="copy-message" data-ai-message-index="${escapeAttr(String(index))}" aria-label="${escapeAttr(tr("action.aiCopy"))}" title="${escapeAttr(tr("action.aiCopy"))}"><i data-lucide="copy"></i></button>` : ""}
+      </div>
+      <div class="ai-chat-message-content ${thinking ? "is-thinking" : ""}">${content}</div>
+    </article>
+  `;
+  }).join("");
+}
+
+function renderAIChatMessagesIntoDom() {
+  const history = document.querySelector<HTMLElement>("#aiChatHistory");
+  if (!history) return;
+  history.innerHTML = renderAIChatMessages();
+  scrollAIChatToBottom();
+}
+
+function aiChatRoleLabel(role: AIChatMessage["role"]): string {
+  if (role === "user") return "You";
+  if (role === "assistant") return "AI";
+  return "WebShell";
+}
+
+function scrollAIChatToBottom() {
+  const history = document.querySelector<HTMLElement>("#aiChatHistory");
+  if (history) history.scrollTop = history.scrollHeight;
+}
+
+function resizeAIChatInput(input: HTMLTextAreaElement) {
+  input.style.height = "auto";
+  input.style.height = `${Math.min(Math.max(input.scrollHeight, 40), 140)}px`;
+}
+
+function aiChatTranscript(session: AIChatSession): string {
+  return session.messages
+    .map((message) => `## ${aiChatRoleLabel(message.role)}\n\n${message.content}`)
+    .join("\n\n");
+}
+
+function exportAIChat() {
+  const session = activeAIChatSession();
+  if (!session || !session.messages.length) {
+    appendAIChatSystem(tr("status.aiNoOutput"), "error");
+    return;
+  }
+  const bytes = new TextEncoder().encode(aiChatTranscript(session));
+  downloadPluginPayload(bytes, `${session.title.replace(/[^\w.-]+/g, "-").toLowerCase() || "ai-chat"}.md`, "text/markdown;charset=utf-8");
 }
 
 function pluginIsEnabled(pluginId: string): boolean {
@@ -2281,25 +2663,10 @@ function aiAccessConfigured(): boolean {
   return Boolean(settings.aiBaseUrl.trim() && settings.aiApiKey.trim());
 }
 
-function aiPromptValue(): string {
-  return document.querySelector<HTMLTextAreaElement>("#aiPrompt")?.value.trim() ?? "";
-}
-
-function aiOutputText(): string {
-  return document.querySelector<HTMLElement>("#aiOutput")?.textContent?.trim() ?? "";
-}
-
-function aiActionPayload(action: string, prompt: string): Record<string, unknown> {
-  const ctx = terminalAIContext();
-  if (action === "complete") return { partial: prompt, ctx };
-  if (action === "explain") return { command: prompt, stdout: "", stderr: "", ctx };
-  return { input: prompt, ctx };
-}
-
 function terminalAIContext(): Record<string, unknown> {
   const pane = activePane();
   const context: Record<string, unknown> = {
-    cwd: "~",
+    cwd: pane?.workingDirectory ?? "~",
     shell: "sh",
     os: "LightOS",
     selector: selectedSelector,
@@ -2325,6 +2692,7 @@ function recentAIContext(pane: TerminalPane): string {
 function appendAIContext(pane: TerminalPane, text: string) {
   if (!text || pane.sessionBackend !== "webshell") return;
   pane.aiContextText = `${pane.aiContextText}${text}`.slice(-MAX_AI_CONTEXT_CHARS);
+  observeWorkingDirectory(pane, text);
 }
 
 function stripAnsiForAI(value: string): string {
@@ -2345,28 +2713,275 @@ function redactAIContext(value: string): string {
     .replace(/(-p\s+)\S+/gi, "$1[REDACTED]");
 }
 
-function setAIOutput(message: string, tone: Tone = "neutral") {
-  const output = document.querySelector<HTMLElement>("#aiOutput");
-  if (!output) return;
-  output.textContent = message;
-  output.dataset.tone = tone;
+function renderFileBrowserEntries(disabled: boolean): string {
+  if (fileBrowserLoading) {
+    return `<div class="empty">${escapeHtml(tr("status.pluginsLoading"))}</div>`;
+  }
+  if (!fileBrowserEntries.length) {
+    return `<div class="empty">${escapeHtml(tr("status.pluginFileEmpty"))}</div>`;
+  }
+  return fileBrowserEntries.map((entry) => {
+    const selected = entry.path === selectedFileBrowserPath;
+    const details = entry.linkTarget
+      ? `${fileKindLabel(entry.kind)} -> ${entry.linkTarget}`
+      : `${fileKindLabel(entry.kind)} · ${formatFileSize(entry.size)}`;
+    return `
+      <button
+        class="file-browser-entry ${selected ? "selected" : ""}"
+        type="button"
+        role="option"
+        aria-selected="${selected}"
+        data-file-entry="${escapeAttr(entry.path)}"
+        title="${escapeAttr(entry.path)}"
+        ${disabled ? "disabled" : ""}
+      >
+        <span class="file-browser-entry-icon" data-kind="${escapeAttr(entry.kind)}">
+          <i data-lucide="${escapeAttr(fileEntryIcon(entry))}"></i>
+        </span>
+        <span class="file-browser-entry-main">
+          <strong>${escapeHtml(entry.name)}</strong>
+          <small>${escapeHtml(details)}</small>
+        </span>
+      </button>
+    `;
+  }).join("");
 }
 
-function commandFromAIOutput(output: string): string {
-  const commandLine = output.match(/(?:命令|Command)\s*[:：]\s*`?([^\n`]+)/i)?.[1]
-    ?? output.match(/`([^`\n]+)`/)?.[1]
-    ?? output.split("\n").find((line) => line.trim()) ?? "";
-  return commandLine.replace(/^\$\s*/, "").trim();
+function renderFileBrowserContextMenu(disabled: boolean): string {
+  if (!fileBrowserContextMenu || disabled) return "";
+  const entry = fileBrowserEntries.find((item) => item.path === fileBrowserContextMenu?.path);
+  const path = entry?.path ?? fileBrowserContextMenu.path;
+  const canOpen = entry?.kind === "directory" || entry?.kind === "symlink";
+  return `
+    <div class="file-browser-context-menu" style="left:${fileBrowserContextMenu.x}px;top:${fileBrowserContextMenu.y}px" role="menu">
+      ${canOpen ? `
+        <button type="button" role="menuitem" data-file-menu-action="open" data-file-menu-path="${escapeAttr(path)}">
+          <i data-lucide="folder-open"></i><span>${escapeHtml(tr("action.pluginFileOpen"))}</span>
+        </button>
+      ` : ""}
+      <button type="button" role="menuitem" data-file-menu-action="download" data-file-menu-path="${escapeAttr(path)}">
+        <i data-lucide="download"></i><span>${escapeHtml(tr("action.pluginFileDownload"))}</span>
+      </button>
+      <button type="button" role="menuitem" data-file-menu-action="read" data-file-menu-path="${escapeAttr(path)}">
+        <i data-lucide="file-text"></i><span>${escapeHtml(tr("action.pluginFileRead"))}</span>
+      </button>
+      <button type="button" role="menuitem" data-file-menu-action="stat" data-file-menu-path="${escapeAttr(path)}">
+        <i data-lucide="info"></i><span>${escapeHtml(tr("action.pluginFileStat"))}</span>
+      </button>
+      <label role="menuitem" class="file-menu-upload">
+        <input data-file-upload type="file" multiple />
+        <i data-lucide="upload"></i><span>${escapeHtml(tr("action.pluginFileUpload"))}</span>
+      </label>
+    </div>
+  `;
 }
 
-function fileTransferPath(): string {
-  return document.querySelector<HTMLInputElement>("#fileTransferPath")?.value.trim() ?? "";
+async function activateFileBrowserEntry(path: string, open = false) {
+  const entry = fileBrowserEntries.find((item) => item.path === path);
+  if (!entry) return;
+  selectedFileBrowserPath = entry.path;
+  fileBrowserContextMenu = undefined;
+  if (open && (entry.kind === "directory" || entry.kind === "symlink")) {
+    await loadFileBrowserDirectory(entry.path);
+    return;
+  }
+  renderPluginTools();
+}
+
+async function loadFileBrowserDirectory(path: string) {
+  if (!pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID)) return;
+  const pane = activePane();
+  if (!pane?.sessionId) {
+    setFileTransferOutput(tr("status.pluginFileNoSession"), "error");
+    return;
+  }
+  const directory = normalizeRemotePath(path);
+  fileBrowserLoading = true;
+  fileBrowserPath = directory;
+  fileBrowserContextMenu = undefined;
+  renderPluginTools();
+  try {
+    let stream = "";
+    await actionClient.send("transfer", "list", {
+      sessionId: pane.sessionId,
+      path: directory,
+    }, {
+      onStream: (chunk) => {
+        stream += chunk;
+      },
+    });
+    fileBrowserEntries = parseFileBrowserEntries(directory, stream);
+    selectedFileBrowserPath = "";
+    fileBrowserLoadedPath = directory;
+    setFileTransferOutput("");
+  } catch (error) {
+    fileBrowserEntries = [];
+    fileBrowserLoadedPath = "";
+    setFileTransferOutput(errorMessage(error), "error");
+  } finally {
+    fileBrowserLoading = false;
+    renderPluginTools();
+  }
+}
+
+function parseFileBrowserEntries(directory: string, text: string): FileBrowserEntry[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line): FileBrowserEntry | undefined => {
+      const [name = "", rawKind = "", rawSize = "0", rawLinks = "1", linkTarget = ""] = line.split("\t");
+      if (!name) return undefined;
+      const links = Number.parseInt(rawLinks, 10);
+      const kind = fileKindFromFindType(rawKind, Number.isFinite(links) ? links : 1);
+      return {
+        name,
+        path: joinRemotePath(directory, name),
+        kind,
+        size: Number.parseInt(rawSize, 10) || 0,
+        linkTarget: linkTarget || undefined,
+      };
+    })
+    .filter((entry): entry is FileBrowserEntry => Boolean(entry))
+    .sort((left, right) => {
+      if (left.kind === "directory" && right.kind !== "directory") return -1;
+      if (left.kind !== "directory" && right.kind === "directory") return 1;
+      return left.name.localeCompare(right.name, undefined, { numeric: true });
+    });
+}
+
+function fileKindFromFindType(value: string, links: number): FileBrowserEntry["kind"] {
+  if (value === "d") return "directory";
+  if (value === "l") return "symlink";
+  if (value === "f" && links > 1) return "hardlink";
+  if (value === "f") return "file";
+  return "other";
+}
+
+function fileEntryIcon(entry: FileBrowserEntry): string {
+  if (entry.kind === "directory") return "folder";
+  if (entry.kind === "symlink") return "file-symlink";
+  if (entry.kind === "hardlink") return "files";
+  if (entry.kind === "file") return "file";
+  return "file-question";
+}
+
+function fileKindLabel(kind: FileBrowserEntry["kind"]): string {
+  if (kind === "directory") return tr("fileKind.directory");
+  if (kind === "symlink") return tr("fileKind.symlink");
+  if (kind === "hardlink") return tr("fileKind.hardlink");
+  if (kind === "file") return tr("fileKind.file");
+  return tr("fileKind.other");
+}
+
+function formatFileSize(size: number): string {
+  if (!Number.isFinite(size) || size < 0) return "-";
+  if (size < 1024) return `${size} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = size / 1024;
+  for (const unit of units) {
+    if (value < 1024) return `${value.toFixed(value >= 100 ? 0 : 1)} ${unit}`;
+    value /= 1024;
+  }
+  return `${value.toFixed(1)} PB`;
+}
+
+function selectedFileBrowserEntry(): FileBrowserEntry | undefined {
+  return fileBrowserEntries.find((entry) => entry.path === selectedFileBrowserPath);
+}
+
+function fileUploadDirectory(): string {
+  const entry = selectedFileBrowserEntry();
+  if (entry?.kind === "directory") return entry.path;
+  return normalizeRemotePath(fileBrowserPath);
+}
+
+function syncFileBrowserPathWithActivePane(force = false) {
+  const pane = activePane();
+  const cwd = normalizeRemotePath(pane?.workingDirectory || "");
+  if (!pane || !cwd || cwd === "/") return;
+  const paneChanged = fileBrowserPaneId !== pane.id;
+  if (!force && !paneChanged && fileBrowserLoadedPath) return;
+  fileBrowserPaneId = pane.id;
+  fileBrowserPath = cwd;
+  selectedFileBrowserPath = "";
+  fileBrowserLoadedPath = "";
+}
+
+function normalizeRemotePath(path: string): string {
+  const trimmed = path.trim().replace(/\/{2,}/g, "/");
+  if (!trimmed) return "/";
+  if (trimmed === "~" || trimmed.startsWith("~/")) return trimmed.replace(/\/+$/, "") || "~";
+  if (trimmed.startsWith("/")) return trimmed.replace(/\/+$/, "") || "/";
+  return `/${trimmed}`.replace(/\/+$/, "") || "/";
+}
+
+function parentRemotePath(path: string): string {
+  const normalized = normalizeRemotePath(path);
+  if (normalized === "/" || normalized === "~") return normalized;
+  if (normalized.startsWith("~/")) {
+    const homeParts = normalized.slice(2).split("/").filter(Boolean);
+    if (homeParts.length <= 1) return "~";
+    return `~/${homeParts.slice(0, -1).join("/")}`;
+  }
+  const parts = normalized.split("/").filter(Boolean);
+  return `/${parts.slice(0, -1).join("/")}` || "/";
+}
+
+function joinRemotePath(directory: string, name: string): string {
+  const safeName = name.replace(/^\/+/, "");
+  const base = normalizeRemotePath(directory);
+  if (base === "/") return `/${safeName}`;
+  return `${base.replace(/\/+$/, "")}/${safeName}`;
+}
+
+function observeWorkingDirectory(pane: TerminalPane, text: string) {
+  const fromOsc = workingDirectoryFromOsc7(text);
+  const fromPrompt = fromOsc || workingDirectoryFromPrompt(text);
+  if (!fromPrompt) return;
+  pane.workingDirectory = fromPrompt;
+  if (pane.id === activePane()?.id && activePluginToolId === FILE_TRANSFER_PLUGIN_ID && !fileBrowserLoadedPath) {
+    syncFileBrowserPathWithActivePane();
+  }
+}
+
+function workingDirectoryFromOsc7(text: string): string {
+  const pattern = /\x1b\]7;file:\/\/[^\x07\x1b/]*(\/[^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+  let match: RegExpExecArray | null;
+  let cwd = "";
+  while ((match = pattern.exec(text)) !== null) {
+    try {
+      cwd = decodeURIComponent(match[1] ?? "");
+    } catch {
+      cwd = match[1] ?? "";
+    }
+  }
+  return normalizeDetectedDirectory(cwd);
+}
+
+function workingDirectoryFromPrompt(text: string): string {
+  const clean = stripAnsiForAI(text).split(/\r?\n/).slice(-4).join("\n");
+  const pattern = /(?:^|[\s:>])((?:~|\/)[\w.@%+\-/]*)(?=$|[\s)>])/g;
+  let match: RegExpExecArray | null;
+  let cwd = "";
+  while ((match = pattern.exec(clean)) !== null) {
+    const candidate = match[1] ?? "";
+    if (candidate.length > cwd.length) cwd = candidate;
+  }
+  return normalizeDetectedDirectory(cwd);
+}
+
+function normalizeDetectedDirectory(value: string): string {
+  const cleaned = value.trim().replace(/[.,;:)\]]+$/g, "");
+  if (!cleaned || cleaned === "/" || cleaned.includes("\n")) return "";
+  if (cleaned === "~" || cleaned.startsWith("~/") || cleaned.startsWith("/")) {
+    return normalizeRemotePath(cleaned);
+  }
+  return "";
 }
 
 function uploadTargetPath(path: string, fileName: string): string {
-  if (!path) return "";
-  if (path === "." || path.endsWith("/")) return `${path}${fileName}`;
-  return path;
+  return joinRemotePath(path, fileName);
 }
 
 function fileNameFromPath(path: string): string {
@@ -2441,25 +3056,25 @@ function base64ToBytes(value: string): Uint8Array {
 }
 
 function pluginDisplayName(plugin: PluginDescriptor): string {
-  if (plugin.id === "ai-control") return tr("plugin.aiControl.name");
-  if (plugin.id === "file-transfer") return tr("plugin.fileTransfer.name");
+  if (plugin.id === AI_CHAT_PLUGIN_ID) return tr("plugin.aiChat.name");
+  if (plugin.id === FILE_TRANSFER_PLUGIN_ID) return tr("plugin.fileTransfer.name");
   return plugin.displayName || plugin.id;
 }
 
 function pluginIcon(pluginId: string): string {
-  if (pluginId === "ai-control") return "bot";
-  if (pluginId === "file-transfer") return "folder-up";
+  if (pluginId === AI_CHAT_PLUGIN_ID) return "message-square-text";
+  if (pluginId === FILE_TRANSFER_PLUGIN_ID) return "folder-up";
   return "plug";
 }
 
 function pluginDescription(plugin: PluginDescriptor): string {
-  if (plugin.id === "ai-control") return tr("plugin.aiControl.description");
-  if (plugin.id === "file-transfer") return tr("plugin.fileTransfer.description");
+  if (plugin.id === AI_CHAT_PLUGIN_ID) return tr("plugin.aiChat.description");
+  if (plugin.id === FILE_TRANSFER_PLUGIN_ID) return tr("plugin.fileTransfer.description");
   return plugin.description || plugin.kind || plugin.id;
 }
 
 function pluginMetaLabel(value: string): string {
-  if (value === "control") return tr("plugin.meta.control");
+  if (value === "ai") return tr("plugin.meta.ai");
   if (value === "filesystem") return tr("plugin.meta.filesystem");
   if (value === "session") return tr("plugin.meta.session");
   if (value === "transfer") return tr("plugin.meta.transfer");
@@ -3175,7 +3790,7 @@ function renderNewTabMenu() {
     const label = sessionBackendLabel(id, backend.label);
     const icon = id === "herdr" ? "panels-top-left" : id === "zellij" ? "layout-dashboard" : "terminal";
     return `
-      <button type="button" role="menuitem" data-new-tab-backend="${escapeAttr(id)}">
+      <button type="button" role="menuitem" data-new-tab-backend="${escapeAttr(id)}" data-default-backend="${selected}">
         <i data-lucide="${escapeAttr(icon)}"></i>
         <span>${escapeHtml(label)}</span>
         ${selected ? `<small>${escapeHtml(tr("status.defaultBackend"))}</small>` : ""}
@@ -3260,9 +3875,11 @@ function renderHerdrWorkspaceMenuRow(workspace: HerdrWorkspaceInfo): string {
 function renderHerdrWorkspaceButton(workspace: HerdrWorkspaceInfo): string {
   const label = workspace.label.trim() || `Workspace ${workspace.number || ""}`.trim();
   const details = `${workspace.tab_count} tabs, ${workspace.pane_count} panes`;
+  const number = String(workspace.number || "").trim();
   return `
-    <div class="herdr-space" role="option" aria-selected="${workspace.focused}" title="${escapeAttr(details)}">
+    <div class="herdr-space" role="option" aria-selected="${workspace.focused}" title="${escapeAttr(`${label} · ${details}`)}">
       <button class="herdr-chip" type="button" data-herdr-workspace="${escapeAttr(workspace.workspace_id)}">
+        ${number ? `<small>${escapeHtml(number)}</small>` : ""}
         <span>${escapeHtml(label)}</span>
       </button>
       <button class="herdr-space-close" type="button" data-herdr-close-workspace="${escapeAttr(workspace.workspace_id)}" aria-label="${escapeAttr(tr("action.closeHerdrSpace"))}" title="${escapeAttr(tr("action.closeHerdrSpace"))}">
@@ -3277,7 +3894,7 @@ function renderHerdrTabButton(tab: HerdrTabInfo): string {
   const rawLabel = tab.label.trim() || `Tab ${number}`.trim();
   const label = compactHerdrTabLabel(rawLabel, number);
   return `
-    <button class="herdr-tab" type="button" role="tab" data-herdr-tab="${escapeAttr(tab.tab_id)}" aria-selected="${tab.focused}" title="${escapeAttr(tab.tab_id)}">
+    <button class="herdr-tab ${label ? "" : "number-only"}" type="button" role="tab" data-herdr-tab="${escapeAttr(tab.tab_id)}" aria-selected="${tab.focused}" title="${escapeAttr(tab.tab_id)}">
       ${number ? `<small>${escapeHtml(number)}</small>` : ""}
       ${label ? `<span>${escapeHtml(label)}</span>` : ""}
     </button>
@@ -3579,6 +4196,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     closing: false,
     titleBuffer: "",
     sessionBackend: "webshell",
+    workingDirectory: "",
     cols: INITIAL_COLS,
     rows: INITIAL_ROWS,
   };
@@ -4166,7 +4784,7 @@ function renderTabs() {
     const active = tab.id === activeTabId;
     const renaming = renamingTabId === tab.id;
     const displayName = tabDisplayName(tab);
-    const named = Boolean(tab.customTitle?.trim());
+    const named = tabHasTextTitle(tab, displayName);
     const title = tabCurrentTitle(tab);
     const label = renaming
       ? `<input class="tab-rename" data-rename-tab="${escapeAttr(tab.id)}" value="${escapeAttr(displayName)}" aria-label="${escapeAttr(tr("action.renameTab"))}" spellcheck="false" />`
@@ -4235,7 +4853,7 @@ function renderTabs() {
 }
 
 function updateTabChrome() {
-  elements.webshell.classList.toggle("has-named-tabs", tabs.some((tab) => Boolean(tab.customTitle?.trim())));
+  elements.webshell.classList.toggle("has-named-tabs", tabs.some((tab) => tabHasTextTitle(tab, tabDisplayName(tab))));
 }
 
 function tabDisplayName(tab: TerminalTab): string {
@@ -4243,6 +4861,10 @@ function tabDisplayName(tab: TerminalTab): string {
     || tab.customTitle?.trim()
     || herdrWorkspaceLabelForTab(tab)
     || String(tabs.findIndex((item) => item.id === tab.id) + 1);
+}
+
+function tabHasTextTitle(tab: TerminalTab, displayName = tabDisplayName(tab)): boolean {
+  return Boolean(tab.customTitle?.trim()) || !/^\d+$/.test(displayName.trim());
 }
 
 function herdrWorkspaceLabelForTab(tab: TerminalTab): string {

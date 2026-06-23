@@ -778,15 +778,15 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             ]),
         },
         PluginRecord {
-            id: "ai-control".to_owned(),
-            kind: "control".to_owned(),
-            display_name: "Control Lease Adapter".to_owned(),
-            description: "Observe, request, and release session control leases for AI or automation actors without bypassing terminal input locks.".to_owned(),
-            scopes: vec!["session".to_owned(), "control".to_owned()],
+            id: "ai-chat".to_owned(),
+            kind: "chat".to_owned(),
+            display_name: "AI Chat".to_owned(),
+            description: "Chat inside WebShell with optional recent terminal context. It does not control terminal input.".to_owned(),
+            scopes: vec!["session".to_owned(), "ai".to_owned()],
             accepted_content_types: vec!["application/json".to_owned()],
             produced_content_types: vec!["application/json".to_owned()],
-            input_schema_json: r#"{"sessionId":"string","operation":"observe|status|request_control|release_control","metadata":{"actorId":"string","actorKind":"human|ai|system|custom","leaseId":"string for release"}}"#.to_owned(),
-            output_schema_json: r#"{"status":"complete","sessionId":"string","control":"lease|null","lease":"lease when requested"}"#.to_owned(),
+            input_schema_json: r#"{"operation":"chat|models|test","metadata":{"model":"string"},"payload":{"input":"string","ctx":"optional terminal context"}}"#.to_owned(),
+            output_schema_json: r#"{"status":"complete","stream":"assistant response chunks","models":"optional model list"}"#.to_owned(),
             enabled: false,
             metadata: HashMap::from([
                 ("builtin".to_owned(), "true".to_owned()),
@@ -1007,9 +1007,7 @@ mod tests {
         let database = temp_database();
         let store = PluginStore::new(Arc::clone(&database));
         let mut plugins = builtin_plugins();
-        let control = plugins
-            .get_mut("ai-control")
-            .expect("ai-control builtin plugin");
+        let control = plugins.get_mut("ai-chat").expect("ai-chat builtin plugin");
         control.enabled = true;
         control
             .metadata
@@ -1022,7 +1020,7 @@ mod tests {
             loaded.get("file-transfer").map(|plugin| plugin.enabled),
             Some(true)
         );
-        let control = loaded.get("ai-control").expect("ai-control loaded");
+        let control = loaded.get("ai-chat").expect("ai-chat loaded");
         assert!(control.enabled);
         assert_eq!(
             control.metadata.get("operator").map(String::as_str),

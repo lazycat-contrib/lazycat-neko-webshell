@@ -358,7 +358,7 @@ async fn handle_ai(
     state: Arc<AppState>,
     message: ActionMessage,
 ) -> anyhow::Result<()> {
-    ensure_plugin_enabled(&state, "ai-control")?;
+    ensure_plugin_enabled(&state, "ai-chat")?;
     let settings = load_ai_settings(&state)?;
     if settings.base_url.trim().is_empty() || settings.api_key.trim().is_empty() {
         send_error(
@@ -621,32 +621,21 @@ fn build_prompt(action: &str, payload: &Value) -> String {
     let cwd = json_string(ctx, "cwd", "~");
     let shell = json_string(ctx, "shell", "sh");
     let os = json_string(ctx, "os", "LightOS");
-    let history = json_string(ctx, "history", "");
+    let recent_output = json_string(ctx, "recent_output", "");
+    let conversation = payload
+        .get("conversation")
+        .map_or_else(String::new, Value::to_string);
     match action {
-        "explain" => format!(
-            "用户刚执行了命令，想理解输出内容。\n\n命令：{}\n退出码：{}\nstdout：\n{}\n\nstderr：\n{}\n\n输出结构：\n[状态] ✅ 成功 / ❌ 失败 / ⚠️ 需注意\n[摘要] 一句话说明发生了什么（≤20字）\n[关键信息] 最重要的 1-3 条，用 · 列出\n[修复] 若失败，给出可直接执行的修复命令\n\n规则：\n- 不要逐行复述输出\n- 不要解释用户已经知道的事\n- exit_code=0 但 stderr 有内容时，标注为 ⚠️ 而非 ✅",
-            json_string(payload, "command", ""),
-            json_string(payload, "exit_code", "0"),
-            json_string(payload, "stdout", ""),
-            json_string(payload, "stderr", "")
-        ),
-        "nl2cmd" => format!(
-            "用户用自然语言描述了意图：\n\"{}\"\n\n环境：{shell} | {os} | 工作目录：{cwd}\n最近命令上下文：{history}\n\n输出格式（严格遵守）：\n命令：`<生成的命令>`\n说明：<15字内>\n副作用：<只有 rm / sudo / 写系统路径 / 批量操作 / 不可逆操作 时才写，必须以 ⚠️ 开头>\n\n规则：\n- 只给一个命令，不给多选\n- 命令可以直接粘贴执行\n- 意图有本质歧义时，给出两个选项并标注差异，不要瞎猜",
+        "chat" => format!(
+            "你是 WebShell 内的 Chat 工具，不控制终端，也不会替用户执行命令。\n当前上下文：{cwd} | {shell} | {os}\n最近终端输出（可能为空，已脱敏）：\n{recent_output}\n\n当前模型会话历史（JSON，可能为空）：\n{conversation}\n\n用户：{}\n\n要求：\n- 简洁回答，优先给可执行建议。\n- 需要命令时用 ```shell 代码块，但不要声称已经执行。\n- 对删除、覆盖、sudo、系统路径写入等风险操作明确提醒。\n- 不要把终端输出逐行复述。",
             json_string(payload, "input", "")
         ),
-        "complete" => format!(
-            "环境：{shell} | {os} | {cwd}\n用户正在输入：{}\n最近命令：{history}\n\n规则：\n- 只补全，不解释\n- 输出格式：纯命令字符串，无任何额外内容\n- 若有多个候选，换行列出，不超过 3 个\n- 补全必须在当前 cwd 和 shell 语法下合法",
-            json_string(payload, "partial", "")
-        ),
-        _ => format!(
-            "你是终端内置的编程/运维助手，用户已切换到对话模式。\n当前上下文：{cwd} | {shell} | {os}\n会话历史：{history}\n\n用户问：{}\n\n行为规范：\n- 多步骤任务：用有序列表 + 每步附命令块\n- 命令始终用 ```shell 包裹，可直接插入终端执行\n- 遇到需要用户确认才能继续的步骤，明确暂停并等待\n- 生产环境或不可逆操作必须标出影响范围和确认要求\n- 任务完成时给出简短完成摘要",
-            json_string(payload, "input", "")
-        ),
+        _ => format!("用户：{}", json_string(payload, "input", "")),
     }
 }
 
 fn core_ai_system_prompt() -> &'static str {
-    "你是嵌入在终端中的 AI，不是一个独立的聊天窗口。你的输出会直接出现在用户的工作流里。核心原则：终端优先，输出要能直接使用；最小打断，能一行解决的不用三行；上下文感知，利用 cwd、shell、OS 和最近命令；危险可见，破坏性操作必须显式标注。"
+    "你是 WebShell 内的聊天助手。你可以利用用户显式允许的终端上下文回答问题，但你不能控制终端、不能执行命令、不能假装已经操作设备。"
 }
 
 fn redact_sensitive(input: &str) -> String {

@@ -99,114 +99,31 @@ impl CapabilityServiceImpl {
                 invoke_file_transfer_plugin(&session, operation, content_type, &payload, &metadata)
                     .await
             }
-            "ai-control" => self.invoke_control_plugin(&session, operation, &metadata),
+            "ai-chat" => Self::invoke_ai_chat_plugin(&session, operation),
             _ => Err(ConnectError::unimplemented(format!(
                 "plugin has no runtime implementation: {plugin_id}"
             ))),
         }
     }
 
-    fn invoke_control_plugin(
-        &self,
+    fn invoke_ai_chat_plugin(
         session: &SessionRecord,
         operation: &str,
-        metadata: &HashMap<String, String>,
     ) -> ServiceResult<InvokePluginResponse> {
         match operation {
-            "default" | "observe" | "status" => plugin_json_response(
+            "default" | "status" => plugin_json_response(
                 "complete",
                 &serde_json::json!({
                     "sessionId": session.id,
                     "selector": session.selector,
                     "status": session.status,
-                    "control": session.control,
+                    "plugin": "ai-chat",
+                    "transport": "action-websocket",
                 }),
                 HashMap::new(),
             ),
-            "request_control" | "request-lease" => {
-                let actor_id = metadata
-                    .get("actorId")
-                    .or_else(|| metadata.get("actor_id"))
-                    .map_or("ai-control", String::as_str)
-                    .trim();
-                let actor_kind = metadata
-                    .get("actorKind")
-                    .or_else(|| metadata.get("actor_kind"))
-                    .map_or("ai", String::as_str)
-                    .trim();
-                if actor_id.is_empty() || actor_kind.is_empty() {
-                    return Err(ConnectError::invalid_argument(
-                        "actorId and actorKind must not be empty",
-                    ));
-                }
-                let lease = ControlLease {
-                    lease_id: Some(Uuid::new_v4().to_string()),
-                    actor_id: Some(actor_id.to_owned()),
-                    actor_kind: Some(actor_kind.to_owned()),
-                    status: Some("active".to_owned()),
-                    ..Default::default()
-                };
-                let snapshot = {
-                    let mut sessions = self.sessions_write()?;
-                    let Some(record) = sessions.get_mut(&session.id) else {
-                        return Err(ConnectError::not_found("session not found"));
-                    };
-                    record.control = Some(lease.clone());
-                    sessions.clone()
-                };
-                self.state
-                    .persist_sessions_snapshot(&snapshot)
-                    .map_err(|err| ConnectError::internal(err.to_string()))?;
-                plugin_json_response(
-                    "complete",
-                    &serde_json::json!({
-                        "sessionId": session.id,
-                        "lease": lease,
-                    }),
-                    HashMap::new(),
-                )
-            }
-            "release_control" | "release-lease" => {
-                let lease_id = metadata
-                    .get("leaseId")
-                    .or_else(|| metadata.get("lease_id"))
-                    .map(String::as_str)
-                    .unwrap_or_default()
-                    .trim();
-                if lease_id.is_empty() {
-                    return Err(ConnectError::invalid_argument("leaseId is required"));
-                }
-                let snapshot = {
-                    let mut sessions = self.sessions_write()?;
-                    let Some(record) = sessions.get_mut(&session.id) else {
-                        return Err(ConnectError::not_found("session not found"));
-                    };
-                    let current = record
-                        .control
-                        .as_ref()
-                        .and_then(|lease| lease.lease_id.as_deref());
-                    if current != Some(lease_id) {
-                        return Err(ConnectError::failed_precondition(
-                            "leaseId does not match active control lease",
-                        ));
-                    }
-                    record.control = None;
-                    sessions.clone()
-                };
-                self.state
-                    .persist_sessions_snapshot(&snapshot)
-                    .map_err(|err| ConnectError::internal(err.to_string()))?;
-                plugin_json_response(
-                    "complete",
-                    &serde_json::json!({
-                        "sessionId": session.id,
-                        "status": "released",
-                    }),
-                    HashMap::new(),
-                )
-            }
             _ => Err(ConnectError::invalid_argument(format!(
-                "unsupported ai-control operation: {operation}"
+                "unsupported ai-chat operation: {operation}"
             ))),
         }
     }
@@ -587,14 +504,18 @@ async fn invoke_file_list(
     let path = metadata.get("path").map_or(".", String::as_str);
     let script = format!(
         r#"path={}
+case "$path" in
+  "~") path="$HOME" ;;
+  "~/"*) path="$HOME/${{path#~/}}" ;;
+esac
 if [ ! -e "$path" ]; then
   echo "path not found: $path" >&2
   exit 2
 fi
 if [ -d "$path" ]; then
-  find "$path" -maxdepth 1 -mindepth 1 -printf '%f\t%y\t%s\n' | sort
+  find "$path" -maxdepth 1 -mindepth 1 -printf '%f\t%y\t%s\t%n\t%l\n' | sort
 else
-  ls -ld -- "$path"
+  find "$path" -maxdepth 0 -printf '%f\t%y\t%s\t%n\t%l\n'
 fi"#,
         shell_quote(path)
     );
@@ -616,6 +537,10 @@ async fn invoke_file_read(
     let path = required_metadata(metadata, "path")?;
     let script = format!(
         r#"path={}
+case "$path" in
+  "~") path="$HOME" ;;
+  "~/"*) path="$HOME/${{path#~/}}" ;;
+esac
 if [ ! -f "$path" ]; then
   echo "file not found: $path" >&2
   exit 2
@@ -645,6 +570,10 @@ async fn invoke_file_write(
     let path = required_metadata(metadata, "path")?;
     let script = format!(
         r#"path={}
+case "$path" in
+  "~") path="$HOME" ;;
+  "~/"*) path="$HOME/${{path#~/}}" ;;
+esac
 parent="$(dirname -- "$path")"
 mkdir -p -- "$parent"
 tmp="$path.webshell-upload.$$"
@@ -671,6 +600,10 @@ async fn invoke_file_stat(
     let path = required_metadata(metadata, "path")?;
     let script = format!(
         r#"path={}
+case "$path" in
+  "~") path="$HOME" ;;
+  "~/"*) path="$HOME/${{path#~/}}" ;;
+esac
 if [ ! -e "$path" ]; then
   echo "path not found: $path" >&2
   exit 2
@@ -886,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn control_plugin_observes_requests_and_releases_leases() {
+    fn ai_chat_plugin_reports_action_websocket_transport() {
         let state = Arc::new(test_app_state());
         let session = test_session(HashMap::new());
         state
@@ -894,50 +827,15 @@ mod tests {
             .write()
             .unwrap()
             .insert(session.id.clone(), session.clone());
-        let service = CapabilityServiceImpl::new(Arc::clone(&state));
-
-        let observed = service
-            .invoke_control_plugin(&session, "observe", &HashMap::new())
+        let response = CapabilityServiceImpl::invoke_ai_chat_plugin(&session, "status")
             .unwrap()
             .body;
-        assert_eq!(observed.status.as_deref(), Some("complete"));
-
-        service
-            .invoke_control_plugin(
-                &session,
-                "request_control",
-                &HashMap::from([
-                    ("actorId".to_owned(), "codex".to_owned()),
-                    ("actorKind".to_owned(), "ai".to_owned()),
-                ]),
-            )
-            .unwrap();
-        let lease_id = state
-            .sessions
-            .read()
-            .unwrap()
-            .get(&session.id)
-            .and_then(|record| record.control.as_ref())
-            .and_then(|lease| lease.lease_id.as_deref())
-            .expect("active control lease")
-            .to_owned();
-
-        service
-            .invoke_control_plugin(
-                &session,
-                "release_control",
-                &HashMap::from([("leaseId".to_owned(), lease_id)]),
-            )
-            .unwrap();
-
-        assert!(
-            state
-                .sessions
-                .read()
-                .unwrap()
-                .get(&session.id)
-                .is_some_and(|record| record.control.is_none())
-        );
+        assert_eq!(response.status.as_deref(), Some("complete"));
+        let value =
+            serde_json::from_slice::<serde_json::Value>(response.payload.as_deref().unwrap())
+                .unwrap();
+        assert_eq!(value["plugin"], "ai-chat");
+        assert_eq!(value["transport"], "action-websocket");
     }
 
     fn test_session(metadata: HashMap<String, String>) -> SessionRecord {

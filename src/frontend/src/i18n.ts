@@ -7,13 +7,13 @@ export type MessageKey =
   | "ai.providerOpenAICompatible"
   | "action.aiChat"
   | "action.aiClear"
-  | "action.aiComplete"
   | "action.aiCopy"
-  | "action.aiExplain"
+  | "action.aiExport"
   | "action.aiFetchModels"
-  | "action.aiInsert"
-  | "action.aiNl2cmd"
+  | "action.aiNewChat"
+  | "action.aiSend"
   | "action.aiTest"
+  | "action.close"
   | "action.closeActiveSession"
   | "action.closeHerdrSpace"
   | "action.closePlugins"
@@ -27,9 +27,14 @@ export type MessageKey =
   | "action.newTab"
   | "action.pasteClipboard"
   | "action.pluginFileDownload"
+  | "action.pluginFileHome"
   | "action.pluginFileList"
+  | "action.pluginFileOpen"
+  | "action.pluginFileParent"
   | "action.pluginFileRead"
+  | "action.pluginFileRefresh"
   | "action.pluginFileStat"
+  | "action.pluginFileSyncCwd"
   | "action.pluginFileUpload"
   | "action.promoteSessionToTab"
   | "action.refreshHerdr"
@@ -68,6 +73,7 @@ export type MessageKey =
   | "field.aiContextLines"
   | "field.aiPrompt"
   | "field.aiProvider"
+  | "field.aiSession"
   | "field.defaultSessionBackend"
   | "field.herdrActiveBackgroundDark"
   | "field.herdrActiveBackgroundLight"
@@ -85,6 +91,11 @@ export type MessageKey =
   | "field.themeName"
   | "field.themeSource"
   | "field.touchBehavior"
+  | "fileKind.directory"
+  | "fileKind.file"
+  | "fileKind.hardlink"
+  | "fileKind.other"
+  | "fileKind.symlink"
   | "font.builtIn"
   | "font.noUploaded"
   | "font.uploaded"
@@ -106,15 +117,15 @@ export type MessageKey =
   | "menu.instances"
   | "menu.mobileShortcuts"
   | "menu.pane"
-  | "plugin.aiControl.description"
-  | "plugin.aiControl.block"
-  | "plugin.aiControl.name"
-  | "plugin.aiControl.output"
+  | "plugin.aiChat.description"
+  | "plugin.aiChat.block"
+  | "plugin.aiChat.name"
+  | "plugin.aiChat.output"
   | "plugin.fileTransfer.help"
   | "plugin.fileTransfer.output"
   | "plugin.fileTransfer.description"
   | "plugin.fileTransfer.name"
-  | "plugin.meta.control"
+  | "plugin.meta.ai"
   | "plugin.meta.filesystem"
   | "plugin.meta.session"
   | "plugin.meta.transfer"
@@ -201,7 +212,9 @@ export type MessageKey =
   | "status.noSessions"
   | "status.noTarget"
   | "status.pasteFailed"
-  | "status.aiInserted"
+  | "status.aiContextOff"
+  | "status.aiContextReady"
+  | "status.aiContextUnavailable"
   | "status.aiModelsReady"
   | "status.aiNoOutput"
   | "status.aiTestOk"
@@ -211,6 +224,7 @@ export type MessageKey =
   | "status.pluginEnableFailed"
   | "status.pluginEnabled"
   | "status.pluginFileDone"
+  | "status.pluginFileEmpty"
   | "status.pluginFileNoSession"
   | "status.pluginFileUploadDone"
   | "status.pluginLoadFailed"
@@ -252,13 +266,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
   en: {
     "action.aiChat": "Chat",
     "action.aiClear": "Clear",
-    "action.aiComplete": "Complete",
     "action.aiCopy": "Copy",
-    "action.aiExplain": "Explain",
+    "action.aiExport": "Export chat",
     "action.aiFetchModels": "Fetch models",
-    "action.aiInsert": "Insert",
-    "action.aiNl2cmd": "NL to cmd",
+    "action.aiNewChat": "New chat",
+    "action.aiSend": "Send",
     "action.aiTest": "Test",
+    "action.close": "Close",
     "action.closeActiveSession": "Close active session",
     "action.closeHerdrSpace": "Close Herdr space",
     "action.closePlugins": "Close plugins",
@@ -272,9 +286,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.newTab": "New terminal tab",
     "action.pasteClipboard": "Paste",
     "action.pluginFileDownload": "Download",
+    "action.pluginFileHome": "Home",
     "action.pluginFileList": "List",
+    "action.pluginFileOpen": "Open",
+    "action.pluginFileParent": "Parent",
     "action.pluginFileRead": "Read",
+    "action.pluginFileRefresh": "Refresh",
     "action.pluginFileStat": "Stat",
+    "action.pluginFileSyncCwd": "Use terminal cwd",
     "action.pluginFileUpload": "Upload file",
     "action.promoteSessionToTab": "Move session to new tab",
     "action.refreshHerdr": "Refresh Herdr",
@@ -313,6 +332,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiContextLines": "Context lines",
     "field.aiPrompt": "Prompt",
     "field.aiProvider": "Provider",
+    "field.aiSession": "Chat",
     "field.defaultSessionBackend": "New tab backend",
     "field.herdrActiveBackgroundDark": "Dark highlight",
     "field.herdrActiveBackgroundLight": "Light highlight",
@@ -330,6 +350,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.themeName": "Theme name",
     "field.themeSource": "Ghostty theme",
     "field.touchBehavior": "Touch behavior",
+    "fileKind.directory": "Directory",
+    "fileKind.file": "File",
+    "fileKind.hardlink": "Hard link",
+    "fileKind.other": "Other",
+    "fileKind.symlink": "Symlink",
     "font.builtIn": "Built in",
     "font.noUploaded": "No uploaded fonts",
     "font.uploaded": "Uploaded",
@@ -351,17 +376,17 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "menu.instances": "Instances",
     "menu.mobileShortcuts": "Terminal shortcuts",
     "menu.pane": "Pane menu",
-    "ai.accessHelp": "Configure the OpenAI-compatible endpoint used by AI workflows. Results stay in this panel and are inserted into the terminal only when you choose.",
+    "ai.accessHelp": "Configure the OpenAI-compatible endpoint used by WebShell Chat. Chat does not control the terminal.",
     "ai.providerOpenAICompatible": "OpenAI-compatible",
-    "plugin.aiControl.block": "AI output",
-    "plugin.aiControl.description": "Chat, command generation, completion, and session control helpers through the action WebSocket.",
-    "plugin.aiControl.name": "AI control",
-    "plugin.aiControl.output": "AI output",
-    "plugin.fileTransfer.description": "Read, write, list, and inspect files inside the selected LightOS instance.",
-    "plugin.fileTransfer.help": "Uses the active terminal session's LightOS instance and login user.",
+    "plugin.aiChat.block": "Chat",
+    "plugin.aiChat.description": "Chat tool inside WebShell with optional recent terminal context.",
+    "plugin.aiChat.name": "AI Chat",
+    "plugin.aiChat.output": "AI chat output",
+    "plugin.fileTransfer.description": "Browse device files, upload multiple local files, and download selected device paths.",
+    "plugin.fileTransfer.help": "Device side uses the active terminal session and login user. The browser can choose local files, but cannot expose a local directory tree.",
     "plugin.fileTransfer.name": "File transfer",
     "plugin.fileTransfer.output": "File transfer output",
-    "plugin.meta.control": "Control",
+    "plugin.meta.ai": "AI",
     "plugin.meta.filesystem": "Filesystem",
     "plugin.meta.session": "Session",
     "plugin.meta.transfer": "Transfer",
@@ -448,9 +473,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noSessions": "No sessions",
     "status.noTarget": "No instance selected",
     "status.pasteFailed": "Paste failed: {message}",
-    "status.aiInserted": "Inserted into terminal",
+    "status.aiContextOff": "Terminal context is off",
+    "status.aiContextReady": "Context: {lines} recent lines",
+    "status.aiContextUnavailable": "No native terminal output captured yet",
     "status.aiModelsReady": "{count} model(s) loaded",
-    "status.aiNoOutput": "No AI output to insert",
+    "status.aiNoOutput": "No AI output",
     "status.aiTestOk": "AI test passed",
     "status.aiWorking": "AI request running...",
     "status.pluginDisableFailed": "Disable failed: {message}",
@@ -458,6 +485,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginEnableFailed": "Enable failed: {message}",
     "status.pluginEnabled": "{name} enabled",
     "status.pluginFileDone": "{operation} complete",
+    "status.pluginFileEmpty": "This directory is empty",
     "status.pluginFileNoSession": "Open or select a terminal session first.",
     "status.pluginFileUploadDone": "Uploaded {name}",
     "status.pluginLoadFailed": "Plugin load failed: {message}",
@@ -498,13 +526,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
   "zh-CN": {
     "action.aiChat": "对话",
     "action.aiClear": "清空",
-    "action.aiComplete": "补全",
     "action.aiCopy": "复制",
-    "action.aiExplain": "解释",
+    "action.aiExport": "导出聊天",
     "action.aiFetchModels": "获取模型",
-    "action.aiInsert": "插入",
-    "action.aiNl2cmd": "转命令",
+    "action.aiNewChat": "新建聊天",
+    "action.aiSend": "发送",
     "action.aiTest": "测试",
+    "action.close": "关闭",
     "action.closeActiveSession": "关闭当前活动会话",
     "action.closeHerdrSpace": "关闭 Herdr Space",
     "action.closePlugins": "关闭插件",
@@ -518,9 +546,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.newTab": "新建终端标签",
     "action.pasteClipboard": "粘贴",
     "action.pluginFileDownload": "下载",
+    "action.pluginFileHome": "根目录",
     "action.pluginFileList": "列出",
+    "action.pluginFileOpen": "打开",
+    "action.pluginFileParent": "上级",
     "action.pluginFileRead": "查看",
+    "action.pluginFileRefresh": "刷新",
     "action.pluginFileStat": "信息",
+    "action.pluginFileSyncCwd": "使用终端目录",
     "action.pluginFileUpload": "上传文件",
     "action.promoteSessionToTab": "将会话提升为新标签",
     "action.refreshHerdr": "刷新 Herdr",
@@ -559,6 +592,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiContextLines": "上下文行数",
     "field.aiPrompt": "输入",
     "field.aiProvider": "服务商",
+    "field.aiSession": "聊天",
     "field.defaultSessionBackend": "新建入口后端",
     "field.herdrActiveBackgroundDark": "深色高亮",
     "field.herdrActiveBackgroundLight": "浅色高亮",
@@ -576,6 +610,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.themeName": "主题名称",
     "field.themeSource": "Ghostty 主题",
     "field.touchBehavior": "触控行为",
+    "fileKind.directory": "目录",
+    "fileKind.file": "文件",
+    "fileKind.hardlink": "硬链接",
+    "fileKind.other": "其他",
+    "fileKind.symlink": "软链接",
     "font.builtIn": "内置",
     "font.noUploaded": "暂无上传字体",
     "font.uploaded": "已上传",
@@ -597,17 +636,17 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "menu.instances": "实例",
     "menu.mobileShortcuts": "终端快捷键",
     "menu.pane": "终端面板菜单",
-    "ai.accessHelp": "配置 AI 工作流使用的 OpenAI-compatible 接口。结果保留在面板内，只有手动点击插入才会写入终端。",
+    "ai.accessHelp": "配置 WebShell Chat 使用的 OpenAI-compatible 接口。聊天不会控制终端。",
     "ai.providerOpenAICompatible": "OpenAI-compatible",
-    "plugin.aiControl.block": "AI 输出",
-    "plugin.aiControl.description": "通过动作 WebSocket 提供对话、命令生成、补全、解释和会话控制辅助。",
-    "plugin.aiControl.name": "AI 控制",
-    "plugin.aiControl.output": "AI 输出",
-    "plugin.fileTransfer.description": "在当前选择的 LightOS 实例内读取、写入、列出和查看文件信息。",
-    "plugin.fileTransfer.help": "使用当前活动终端会话对应的 LightOS 实例和登录用户。",
+    "plugin.aiChat.block": "聊天",
+    "plugin.aiChat.description": "WebShell 内的 Chat 工具，可选携带最近终端上下文。",
+    "plugin.aiChat.name": "AI Chat",
+    "plugin.aiChat.output": "AI 聊天输出",
+    "plugin.fileTransfer.description": "浏览设备文件，上传多个本地文件，并下载选中的设备路径。",
+    "plugin.fileTransfer.help": "设备侧使用当前活动终端会话和登录用户；浏览器可以选择本地文件，但不能暴露本地目录树。",
     "plugin.fileTransfer.name": "文件传输",
     "plugin.fileTransfer.output": "文件传输输出",
-    "plugin.meta.control": "控制",
+    "plugin.meta.ai": "AI",
     "plugin.meta.filesystem": "文件系统",
     "plugin.meta.session": "会话",
     "plugin.meta.transfer": "传输",
@@ -694,9 +733,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noSessions": "没有会话",
     "status.noTarget": "未选择实例",
     "status.pasteFailed": "粘贴失败：{message}",
-    "status.aiInserted": "已插入终端",
+    "status.aiContextOff": "终端上下文已关闭",
+    "status.aiContextReady": "上下文：最近 {lines} 行",
+    "status.aiContextUnavailable": "还没有捕获到原生终端输出",
     "status.aiModelsReady": "已加载 {count} 个模型",
-    "status.aiNoOutput": "没有可插入的 AI 输出",
+    "status.aiNoOutput": "没有 AI 输出",
     "status.aiTestOk": "AI 测试通过",
     "status.aiWorking": "AI 请求中...",
     "status.pluginDisableFailed": "关闭失败：{message}",
@@ -704,6 +745,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginEnableFailed": "启用失败：{message}",
     "status.pluginEnabled": "{name} 已启用",
     "status.pluginFileDone": "{operation} 完成",
+    "status.pluginFileEmpty": "当前目录为空",
     "status.pluginFileNoSession": "请先打开或选择一个终端会话。",
     "status.pluginFileUploadDone": "已上传 {name}",
     "status.pluginLoadFailed": "插件加载失败：{message}",

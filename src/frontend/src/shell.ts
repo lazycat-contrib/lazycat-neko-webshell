@@ -92,6 +92,7 @@ export type ShellElements = {
   debugMode: HTMLInputElement;
   shortcutHelpButton: HTMLButtonElement;
   shortcutHelp: HTMLDivElement;
+  shortcutHelpClose: HTMLButtonElement;
   paneMenu: HTMLDivElement;
   fitTerminal: HTMLButtonElement;
 };
@@ -148,31 +149,36 @@ export function renderShell(app: HTMLElement): ShellElements {
             <button class="icon-button" id="shortcutHelpButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" data-i18n-aria="action.shortcutHelp" data-i18n-title="action.shortcutHelp">
               <i data-lucide="circle-help"></i>
             </button>
-            <div class="shortcut-help" id="shortcutHelp" role="dialog" aria-label="Keyboard shortcuts" data-i18n-aria="action.shortcutHelp" hidden>
-              <div class="shortcut-help-head">
-                <strong data-i18n="section.shortcuts">Shortcuts</strong>
-              </div>
-              <div class="shortcut-help-grid">
-                <section>
-                  <h3 data-i18n="section.desktopShortcuts">Desktop</h3>
-                  <dl>
-                    <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd></dt><dd data-i18n="shortcut.newTab">New terminal tab</dd></div>
-                    <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>W</kbd></dt><dd data-i18n="shortcut.closeTab">Close tab</dd></div>
-                    <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>↑/↓/←/→</kbd></dt><dd data-i18n="shortcut.splitPane">Split pane</dd></div>
-                    <div><dt><kbd>Ctrl</kbd><kbd>+</kbd> / <kbd>Ctrl</kbd><kbd>-</kbd></dt><dd data-i18n="shortcut.zoomFont">Adjust terminal font</dd></div>
-                    <div><dt><kbd>Ctrl</kbd><kbd>0</kbd></dt><dd data-i18n="shortcut.resetFont">Reset terminal font</dd></div>
-                    <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>C/V</kbd></dt><dd data-i18n="shortcut.copyPaste">Copy or paste</dd></div>
-                  </dl>
-                </section>
-                <section>
-                  <h3 data-i18n="section.mobileShortcuts">Mobile</h3>
-                  <dl>
-                    <div><dt><kbd>Ops</kbd><kbd>A+</kbd>/<kbd>A-</kbd></dt><dd data-i18n="shortcut.mobileFont">Adjust terminal font</dd></div>
-                    <div><dt><kbd>Ops</kbd><kbd>Tab</kbd></dt><dd data-i18n="shortcut.mobileTab">Switch or create tabs</dd></div>
-                    <div><dt><kbd>Main</kbd><kbd>Ctrl</kbd><kbd>Tab</kbd></dt><dd data-i18n="shortcut.mobileKeys">Send terminal keys</dd></div>
-                    <div><dt><kbd>double tap</kbd></dt><dd data-i18n="shortcut.mobileKeyboard">Open system keyboard</dd></div>
-                  </dl>
-                </section>
+            <div class="shortcut-help" id="shortcutHelp" hidden>
+              <div class="shortcut-help-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" data-i18n-aria="action.shortcutHelp">
+                <div class="shortcut-help-head">
+                  <strong data-i18n="section.shortcuts">Shortcuts</strong>
+                  <button class="icon-button" id="shortcutHelpClose" type="button" aria-label="Close settings" title="Close settings" data-i18n-aria="action.closeSettings" data-i18n-title="action.closeSettings">
+                    <i data-lucide="x"></i>
+                  </button>
+                </div>
+                <div class="shortcut-help-grid">
+                  <section>
+                    <h3 data-i18n="section.desktopShortcuts">Desktop</h3>
+                    <dl>
+                      <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd></dt><dd data-i18n="shortcut.newTab">New terminal tab</dd></div>
+                      <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>W</kbd></dt><dd data-i18n="shortcut.closeTab">Close tab</dd></div>
+                      <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>↑/↓/←/→</kbd></dt><dd data-i18n="shortcut.splitPane">Split pane</dd></div>
+                      <div><dt><kbd>Ctrl</kbd><kbd>+</kbd> / <kbd>Ctrl</kbd><kbd>-</kbd></dt><dd data-i18n="shortcut.zoomFont">Adjust terminal font</dd></div>
+                      <div><dt><kbd>Ctrl</kbd><kbd>0</kbd></dt><dd data-i18n="shortcut.resetFont">Reset terminal font</dd></div>
+                      <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>C/V</kbd></dt><dd data-i18n="shortcut.copyPaste">Copy or paste</dd></div>
+                    </dl>
+                  </section>
+                  <section>
+                    <h3 data-i18n="section.mobileShortcuts">Mobile</h3>
+                    <dl>
+                      <div><dt><kbd>Ops</kbd><kbd>A+</kbd>/<kbd>A-</kbd></dt><dd data-i18n="shortcut.mobileFont">Adjust terminal font</dd></div>
+                      <div><dt><kbd>Ops</kbd><kbd>Tab</kbd></dt><dd data-i18n="shortcut.mobileTab">Switch or create tabs</dd></div>
+                      <div><dt><kbd>Main</kbd><kbd>Ctrl</kbd><kbd>Tab</kbd></dt><dd data-i18n="shortcut.mobileKeys">Send terminal keys</dd></div>
+                      <div><dt><kbd>double tap</kbd></dt><dd data-i18n="shortcut.mobileKeyboard">Open system keyboard</dd></div>
+                    </dl>
+                  </section>
+                </div>
               </div>
             </div>
           </div>
@@ -693,6 +699,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     debugMode: qs<HTMLInputElement>("#debugMode"),
     shortcutHelpButton: qs<HTMLButtonElement>("#shortcutHelpButton"),
     shortcutHelp: qs<HTMLDivElement>("#shortcutHelp"),
+    shortcutHelpClose: qs<HTMLButtonElement>("#shortcutHelpClose"),
     paneMenu: qs<HTMLDivElement>("#paneMenu"),
     fitTerminal: qs<HTMLButtonElement>("#fitTerminal"),
   };

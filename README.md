@@ -15,10 +15,10 @@ The protobuf schema is intentionally generic. It describes capabilities, session
 
 Two built-in plugin descriptors are registered by default:
 
-- `file-transfer`: reads, writes, lists, and stats files inside the selected LightOS instance through `/lzcinit/lightosctl exec -i`.
-- `ai-control`: observes, requests, and releases control leases for AI or automation actors.
+- `file-transfer`: browses, reads, uploads, downloads, and stats files inside the selected LightOS instance through `/lzcinit/lightosctl exec -i`.
+- `ai-chat`: provides the WebShell chat tool with optional recent terminal context, model discovery, access testing, multi-session chat history, and export.
 
-Both plugins are exposed through the Connect control plane. Built-in plugin enablement is managed from Settings -> Plugins and persisted in the application database. The frontend still avoids a generic plugin invocation form; file movement, image paste, and session control are surfaced as product workflows instead of raw payload editors.
+Both plugins are exposed through the Connect control plane. Built-in plugin enablement is managed from Settings -> Plugins and persisted in the application database. The frontend avoids a generic plugin invocation form; file movement, image paste, and AI chat are surfaced as product workflows instead of raw payload editors.
 
 ## Frontend Interaction
 
