@@ -23,6 +23,17 @@ export function renderHerdrWorkspaceMenuRow(
   `;
 }
 
+export function renderHerdrWorkspaceMenuView(
+  workspaces: HerdrWorkspaceInfo[],
+  labels: { tabs: string; panes: string; close: string },
+  emptyMessage: string,
+): string {
+  if (!workspaces.length) {
+    return `<div class="empty">${escapeHtml(emptyMessage)}</div>`;
+  }
+  return workspaces.map((workspace) => renderHerdrWorkspaceMenuRow(workspace, labels)).join("");
+}
+
 export function renderHerdrWorkspaceButton(workspace: HerdrWorkspaceInfo, closeLabel: string): string {
   const label = workspace.label.trim() || `Workspace ${workspace.number || ""}`.trim();
   const details = `${workspace.tab_count} tabs, ${workspace.pane_count} panes`;
@@ -40,6 +51,15 @@ export function renderHerdrWorkspaceButton(workspace: HerdrWorkspaceInfo, closeL
   `;
 }
 
+export function renderHerdrWorkspaceButtons(
+  workspaces: HerdrWorkspaceInfo[] | undefined,
+  closeLabel: string,
+): string {
+  return workspaces?.length
+    ? workspaces.map((workspace) => renderHerdrWorkspaceButton(workspace, closeLabel)).join("")
+    : "";
+}
+
 export function renderHerdrTabButton(tab: HerdrTabInfo): string {
   const number = String(tab.number || "").trim();
   const rawLabel = tab.label.trim() || `Tab ${number}`.trim();
@@ -50,6 +70,10 @@ export function renderHerdrTabButton(tab: HerdrTabInfo): string {
       ${label ? `<span>${escapeHtml(label)}</span>` : ""}
     </button>
   `;
+}
+
+export function renderHerdrTabButtons(tabs: HerdrTabInfo[] | undefined): string {
+  return tabs?.length ? tabs.map(renderHerdrTabButton).join("") : "";
 }
 
 function compactHerdrTabLabel(label: string, number: string): string {

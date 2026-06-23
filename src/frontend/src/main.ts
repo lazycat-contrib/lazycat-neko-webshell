@@ -54,9 +54,9 @@ import {
   herdrSplitDirection,
 } from "./herdr-backend";
 import {
-  renderHerdrTabButton,
-  renderHerdrWorkspaceButton,
-  renderHerdrWorkspaceMenuRow,
+  renderHerdrTabButtons,
+  renderHerdrWorkspaceButtons,
+  renderHerdrWorkspaceMenuView,
 } from "./herdr-views";
 import { translate, type MessageKey } from "./i18n";
 import { renderInstanceListView } from "./instance-views";
@@ -2976,12 +2976,11 @@ function renderHerdrDock() {
   elements.herdrTabList.parentElement?.toggleAttribute("hidden", false);
   elements.herdrNewWorkspace.hidden = false;
   elements.herdrNewTab.hidden = false;
-  elements.herdrWorkspaceList.innerHTML = herdrState?.workspaces.length
-    ? herdrState.workspaces.map((workspace) => renderHerdrWorkspaceButton(workspace, tr("action.closeHerdrSpace"))).join("")
-    : "";
-  elements.herdrTabList.innerHTML = herdrState?.tabs.length
-    ? herdrState.tabs.map(renderHerdrTabButton).join("")
-    : "";
+  elements.herdrWorkspaceList.innerHTML = renderHerdrWorkspaceButtons(
+    herdrState?.workspaces,
+    tr("action.closeHerdrSpace"),
+  );
+  elements.herdrTabList.innerHTML = renderHerdrTabButtons(herdrState?.tabs);
   elements.herdrStatus.textContent = herdrState?.message ?? "";
   renderHerdrWorkspaceMenu();
   void syncHerdrEventBridge();
@@ -3094,13 +3093,15 @@ function renderHerdrWorkspaceMenu() {
     return;
   }
   const workspaces = herdrState?.workspaces ?? [];
-  elements.herdrWorkspaceMenuList.innerHTML = workspaces.length
-    ? workspaces.map((workspace) => renderHerdrWorkspaceMenuRow(workspace, {
+  elements.herdrWorkspaceMenuList.innerHTML = renderHerdrWorkspaceMenuView(
+    workspaces,
+    {
       tabs: tr("field.tabs"),
       panes: tr("field.panes"),
       close: tr("action.closeHerdrSpace"),
-    })).join("")
-    : `<div class="empty">${escapeHtml(herdrState?.message || tr("status.herdrUnavailable"))}</div>`;
+    },
+    herdrState?.message || tr("status.herdrUnavailable"),
+  );
   elements.herdrWorkspaceMenuStatus.textContent = herdrState?.message ?? "";
   updateIcons();
 }
