@@ -238,6 +238,7 @@ export type TerminalPane = {
   lastOutputSequence: number;
   aiContextText: string;
   viewportGuardInstalled?: boolean;
+  scrollbackFallbackInstalled?: boolean;
   exited: boolean;
   closing: boolean;
   cols: number;
