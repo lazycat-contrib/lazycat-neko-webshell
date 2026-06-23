@@ -4965,7 +4965,13 @@ async function syncHerdrWorkspaceRenameForTab(tab: TerminalTab, label: string) {
   }
   const workspace = focusedHerdrWorkspace();
   if (!workspace?.workspace_id) return;
-  if (workspace.label.trim() === nextLabel) return;
+  applyHerdrWorkspaceLabel(workspace.workspace_id, nextLabel);
+  renderTabs();
+  renderHerdrDock();
+  if (workspace.label.trim() === nextLabel) {
+    await refreshHerdrState(tab.selector);
+    return;
+  }
   try {
     await runHerdrSocketRequest("workspace.rename", {
       workspace_id: workspace.workspace_id,
@@ -4979,6 +4985,17 @@ async function syncHerdrWorkspaceRenameForTab(tab: TerminalTab, label: string) {
   } catch (error) {
     setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
   }
+}
+
+function applyHerdrWorkspaceLabel(workspaceId: string, label: string) {
+  if (!herdrState?.available) return;
+  herdrState = {
+    ...herdrState,
+    workspaces: herdrState.workspaces.map((workspace) => {
+      if (workspace.workspace_id !== workspaceId) return workspace;
+      return { ...workspace, label };
+    }),
+  };
 }
 
 function cancelTabRename() {
