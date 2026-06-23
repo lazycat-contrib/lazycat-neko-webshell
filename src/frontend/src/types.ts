@@ -110,6 +110,51 @@ export type SessionBackendsState = {
   backends: SessionBackendInfo[];
 };
 
+export type FileBrowserEntry = {
+  name: string;
+  path: string;
+  kind: "directory" | "file" | "symlink" | "hardlink" | "other";
+  size: number;
+  linkTarget?: string;
+};
+
+export type FileBrowserContextMenu = {
+  path: string;
+  x: number;
+  y: number;
+};
+
+export type AIChatMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+  tone?: Tone;
+};
+
+export type AIChatSession = {
+  id: string;
+  model: string;
+  title: string;
+  messages: AIChatMessage[];
+};
+
+export type ClipboardImagePayload = {
+  extension: string;
+  data: ArrayBuffer;
+};
+
+export type JsonRecord = Record<string, unknown>;
+
+export type HerdrSocketEnvelope = {
+  id?: string;
+  result?: JsonRecord;
+  error?: {
+    code?: string;
+    message?: string;
+  };
+  event?: string;
+  data?: JsonRecord;
+};
+
 export type TerminalTheme = {
   id: string;
   label: string;

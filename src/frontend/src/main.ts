@@ -6,6 +6,14 @@ import { createIcons, icons } from "lucide";
 import { Terminal } from "restty/xterm";
 
 import { TerminalActionWSClient, type ActionResponseMeta } from "./action-ws-client";
+import { appendAIContextText, recentAIContextText } from "./ai-context";
+import {
+  clipboardImageFile,
+  clipboardImagePayloadIsValid,
+  imageBlobPayload,
+  readClipboardImagePayload,
+  stageClipboardImage,
+} from "./clipboard-image";
 import {
   DEFAULT_SETTINGS,
   FONT_EXTENSIONS,
@@ -14,7 +22,6 @@ import {
   INTERFACE_STYLE_IDS,
   INITIAL_COLS,
   INITIAL_ROWS,
-  MAX_CLIPBOARD_IMAGE_BYTES,
   MAX_CUSTOM_THEME_SOURCE_BYTES,
   MAX_OUTPUT_BUFFER_LIMIT,
   MAX_FONT_BYTES,
@@ -27,8 +34,38 @@ import {
 } from "./config";
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
 import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
+import {
+  herdrCurrentPaneId,
+  herdrEventChangesDock,
+  herdrEventSocketUrl,
+  herdrEventSubscriptions,
+  herdrEventTone,
+  herdrFocusedOrFirstPaneId,
+  herdrPaneIdsFromListResult,
+  herdrSplitDirection,
+} from "./herdr-backend";
 import { translate, type MessageKey } from "./i18n";
+import {
+  base64ToBytes,
+  boolField,
+  metaBoolean,
+  metaNumber,
+  metaString,
+  metaStringArray,
+  stringField,
+} from "./json-meta";
 import { encodeMobileShortcutKeyInput, encodeModifiedTextInput } from "./keyboard";
+import {
+  fileEntryIcon,
+  fileNameFromPath,
+  formatFileSize,
+  normalizeRemotePath,
+  parentRemotePath,
+  parseFileBrowserEntries,
+  uploadTargetPath,
+  workingDirectoryFromOsc7,
+  workingDirectoryFromPrompt,
+} from "./remote-files";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
@@ -36,12 +73,19 @@ import { cursorStyleSequence, terminalThemeCssVars, withTransparentBackground } 
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
 import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX, parseCustomGhosttyTheme, resolveTheme, resttyThemeFor } from "./theme-registry";
 import type {
+  AIChatMessage,
+  AIChatSession,
+  ClipboardImagePayload,
+  FileBrowserContextMenu,
+  FileBrowserEntry,
   FontPreset,
   HerdrAction,
   HerdrBridgeState,
+  HerdrSocketEnvelope,
   HerdrTabInfo,
   HerdrWorkspaceInfo,
   InterfaceStyleId,
+  JsonRecord,
   PaneTerminalTransport,
   SessionBackendId,
   SessionBackendInfo,
@@ -59,6 +103,13 @@ import type {
   WorkspaceState,
 } from "./types";
 import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorLabel } from "./utils";
+import {
+  webshellOutputBufferMessage,
+  webshellResizeMessage,
+  webshellRestartPolicyMessage,
+  webshellTerminalSocketUrl,
+} from "./webshell-backend";
+import { zellijPaneModeInput, zellijSplitKey } from "./zellij-backend";
 
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
@@ -72,21 +123,11 @@ const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
 const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
-const MAX_AI_CONTEXT_CHARS = 12000;
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
 const FILE_TRANSFER_PLUGIN_ID = "file-transfer";
 const AI_CHAT_PLUGIN_ID = "ai-chat";
 const LIGHT_INTERFACE_STYLES = new Set<InterfaceStyleId>(["porcelain", "frost", "champagne", "candy", "lab"]);
-const HERDR_SPLIT_DIRECTIONS: Partial<Record<SplitPlacement, "right" | "down">> = {
-  right: "right",
-  down: "down",
-};
-const ZELLIJ_SPLIT_KEYS: Partial<Record<SplitPlacement, string>> = {
-  right: "r",
-  down: "d",
-};
-const ZELLIJ_PANE_MODE_PREFIX = "\x10";
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -97,44 +138,6 @@ const capabilityClient = createClient(
 const actionClient = new TerminalActionWSClient();
 
 type SessionMode = SessionBackendId;
-type FileBrowserEntry = {
-  name: string;
-  path: string;
-  kind: "directory" | "file" | "symlink" | "hardlink" | "other";
-  size: number;
-  linkTarget?: string;
-};
-type AIChatMessage = {
-  role: "user" | "assistant" | "system";
-  content: string;
-  tone?: Tone;
-};
-type AIChatSession = {
-  id: string;
-  model: string;
-  title: string;
-  messages: AIChatMessage[];
-};
-type FileBrowserContextMenu = {
-  path: string;
-  x: number;
-  y: number;
-};
-type ClipboardImagePayload = {
-  extension: string;
-  data: ArrayBuffer;
-};
-type JsonRecord = Record<string, unknown>;
-type HerdrSocketEnvelope = {
-  id?: string;
-  result?: JsonRecord;
-  error?: {
-    code?: string;
-    message?: string;
-  };
-  event?: string;
-  data?: JsonRecord;
-};
 
 const params = new URLSearchParams(window.location.search);
 const initialSelector = normalizeSelector(params.get("name") ?? "");
@@ -1574,7 +1577,7 @@ function splitPlacementForPaneAction(action: string): SplitPlacement | undefined
 }
 
 async function splitHerdrPane(pane: TerminalPane, placement: SplitPlacement): Promise<boolean> {
-  const direction = HERDR_SPLIT_DIRECTIONS[placement];
+  const direction = herdrSplitDirection(placement);
   if (!direction) {
     setBackendActionUnavailable(pane);
     return false;
@@ -1649,7 +1652,7 @@ async function pasteClipboardImageIntoHerdrPane(
   payload: ClipboardImagePayload,
   report: boolean,
 ): Promise<boolean> {
-  if (payload.data.byteLength <= 0 || payload.data.byteLength > MAX_CLIPBOARD_IMAGE_BYTES) return false;
+  if (!clipboardImagePayloadIsValid(payload)) return false;
   try {
     const selector = await ensureHerdrSocketReady(pane);
     const paneId = await currentHerdrPaneId(selector);
@@ -1682,8 +1685,7 @@ async function currentHerdrPaneId(selector: string): Promise<string> {
     id: "lazycat-webshell:pane-current",
     mirrorNotification: false,
   });
-  const currentPane = recordField(current.result, "pane");
-  const currentPaneId = stringField(currentPane, "pane_id");
+  const currentPaneId = herdrCurrentPaneId(current.result);
   if (currentPaneId) return currentPaneId;
 
   const workspaceId = herdrState?.workspaces.find((workspace) => workspace.focused)?.workspace_id;
@@ -1692,17 +1694,13 @@ async function currentHerdrPaneId(selector: string): Promise<string> {
     id: "lazycat-webshell:pane-list-current",
     mirrorNotification: false,
   });
-  const panes = Array.isArray(list.result?.panes) ? list.result.panes : [];
-  const records = panes
-    .filter((item): item is JsonRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item));
-  const focusedPane = records.find((item) => boolField(item, "focused"));
-  const fallbackPaneId = stringField(focusedPane ?? records[0], "pane_id");
+  const fallbackPaneId = herdrFocusedOrFirstPaneId(list.result);
   if (fallbackPaneId) return fallbackPaneId;
   throw new Error("Herdr pane not found");
 }
 
 function splitZellijPane(pane: TerminalPane, placement: SplitPlacement): boolean {
-  const key = ZELLIJ_SPLIT_KEYS[placement];
+  const key = zellijSplitKey(placement);
   if (!key) {
     setBackendActionUnavailable(pane);
     return false;
@@ -1715,7 +1713,7 @@ function closeZellijPane(pane: TerminalPane): boolean {
 }
 
 function sendZellijPaneModeKey(pane: TerminalPane, key: string): boolean {
-  if (sendPaneInput(pane, `${ZELLIJ_PANE_MODE_PREFIX}${key}`)) {
+  if (sendPaneInput(pane, zellijPaneModeInput(key))) {
     pane.term?.focus();
     return true;
   }
@@ -3010,34 +3008,13 @@ function terminalAIContext(): Record<string, unknown> {
 }
 
 function recentAIContext(pane: TerminalPane): string {
-  const text = stripAnsiForAI(pane.aiContextText);
-  const lines = text.split(/\r?\n/).filter((line) => line.trim());
-  const selected = settings.aiContextLines > 0 ? lines.slice(-settings.aiContextLines) : [];
-  return redactAIContext(selected.join("\n"));
+  return recentAIContextText(pane.aiContextText, settings.aiContextLines);
 }
 
 function appendAIContext(pane: TerminalPane, text: string) {
   if (!text || pane.sessionBackend !== "webshell") return;
-  pane.aiContextText = `${pane.aiContextText}${text}`.slice(-MAX_AI_CONTEXT_CHARS);
+  pane.aiContextText = appendAIContextText(pane.aiContextText, text);
   observeWorkingDirectory(pane, text);
-}
-
-function stripAnsiForAI(value: string): string {
-  return value
-    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
-}
-
-function redactAIContext(value: string): string {
-  return value
-    .replace(/-----BEGIN [\s\S]*?-----END [A-Z ]+-----/g, "[REDACTED_PRIVATE_KEY]")
-    .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, "[REDACTED_TOKEN]")
-    .replace(/\bghp_[A-Za-z0-9_]{16,}\b/g, "[REDACTED_TOKEN]")
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED_TOKEN]")
-    .replace(/\b([A-Z0-9_]*(?:PASS|PASSWORD|TOKEN|SECRET|KEY)[A-Z0-9_]*)=([^\s]+)/gi, "$1=[REDACTED]")
-    .replace(/(--password(?:=|\s+))\S+/gi, "$1[REDACTED]")
-    .replace(/(-p\s+)\S+/gi, "$1[REDACTED]");
 }
 
 function renderFileBrowserEntries(disabled: boolean): string {
@@ -3151,66 +3128,12 @@ async function loadFileBrowserDirectory(path: string) {
   }
 }
 
-function parseFileBrowserEntries(directory: string, text: string): FileBrowserEntry[] {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter(Boolean)
-    .map((line): FileBrowserEntry | undefined => {
-      const [name = "", rawKind = "", rawSize = "0", rawLinks = "1", linkTarget = ""] = line.split("\t");
-      if (!name) return undefined;
-      const links = Number.parseInt(rawLinks, 10);
-      const kind = fileKindFromFindType(rawKind, Number.isFinite(links) ? links : 1);
-      return {
-        name,
-        path: joinRemotePath(directory, name),
-        kind,
-        size: Number.parseInt(rawSize, 10) || 0,
-        linkTarget: linkTarget || undefined,
-      };
-    })
-    .filter((entry): entry is FileBrowserEntry => Boolean(entry))
-    .sort((left, right) => {
-      if (left.kind === "directory" && right.kind !== "directory") return -1;
-      if (left.kind !== "directory" && right.kind === "directory") return 1;
-      return left.name.localeCompare(right.name, undefined, { numeric: true });
-    });
-}
-
-function fileKindFromFindType(value: string, links: number): FileBrowserEntry["kind"] {
-  if (value === "d") return "directory";
-  if (value === "l") return "symlink";
-  if (value === "f" && links > 1) return "hardlink";
-  if (value === "f") return "file";
-  return "other";
-}
-
-function fileEntryIcon(entry: FileBrowserEntry): string {
-  if (entry.kind === "directory") return "folder";
-  if (entry.kind === "symlink") return "file-symlink";
-  if (entry.kind === "hardlink") return "files";
-  if (entry.kind === "file") return "file";
-  return "file-question";
-}
-
 function fileKindLabel(kind: FileBrowserEntry["kind"]): string {
   if (kind === "directory") return tr("fileKind.directory");
   if (kind === "symlink") return tr("fileKind.symlink");
   if (kind === "hardlink") return tr("fileKind.hardlink");
   if (kind === "file") return tr("fileKind.file");
   return tr("fileKind.other");
-}
-
-function formatFileSize(size: number): string {
-  if (!Number.isFinite(size) || size < 0) return "-";
-  if (size < 1024) return `${size} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = size / 1024;
-  for (const unit of units) {
-    if (value < 1024) return `${value.toFixed(value >= 100 ? 0 : 1)} ${unit}`;
-    value /= 1024;
-  }
-  return `${value.toFixed(1)} PB`;
 }
 
 function selectedFileBrowserEntry(): FileBrowserEntry | undefined {
@@ -3235,33 +3158,6 @@ function syncFileBrowserPathWithActivePane(force = false) {
   fileBrowserLoadedPath = "";
 }
 
-function normalizeRemotePath(path: string): string {
-  const trimmed = path.trim().replace(/\/{2,}/g, "/");
-  if (!trimmed) return "/";
-  if (trimmed === "~" || trimmed.startsWith("~/")) return trimmed.replace(/\/+$/, "") || "~";
-  if (trimmed.startsWith("/")) return trimmed.replace(/\/+$/, "") || "/";
-  return `/${trimmed}`.replace(/\/+$/, "") || "/";
-}
-
-function parentRemotePath(path: string): string {
-  const normalized = normalizeRemotePath(path);
-  if (normalized === "/" || normalized === "~") return normalized;
-  if (normalized.startsWith("~/")) {
-    const homeParts = normalized.slice(2).split("/").filter(Boolean);
-    if (homeParts.length <= 1) return "~";
-    return `~/${homeParts.slice(0, -1).join("/")}`;
-  }
-  const parts = normalized.split("/").filter(Boolean);
-  return `/${parts.slice(0, -1).join("/")}` || "/";
-}
-
-function joinRemotePath(directory: string, name: string): string {
-  const safeName = name.replace(/^\/+/, "");
-  const base = normalizeRemotePath(directory);
-  if (base === "/") return `/${safeName}`;
-  return `${base.replace(/\/+$/, "")}/${safeName}`;
-}
-
 function observeWorkingDirectory(pane: TerminalPane, text: string) {
   const fromOsc = workingDirectoryFromOsc7(text);
   const fromPrompt = fromOsc || workingDirectoryFromPrompt(text);
@@ -3270,49 +3166,6 @@ function observeWorkingDirectory(pane: TerminalPane, text: string) {
   if (pane.id === activePane()?.id && activePluginToolId === FILE_TRANSFER_PLUGIN_ID && !fileBrowserLoadedPath) {
     syncFileBrowserPathWithActivePane();
   }
-}
-
-function workingDirectoryFromOsc7(text: string): string {
-  const pattern = /\x1b\]7;file:\/\/[^\x07\x1b/]*(\/[^\x07\x1b]*)(?:\x07|\x1b\\)/g;
-  let match: RegExpExecArray | null;
-  let cwd = "";
-  while ((match = pattern.exec(text)) !== null) {
-    try {
-      cwd = decodeURIComponent(match[1] ?? "");
-    } catch {
-      cwd = match[1] ?? "";
-    }
-  }
-  return normalizeDetectedDirectory(cwd);
-}
-
-function workingDirectoryFromPrompt(text: string): string {
-  const clean = stripAnsiForAI(text).split(/\r?\n/).slice(-4).join("\n");
-  const pattern = /(?:^|[\s:>])((?:~|\/)[\w.@%+\-/]*)(?=$|[\s)>])/g;
-  let match: RegExpExecArray | null;
-  let cwd = "";
-  while ((match = pattern.exec(clean)) !== null) {
-    const candidate = match[1] ?? "";
-    if (candidate.length > cwd.length) cwd = candidate;
-  }
-  return normalizeDetectedDirectory(cwd);
-}
-
-function normalizeDetectedDirectory(value: string): string {
-  const cleaned = value.trim().replace(/[.,;:)\]]+$/g, "");
-  if (!cleaned || cleaned === "/" || cleaned.includes("\n")) return "";
-  if (cleaned === "~" || cleaned.startsWith("~/") || cleaned.startsWith("/")) {
-    return normalizeRemotePath(cleaned);
-  }
-  return "";
-}
-
-function uploadTargetPath(path: string, fileName: string): string {
-  return joinRemotePath(path, fileName);
-}
-
-function fileNameFromPath(path: string): string {
-  return path.split("/").filter(Boolean).pop() || "download";
 }
 
 function setFileTransferOutput(message: string, tone: Tone = "neutral") {
@@ -3342,49 +3195,6 @@ function transferProgressText(meta: ActionResponseMeta | undefined): string {
   const done = metaBoolean(meta, "done");
   const status = `${Number.isFinite(percent) ? `${percent}%` : "..."}`;
   return [name, done ? `${status} complete` : status].filter(Boolean).join(": ");
-}
-
-function metaString(meta: ActionResponseMeta | undefined, key: string): string {
-  const value = meta?.[key];
-  return typeof value === "string" ? value : "";
-}
-
-function metaNumber(meta: ActionResponseMeta | undefined, key: string): number {
-  const value = meta?.[key];
-  return typeof value === "number" ? value : Number.NaN;
-}
-
-function metaBoolean(meta: ActionResponseMeta | undefined, key: string): boolean {
-  return meta?.[key] === true;
-}
-
-function stringField(record: JsonRecord | undefined, key: string): string {
-  const value = record?.[key];
-  return typeof value === "string" ? value.trim() : "";
-}
-
-function recordField(record: JsonRecord | undefined, key: string): JsonRecord | undefined {
-  const value = record?.[key];
-  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : undefined;
-}
-
-function boolField(record: JsonRecord | undefined, key: string): boolean {
-  return record?.[key] === true;
-}
-
-function metaStringArray(meta: ActionResponseMeta | undefined, key: string): string[] {
-  const value = meta?.[key];
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string");
-}
-
-function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
 }
 
 function pluginDisplayName(plugin: PluginDescriptor): string {
@@ -3851,11 +3661,7 @@ async function fetchHerdrPaneIds(selector: string): Promise<string[]> {
     id: "lazycat-webshell:pane-list",
     mirrorNotification: false,
   });
-  const panes = envelope.result?.panes;
-  if (!Array.isArray(panes)) return [];
-  return panes
-    .map((pane) => pane && typeof pane === "object" ? stringField(pane as JsonRecord, "pane_id") : "")
-    .filter(Boolean);
+  return herdrPaneIdsFromListResult(envelope.result);
 }
 
 async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
@@ -3884,10 +3690,7 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   });
   if (generation !== herdrEventSocketGeneration || normalizeSelector(selectedSelector) !== selector) return;
 
-  const url = new URL("./ws/herdr", window.location.href);
-  url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("name", selector);
-  const socket = new WebSocket(url);
+  const socket = new WebSocket(herdrEventSocketUrl(selector));
   herdrEventSocket = socket;
   herdrEventSocketSelector = selector;
   socket.addEventListener("open", () => {
@@ -3914,28 +3717,6 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
       setGlobalStatus(tr("status.herdrUnavailable"), "error");
     }
   });
-}
-
-function herdrEventSubscriptions(paneIds: string[]): JsonRecord[] {
-  const subscriptions: JsonRecord[] = [
-    { type: "workspace.created" },
-    { type: "workspace.renamed" },
-    { type: "workspace.closed" },
-    { type: "workspace.focused" },
-    { type: "tab.created" },
-    { type: "tab.closed" },
-    { type: "tab.focused" },
-    { type: "tab.renamed" },
-    { type: "pane.created" },
-    { type: "pane.closed" },
-    { type: "pane.moved" },
-    { type: "pane.exited" },
-    { type: "pane.agent_detected" },
-  ];
-  for (const paneId of paneIds) {
-    subscriptions.push({ type: "pane.agent_status_changed", pane_id: paneId });
-  }
-  return subscriptions;
 }
 
 function handleHerdrEventMessage(raw: unknown) {
@@ -3981,24 +3762,6 @@ function herdrEventMessage(event: string, data: JsonRecord): string {
     || stringField(data, "workspace_id")
     || event;
   return tr("status.herdrEvent", { event, subject });
-}
-
-function herdrEventTone(event: string, data: JsonRecord): Tone {
-  if (event === "pane.exited") return "error";
-  const status = stringField(data, "agent_status") || stringField(data, "state");
-  if (status === "blocked") return "error";
-  if (status === "done" || status === "idle") return "ok";
-  return "neutral";
-}
-
-function herdrEventChangesDock(event: string): boolean {
-  return event.startsWith("workspace.")
-    || event.startsWith("tab.")
-    || event === "pane.created"
-    || event === "pane.closed"
-    || event === "pane.focused"
-    || event === "pane.moved"
-    || event === "pane.exited";
 }
 
 function scheduleHerdrEventRefresh() {
@@ -4801,7 +4564,7 @@ function updatePaneTerminalSize(pane: TerminalPane, cols: number, rows: number):
 function sendPaneResize(pane: TerminalPane, cols: number, rows: number): boolean {
   updatePaneTerminalSize(pane, cols, rows);
   if (pane.socket?.readyState === WebSocket.OPEN) {
-    pane.socket.send(JSON.stringify({ type: "resize", cols: pane.cols, rows: pane.rows }));
+    pane.socket.send(webshellResizeMessage(pane.cols, pane.rows));
     updateActiveDetails();
     return true;
   }
@@ -4821,16 +4584,15 @@ function connectPanePty(pane: TerminalPane) {
 function openSocket(pane: TerminalPane) {
   if (!pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
-  const url = new URL("./ws/terminal", window.location.href);
-  url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("session_id", pane.sessionId);
-  url.searchParams.set("pane_id", pane.id);
-  url.searchParams.set("cols", String(pane.cols || pane.term?.cols || INITIAL_COLS));
-  url.searchParams.set("rows", String(pane.rows || pane.term?.rows || INITIAL_ROWS));
-  url.searchParams.set("restart", String(settings.autoRestartSessions));
-  url.searchParams.set("replay", "true");
-  url.searchParams.set("after", String(pane.lastOutputSequence));
-  url.searchParams.set("output_limit", String(settings.outputBufferLimit));
+  const url = webshellTerminalSocketUrl({
+    sessionId: pane.sessionId,
+    paneId: pane.id,
+    cols: pane.cols || pane.term?.cols || INITIAL_COLS,
+    rows: pane.rows || pane.term?.rows || INITIAL_ROWS,
+    restart: settings.autoRestartSessions,
+    after: pane.lastOutputSequence,
+    outputLimit: settings.outputBufferLimit,
+  });
 
   pane.exited = false;
   pane.replaying = true;
@@ -4903,12 +4665,12 @@ function syncOutputBufferLimitToServer() {
 
 function sendOutputBufferLimit(pane: TerminalPane) {
   if (pane.socket?.readyState !== WebSocket.OPEN) return;
-  pane.socket.send(JSON.stringify({ type: "output-buffer", limit: settings.outputBufferLimit }));
+  pane.socket.send(webshellOutputBufferMessage(settings.outputBufferLimit));
 }
 
 function sendRestartPolicy(pane: TerminalPane) {
   if (pane.socket?.readyState !== WebSocket.OPEN) return;
-  pane.socket.send(JSON.stringify({ type: "restart-policy", enabled: settings.autoRestartSessions }));
+  pane.socket.send(webshellRestartPolicyMessage(settings.autoRestartSessions));
 }
 
 function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {
@@ -5998,31 +5760,6 @@ async function pasteIntoPane(pane: TerminalPane | undefined, report: boolean): P
   }
 }
 
-function clipboardImageFile(data: DataTransfer | null | undefined): File | undefined {
-  if (!data?.items) return undefined;
-  for (const item of Array.from(data.items)) {
-    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
-    const file = item.getAsFile();
-    if (file) return file;
-  }
-  return undefined;
-}
-
-async function readClipboardImagePayload(): Promise<ClipboardImagePayload | undefined> {
-  if (!navigator.clipboard?.read) return undefined;
-  try {
-    const items = await navigator.clipboard.read();
-    for (const item of items) {
-      const type = item.types.find((candidate) => candidate.startsWith("image/"));
-      if (!type) continue;
-      const blob = await item.getType(type);
-      return imageBlobPayload(blob, type);
-    }
-  } catch {
-  }
-  return undefined;
-}
-
 async function pasteImageFileIntoPane(pane: TerminalPane, file: File, report: boolean): Promise<boolean> {
   try {
     const payload = await imageBlobPayload(file, file.type);
@@ -6036,35 +5773,13 @@ async function pasteImageFileIntoPane(pane: TerminalPane, file: File, report: bo
   }
 }
 
-async function imageBlobPayload(blob: Blob, contentType: string): Promise<ClipboardImagePayload> {
-  if (blob.size <= 0) {
-    throw new Error("clipboard image is empty");
-  }
-  if (blob.size > MAX_CLIPBOARD_IMAGE_BYTES) {
-    throw new Error(`clipboard image exceeds ${Math.floor(MAX_CLIPBOARD_IMAGE_BYTES / (1024 * 1024))} MiB`);
-  }
-  return {
-    extension: imageExtension(contentType),
-    data: await blob.arrayBuffer(),
-  };
-}
-
-function imageExtension(contentType: string): string {
-  const type = contentType.toLowerCase();
-  if (type === "image/jpeg" || type === "image/jpg") return "jpg";
-  if (type === "image/gif") return "gif";
-  if (type === "image/webp") return "webp";
-  if (type === "image/bmp") return "bmp";
-  return "png";
-}
-
 function sendClipboardImageIntoPane(
   pane: TerminalPane | undefined,
   payload: ClipboardImagePayload,
   report: boolean,
 ): boolean {
   if (!pane || pane.closing || pane.exited || !pane.sessionId) return false;
-  if (payload.data.byteLength <= 0 || payload.data.byteLength > MAX_CLIPBOARD_IMAGE_BYTES) return false;
+  if (!clipboardImagePayloadIsValid(payload)) return false;
   if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying) {
     connectPanePty(pane);
     if (report) setGlobalStatus(tr("status.pasteFailed", { message: "terminal is reconnecting" }), "error");
@@ -6084,25 +5799,6 @@ function sendClipboardImageIntoPane(
     scheduleReconnect(pane);
     return false;
   }
-}
-
-async function stageClipboardImage(selector: string, payload: ClipboardImagePayload): Promise<string> {
-  const url = new URL("./api/clipboard-image", window.location.href);
-  url.searchParams.set("name", selector);
-  url.searchParams.set("extension", payload.extension);
-  const response = await fetch(url, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "content-type": "application/octet-stream" },
-    body: payload.data,
-  });
-  if (!response.ok) {
-    throw new Error(await response.text() || response.statusText);
-  }
-  const result = await response.json() as { path?: unknown };
-  const path = typeof result.path === "string" ? result.path.trim() : "";
-  if (!path) throw new Error("clipboard image path is missing");
-  return path;
 }
 
 function pasteTextIntoPane(pane: TerminalPane | undefined, text: string): boolean {
