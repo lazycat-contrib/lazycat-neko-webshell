@@ -1160,9 +1160,10 @@ function stopMobileShortcutRepeat() {
 }
 
 async function runMobileShortcut(shortcut: string, options: { keepModifiers?: boolean } = {}) {
-  if (shortcut === "ctrl" || shortcut === "alt" || shortcut === "shift") {
+  if (isMobileModifierShortcut(shortcut)) {
     mobileSticky[shortcut] = !mobileSticky[shortcut];
     updateMobileShortcutState();
+    focusActivePaneSystemKeyboard();
     return;
   }
 
@@ -1181,6 +1182,10 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
     clearMobileSticky();
   }
   focusAfterMobileShortcut();
+}
+
+function isMobileModifierShortcut(shortcut: string): shortcut is keyof typeof mobileSticky {
+  return shortcut === "ctrl" || shortcut === "alt" || shortcut === "shift";
 }
 
 function runMobileChord(chord: string) {
@@ -5463,6 +5468,11 @@ function focusActivePaneCanvas() {
 function focusAfterMobileShortcut() {
   if (isCoarseTouchPointer()) return;
   focusActivePaneCanvas();
+}
+
+function focusActivePaneSystemKeyboard() {
+  const pane = activePane();
+  if (pane) focusPaneSystemKeyboard(pane);
 }
 
 function focusPaneCanvas(pane: TerminalPane | undefined) {
