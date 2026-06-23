@@ -900,7 +900,7 @@ textarea:focus-visible {
   position: relative;
   z-index: 16;
   display: grid;
-  grid-template-columns: minmax(72px, min(34vw, 330px)) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   min-height: 38px;
@@ -1038,7 +1038,7 @@ textarea:focus-visible {
   max-width: 88px;
   min-width: 0;
   min-height: 26px;
-  padding: 0 8px;
+  padding: 0 10px 0 8px;
   font-size: 11.5px;
 }
 
@@ -1089,22 +1089,28 @@ textarea:focus-visible {
 }
 
 .herdr-space-close {
-  width: 0;
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  z-index: 2;
+  width: 18px;
   height: 18px;
   margin-left: 0;
   margin-right: 0;
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
+  transform: translateY(-50%) scale(0.86);
 }
 
 .herdr-space:hover .herdr-space-close,
 .herdr-space:focus-within .herdr-space-close {
   width: 18px;
-  margin-left: -5px;
-  margin-right: 1px;
+  margin-left: 0;
+  margin-right: 0;
   opacity: 0.82;
   pointer-events: auto;
+  transform: translateY(-50%) scale(1);
 }
 
 .herdr-space-close:hover,
