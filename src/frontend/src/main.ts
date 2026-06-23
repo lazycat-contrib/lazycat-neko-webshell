@@ -63,6 +63,7 @@ import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorL
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
+const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
 const MAX_AI_CONTEXT_CHARS = 12000;
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
@@ -990,11 +991,30 @@ function updateViewportMetrics() {
   style.setProperty("--app-viewport-offset-top", `${offsetTop}px`);
   style.setProperty("--app-viewport-offset-left", `${offsetLeft}px`);
   style.setProperty("--app-keyboard-inset-bottom", `${keyboardInset}px`);
+  document.body.classList.toggle("mobile-keyboard-visible", keyboardInset > MOBILE_KEYBOARD_INSET_THRESHOLD_PX);
+  document.body.classList.toggle("mobile-controls-enabled", shouldUseMobileControls(width));
+  document.body.classList.toggle("desktop-controls-enabled", shouldUseDesktopControls(width));
 }
 
 function handleViewportChange() {
   updateViewportMetrics();
   scheduleTerminalSizeRefresh();
+}
+
+function shouldUseMobileControls(viewportWidth = Math.max(1, window.innerWidth || 0)): boolean {
+  const mobileUA = /Android|iPhone|iPad|iPod|Mobile|Harmony|HUAWEI|Miui/i.test(navigator.userAgent);
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  return viewportWidth <= 760
+    || mobileUA
+    || coarsePointer
+    || (navigator.maxTouchPoints > 0 && viewportWidth <= 1180);
+}
+
+function shouldUseDesktopControls(viewportWidth = Math.max(1, window.innerWidth || 0)): boolean {
+  return viewportWidth > 760
+    && navigator.maxTouchPoints === 0
+    && window.matchMedia("(hover: hover) and (pointer: fine)").matches
+    && !/Android|iPhone|iPad|iPod|Mobile|Harmony|HUAWEI|Miui/i.test(navigator.userAgent);
 }
 
 function bindMobileShortcuts() {
@@ -4419,7 +4439,10 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     const current = findPaneById(id);
     if (current) {
       trackMobileTerminalSwipeStart(current, event);
-      activatePane(current.tabId, id, { focus: shouldFocusTerminalFromPointer(event) });
+      activatePane(current.tabId, id, { focus: false });
+      if (shouldFocusTerminalFromPointer(event)) {
+        requestAnimationFrame(() => focusPaneCanvas(current));
+      }
     }
   });
   mount.addEventListener("pointerup", (event) => {

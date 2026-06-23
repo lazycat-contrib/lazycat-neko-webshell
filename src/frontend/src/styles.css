@@ -102,6 +102,7 @@
   --app-viewport-offset-left: 0px;
   --app-keyboard-inset-bottom: 0px;
   --mobile-shortcuts-height: 104px;
+  --mobile-shortcuts-bottom-offset: var(--lzc-safe-area-inset-bottom);
   font-family:
     "IBM Plex Sans",
     "Aptos",
@@ -136,6 +137,10 @@ body {
     var(--bg);
   color: var(--text);
   overflow: hidden;
+}
+
+body.mobile-keyboard-visible {
+  --mobile-shortcuts-bottom-offset: var(--app-keyboard-inset-bottom);
 }
 
 button,
@@ -3649,11 +3654,12 @@ output {
   }
 
   .plugin-sidebar {
-    position: absolute;
-    top: 8px;
+    position: fixed;
+    z-index: 92;
+    top: calc(var(--app-viewport-offset-top) + 8px);
     right: max(8px, var(--lzc-safe-area-inset-right));
-    bottom: max(8px, var(--lzc-safe-area-inset-bottom));
-    left: max(8px, var(--lzc-safe-area-inset-left));
+    bottom: max(8px, var(--lzc-safe-area-inset-bottom), var(--app-keyboard-inset-bottom));
+    left: calc(var(--app-viewport-offset-left) + max(8px, var(--lzc-safe-area-inset-left)));
     grid-template-rows: 48px minmax(0, 1fr) auto;
     grid-template-columns: 44px minmax(0, 1fr);
     width: auto;
@@ -3844,15 +3850,15 @@ output {
   }
 
   .mobile-shortcuts {
-    position: absolute;
+    position: fixed;
     right: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 18;
+    bottom: var(--mobile-shortcuts-bottom-offset);
+    left: var(--app-viewport-offset-left);
+    z-index: 80;
     display: grid;
     grid-template-rows: 32px minmax(0, auto);
     gap: 5px;
-    width: 100%;
+    width: var(--app-viewport-width);
     height: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
     min-height: 0;
     padding:
@@ -3866,7 +3872,8 @@ output {
     scrollbar-width: none;
   }
 
-  .webshell.settings-open .mobile-shortcuts {
+  .webshell.settings-open .mobile-shortcuts,
+  .webshell.plugins-open .mobile-shortcuts {
     display: none;
   }
 
@@ -3933,4 +3940,113 @@ output {
     width: 15px;
     height: 15px;
   }
+}
+
+.tab-mount {
+  bottom: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
+}
+
+.empty-state {
+  bottom: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
+}
+
+.mobile-shortcuts {
+  position: fixed;
+  right: 0;
+  bottom: var(--mobile-shortcuts-bottom-offset);
+  left: var(--app-viewport-offset-left);
+  z-index: 80;
+  display: grid;
+  grid-template-rows: 32px minmax(0, auto);
+  gap: 5px;
+  width: var(--app-viewport-width);
+  height: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
+  min-height: 0;
+  padding:
+    5px
+    max(6px, var(--lzc-safe-area-inset-right))
+    calc(6px + var(--lzc-safe-area-inset-bottom))
+    max(6px, var(--lzc-safe-area-inset-left));
+  overflow: hidden;
+  border-top: 1px solid var(--line-soft);
+  background: var(--mobile-shortcuts-bg);
+  scrollbar-width: none;
+}
+
+.desktop-controls-enabled .tab-mount {
+  bottom: var(--lzc-safe-area-inset-bottom);
+}
+
+.desktop-controls-enabled .empty-state {
+  bottom: 0;
+}
+
+.desktop-controls-enabled .mobile-shortcuts {
+  display: none;
+}
+
+.webshell.settings-open .mobile-shortcuts,
+.webshell.plugins-open .mobile-shortcuts {
+  display: none;
+}
+
+.mobile-shortcuts::-webkit-scrollbar,
+.mobile-keyboard-pages::-webkit-scrollbar,
+.mobile-keyboard-panel::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-keyboard-pages,
+.mobile-keyboard-panel {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.mobile-keyboard-pages button,
+.mobile-keyboard-panel button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 38px;
+  height: 36px;
+  border: 1px solid var(--component-border);
+  border-radius: 6px;
+  background:
+    var(--component-wash),
+    var(--surface);
+  color: var(--text);
+  padding: 0 9px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.mobile-keyboard-pages button {
+  min-width: 48px;
+  height: 28px;
+  border-color: var(--line-soft);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.mobile-keyboard-panel[hidden] {
+  display: none;
+}
+
+.mobile-shortcuts button.active {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+}
+
+.mobile-shortcuts svg {
+  width: 15px;
+  height: 15px;
 }
