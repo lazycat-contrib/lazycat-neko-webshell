@@ -239,6 +239,7 @@ export type TerminalPane = {
   aiContextText: string;
   viewportGuardInstalled?: boolean;
   scrollbackFallbackInstalled?: boolean;
+  touchKeyboardGuardInstalled?: boolean;
   exited: boolean;
   closing: boolean;
   cols: number;

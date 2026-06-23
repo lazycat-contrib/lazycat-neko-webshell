@@ -70,6 +70,8 @@ const MOBILE_TERMINAL_DOUBLE_TAP_DELAY_MS = 420;
 const MOBILE_TERMINAL_TAB_SWIPE_DISTANCE_PX = 72;
 const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
 const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
+const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
+const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
 const MAX_AI_CONTEXT_CHARS = 12000;
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
@@ -4766,8 +4768,9 @@ async function mountTerminal(pane: TerminalPane) {
   if (pane.closing) return;
   pane.term = term;
   term.open(pane.mount);
-  term.restty?.setMouseMode("auto");
+  term.restty?.setMouseMode(pane.sessionBackend === "herdr" ? "off" : "auto");
   installPaneScrollbackFallback(pane);
+  installPaneTouchKeyboardGuard(pane);
   installPaneViewportGuard(pane);
   schedulePaneViewportReset(pane);
   applyTerminalAppearance(pane);
@@ -5081,6 +5084,7 @@ function installPaneScrollbackFallback(pane: TerminalPane) {
   };
 
   pane.mount.addEventListener("wheel", (event) => {
+    if (pane.sessionBackend === "herdr") return;
     if (paneMouseReportingActive(pane, event)) return;
     const host = paneScrollbackHost(pane);
     if (!host || !hostCanScroll(host)) return;
@@ -5126,6 +5130,61 @@ function installPaneScrollbackFallback(pane: TerminalPane) {
   pane.scrollbackFallbackInstalled = true;
 }
 
+function installPaneTouchKeyboardGuard(pane: TerminalPane) {
+  if (pane.touchKeyboardGuardInstalled) return;
+  let touchPointerId: number | undefined;
+  let startX = 0;
+  let startY = 0;
+  let suppressInput: HTMLTextAreaElement | null = null;
+  let suppressInputReadOnly = false;
+  let scrollLocked = false;
+
+  const restoreInput = () => {
+    if (!suppressInput) return;
+    suppressInput.readOnly = suppressInputReadOnly;
+    suppressInput = null;
+  };
+
+  const stopTouch = (pointerId: number) => {
+    if (touchPointerId !== pointerId) return;
+    touchPointerId = undefined;
+    scrollLocked = false;
+    restoreInput();
+  };
+
+  pane.mount.addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "touch") return;
+    touchPointerId = event.pointerId;
+    startX = event.clientX;
+    startY = event.clientY;
+    scrollLocked = false;
+    suppressInput = paneImeInput(pane);
+    if (suppressInput) {
+      suppressInputReadOnly = suppressInput.readOnly;
+      suppressInput.readOnly = true;
+    }
+  }, { capture: true, passive: true });
+
+  pane.mount.addEventListener("pointermove", (event) => {
+    if (touchPointerId !== event.pointerId || scrollLocked) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+    if (Math.hypot(dx, dy) < MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX) return;
+    if (absDy < absDx * MOBILE_TERMINAL_SCROLL_AXIS_RATIO) return;
+    scrollLocked = true;
+    pane.term?.blur();
+    restoreInput();
+    handleViewportChange();
+  }, { capture: true, passive: true });
+
+  pane.mount.addEventListener("pointerup", (event) => stopTouch(event.pointerId), true);
+  pane.mount.addEventListener("pointercancel", (event) => stopTouch(event.pointerId), true);
+  pane.mount.addEventListener("lostpointercapture", (event) => stopTouch(event.pointerId), true);
+  pane.touchKeyboardGuardInstalled = true;
+}
+
 function paneScrollbackHost(pane: TerminalPane): HTMLElement | null {
   return pane.mount.querySelector<HTMLElement>(".restty-native-scroll-host");
 }
@@ -5136,9 +5195,6 @@ function paneTouchScrollbackFallbackEnabled(pane: TerminalPane): boolean {
 
 function paneMouseReportingActive(pane: TerminalPane, event: MouseEvent | PointerEvent): boolean {
   if (event.shiftKey) return false;
-  // Herdr enables terminal mouse reporting, but webshell still owns the outer
-  // Restty scrollback viewport for history navigation.
-  if (pane.sessionBackend === "herdr") return false;
   return Boolean(pane.term?.restty?.getMouseStatus().active);
 }
 
