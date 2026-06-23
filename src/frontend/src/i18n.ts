@@ -15,11 +15,14 @@ export type MessageKey =
   | "action.aiNl2cmd"
   | "action.aiTest"
   | "action.closeActiveSession"
+  | "action.closeHerdrSpace"
+  | "action.closePlugins"
   | "action.closeSettings"
   | "action.copySelection"
   | "action.focusTerminal"
   | "action.fullscreen"
   | "action.lightosHome"
+  | "action.newHerdrSpace"
   | "action.newHerdrTab"
   | "action.newTab"
   | "action.pasteClipboard"
@@ -38,6 +41,7 @@ export type MessageKey =
   | "action.saveTheme"
   | "action.settings"
   | "action.settingsMenu"
+  | "action.shortcutHelp"
   | "action.closeTab"
   | "action.renameTab"
   | "action.splitDown"
@@ -48,6 +52,9 @@ export type MessageKey =
   | "action.uploadFont"
   | "action.uploadTerminalBackground"
   | "app.title"
+  | "backend.herdr"
+  | "backend.webshell"
+  | "backend.zellij"
   | "cursor.bar"
   | "cursor.block"
   | "cursor.underline"
@@ -58,12 +65,17 @@ export type MessageKey =
   | "field.aiApiKey"
   | "field.aiBaseUrl"
   | "field.aiModel"
+  | "field.aiContextLines"
   | "field.aiPrompt"
   | "field.aiProvider"
+  | "field.defaultSessionBackend"
+  | "field.herdrActiveBackgroundDark"
+  | "field.herdrActiveBackgroundLight"
   | "field.interfaceStyle"
   | "field.language"
   | "field.lineHeight"
   | "field.outputBuffer"
+  | "field.panes"
   | "field.pluginPath"
   | "field.scrollback"
   | "field.tabs"
@@ -77,8 +89,13 @@ export type MessageKey =
   | "font.noUploaded"
   | "font.uploaded"
   | "interfaceStyle.brass"
+  | "interfaceStyle.candy"
+  | "interfaceStyle.champagne"
+  | "interfaceStyle.frost"
   | "interfaceStyle.geek"
   | "interfaceStyle.glass"
+  | "interfaceStyle.lab"
+  | "interfaceStyle.porcelain"
   | "interfaceStyle.spectrum"
   | "interfaceStyle.steel"
   | "layout.horizontal"
@@ -105,20 +122,39 @@ export type MessageKey =
   | "section.aiAccess"
   | "section.fileTransfer"
   | "section.fonts"
+  | "section.desktopShortcuts"
   | "section.herdr"
   | "section.herdrTabs"
   | "section.herdrWorkspaces"
   | "section.plugins"
+  | "section.herdrHighlight"
+  | "section.mobileShortcuts"
+  | "section.sessionBackend"
+  | "section.shortcuts"
   | "section.terminalBackground"
   | "section.themes"
   | "setting.autoRestartSessions"
   | "setting.copyOnSelect"
   | "setting.cursorBlink"
   | "setting.debugAdapter"
+  | "setting.defaultSessionBackendHelp"
+  | "setting.herdrHighlightHelp"
+  | "setting.aiSendTerminalContext"
+  | "setting.aiPrivacyHelp"
   | "setting.pluginDisabled"
   | "setting.pluginEnabled"
   | "setting.terminalBackground"
   | "setting.useResttyClipboard"
+  | "shortcut.closeTab"
+  | "shortcut.copyPaste"
+  | "shortcut.mobileFont"
+  | "shortcut.mobileKeyboard"
+  | "shortcut.mobileKeys"
+  | "shortcut.mobileTab"
+  | "shortcut.newTab"
+  | "shortcut.resetFont"
+  | "shortcut.splitPane"
+  | "shortcut.zoomFont"
   | "tab.appearance"
   | "tab.fonts"
   | "tab.fontSettings"
@@ -130,6 +166,7 @@ export type MessageKey =
   | "status.connectFailed"
   | "status.copyFailed"
   | "status.creatingSession"
+  | "status.defaultBackend"
   | "status.fontDeleteFailed"
   | "status.fontLoadFailed"
   | "status.fontReady"
@@ -142,7 +179,12 @@ export type MessageKey =
   | "status.backgroundUploadFailed"
   | "status.backgroundDeleteFailed"
   | "status.herdrActionFailed"
+  | "status.herdrEvent"
+  | "status.herdrEventAgent"
+  | "status.herdrEntryRestored"
+  | "status.herdrNotification"
   | "status.herdrUnavailable"
+  | "status.herdrWorkspaceFocused"
   | "status.idle"
   | "status.instance"
   | "status.instanceLoadFailed"
@@ -218,11 +260,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiNl2cmd": "NL to cmd",
     "action.aiTest": "Test",
     "action.closeActiveSession": "Close active session",
+    "action.closeHerdrSpace": "Close Herdr space",
+    "action.closePlugins": "Close plugins",
     "action.closeSettings": "Close settings",
     "action.copySelection": "Copy selection",
     "action.focusTerminal": "Focus terminal",
     "action.fullscreen": "Full screen",
     "action.lightosHome": "LightOS home",
+    "action.newHerdrSpace": "New Herdr space",
     "action.newHerdrTab": "New Herdr tab",
     "action.newTab": "New terminal tab",
     "action.pasteClipboard": "Paste",
@@ -241,6 +286,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.saveTheme": "Save custom theme",
     "action.settings": "Settings",
     "action.settingsMenu": "Settings menu",
+    "action.shortcutHelp": "Keyboard shortcuts",
     "action.closeTab": "Close tab",
     "action.renameTab": "Rename tab",
     "action.splitDown": "Split down",
@@ -251,6 +297,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.uploadFont": "Upload font",
     "action.uploadTerminalBackground": "Upload terminal background",
     "app.title": "Neko Webshell",
+    "backend.herdr": "Herdr",
+    "backend.webshell": "WebShell native",
+    "backend.zellij": "zellij",
     "cursor.bar": "Bar",
     "cursor.block": "Block",
     "cursor.underline": "Underline",
@@ -261,12 +310,17 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiApiKey": "API key",
     "field.aiBaseUrl": "Base URL",
     "field.aiModel": "Model",
+    "field.aiContextLines": "Context lines",
     "field.aiPrompt": "Prompt",
     "field.aiProvider": "Provider",
+    "field.defaultSessionBackend": "New tab backend",
+    "field.herdrActiveBackgroundDark": "Dark highlight",
+    "field.herdrActiveBackgroundLight": "Light highlight",
     "field.interfaceStyle": "Interface style",
     "field.language": "Language",
     "field.lineHeight": "Line height",
     "field.outputBuffer": "History lines",
+    "field.panes": "Panes",
     "field.pluginPath": "Path",
     "field.scrollback": "Scrollback",
     "field.tabs": "Tabs",
@@ -280,8 +334,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "font.noUploaded": "No uploaded fonts",
     "font.uploaded": "Uploaded",
     "interfaceStyle.brass": "Brass",
+    "interfaceStyle.candy": "Candy",
+    "interfaceStyle.champagne": "Champagne",
+    "interfaceStyle.frost": "Frost",
     "interfaceStyle.geek": "Geek",
     "interfaceStyle.glass": "Glass",
+    "interfaceStyle.lab": "Lab",
+    "interfaceStyle.porcelain": "Porcelain",
     "interfaceStyle.spectrum": "Spectrum",
     "interfaceStyle.steel": "Steel",
     "layout.horizontal": "Horizontal",
@@ -310,20 +369,39 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.aiAccess": "AI access",
     "section.fileTransfer": "File transfer",
     "section.fonts": "Fonts",
+    "section.desktopShortcuts": "Desktop",
     "section.herdr": "Herdr controls",
     "section.herdrTabs": "Herdr tabs",
-    "section.herdrWorkspaces": "Herdr workspaces",
+    "section.herdrWorkspaces": "Herdr spaces",
+    "section.herdrHighlight": "Herdr selection",
+    "section.mobileShortcuts": "Mobile",
     "section.plugins": "Plugins",
+    "section.sessionBackend": "Session backend",
+    "section.shortcuts": "Shortcuts",
     "section.terminalBackground": "Terminal background",
     "section.themes": "Terminal themes",
     "setting.autoRestartSessions": "Restart sessions after provider restart",
     "setting.copyOnSelect": "Copy on select",
     "setting.cursorBlink": "Cursor blink",
     "setting.debugAdapter": "Debug adapter",
+    "setting.defaultSessionBackendHelp": "The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.",
+    "setting.herdrHighlightHelp": "Customize the active Herdr workspace and tab background for dark and light interface styles.",
+    "setting.aiSendTerminalContext": "Send recent terminal context",
+    "setting.aiPrivacyHelp": "Off by default. When enabled, only the active pane's recent text is sent after local redaction of tokens, passwords, and private keys.",
     "setting.pluginDisabled": "Disabled",
     "setting.pluginEnabled": "Enabled",
     "setting.terminalBackground": "Use background image",
     "setting.useResttyClipboard": "Use restty clipboard",
+    "shortcut.closeTab": "Close tab",
+    "shortcut.copyPaste": "Copy or paste",
+    "shortcut.mobileFont": "Adjust terminal font",
+    "shortcut.mobileKeyboard": "Open system keyboard",
+    "shortcut.mobileKeys": "Send terminal keys",
+    "shortcut.mobileTab": "Switch or create tabs",
+    "shortcut.newTab": "New terminal tab",
+    "shortcut.resetFont": "Reset terminal font",
+    "shortcut.splitPane": "Split pane",
+    "shortcut.zoomFont": "Adjust terminal font",
     "tab.appearance": "Appearance",
     "tab.fonts": "Fonts",
     "tab.fontSettings": "Font settings",
@@ -335,6 +413,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.connectFailed": "Connect failed: {message}",
     "status.copyFailed": "Copy failed: {message}",
     "status.creatingSession": "Creating session...",
+    "status.defaultBackend": "Default",
     "status.fontDeleteFailed": "Font delete failed: {message}",
     "status.fontLoadFailed": "Font load failed: {message}",
     "status.fontReady": "{name} ready",
@@ -347,7 +426,12 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.backgroundUploadFailed": "Background upload failed: {message}",
     "status.backgroundDeleteFailed": "Background delete failed: {message}",
     "status.herdrActionFailed": "Herdr action failed: {message}",
+    "status.herdrEvent": "Herdr {event}: {subject}",
+    "status.herdrEventAgent": "Herdr {agent}: {status}",
+    "status.herdrEntryRestored": "Herdr entry restored",
+    "status.herdrNotification": "Herdr: {message}",
     "status.herdrUnavailable": "Herdr socket unavailable",
+    "status.herdrWorkspaceFocused": "Herdr workspace focused",
     "status.idle": "Idle",
     "status.instance": "Instance",
     "status.instanceLoadFailed": "Instance load failed: {message}",
@@ -422,11 +506,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiNl2cmd": "转命令",
     "action.aiTest": "测试",
     "action.closeActiveSession": "关闭当前活动会话",
+    "action.closeHerdrSpace": "关闭 Herdr Space",
+    "action.closePlugins": "关闭插件",
     "action.closeSettings": "关闭设置",
     "action.copySelection": "复制选区",
     "action.focusTerminal": "聚焦终端",
     "action.fullscreen": "全屏",
     "action.lightosHome": "LightOS 首页",
+    "action.newHerdrSpace": "新建 Herdr Space",
     "action.newHerdrTab": "新建 Herdr 标签",
     "action.newTab": "新建终端标签",
     "action.pasteClipboard": "粘贴",
@@ -445,6 +532,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.saveTheme": "保存自定义主题",
     "action.settings": "设置",
     "action.settingsMenu": "设置菜单",
+    "action.shortcutHelp": "快捷键",
     "action.closeTab": "关闭标签",
     "action.renameTab": "重命名标签",
     "action.splitDown": "向下拆分",
@@ -455,6 +543,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.uploadFont": "上传字体",
     "action.uploadTerminalBackground": "上传终端背景",
     "app.title": "小橘Web Shell",
+    "backend.herdr": "Herdr",
+    "backend.webshell": "WebShell 原生",
+    "backend.zellij": "zellij",
     "cursor.bar": "竖线",
     "cursor.block": "块",
     "cursor.underline": "下划线",
@@ -465,12 +556,17 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiApiKey": "API Key",
     "field.aiBaseUrl": "Base URL",
     "field.aiModel": "模型",
+    "field.aiContextLines": "上下文行数",
     "field.aiPrompt": "输入",
     "field.aiProvider": "服务商",
+    "field.defaultSessionBackend": "新建入口后端",
+    "field.herdrActiveBackgroundDark": "深色高亮",
+    "field.herdrActiveBackgroundLight": "浅色高亮",
     "field.interfaceStyle": "界面风格",
     "field.language": "语言",
     "field.lineHeight": "行高",
     "field.outputBuffer": "历史行数",
+    "field.panes": "面板",
     "field.pluginPath": "路径",
     "field.scrollback": "回滚行数",
     "field.tabs": "标签栏",
@@ -484,8 +580,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "font.noUploaded": "暂无上传字体",
     "font.uploaded": "已上传",
     "interfaceStyle.brass": "黄铜",
+    "interfaceStyle.candy": "糖果彩",
+    "interfaceStyle.champagne": "浅黄铜",
+    "interfaceStyle.frost": "晴空玻璃",
     "interfaceStyle.geek": "Geek 风",
     "interfaceStyle.glass": "磨砂玻璃",
+    "interfaceStyle.lab": "实验室",
+    "interfaceStyle.porcelain": "瓷白",
     "interfaceStyle.spectrum": "五彩缤纷",
     "interfaceStyle.steel": "钢铁风",
     "layout.horizontal": "横向",
@@ -514,20 +615,39 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.aiAccess": "AI 接入",
     "section.fileTransfer": "文件传输",
     "section.fonts": "字体",
+    "section.desktopShortcuts": "桌面端",
     "section.herdr": "Herdr 控件",
     "section.herdrTabs": "Herdr 标签",
-    "section.herdrWorkspaces": "Herdr 工作区",
+    "section.herdrWorkspaces": "Herdr Spaces",
+    "section.herdrHighlight": "Herdr 选中态",
+    "section.mobileShortcuts": "移动端",
     "section.plugins": "插件",
+    "section.sessionBackend": "会话后端",
+    "section.shortcuts": "快捷键",
     "section.terminalBackground": "终端背景",
     "section.themes": "终端主题",
     "setting.autoRestartSessions": "Provider 重启后自动恢复会话",
     "setting.copyOnSelect": "选中即复制",
     "setting.cursorBlink": "光标闪烁",
     "setting.debugAdapter": "调试适配器",
+    "setting.defaultSessionBackendHelp": "+ 按钮使用这个后端创建。Herdr 已有引擎入口时，再点 + 会在同一个 Herdr session 里新建 Workspace。",
+    "setting.herdrHighlightHelp": "分别设置深色和浅色界面风格下，Herdr 当前工作区和标签的背景色。",
+    "setting.aiSendTerminalContext": "发送最近终端上下文",
+    "setting.aiPrivacyHelp": "默认关闭。开启后只发送当前面板最近文本，并在本地先隐藏 token、密码和私钥内容。",
     "setting.pluginDisabled": "已关闭",
     "setting.pluginEnabled": "已启用",
     "setting.terminalBackground": "使用背景图片",
     "setting.useResttyClipboard": "使用 restty 剪贴板",
+    "shortcut.closeTab": "关闭标签",
+    "shortcut.copyPaste": "复制或粘贴",
+    "shortcut.mobileFont": "调整终端字号",
+    "shortcut.mobileKeyboard": "弹出系统键盘",
+    "shortcut.mobileKeys": "发送终端按键",
+    "shortcut.mobileTab": "切换或新建标签",
+    "shortcut.newTab": "新建终端标签",
+    "shortcut.resetFont": "重置终端字号",
+    "shortcut.splitPane": "拆分面板",
+    "shortcut.zoomFont": "调整终端字号",
     "tab.appearance": "外观",
     "tab.fonts": "字体",
     "tab.fontSettings": "字体设置",
@@ -539,6 +659,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.connectFailed": "连接失败：{message}",
     "status.copyFailed": "复制失败：{message}",
     "status.creatingSession": "正在创建会话...",
+    "status.defaultBackend": "默认",
     "status.fontDeleteFailed": "字体删除失败：{message}",
     "status.fontLoadFailed": "字体加载失败：{message}",
     "status.fontReady": "{name} 已就绪",
@@ -551,7 +672,12 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.backgroundUploadFailed": "背景上传失败：{message}",
     "status.backgroundDeleteFailed": "背景删除失败：{message}",
     "status.herdrActionFailed": "Herdr 操作失败：{message}",
+    "status.herdrEvent": "Herdr {event}：{subject}",
+    "status.herdrEventAgent": "Herdr {agent}：{status}",
+    "status.herdrEntryRestored": "已恢复 Herdr 入口",
+    "status.herdrNotification": "Herdr：{message}",
     "status.herdrUnavailable": "Herdr socket 不可用",
+    "status.herdrWorkspaceFocused": "已切换 Herdr 工作区",
     "status.idle": "空闲",
     "status.instance": "实例",
     "status.instanceLoadFailed": "实例加载失败：{message}",

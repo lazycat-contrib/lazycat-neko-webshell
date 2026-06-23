@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS, INTERFACE_STYLE_IDS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "./config";
-import type { CustomTerminalTheme, InterfaceStyleId, Settings } from "./types";
+import type { CustomTerminalTheme, InterfaceStyleId, SessionBackendId, Settings } from "./types";
 import { clampNumber } from "./utils";
 
 const SETTINGS_KEY = "lazycat-neko-webshell.settings";
@@ -66,6 +66,15 @@ export function normalizeSettings(value: Partial<Settings>): Settings {
     outputBufferLimit: Math.round(
       clampNumber(value.outputBufferLimit, MIN_OUTPUT_BUFFER_LIMIT, MAX_OUTPUT_BUFFER_LIMIT, DEFAULT_SETTINGS.outputBufferLimit),
     ),
+    defaultSessionBackend: normalizeSessionBackendId(value.defaultSessionBackend),
+    herdrActiveBackgroundDark: normalizeHexColor(
+      value.herdrActiveBackgroundDark,
+      DEFAULT_SETTINGS.herdrActiveBackgroundDark,
+    ),
+    herdrActiveBackgroundLight: normalizeHexColor(
+      value.herdrActiveBackgroundLight,
+      DEFAULT_SETTINGS.herdrActiveBackgroundLight,
+    ),
     autoRestartSessions: value.autoRestartSessions ?? DEFAULT_SETTINGS.autoRestartSessions,
     tabLayout: value.tabLayout === "vertical" ? "vertical" : DEFAULT_SETTINGS.tabLayout,
     debugMode: value.debugMode ?? DEFAULT_SETTINGS.debugMode,
@@ -73,7 +82,19 @@ export function normalizeSettings(value: Partial<Settings>): Settings {
     aiBaseUrl: typeof value.aiBaseUrl === "string" ? value.aiBaseUrl : DEFAULT_SETTINGS.aiBaseUrl,
     aiApiKey: typeof value.aiApiKey === "string" ? value.aiApiKey : DEFAULT_SETTINGS.aiApiKey,
     aiModel: typeof value.aiModel === "string" ? value.aiModel : DEFAULT_SETTINGS.aiModel,
+    aiSendTerminalContext: value.aiSendTerminalContext ?? DEFAULT_SETTINGS.aiSendTerminalContext,
+    aiContextLines: Math.round(clampNumber(value.aiContextLines, 0, 200, DEFAULT_SETTINGS.aiContextLines)),
   };
+}
+
+function normalizeSessionBackendId(value: unknown): SessionBackendId {
+  return value === "herdr" || value === "zellij" ? value : DEFAULT_SETTINGS.defaultSessionBackend;
+}
+
+function normalizeHexColor(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed.toLowerCase() : fallback;
 }
 
 function normalizeInterfaceStyleId(value: unknown): InterfaceStyleId {

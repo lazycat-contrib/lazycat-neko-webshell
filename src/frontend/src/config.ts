@@ -33,7 +33,18 @@ export const TERMINAL_BACKGROUND_MIME_TYPES = new Set([
   "application/octet-stream",
 ]);
 
-export const INTERFACE_STYLE_IDS: InterfaceStyleId[] = ["steel", "glass", "brass", "spectrum", "geek"];
+export const INTERFACE_STYLE_IDS: InterfaceStyleId[] = [
+  "steel",
+  "glass",
+  "brass",
+  "spectrum",
+  "geek",
+  "porcelain",
+  "frost",
+  "champagne",
+  "candy",
+  "lab",
+];
 
 export const THEMES: TerminalTheme[] = [
   { id: "ghostty", label: "Ghostty Default", ghosttyName: "Ghostty Default Style Dark" },
@@ -151,10 +162,15 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalBackgroundBlur: 0,
   scrollbackLimit: 10000,
   outputBufferLimit: 4096,
+  defaultSessionBackend: "webshell",
+  herdrActiveBackgroundDark: "#1f6f5b",
+  herdrActiveBackgroundLight: "#cdebdc",
   autoRestartSessions: false,
   debugMode: false,
   aiProvider: "openai-compatible",
   aiBaseUrl: "",
   aiApiKey: "",
   aiModel: "",
+  aiSendTerminalContext: false,
+  aiContextLines: 40,
 };

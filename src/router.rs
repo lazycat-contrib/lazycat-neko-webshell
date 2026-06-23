@@ -4,7 +4,7 @@ use axum::Json;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::http::header::{CONTENT_SECURITY_POLICY, HeaderName};
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, post};
 use connectrpc::Router as ConnectRouter;
 use tower_http::trace::TraceLayer;
 
@@ -13,7 +13,7 @@ use crate::assets::{frontend_asset, frontend_font, index, security_header};
 use crate::backgrounds::{background_file, delete_background, upload_background};
 use crate::config::{MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES};
 use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
-use crate::herdr::{get_herdr_state, post_herdr_action};
+use crate::herdr::{get_herdr_state, herdr_ws, post_herdr_action, post_herdr_socket};
 use crate::lightos::{self, AdminInfo};
 use crate::preferences::{get_settings, put_settings};
 use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
@@ -33,6 +33,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/healthz", get(|| async { "ok" }))
         .route("/ws/terminal", get(terminal_ws))
         .route("/ws/action", get(action_ws))
+        .route("/ws/herdr", get(herdr_ws))
         .route("/assets/{*path}", get(frontend_asset))
         .route("/fonts/{*path}", get(frontend_font))
         .route("/api/instances", get(list_instances))
@@ -41,6 +42,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/session-backends", get(get_session_backends))
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
         .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
+        .route("/api/herdr/socket", post(post_herdr_socket))
         .route("/api/fonts", get(list_fonts).post(upload_font))
         .route("/api/fonts/{id}", delete(delete_font))
         .route("/api/fonts/{id}/file", get(font_file))

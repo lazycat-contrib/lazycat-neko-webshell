@@ -8,7 +8,17 @@ export type SplitPlacement = "up" | "down" | "left" | "right";
 export type SplitAxis = "rows" | "columns";
 export type LocaleSetting = "auto" | "en" | "zh-CN";
 export type TouchSelectionMode = "long-press" | "drag" | "off";
-export type InterfaceStyleId = "steel" | "glass" | "brass" | "spectrum" | "geek";
+export type InterfaceStyleId =
+  | "steel"
+  | "glass"
+  | "brass"
+  | "spectrum"
+  | "geek"
+  | "porcelain"
+  | "frost"
+  | "champagne"
+  | "candy"
+  | "lab";
 
 export type SplitPaneNode = {
   type: "pane";
@@ -85,7 +95,7 @@ export type HerdrBridgeState = {
   tabs: HerdrTabInfo[];
 };
 
-export type HerdrAction = "focus_workspace" | "focus_tab" | "create_tab";
+export type HerdrAction = "focus_workspace" | "focus_tab" | "create_tab" | "close_workspace" | "create_workspace";
 
 export type SessionBackendId = "webshell" | "herdr" | "zellij";
 
@@ -188,12 +198,17 @@ export type Settings = {
   terminalBackgroundBlur: number;
   scrollbackLimit: number;
   outputBufferLimit: number;
+  defaultSessionBackend: SessionBackendId;
+  herdrActiveBackgroundDark: string;
+  herdrActiveBackgroundLight: string;
   autoRestartSessions: boolean;
   debugMode: boolean;
   aiProvider: string;
   aiBaseUrl: string;
   aiApiKey: string;
   aiModel: string;
+  aiSendTerminalContext: boolean;
+  aiContextLines: number;
 };
 
 export type TerminalPane = {
@@ -220,6 +235,7 @@ export type TerminalPane = {
   pendingInputBytes: number;
   replaying: boolean;
   lastOutputSequence: number;
+  aiContextText: string;
   viewportGuardInstalled?: boolean;
   exited: boolean;
   closing: boolean;

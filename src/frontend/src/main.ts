@@ -44,6 +44,7 @@ import type {
   InterfaceStyleId,
   PaneTerminalTransport,
   SessionBackendId,
+  SessionBackendInfo,
   SessionBackendsState,
   SplitNode,
   SplitPlacement,
@@ -62,9 +63,10 @@ import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorL
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
+const MAX_AI_CONTEXT_CHARS = 12000;
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
-const SESSION_MODE_STORAGE_PREFIX = "lazycat-neko-webshell.sessionMode";
+const LIGHT_INTERFACE_STYLES = new Set<InterfaceStyleId>(["porcelain", "frost", "champagne", "candy", "lab"]);
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -78,6 +80,17 @@ type SessionMode = SessionBackendId;
 type ClipboardImagePayload = {
   extension: string;
   data: ArrayBuffer;
+};
+type JsonRecord = Record<string, unknown>;
+type HerdrSocketEnvelope = {
+  id?: string;
+  result?: JsonRecord;
+  error?: {
+    code?: string;
+    message?: string;
+  };
+  event?: string;
+  data?: JsonRecord;
 };
 
 const params = new URLSearchParams(window.location.search);
@@ -93,11 +106,18 @@ let selectedSelectorGeneration = 0;
 let selectedSelectorExplicit = initialSelectorExplicit;
 let herdrState: HerdrBridgeState | undefined;
 let herdrStateGeneration = 0;
+let herdrEventSocket: WebSocket | undefined;
+let herdrEventSocketSelector = "";
+let herdrEventSocketGeneration = 0;
+let herdrEventReconnectTimer: number | undefined;
+let herdrEventRefreshTimer: number | undefined;
 let sessionBackendsState: SessionBackendsState | undefined;
 let sessionBackendsGeneration = 0;
+const herdrAutoRestoredSelectors = new Set<string>();
 let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
 let pluginsLoading = false;
+let activePluginToolId = "";
 let aiModelOptions: string[] = [];
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
@@ -356,6 +376,28 @@ function bindSettings() {
     saveSettings();
     applySettings();
   });
+  elements.defaultSessionBackend.addEventListener("change", () => {
+    const backend = normalizeSessionMode(elements.defaultSessionBackend.value);
+    settings.defaultSessionBackend = sessionBackendIsSelectable(backend) ? backend : "webshell";
+    saveSettings();
+    applySettings();
+  });
+  elements.herdrActiveBackgroundDark.addEventListener("input", () => {
+    settings.herdrActiveBackgroundDark = normalizeHexColorInput(
+      elements.herdrActiveBackgroundDark.value,
+      DEFAULT_SETTINGS.herdrActiveBackgroundDark,
+    );
+    saveSettings();
+    applySettings();
+  });
+  elements.herdrActiveBackgroundLight.addEventListener("input", () => {
+    settings.herdrActiveBackgroundLight = normalizeHexColorInput(
+      elements.herdrActiveBackgroundLight.value,
+      DEFAULT_SETTINGS.herdrActiveBackgroundLight,
+    );
+    saveSettings();
+    applySettings();
+  });
   elements.saveTheme.addEventListener("click", () => saveCustomTheme());
   elements.removeTheme.addEventListener("click", () => removeSelectedCustomTheme());
   elements.refreshPlugins.addEventListener("click", () => void loadPlugins());
@@ -371,9 +413,34 @@ function bindSettings() {
       ? event.target.closest<HTMLInputElement | HTMLSelectElement>("[data-ai-setting]")
       : null;
     if (aiSetting) {
-      updateAISetting(aiSetting.dataset.aiSetting ?? "", aiSetting.value);
+      const value = aiSetting instanceof HTMLInputElement && aiSetting.type === "checkbox"
+        ? String(aiSetting.checked)
+        : aiSetting.value;
+      updateAISetting(aiSetting.dataset.aiSetting ?? "", value);
       return;
     }
+  });
+  elements.pluginList.addEventListener("click", (event) => {
+    const aiButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-ai-action]")
+      : null;
+    if (!aiButton) return;
+    const action = aiButton.dataset.aiAction ?? "";
+    if (action === "models") {
+      void fetchAIModels();
+    } else if (action === "test") {
+      void testAIAccess();
+    }
+  });
+  elements.pluginToolTabs.addEventListener("click", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-plugin-tool]")
+      : null;
+    if (!button) return;
+    activePluginToolId = button.dataset.pluginTool ?? "";
+    renderPluginTools();
+  });
+  elements.pluginToolBody.addEventListener("change", (event) => {
     const upload = event.target instanceof Element
       ? event.target.closest<HTMLInputElement>("#fileTransferUpload")
       : null;
@@ -383,7 +450,7 @@ function bindSettings() {
       upload.value = "";
     });
   });
-  elements.pluginList.addEventListener("click", (event) => {
+  elements.pluginToolBody.addEventListener("click", (event) => {
     const fileButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-file-transfer-action]")
       : null;
@@ -396,11 +463,7 @@ function bindSettings() {
       : null;
     if (!aiButton) return;
     const action = aiButton.dataset.aiAction ?? "";
-    if (action === "models") {
-      void fetchAIModels();
-    } else if (action === "test") {
-      void testAIAccess();
-    } else if (action === "insert-output") {
+    if (action === "insert-output") {
       insertAIOutputIntoTerminal();
     } else if (action === "copy-output") {
       void copyAIOutput();
@@ -513,19 +576,76 @@ function bindSettings() {
 
 function bindActions() {
   elements.refreshInstances.addEventListener("click", () => void loadInstances());
-  elements.newTabButton.addEventListener("click", () => void createSelectedTab());
+  elements.newTabButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (selectableSessionBackends().length <= 1) {
+      void createSelectedTab();
+      return;
+    }
+    toggleNewTabMenu();
+  });
+  elements.newTabMenu.addEventListener("click", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-new-tab-backend]")
+      : null;
+    if (!button) return;
+    closeNewTabMenu();
+    void createSelectedTab(normalizeSessionMode(button.dataset.newTabBackend));
+  });
   elements.emptyNewTab.addEventListener("click", () => void createSelectedTab());
   elements.herdrRefresh.addEventListener("click", () => void refreshHerdrState(selectedSelector));
-  elements.herdrMode.addEventListener("change", (event) => {
-    const select = event.target instanceof HTMLSelectElement ? event.target : null;
-    if (!select) return;
-    void setSessionMode(normalizeSessionMode(select.value));
+  elements.herdrNewWorkspace.addEventListener("click", () => {
+    void runHerdrAction("create_workspace");
+  });
+  elements.herdrWorkspaceButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void toggleHerdrWorkspaceMenu();
+  });
+  elements.herdrWorkspaceRefresh.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void refreshHerdrState(selectedSelector);
+  });
+  elements.herdrWorkspaceMenuList.addEventListener("click", (event) => {
+    const closeButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-close-workspace]")
+      : null;
+    if (closeButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      void runHerdrAction("close_workspace", { workspaceId: closeButton.dataset.herdrCloseWorkspace });
+      return;
+    }
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
+      : null;
+    if (!button) return;
+    closeHerdrWorkspaceMenu();
+    void restoreHerdrWorkspace(button.dataset.herdrWorkspace);
+  });
+  elements.herdrWorkspaceMenuList.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
+      : null;
+    if (!button) return;
+    event.preventDefault();
+    closeHerdrWorkspaceMenu();
+    void restoreHerdrWorkspace(button.dataset.herdrWorkspace);
   });
   elements.herdrNewTab.addEventListener("click", () => {
     const workspaceId = focusedHerdrWorkspace()?.workspace_id;
     void runHerdrAction("create_tab", { workspaceId });
   });
   elements.herdrWorkspaceList.addEventListener("click", (event) => {
+    const closeButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-close-workspace]")
+      : null;
+    if (closeButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      void runHerdrAction("close_workspace", { workspaceId: closeButton.dataset.herdrCloseWorkspace });
+      return;
+    }
     const button = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
       : null;
@@ -559,6 +679,15 @@ function bindActions() {
   });
   elements.removeFont.addEventListener("click", () => void removeSelectedFont());
   elements.fitTerminal.addEventListener("click", () => void toggleFullscreen());
+  elements.shortcutHelpButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleShortcutHelp();
+  });
+  elements.pluginsButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openPluginSidebar();
+  });
+  elements.closePluginSidebar.addEventListener("click", () => closePluginSidebar());
   elements.homeButton.addEventListener("click", () => void navigateLightOSHome());
   elements.settingsButton.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -593,6 +722,15 @@ function bindActions() {
     if (event.target instanceof Node && !elements.settingsMenu.contains(event.target) && event.target !== elements.settingsButton) {
       closeSettingsMenu();
     }
+    if (event.target instanceof Node && !elements.newTabShell.contains(event.target)) {
+      closeNewTabMenu();
+    }
+    if (event.target instanceof Node && !elements.herdrWorkspaceSwitcher.contains(event.target)) {
+      closeHerdrWorkspaceMenu();
+    }
+    if (event.target instanceof Node && !elements.shortcutHelp.contains(event.target) && event.target !== elements.shortcutHelpButton) {
+      closeShortcutHelp();
+    }
     if (event.target instanceof Node && !elements.paneMenu.contains(event.target)) {
       closePaneMenu();
     }
@@ -606,8 +744,15 @@ function bindActions() {
     if (event.key === "Escape") {
       closeInstanceMenu();
       closeSettingsMenu();
+      closeNewTabMenu();
+      closeHerdrWorkspaceMenu();
+      closeShortcutHelp();
       closePaneMenu();
       closeSettings();
+      closePluginSidebar();
+      return;
+    }
+    if (handleFontZoomShortcut(event)) {
       return;
     }
     if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) {
@@ -887,6 +1032,10 @@ async function runMobileAction(action: string) {
     await copySelection(true);
   } else if (action === "paste-clipboard") {
     await pasteIntoPane(activePane(), true);
+  } else if (action === "font-larger") {
+    setTerminalFontSize(settings.fontSize + 1);
+  } else if (action === "font-smaller") {
+    setTerminalFontSize(settings.fontSize - 1);
   } else if (action === "pane-menu") {
     openActivePaneMenu();
   }
@@ -1000,6 +1149,7 @@ function setAppBackgroundInert(inert: boolean) {
 
 function toggleSettingsMenu() {
   const open = elements.settingsMenu.hidden;
+  closeShortcutHelp();
   elements.settingsMenu.hidden = !open;
   elements.settingsButton.setAttribute("aria-expanded", String(open));
 }
@@ -1007,6 +1157,43 @@ function toggleSettingsMenu() {
 function closeSettingsMenu() {
   elements.settingsMenu.hidden = true;
   elements.settingsButton.setAttribute("aria-expanded", "false");
+}
+
+function openPluginSidebar() {
+  closeSettingsMenu();
+  closeShortcutHelp();
+  closeInstanceMenu();
+  closePaneMenu();
+  closeSettings();
+  elements.pluginSidebar.hidden = false;
+  elements.webshell.classList.add("plugins-open");
+  elements.pluginsButton.setAttribute("aria-expanded", "true");
+  if (!pluginsLoaded && !pluginsLoading) {
+    void loadPlugins();
+  } else {
+    renderPluginTools();
+  }
+}
+
+function closePluginSidebar() {
+  elements.pluginSidebar.hidden = true;
+  elements.webshell.classList.remove("plugins-open");
+  elements.pluginsButton.setAttribute("aria-expanded", "false");
+  activePane()?.term?.focus();
+}
+
+function toggleShortcutHelp() {
+  const open = elements.shortcutHelp.hidden;
+  closeSettingsMenu();
+  closeInstanceMenu();
+  closePaneMenu();
+  elements.shortcutHelp.hidden = !open;
+  elements.shortcutHelpButton.setAttribute("aria-expanded", String(open));
+}
+
+function closeShortcutHelp() {
+  elements.shortcutHelp.hidden = true;
+  elements.shortcutHelpButton.setAttribute("aria-expanded", "false");
 }
 
 async function toggleFullscreen() {
@@ -1105,6 +1292,41 @@ async function runPaneMenuAction(action: string) {
   }
 }
 
+function handleFontZoomShortcut(event: KeyboardEvent): boolean {
+  if (!elements.settingsPage.hidden) return false;
+  if (isEditableTarget(event.target)) return false;
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return false;
+  if (event.code === "Equal" || event.code === "NumpadAdd") {
+    event.preventDefault();
+    setTerminalFontSize(settings.fontSize + 1);
+    return true;
+  }
+  if (event.code === "Minus" || event.code === "NumpadSubtract") {
+    event.preventDefault();
+    setTerminalFontSize(settings.fontSize - 1);
+    return true;
+  }
+  if (event.code === "Digit0" || event.code === "Numpad0") {
+    event.preventDefault();
+    setTerminalFontSize(DEFAULT_SETTINGS.fontSize);
+    return true;
+  }
+  return false;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+}
+
+function setTerminalFontSize(value: number) {
+  const next = Math.round(clampNumber(value, 11, 22, DEFAULT_SETTINGS.fontSize));
+  if (next === settings.fontSize) return;
+  settings.fontSize = next;
+  saveSettings();
+  applySettings({ resizeTerminals: true });
+}
+
 function applySettings(options: { resizeTerminals?: boolean } = {}) {
   const theme = currentTheme();
   const font = currentFont();
@@ -1123,6 +1345,9 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.tabLayout.value = settings.tabLayout;
   elements.webshell.dataset.tabLayout = settings.tabLayout;
   elements.webshell.dataset.interfaceStyle = settings.interfaceStyleId;
+  elements.webshell.dataset.interfaceTone = isLightInterfaceStyle(settings.interfaceStyleId) ? "light" : "dark";
+  elements.webshell.style.setProperty("--herdr-active-bg", currentHerdrActiveBackground());
+  elements.webshell.style.setProperty("--herdr-active-fg", isLightInterfaceStyle(settings.interfaceStyleId) ? "#17231d" : "#f4fff8");
   elements.removeFont.disabled = !font.custom;
   settings.themeId = theme.id;
   settings.fontFamilyId = font.id;
@@ -1146,6 +1371,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.touchSelectionMode.value = settings.touchSelectionMode;
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;
+  updateSessionBackendSettings();
   renderPlugins();
 
   for (const pane of allPanes()) {
@@ -1167,6 +1393,74 @@ function normalizeInterfaceStyleId(value: string): InterfaceStyleId {
   return INTERFACE_STYLE_IDS.includes(value as InterfaceStyleId)
     ? value as InterfaceStyleId
     : DEFAULT_SETTINGS.interfaceStyleId;
+}
+
+function isLightInterfaceStyle(value: InterfaceStyleId): boolean {
+  return LIGHT_INTERFACE_STYLES.has(value);
+}
+
+function currentHerdrActiveBackground(): string {
+  return isLightInterfaceStyle(settings.interfaceStyleId)
+    ? settings.herdrActiveBackgroundLight
+    : settings.herdrActiveBackgroundDark;
+}
+
+function normalizeHexColorInput(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed.toLowerCase() : fallback;
+}
+
+function updateSessionBackendSettings() {
+  const selectable = selectableSessionBackends();
+  const hasOptionalBackend = selectable.some((backend) => backend.id !== "webshell");
+  const hasHerdr = selectable.some((backend) => backend.id === "herdr");
+  elements.sessionBackendSettings.hidden = !hasOptionalBackend;
+  elements.herdrHighlightSettings.hidden = !hasHerdr;
+  elements.herdrActiveBackgroundDark.value = normalizeHexColorInput(
+    settings.herdrActiveBackgroundDark,
+    DEFAULT_SETTINGS.herdrActiveBackgroundDark,
+  );
+  elements.herdrActiveBackgroundLight.value = normalizeHexColorInput(
+    settings.herdrActiveBackgroundLight,
+    DEFAULT_SETTINGS.herdrActiveBackgroundLight,
+  );
+  if (!hasOptionalBackend) {
+    settings.defaultSessionBackend = "webshell";
+    elements.defaultSessionBackend.innerHTML = `<option value="webshell">${escapeHtml(tr("backend.webshell"))}</option>`;
+    elements.defaultSessionBackend.value = "webshell";
+    renderNewTabMenu();
+    updateHerdrWorkspaceEntry();
+    return;
+  }
+  const selected = selectable.some((backend) => backend.id === settings.defaultSessionBackend)
+    ? settings.defaultSessionBackend
+    : "webshell";
+  if (settings.defaultSessionBackend !== selected) {
+    settings.defaultSessionBackend = selected;
+  }
+  elements.defaultSessionBackend.innerHTML = selectable
+    .map((backend) => `<option value="${escapeAttr(backend.id)}">${escapeHtml(sessionBackendLabel(backend.id, backend.label))}</option>`)
+    .join("");
+  elements.defaultSessionBackend.value = selected;
+  renderNewTabMenu();
+  updateHerdrWorkspaceEntry();
+}
+
+function selectableSessionBackends(): SessionBackendInfo[] {
+  const backends = sessionBackendsState?.backends ?? [{ id: "webshell" as const, label: "WebShell native", available: true }];
+  return backends.filter((backend) => backend.available || backend.id === "webshell");
+}
+
+function backendInstalled(mode: SessionMode): boolean {
+  return selectableSessionBackends().some((backend) => backend.id === mode);
+}
+
+function updateHerdrWorkspaceEntry() {
+  const hasHerdr = backendInstalled("herdr");
+  elements.herdrWorkspaceSwitcher.hidden = !hasHerdr;
+  if (!hasHerdr) {
+    closeHerdrWorkspaceMenu();
+  }
 }
 
 function currentFont(): FontPreset {
@@ -1548,6 +1842,11 @@ async function configurePlugin(pluginId: string, enabled: boolean) {
 }
 
 function renderPlugins() {
+  renderPluginSettings();
+  renderPluginTools();
+}
+
+function renderPluginSettings() {
   if (!plugins.length) {
     elements.pluginList.innerHTML = `<div class="empty">${escapeHtml(pluginsLoading ? tr("status.pluginsLoading") : tr("status.noPlugins"))}</div>`;
     elements.refreshPlugins.disabled = pluginsLoading;
@@ -1563,11 +1862,7 @@ function renderPlugin(plugin: PluginDescriptor): string {
   const status = plugin.enabled ? tr("setting.pluginEnabled") : tr("setting.pluginDisabled");
   const meta = Array.from(new Set([plugin.kind, ...plugin.scopes].filter(Boolean)))
     .map((item) => pluginMetaLabel(item));
-  const tool = plugin.id === "file-transfer"
-    ? renderFileTransferTool(plugin)
-    : plugin.id === "ai-control"
-      ? renderAIControlTool(plugin)
-      : "";
+  const settingsTool = plugin.id === "ai-control" ? renderAIAccessSettings(plugin) : "";
   return `
     <div class="plugin-item" role="listitem">
       <div class="plugin-content">
@@ -1590,13 +1885,100 @@ function renderPlugin(plugin: PluginDescriptor): string {
         />
         <span>${escapeHtml(status)}</span>
       </label>
-      ${tool}
+      ${settingsTool}
     </div>
   `;
 }
 
 function pluginControlsDisabled(plugin: PluginDescriptor): boolean {
   return !plugin.enabled || pluginSaveInFlight.has(plugin.id) || pluginsLoading;
+}
+
+function renderAIAccessSettings(plugin: PluginDescriptor): string {
+  const disabled = pluginControlsDisabled(plugin);
+  const disabledAttr = disabled ? "disabled" : "";
+  const modelValues = aiModelOptions.includes(settings.aiModel) || !settings.aiModel
+    ? aiModelOptions
+    : [settings.aiModel, ...aiModelOptions];
+  const modelOptions = modelValues.length
+    ? modelValues
+      .map((model) => `<option value="${escapeAttr(model)}" ${model === settings.aiModel ? "selected" : ""}>${escapeHtml(model)}</option>`)
+      .join("")
+    : `<option value="" selected disabled>${escapeHtml(tr("action.aiFetchModels"))}</option>`;
+  return `
+    <div class="plugin-tool ai-access-settings">
+      <div class="settings-group-title">${escapeHtml(tr("section.aiAccess"))}</div>
+      <p class="settings-help">${escapeHtml(tr("ai.accessHelp"))}</p>
+      <div class="ai-config-grid">
+        <label class="field">
+          <span>${escapeHtml(tr("field.aiProvider"))}</span>
+          <select data-ai-setting="provider" ${disabledAttr}>
+            <option value="openai-compatible" ${settings.aiProvider === "openai-compatible" ? "selected" : ""}>${escapeHtml(tr("ai.providerOpenAICompatible"))}</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>${escapeHtml(tr("field.aiBaseUrl"))}</span>
+          <input data-ai-setting="baseUrl" type="url" value="${escapeAttr(settings.aiBaseUrl)}" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" ${disabledAttr} />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(tr("field.aiApiKey"))}</span>
+          <input data-ai-setting="apiKey" type="password" value="${escapeAttr(settings.aiApiKey)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(tr("field.aiModel"))}</span>
+          <select data-ai-setting="model" ${disabledAttr}>
+            ${modelOptions}
+          </select>
+        </label>
+        <label class="field checkbox-field">
+          <input data-ai-setting="sendContext" type="checkbox" ${settings.aiSendTerminalContext ? "checked" : ""} ${disabledAttr} />
+          <span>${escapeHtml(tr("setting.aiSendTerminalContext"))}</span>
+        </label>
+        <label class="field">
+          <span>${escapeHtml(tr("field.aiContextLines"))}</span>
+          <input data-ai-setting="contextLines" type="number" min="0" max="200" step="1" value="${escapeAttr(String(settings.aiContextLines))}" ${disabledAttr} />
+        </label>
+      </div>
+      <p class="settings-help">${escapeHtml(tr("setting.aiPrivacyHelp"))}</p>
+      <div class="plugin-action-row ai-config-actions">
+        <button class="command-button" type="button" data-ai-action="models" ${disabledAttr}>
+          <i data-lucide="list-filter"></i>
+          <span>${escapeHtml(tr("action.aiFetchModels"))}</span>
+        </button>
+        <button class="command-button" type="button" data-ai-action="test" ${disabledAttr}>
+          <i data-lucide="activity"></i>
+          <span>${escapeHtml(tr("action.aiTest"))}</span>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function renderPluginTools() {
+  const tools = plugins.filter((plugin) => plugin.enabled && (plugin.id === "file-transfer" || plugin.id === "ai-control"));
+  if (!tools.length) {
+    activePluginToolId = "";
+    elements.pluginToolTabs.innerHTML = "";
+    elements.pluginToolBody.innerHTML = `<div class="empty">${escapeHtml(pluginsLoading ? tr("status.pluginsLoading") : tr("status.noPlugins"))}</div>`;
+    updateIcons();
+    return;
+  }
+  if (!tools.some((plugin) => plugin.id === activePluginToolId)) {
+    activePluginToolId = tools[0]?.id ?? "";
+  }
+  elements.pluginToolTabs.innerHTML = tools.map((plugin) => `
+    <button type="button" role="tab" data-plugin-tool="${escapeAttr(plugin.id)}" aria-selected="${plugin.id === activePluginToolId}">
+      <i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i>
+      <span>${escapeHtml(pluginDisplayName(plugin))}</span>
+    </button>
+  `).join("");
+  const activePlugin = tools.find((plugin) => plugin.id === activePluginToolId);
+  elements.pluginToolBody.innerHTML = activePlugin?.id === "file-transfer"
+    ? renderFileTransferTool(activePlugin)
+    : activePlugin?.id === "ai-control"
+      ? renderAIControlTool(activePlugin)
+      : "";
+  updateIcons();
 }
 
 function renderFileTransferTool(plugin: PluginDescriptor): string {
@@ -1641,49 +2023,10 @@ function renderFileTransferTool(plugin: PluginDescriptor): string {
 function renderAIControlTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
   const disabledAttr = disabled ? "disabled" : "";
-  const modelValues = aiModelOptions.includes(settings.aiModel) || !settings.aiModel
-    ? aiModelOptions
-    : [settings.aiModel, ...aiModelOptions];
-  const modelOptions = modelValues.length
-    ? modelValues
-      .map((model) => `<option value="${escapeAttr(model)}" ${model === settings.aiModel ? "selected" : ""}>${escapeHtml(model)}</option>`)
-      .join("")
-    : `<option value="" selected disabled>${escapeHtml(tr("action.aiFetchModels"))}</option>`;
   return `
     <div class="plugin-tool ai-control-tool">
-      <div class="settings-group-title">${escapeHtml(tr("section.aiAccess"))}</div>
-      <p class="settings-help">${escapeHtml(tr("ai.accessHelp"))}</p>
-      <div class="ai-config-grid">
-        <label class="field">
-          <span>${escapeHtml(tr("field.aiProvider"))}</span>
-          <select data-ai-setting="provider" ${disabledAttr}>
-            <option value="openai-compatible" ${settings.aiProvider === "openai-compatible" ? "selected" : ""}>${escapeHtml(tr("ai.providerOpenAICompatible"))}</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>${escapeHtml(tr("field.aiBaseUrl"))}</span>
-          <input data-ai-setting="baseUrl" type="url" value="${escapeAttr(settings.aiBaseUrl)}" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" ${disabledAttr} />
-        </label>
-        <label class="field">
-          <span>${escapeHtml(tr("field.aiApiKey"))}</span>
-          <input data-ai-setting="apiKey" type="password" value="${escapeAttr(settings.aiApiKey)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
-        </label>
-        <label class="field">
-          <span>${escapeHtml(tr("field.aiModel"))}</span>
-          <select data-ai-setting="model" ${disabledAttr}>
-            ${modelOptions}
-          </select>
-        </label>
-      </div>
+      <div class="settings-group-title">${escapeHtml(tr("plugin.aiControl.name"))}</div>
       <div class="plugin-action-row ai-action-row">
-        <button class="command-button" type="button" data-ai-action="models" ${disabledAttr}>
-          <i data-lucide="list-filter"></i>
-          <span>${escapeHtml(tr("action.aiFetchModels"))}</span>
-        </button>
-        <button class="command-button" type="button" data-ai-action="test" ${disabledAttr}>
-          <i data-lucide="activity"></i>
-          <span>${escapeHtml(tr("action.aiTest"))}</span>
-        </button>
         <button class="command-button" type="button" data-ai-action="chat" ${disabledAttr}>
           <i data-lucide="message-square"></i>
           <span>${escapeHtml(tr("action.aiChat"))}</span>
@@ -1809,8 +2152,13 @@ function updateAISetting(field: string, value: string) {
     aiModelOptions = [];
   } else if (field === "model") {
     settings.aiModel = value.trim();
+  } else if (field === "sendContext") {
+    settings.aiSendTerminalContext = value === "true";
+  } else if (field === "contextLines") {
+    settings.aiContextLines = Math.round(clampNumber(value, 0, 200, DEFAULT_SETTINGS.aiContextLines));
   }
   saveSettings();
+  renderPlugins();
 }
 
 async function fetchAIModels() {
@@ -1950,15 +2298,51 @@ function aiActionPayload(action: string, prompt: string): Record<string, unknown
 
 function terminalAIContext(): Record<string, unknown> {
   const pane = activePane();
-  return {
+  const context: Record<string, unknown> = {
     cwd: "~",
     shell: "sh",
     os: "LightOS",
     selector: selectedSelector,
     sessionId: pane?.sessionId ?? "",
+    backend: pane?.sessionBackend ?? "",
     history: [],
     last_command: "",
   };
+  if (settings.aiSendTerminalContext && pane) {
+    context.recent_output = recentAIContext(pane);
+    context.context_lines = settings.aiContextLines;
+  }
+  return context;
+}
+
+function recentAIContext(pane: TerminalPane): string {
+  const text = stripAnsiForAI(pane.aiContextText);
+  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  const selected = settings.aiContextLines > 0 ? lines.slice(-settings.aiContextLines) : [];
+  return redactAIContext(selected.join("\n"));
+}
+
+function appendAIContext(pane: TerminalPane, text: string) {
+  if (!text || pane.sessionBackend !== "webshell") return;
+  pane.aiContextText = `${pane.aiContextText}${text}`.slice(-MAX_AI_CONTEXT_CHARS);
+}
+
+function stripAnsiForAI(value: string): string {
+  return value
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
+
+function redactAIContext(value: string): string {
+  return value
+    .replace(/-----BEGIN [\s\S]*?-----END [A-Z ]+-----/g, "[REDACTED_PRIVATE_KEY]")
+    .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, "[REDACTED_TOKEN]")
+    .replace(/\bghp_[A-Za-z0-9_]{16,}\b/g, "[REDACTED_TOKEN]")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED_TOKEN]")
+    .replace(/\b([A-Z0-9_]*(?:PASS|PASSWORD|TOKEN|SECRET|KEY)[A-Z0-9_]*)=([^\s]+)/gi, "$1=[REDACTED]")
+    .replace(/(--password(?:=|\s+))\S+/gi, "$1[REDACTED]")
+    .replace(/(-p\s+)\S+/gi, "$1[REDACTED]");
 }
 
 function setAIOutput(message: string, tone: Tone = "neutral") {
@@ -2030,6 +2414,15 @@ function metaNumber(meta: ActionResponseMeta | undefined, key: string): number {
 
 function metaBoolean(meta: ActionResponseMeta | undefined, key: string): boolean {
   return meta?.[key] === true;
+}
+
+function stringField(record: JsonRecord | undefined, key: string): string {
+  const value = record?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function boolField(record: JsonRecord | undefined, key: string): boolean {
+  return record?.[key] === true;
 }
 
 function metaStringArray(meta: ActionResponseMeta | undefined, key: string): string[] {
@@ -2345,7 +2738,9 @@ async function refreshHerdrState(
       return false;
     }
     herdrState = state;
+    renderTabs();
     renderHerdrDock();
+    void maybeAutoRestoreHerdrEntry(requestSelector);
     return true;
   } catch (error) {
     if (requestId === herdrStateGeneration && isCurrentSelectorRequest(requestSelector, generation)) {
@@ -2355,6 +2750,25 @@ async function refreshHerdrState(
       }
     }
     return false;
+  }
+}
+
+async function maybeAutoRestoreHerdrEntry(selector: string) {
+  const normalized = normalizeSelector(selector);
+  if (!normalized || settings.defaultSessionBackend !== "herdr") return;
+  if (!backendInstalled("herdr") || !herdrState?.available || !herdrState.workspaces.length) return;
+  if (findPaneBySessionBackend(normalized, "herdr")) return;
+  if (herdrAutoRestoredSelectors.has(normalized)) return;
+  herdrAutoRestoredSelectors.add(normalized);
+  try {
+    await runWorkspaceAction("create_tab", { selector: normalized, sessionBackend: "herdr" });
+    setGlobalStatus(tr("status.herdrEntryRestored"), "ok");
+  } catch (error) {
+    if (settings.debugMode) {
+      setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+    }
+  } finally {
+    herdrAutoRestoredSelectors.delete(normalized);
   }
 }
 
@@ -2399,8 +2813,6 @@ async function runHerdrAction(
       return;
     }
     herdrState = state;
-    writeSessionModePreference("herdr");
-    await ensureSessionModeTab("herdr");
     renderHerdrDock();
     activePane()?.term?.focus();
   } catch (error) {
@@ -2408,51 +2820,317 @@ async function runHerdrAction(
   }
 }
 
+async function ensureHerdrEntry(selector = selectedSelector): Promise<boolean> {
+  const normalized = normalizeSelector(selector);
+  if (!normalized || !sessionBackendIsSelectable("herdr")) return false;
+  const existing = findPaneBySessionBackend(normalized, "herdr");
+  if (existing) {
+    activatePane(existing.tab.id, existing.pane.id);
+    return true;
+  }
+  try {
+    await runWorkspaceAction("create_tab", { selector: normalized, sessionBackend: "herdr" });
+    return true;
+  } catch (error) {
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+    return false;
+  }
+}
+
+async function restoreHerdrWorkspace(workspaceId: string | undefined) {
+  const normalized = normalizeSelector(workspaceId);
+  if (!normalized) return;
+  const selector = selectedSelector;
+  if (!selector) {
+    setGlobalStatus(tr("status.selectRunningInstance"), "error");
+    return;
+  }
+  const entryReady = await ensureHerdrEntry(selector);
+  if (!entryReady) return;
+  const stateReady = herdrState?.available || await refreshHerdrState(selector);
+  if (!stateReady) {
+    setGlobalStatus(tr("status.herdrUnavailable"), "error");
+    return;
+  }
+  await runHerdrAction("focus_workspace", { workspaceId: normalized });
+  setGlobalStatus(tr("status.herdrWorkspaceFocused"), "ok");
+}
+
+async function runHerdrSocketRequest(
+  method: string,
+  params: JsonRecord = {},
+  options: { selector?: string; id?: string; mirrorNotification?: boolean } = {},
+): Promise<HerdrSocketEnvelope> {
+  const selector = normalizeSelector(options.selector ?? selectedSelector);
+  if (!selector) throw new Error(tr("status.selectRunningInstance"));
+  const response = await fetch(new URL("./api/herdr/socket", window.location.href), {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: selector,
+      method,
+      params,
+      id: options.id,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  const envelope = await response.json() as HerdrSocketEnvelope;
+  if (method === "notification.show" && options.mirrorNotification !== false) {
+    mirrorHerdrNotification(params, envelope);
+  }
+  if (envelope.error) {
+    throw new Error(envelope.error.message || envelope.error.code || "Herdr socket request failed");
+  }
+  return envelope;
+}
+
+function mirrorHerdrNotification(params: JsonRecord, envelope: HerdrSocketEnvelope) {
+  const title = stringField(params, "title");
+  const body = stringField(params, "body");
+  const shown = envelope.result ? boolField(envelope.result, "shown") : false;
+  const reason = envelope.result ? stringField(envelope.result, "reason") : "";
+  const message = [title, body].filter(Boolean).join(" - ");
+  if (message) {
+    setGlobalStatus(tr("status.herdrNotification", { message }), shown || !reason ? "ok" : "neutral");
+  }
+}
+
+async function fetchHerdrPaneIds(selector: string): Promise<string[]> {
+  const envelope = await runHerdrSocketRequest("pane.list", {}, {
+    selector,
+    id: "lazycat-webshell:pane-list",
+    mirrorNotification: false,
+  });
+  const panes = envelope.result?.panes;
+  if (!Array.isArray(panes)) return [];
+  return panes
+    .map((pane) => pane && typeof pane === "object" ? stringField(pane as JsonRecord, "pane_id") : "")
+    .filter(Boolean);
+}
+
+async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
+  const selector = normalizeSelector(selectedSelector);
+  const activeMode = activePane()?.sessionBackend;
+  const shouldSubscribe = Boolean(selector && herdrState?.available && activeMode === "herdr");
+  if (!shouldSubscribe) {
+    stopHerdrEventBridge();
+    return;
+  }
+  if (
+    !options.force
+    && herdrEventSocketSelector === selector
+    && (herdrEventSocket?.readyState === WebSocket.OPEN || herdrEventSocket?.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  closeHerdrEventSocket();
+  const generation = ++herdrEventSocketGeneration;
+  const paneIds = await fetchHerdrPaneIds(selector).catch((error) => {
+    if (settings.debugMode) {
+      setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
+    }
+    return [];
+  });
+  if (generation !== herdrEventSocketGeneration || normalizeSelector(selectedSelector) !== selector) return;
+
+  const url = new URL("./ws/herdr", window.location.href);
+  url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("name", selector);
+  const socket = new WebSocket(url);
+  herdrEventSocket = socket;
+  herdrEventSocketSelector = selector;
+  socket.addEventListener("open", () => {
+    if (herdrEventSocket !== socket || generation !== herdrEventSocketGeneration) return;
+    socket.send(JSON.stringify({
+      id: "lazycat-webshell:events",
+      method: "events.subscribe",
+      params: {
+        subscriptions: herdrEventSubscriptions(paneIds),
+      },
+    }));
+  });
+  socket.addEventListener("message", (event) => {
+    if (herdrEventSocket !== socket || generation !== herdrEventSocketGeneration) return;
+    handleHerdrEventMessage(event.data);
+  });
+  socket.addEventListener("close", () => {
+    if (herdrEventSocket !== socket || generation !== herdrEventSocketGeneration) return;
+    herdrEventSocket = undefined;
+    scheduleHerdrEventReconnect(selector, generation);
+  });
+  socket.addEventListener("error", () => {
+    if (herdrEventSocket === socket && settings.debugMode) {
+      setGlobalStatus(tr("status.herdrUnavailable"), "error");
+    }
+  });
+}
+
+function herdrEventSubscriptions(paneIds: string[]): JsonRecord[] {
+  const subscriptions: JsonRecord[] = [
+    { type: "workspace.created" },
+    { type: "workspace.renamed" },
+    { type: "workspace.closed" },
+    { type: "workspace.focused" },
+    { type: "tab.created" },
+    { type: "tab.closed" },
+    { type: "tab.focused" },
+    { type: "tab.renamed" },
+    { type: "pane.created" },
+    { type: "pane.closed" },
+    { type: "pane.moved" },
+    { type: "pane.exited" },
+    { type: "pane.agent_detected" },
+  ];
+  for (const paneId of paneIds) {
+    subscriptions.push({ type: "pane.agent_status_changed", pane_id: paneId });
+  }
+  return subscriptions;
+}
+
+function handleHerdrEventMessage(raw: unknown) {
+  const text = typeof raw === "string" ? raw : "";
+  if (!text) return;
+  let envelope: HerdrSocketEnvelope;
+  try {
+    envelope = JSON.parse(text) as HerdrSocketEnvelope;
+  } catch {
+    return;
+  }
+  if (envelope.error) {
+    if (settings.debugMode) {
+      setGlobalStatus(tr("status.herdrActionFailed", { message: envelope.error.message || envelope.error.code || "" }), "error");
+    }
+    return;
+  }
+  if (!envelope.event) return;
+  const event = envelope.event;
+  const data = envelope.data ?? {};
+  const message = herdrEventMessage(event, data);
+  if (message) {
+    setGlobalStatus(message, herdrEventTone(event, data));
+  }
+  if (herdrEventChangesDock(event)) {
+    scheduleHerdrEventRefresh();
+  }
+}
+
+function herdrEventMessage(event: string, data: JsonRecord): string {
+  if (event === "pane.agent_status_changed") {
+    const status = stringField(data, "agent_status") || stringField(data, "state") || stringField(data, "custom_status");
+    const agent = stringField(data, "display_agent") || stringField(data, "agent") || "agent";
+    const detail = stringField(data, "message") || stringField(data, "custom_status") || status;
+    return tr("status.herdrEventAgent", { agent, status: detail || status || "updated" });
+  }
+  if (event === "pane.agent_detected") {
+    const agent = stringField(data, "agent") || "agent";
+    return tr("status.herdrEventAgent", { agent, status: "detected" });
+  }
+  const subject = stringField(data, "pane_id")
+    || stringField(data, "tab_id")
+    || stringField(data, "workspace_id")
+    || event;
+  return tr("status.herdrEvent", { event, subject });
+}
+
+function herdrEventTone(event: string, data: JsonRecord): Tone {
+  if (event === "pane.exited") return "error";
+  const status = stringField(data, "agent_status") || stringField(data, "state");
+  if (status === "blocked") return "error";
+  if (status === "done" || status === "idle") return "ok";
+  return "neutral";
+}
+
+function herdrEventChangesDock(event: string): boolean {
+  return event.startsWith("workspace.")
+    || event.startsWith("tab.")
+    || event === "pane.created"
+    || event === "pane.closed"
+    || event === "pane.focused"
+    || event === "pane.moved"
+    || event === "pane.exited";
+}
+
+function scheduleHerdrEventRefresh() {
+  window.clearTimeout(herdrEventRefreshTimer);
+  herdrEventRefreshTimer = window.setTimeout(() => {
+    if (!selectedSelector) return;
+    void refreshHerdrState(selectedSelector);
+    void syncHerdrEventBridge({ force: true });
+  }, 300);
+}
+
+function scheduleHerdrEventReconnect(selector: string, generation: number) {
+  window.clearTimeout(herdrEventReconnectTimer);
+  herdrEventReconnectTimer = window.setTimeout(() => {
+    if (generation !== herdrEventSocketGeneration || normalizeSelector(selectedSelector) !== selector) return;
+    void syncHerdrEventBridge({ force: true });
+  }, 2000);
+}
+
+function stopHerdrEventBridge() {
+  herdrEventSocketGeneration += 1;
+  closeHerdrEventSocket();
+}
+
+function closeHerdrEventSocket() {
+  window.clearTimeout(herdrEventReconnectTimer);
+  window.clearTimeout(herdrEventRefreshTimer);
+  herdrEventReconnectTimer = undefined;
+  herdrEventRefreshTimer = undefined;
+  const socket = herdrEventSocket;
+  herdrEventSocket = undefined;
+  herdrEventSocketSelector = "";
+  socket?.close();
+}
+
 function clearHerdrState() {
   herdrStateGeneration += 1;
   herdrState = undefined;
+  stopHerdrEventBridge();
+  renderHerdrWorkspaceMenu();
+  renderTabs();
   renderHerdrDock();
 }
 
 function renderHerdrDock() {
-  const backends = sessionBackendsState?.backends ?? [{ id: "webshell" as const, label: "WebShell native", available: true }];
-  const hasOptionalBackend = backends.some((backend) => backend.id !== "webshell");
   const hasHerdrControls = Boolean(herdrState?.available);
   const activeMode = activePane()?.sessionBackend;
-  const mode = activeMode ?? currentSessionMode();
-  const showHerdrControls = hasHerdrControls && mode === "herdr" && activeMode === "herdr";
-  if (!hasOptionalBackend && !showHerdrControls) {
+  const showHerdrControls = hasHerdrControls && activeMode === "herdr";
+  updateSessionBackendSettings();
+  if (!showHerdrControls) {
     elements.webshell.classList.remove("has-herdr");
     elements.herdrDock.hidden = true;
-    elements.herdrDock.classList.remove("webshell-mode");
-    elements.herdrMode.hidden = true;
     elements.herdrWorkspaceList.hidden = false;
     elements.herdrTabList.parentElement?.removeAttribute("hidden");
+    elements.herdrNewWorkspace.hidden = false;
     elements.herdrNewTab.hidden = false;
     elements.herdrWorkspaceList.replaceChildren();
     elements.herdrTabList.replaceChildren();
     elements.herdrStatus.textContent = "";
+    renderHerdrWorkspaceMenu();
+    void syncHerdrEventBridge();
     return;
   }
 
   elements.webshell.classList.add("has-herdr");
   elements.herdrDock.hidden = false;
-  elements.herdrDock.classList.toggle("webshell-mode", !showHerdrControls);
-  elements.herdrMode.hidden = !hasOptionalBackend;
-  elements.herdrMode.innerHTML = backends
-    .map((backend) => `<option value="${escapeAttr(backend.id)}">${escapeHtml(sessionBackendLabel(backend.id, backend.label))}</option>`)
-    .join("");
-  elements.herdrMode.value = mode;
-  elements.herdrWorkspaceList.hidden = !showHerdrControls;
-  elements.herdrTabList.parentElement?.toggleAttribute("hidden", !showHerdrControls);
-  elements.herdrNewTab.hidden = !showHerdrControls;
-  elements.herdrWorkspaceList.innerHTML = showHerdrControls && herdrState?.workspaces.length
+  elements.herdrWorkspaceList.hidden = false;
+  elements.herdrTabList.parentElement?.toggleAttribute("hidden", false);
+  elements.herdrNewWorkspace.hidden = false;
+  elements.herdrNewTab.hidden = false;
+  elements.herdrWorkspaceList.innerHTML = herdrState?.workspaces.length
     ? herdrState.workspaces.map(renderHerdrWorkspaceButton).join("")
     : "";
-  elements.herdrTabList.innerHTML = showHerdrControls && herdrState?.tabs.length
+  elements.herdrTabList.innerHTML = herdrState?.tabs.length
     ? herdrState.tabs.map(renderHerdrTabButton).join("")
     : "";
-  elements.herdrStatus.textContent = showHerdrControls ? herdrState?.message ?? "" : "";
+  elements.herdrStatus.textContent = herdrState?.message ?? "";
+  renderHerdrWorkspaceMenu();
+  void syncHerdrEventBridge();
   updateIcons();
 }
 
@@ -2460,61 +3138,9 @@ function normalizeSessionMode(value: unknown): SessionMode {
   return value === "herdr" || value === "zellij" ? value : "webshell";
 }
 
-function currentSessionMode(): SessionMode {
-  if (!selectedSelector) return "webshell";
-  const backends = sessionBackendsState?.backends ?? [{ id: "webshell" as const }];
-  try {
-    const stored = normalizeSessionMode(window.localStorage.getItem(sessionModeStorageKey(selectedSelector)));
-    return backends.some((backend) => backend.id === stored) ? stored : "webshell";
-  } catch {
-    return "webshell";
-  }
-}
-
-async function setSessionMode(mode: SessionMode) {
-  if (!selectedSelector) return;
-  if (!sessionBackendIsSelectable(mode)) return;
-  writeSessionModePreference(mode);
-  renderHerdrDock();
-  await ensureSessionModeTab(mode);
-  renderHerdrDock();
-}
-
 function sessionBackendIsSelectable(mode: SessionMode): boolean {
   if (mode === "webshell") return true;
-  if (mode === "herdr" && herdrState?.available) return true;
-  return (sessionBackendsState?.backends ?? []).some((backend) => backend.id === mode);
-}
-
-function writeSessionModePreference(mode: SessionMode) {
-  if (!selectedSelector) return;
-  try {
-    window.localStorage.setItem(sessionModeStorageKey(selectedSelector), mode);
-  } catch {
-    // This preference is non-critical.
-  }
-}
-
-function syncSessionModePreferenceToActivePane() {
-  const mode = activePane()?.sessionBackend;
-  if (mode) writeSessionModePreference(mode);
-}
-
-async function ensureSessionModeTab(mode: SessionMode): Promise<boolean> {
-  const selector = selectedSelector;
-  if (!selector || !sessionBackendIsSelectable(mode)) return false;
-  const existing = findPaneBySessionBackend(selector, mode);
-  if (existing) {
-    activatePane(existing.tab.id, existing.pane.id);
-    return true;
-  }
-  try {
-    await runWorkspaceAction("create_tab", { selector, sessionBackend: mode });
-    return true;
-  } catch (error) {
-    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
-    return false;
-  }
+  return selectableSessionBackends().some((backend) => backend.id === mode);
 }
 
 function findPaneBySessionBackend(
@@ -2534,35 +3160,138 @@ function findPaneBySessionBackend(
   return undefined;
 }
 
-function sessionModeStorageKey(selector: string): string {
-  return `${SESSION_MODE_STORAGE_PREFIX}.${selector}`;
+function sessionBackendLabel(id: SessionBackendId, fallback: string): string {
+  if (id === "webshell") return tr("backend.webshell");
+  if (id === "herdr") return tr("backend.herdr");
+  if (id === "zellij") return tr("backend.zellij");
+  return fallback;
 }
 
-function sessionBackendLabel(id: SessionBackendId, fallback: string): string {
-  if (id === "webshell") return "WebShell native";
-  if (id === "herdr") return "Herdr";
-  if (id === "zellij") return "zellij";
-  return fallback;
+function renderNewTabMenu() {
+  const selectable = selectableSessionBackends();
+  elements.newTabMenu.innerHTML = selectable.map((backend) => {
+    const id = backend.id;
+    const selected = id === preferredBackendForNewTab();
+    const label = sessionBackendLabel(id, backend.label);
+    const icon = id === "herdr" ? "panels-top-left" : id === "zellij" ? "layout-dashboard" : "terminal";
+    return `
+      <button type="button" role="menuitem" data-new-tab-backend="${escapeAttr(id)}">
+        <i data-lucide="${escapeAttr(icon)}"></i>
+        <span>${escapeHtml(label)}</span>
+        ${selected ? `<small>${escapeHtml(tr("status.defaultBackend"))}</small>` : ""}
+      </button>
+    `;
+  }).join("");
+  updateIcons();
+}
+
+function toggleNewTabMenu() {
+  if (elements.newTabMenu.hidden) {
+    renderNewTabMenu();
+    elements.newTabMenu.hidden = false;
+    elements.newTabButton.setAttribute("aria-expanded", "true");
+    return;
+  }
+  closeNewTabMenu();
+}
+
+function closeNewTabMenu() {
+  elements.newTabMenu.hidden = true;
+  elements.newTabButton.setAttribute("aria-expanded", "false");
+}
+
+async function toggleHerdrWorkspaceMenu() {
+  if (elements.herdrWorkspaceMenu.hidden) {
+    await openHerdrWorkspaceMenu();
+    return;
+  }
+  closeHerdrWorkspaceMenu();
+}
+
+async function openHerdrWorkspaceMenu() {
+  elements.herdrWorkspaceMenu.hidden = false;
+  elements.herdrWorkspaceButton.setAttribute("aria-expanded", "true");
+  renderHerdrWorkspaceMenu();
+  if (selectedSelector) {
+    await refreshHerdrState(selectedSelector);
+  }
+  renderHerdrWorkspaceMenu();
+  updateIcons();
+}
+
+function closeHerdrWorkspaceMenu() {
+  elements.herdrWorkspaceMenu.hidden = true;
+  elements.herdrWorkspaceButton.setAttribute("aria-expanded", "false");
+}
+
+function renderHerdrWorkspaceMenu() {
+  if (!backendInstalled("herdr")) {
+    elements.herdrWorkspaceMenuList.replaceChildren();
+    elements.herdrWorkspaceMenuStatus.textContent = "";
+    return;
+  }
+  const workspaces = herdrState?.workspaces ?? [];
+  elements.herdrWorkspaceMenuList.innerHTML = workspaces.length
+    ? workspaces.map(renderHerdrWorkspaceMenuRow).join("")
+    : `<div class="empty">${escapeHtml(herdrState?.message || tr("status.herdrUnavailable"))}</div>`;
+  elements.herdrWorkspaceMenuStatus.textContent = herdrState?.message ?? "";
+  updateIcons();
+}
+
+function renderHerdrWorkspaceMenuRow(workspace: HerdrWorkspaceInfo): string {
+  const label = workspace.label.trim() || `Workspace ${workspace.number || ""}`.trim();
+  const detail = `${workspace.tab_count} ${tr("field.tabs")} · ${workspace.pane_count} ${tr("field.panes")}`;
+  return `
+    <div class="herdr-workspace-row-shell ${workspace.focused ? "selected" : ""}" role="option" aria-selected="${workspace.focused}">
+      <button class="herdr-workspace-row" type="button" data-herdr-workspace="${escapeAttr(workspace.workspace_id)}">
+        <span>
+          <strong>${escapeHtml(label)}</strong>
+          <small>${escapeHtml(detail)}</small>
+        </span>
+        ${workspace.focused ? `<i data-lucide="check"></i>` : ""}
+      </button>
+      <button class="herdr-workspace-close" type="button" data-herdr-close-workspace="${escapeAttr(workspace.workspace_id)}" aria-label="${escapeAttr(tr("action.closeHerdrSpace"))}" title="${escapeAttr(tr("action.closeHerdrSpace"))}">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
+  `;
 }
 
 function renderHerdrWorkspaceButton(workspace: HerdrWorkspaceInfo): string {
   const label = workspace.label.trim() || `Workspace ${workspace.number || ""}`.trim();
   const details = `${workspace.tab_count} tabs, ${workspace.pane_count} panes`;
   return `
-    <button class="herdr-chip" type="button" role="option" data-herdr-workspace="${escapeAttr(workspace.workspace_id)}" aria-selected="${workspace.focused}" title="${escapeAttr(details)}">
-      <span>${escapeHtml(label)}</span>
-    </button>
+    <div class="herdr-space" role="option" aria-selected="${workspace.focused}" title="${escapeAttr(details)}">
+      <button class="herdr-chip" type="button" data-herdr-workspace="${escapeAttr(workspace.workspace_id)}">
+        <span>${escapeHtml(label)}</span>
+      </button>
+      <button class="herdr-space-close" type="button" data-herdr-close-workspace="${escapeAttr(workspace.workspace_id)}" aria-label="${escapeAttr(tr("action.closeHerdrSpace"))}" title="${escapeAttr(tr("action.closeHerdrSpace"))}">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
   `;
 }
 
 function renderHerdrTabButton(tab: HerdrTabInfo): string {
-  const label = tab.label.trim() || `Tab ${tab.number || ""}`.trim();
+  const number = String(tab.number || "").trim();
+  const rawLabel = tab.label.trim() || `Tab ${number}`.trim();
+  const label = compactHerdrTabLabel(rawLabel, number);
   return `
     <button class="herdr-tab" type="button" role="tab" data-herdr-tab="${escapeAttr(tab.tab_id)}" aria-selected="${tab.focused}" title="${escapeAttr(tab.tab_id)}">
-      <small>${escapeHtml(String(tab.number || ""))}</small>
-      <span>${escapeHtml(label)}</span>
+      ${number ? `<small>${escapeHtml(number)}</small>` : ""}
+      ${label ? `<span>${escapeHtml(label)}</span>` : ""}
     </button>
   `;
+}
+
+function compactHerdrTabLabel(label: string, number: string): string {
+  if (!number) return label;
+  if (label === number) return "";
+  return label.replace(new RegExp(`^${escapeRegExp(number)}(?:[.\\s:-]+)`), "").trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function focusedHerdrWorkspace(): HerdrWorkspaceInfo | undefined {
@@ -2731,25 +3460,46 @@ function nextAnimationFrame(): Promise<void> {
   });
 }
 
-async function createSelectedTab() {
+async function createSelectedTab(mode?: SessionMode) {
   if (!selectedSelector) {
     setGlobalStatus(tr("status.selectRunningInstance"), "error");
     return;
   }
-  await createTerminalTab(selectedSelector);
+  await createTerminalTab(selectedSelector, mode);
 }
 
-async function createTerminalTab(selector: string) {
-  const mode = currentSessionMode();
-  if (mode !== "webshell") {
-    await ensureSessionModeTab(mode);
-    return;
-  }
+async function createTerminalTab(selector: string, requestedMode?: SessionMode) {
+  const mode = requestedMode && sessionBackendIsSelectable(requestedMode)
+    ? requestedMode
+    : preferredBackendForNewTab();
   try {
+    if (mode === "herdr") {
+      const existing = findPaneBySessionBackend(selector, "herdr");
+      if (existing) {
+        activatePane(existing.tab.id, existing.pane.id);
+        const ready = herdrState?.available || await refreshHerdrState(selector);
+        if (!ready) {
+          setGlobalStatus(tr("status.herdrUnavailable"), "error");
+          return;
+        }
+        await runHerdrAction("create_workspace");
+        await syncHerdrEventBridge({ force: true });
+        return;
+      }
+    }
     await runWorkspaceAction("create_tab", { selector, sessionBackend: mode });
+    if (mode === "herdr") {
+      window.setTimeout(() => void refreshHerdrState(selector), 400);
+    }
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
+}
+
+function preferredBackendForNewTab(): SessionMode {
+  const preferred = normalizeSessionMode(settings.defaultSessionBackend);
+  if (!sessionBackendIsSelectable(preferred)) return "webshell";
+  return preferred;
 }
 
 function makeTab(selector: string, restoredId?: string): TerminalTab {
@@ -2824,6 +3574,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     pendingInputBytes: 0,
     replaying: false,
     lastOutputSequence: 0,
+    aiContextText: "",
     exited: false,
     closing: false,
     titleBuffer: "",
@@ -2903,9 +3654,12 @@ function createPaneTransport(pane: TerminalPane): PaneTerminalTransport {
 }
 
 async function createPane(tab: TerminalTab, placement: SplitPlacement) {
-  const mode = currentSessionMode();
-  if (mode !== "webshell") {
-    await ensureSessionModeTab(mode);
+  if (activePane(tab)?.sessionBackend !== "webshell") {
+    try {
+      await runWorkspaceAction("create_tab", { selector: tab.selector, sessionBackend: "webshell" });
+    } catch (error) {
+      setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+    }
     return;
   }
   try {
@@ -2914,7 +3668,7 @@ async function createPane(tab: TerminalTab, placement: SplitPlacement) {
       tabId: tab.id,
       paneId: activePane(tab)?.id,
       direction: placement,
-      sessionBackend: mode,
+      sessionBackend: "webshell",
     });
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
@@ -3241,6 +3995,7 @@ function flushPaneDecoder(pane: TerminalPane) {
 }
 
 function writeTerminalText(pane: TerminalPane, text: string) {
+  appendAIContext(pane, text);
   observeTerminalTitle(pane, text);
   if (!pane.transport?.notifyData(text)) {
     pane.term?.write(text);
@@ -3350,7 +4105,6 @@ function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: 
   }
   renderTabs();
   updateActiveDetails();
-  syncSessionModePreferenceToActivePane();
   renderHerdrDock();
   activePane()?.term?.focus();
   if (options.updateLocation !== false) {
@@ -3379,7 +4133,6 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   updatePaneActiveState(tab);
   renderTabs();
   updateActiveDetails();
-  syncSessionModePreferenceToActivePane();
   renderHerdrDock();
   if (options.focus !== false) {
     activePane(tab)?.term?.focus();
@@ -3486,7 +4239,23 @@ function updateTabChrome() {
 }
 
 function tabDisplayName(tab: TerminalTab): string {
-  return tab.customTitle?.trim() || String(tabs.findIndex((item) => item.id === tab.id) + 1);
+  return (isHerdrTab(tab) ? herdrWorkspaceLabelForTab(tab) : "")
+    || tab.customTitle?.trim()
+    || herdrWorkspaceLabelForTab(tab)
+    || String(tabs.findIndex((item) => item.id === tab.id) + 1);
+}
+
+function herdrWorkspaceLabelForTab(tab: TerminalTab): string {
+  if (!isHerdrTab(tab)) return "";
+  if (normalizeSelector(herdrState?.selector) !== normalizeSelector(tab.selector)) {
+    return tr("backend.herdr");
+  }
+  const workspace = focusedHerdrWorkspace();
+  return workspace?.label.trim() || tr("backend.herdr");
+}
+
+function isHerdrTab(tab: TerminalTab): boolean {
+  return tab.panes.some((pane) => pane.sessionBackend === "herdr");
 }
 
 function startRenamingTab(tabId: string) {
@@ -3515,6 +4284,26 @@ async function commitTabRename(tabId: string, value: string) {
   }
   const trimmed = value.trim();
   const defaultName = String(tabs.findIndex((item) => item.id === tab.id) + 1);
+  if (isHerdrTab(tab)) {
+    tab.customTitle = undefined;
+    renderTabs();
+    updateActiveDetails();
+    activePane()?.term?.focus();
+    try {
+      await runWorkspaceAction("rename_tab", {
+        selector: tab.selector,
+        tabId,
+        label: "",
+        apply: false,
+      });
+      if (trimmed && trimmed !== defaultName) {
+        await syncHerdrWorkspaceRenameForTab(tab, trimmed);
+      }
+    } catch (error) {
+      setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+    }
+    return;
+  }
   tab.customTitle = trimmed && trimmed !== defaultName ? trimmed : undefined;
   renderTabs();
   updateActiveDetails();
@@ -3526,8 +4315,35 @@ async function commitTabRename(tabId: string, value: string) {
       label: tab.customTitle ?? "",
       apply: false,
     });
+    if (tab.customTitle) {
+      await syncHerdrWorkspaceRenameForTab(tab, tab.customTitle);
+    }
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+async function syncHerdrWorkspaceRenameForTab(tab: TerminalTab, label: string) {
+  const nextLabel = label.trim();
+  if (!nextLabel || !isHerdrTab(tab)) return;
+  if (!herdrState?.available || normalizeSelector(herdrState.selector) !== normalizeSelector(tab.selector)) {
+    await refreshHerdrState(tab.selector);
+  }
+  const workspace = focusedHerdrWorkspace();
+  if (!workspace?.workspace_id) return;
+  if (workspace.label.trim() === nextLabel) return;
+  try {
+    await runHerdrSocketRequest("workspace.rename", {
+      workspace_id: workspace.workspace_id,
+      label: nextLabel,
+    }, {
+      selector: tab.selector,
+      id: `lazycat-webshell:workspace-rename:${tab.id}`,
+      mirrorNotification: false,
+    });
+    await refreshHerdrState(tab.selector);
+  } catch (error) {
+    setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
   }
 }
 

@@ -10,16 +10,24 @@ export type ShellElements = {
   instanceStatusDot: HTMLSpanElement;
   refreshInstances: HTMLButtonElement;
   newTabButton: HTMLButtonElement;
+  newTabShell: HTMLDivElement;
+  newTabMenu: HTMLDivElement;
   emptyNewTab: HTMLButtonElement;
   statusLine: HTMLParagraphElement;
   targetLabel: HTMLElement;
   tabList: HTMLDivElement;
+  herdrWorkspaceSwitcher: HTMLDivElement;
+  herdrWorkspaceButton: HTMLButtonElement;
+  herdrWorkspaceMenu: HTMLDivElement;
+  herdrWorkspaceRefresh: HTMLButtonElement;
+  herdrWorkspaceMenuList: HTMLDivElement;
+  herdrWorkspaceMenuStatus: HTMLParagraphElement;
   herdrDock: HTMLElement;
-  herdrMode: HTMLSelectElement;
   herdrWorkspaceList: HTMLDivElement;
   herdrTabList: HTMLDivElement;
   herdrStatus: HTMLParagraphElement;
   herdrRefresh: HTMLButtonElement;
+  herdrNewWorkspace: HTMLButtonElement;
   herdrNewTab: HTMLButtonElement;
   terminalStage: HTMLDivElement;
   mobileShortcuts: HTMLDivElement;
@@ -28,6 +36,12 @@ export type ShellElements = {
   settingsButton: HTMLButtonElement;
   settingsMenu: HTMLDivElement;
   openSettingsItem: HTMLButtonElement;
+  pluginsButton: HTMLButtonElement;
+  pluginSidebar: HTMLElement;
+  closePluginSidebar: HTMLButtonElement;
+  pluginToolTabs: HTMLDivElement;
+  pluginToolBody: HTMLDivElement;
+  pluginToolStatus: HTMLElement;
   closeSettings: HTMLButtonElement;
   settingsPage: HTMLElement;
   settingsTabs: HTMLDivElement;
@@ -37,6 +51,12 @@ export type ShellElements = {
   refreshPlugins: HTMLButtonElement;
   localeSelect: HTMLSelectElement;
   interfaceStyleSelect: HTMLSelectElement;
+  sessionBackendSettings: HTMLDivElement;
+  defaultSessionBackend: HTMLSelectElement;
+  sessionBackendHelp: HTMLParagraphElement;
+  herdrHighlightSettings: HTMLDivElement;
+  herdrActiveBackgroundDark: HTMLInputElement;
+  herdrActiveBackgroundLight: HTMLInputElement;
   themeSelect: HTMLSelectElement;
   customThemeName: HTMLInputElement;
   customThemeSource: HTMLTextAreaElement;
@@ -70,6 +90,8 @@ export type ShellElements = {
   touchSelectionMode: HTMLSelectElement;
   autoRestartSessions: HTMLInputElement;
   debugMode: HTMLInputElement;
+  shortcutHelpButton: HTMLButtonElement;
+  shortcutHelp: HTMLDivElement;
   paneMenu: HTMLDivElement;
   fitTerminal: HTMLButtonElement;
 };
@@ -80,11 +102,29 @@ export function renderShell(app: HTMLElement): ShellElements {
       <header class="topbar" aria-label="Terminal controls" data-i18n-aria="app.title">
         <div class="tabs-shell">
           <div id="tabList" class="tab-list" role="tablist" aria-label="Terminal tabs" data-i18n-aria="action.newTab"></div>
-          <button class="tab-add" id="newTabButton" type="button" aria-label="New terminal tab" title="New terminal tab" data-i18n-aria="action.newTab" data-i18n-title="action.newTab">
-            <i data-lucide="plus"></i>
-          </button>
+          <div class="new-tab-shell" id="newTabShell">
+            <button class="tab-add" id="newTabButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="New terminal tab" title="New terminal tab" data-i18n-aria="action.newTab" data-i18n-title="action.newTab">
+              <i data-lucide="plus"></i>
+            </button>
+            <div class="new-tab-menu" id="newTabMenu" role="menu" aria-label="New terminal tab" data-i18n-aria="action.newTab" hidden></div>
+          </div>
         </div>
         <div class="topbar-actions">
+          <div class="herdr-workspace-switcher" id="herdrWorkspaceSwitcher" hidden>
+            <button class="icon-button" id="herdrWorkspaceButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Herdr workspaces" title="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces" data-i18n-title="section.herdrWorkspaces">
+              <i data-lucide="folder-tree"></i>
+            </button>
+            <div class="herdr-workspace-menu" id="herdrWorkspaceMenu" role="dialog" aria-label="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces" hidden>
+              <div class="menu-head">
+                <span data-i18n="section.herdrWorkspaces">Herdr workspaces</span>
+                <button class="icon-button" id="herdrWorkspaceRefresh" type="button" aria-label="Refresh Herdr" title="Refresh Herdr" data-i18n-aria="action.refreshHerdr" data-i18n-title="action.refreshHerdr">
+                  <i data-lucide="refresh-cw"></i>
+                </button>
+              </div>
+              <div class="herdr-workspace-menu-list" id="herdrWorkspaceMenuList" role="listbox" aria-label="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces"></div>
+              <p class="herdr-workspace-menu-status" id="herdrWorkspaceMenuStatus" aria-live="polite"></p>
+            </div>
+          </div>
           <div class="instance-switcher" id="instanceSwitcher">
             <button class="icon-button status-icon" id="instanceButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch instance" title="Switch instance" data-i18n-aria="action.switchInstance" data-i18n-title="action.switchInstance">
               <span class="status-dot" id="instanceStatusDot" data-status="unknown"></span>
@@ -103,6 +143,41 @@ export function renderShell(app: HTMLElement): ShellElements {
           </div>
           <button class="icon-button" id="fitTerminal" type="button" aria-label="Full screen" title="Full screen" data-i18n-aria="action.fullscreen" data-i18n-title="action.fullscreen">
             <i data-lucide="maximize"></i>
+          </button>
+          <div class="shortcut-help-shell" id="shortcutHelpShell">
+            <button class="icon-button" id="shortcutHelpButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" data-i18n-aria="action.shortcutHelp" data-i18n-title="action.shortcutHelp">
+              <i data-lucide="circle-help"></i>
+            </button>
+            <div class="shortcut-help" id="shortcutHelp" role="dialog" aria-label="Keyboard shortcuts" data-i18n-aria="action.shortcutHelp" hidden>
+              <div class="shortcut-help-head">
+                <strong data-i18n="section.shortcuts">Shortcuts</strong>
+              </div>
+              <div class="shortcut-help-grid">
+                <section>
+                  <h3 data-i18n="section.desktopShortcuts">Desktop</h3>
+                  <dl>
+                    <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd></dt><dd data-i18n="shortcut.newTab">New terminal tab</dd></div>
+                    <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>W</kbd></dt><dd data-i18n="shortcut.closeTab">Close tab</dd></div>
+                    <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>↑/↓/←/→</kbd></dt><dd data-i18n="shortcut.splitPane">Split pane</dd></div>
+                    <div><dt><kbd>Ctrl</kbd><kbd>+</kbd> / <kbd>Ctrl</kbd><kbd>-</kbd></dt><dd data-i18n="shortcut.zoomFont">Adjust terminal font</dd></div>
+                    <div><dt><kbd>Ctrl</kbd><kbd>0</kbd></dt><dd data-i18n="shortcut.resetFont">Reset terminal font</dd></div>
+                    <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>C/V</kbd></dt><dd data-i18n="shortcut.copyPaste">Copy or paste</dd></div>
+                  </dl>
+                </section>
+                <section>
+                  <h3 data-i18n="section.mobileShortcuts">Mobile</h3>
+                  <dl>
+                    <div><dt><kbd>Ops</kbd><kbd>A+</kbd>/<kbd>A-</kbd></dt><dd data-i18n="shortcut.mobileFont">Adjust terminal font</dd></div>
+                    <div><dt><kbd>Ops</kbd><kbd>Tab</kbd></dt><dd data-i18n="shortcut.mobileTab">Switch or create tabs</dd></div>
+                    <div><dt><kbd>Main</kbd><kbd>Ctrl</kbd><kbd>Tab</kbd></dt><dd data-i18n="shortcut.mobileKeys">Send terminal keys</dd></div>
+                    <div><dt><kbd>double tap</kbd></dt><dd data-i18n="shortcut.mobileKeyboard">Open system keyboard</dd></div>
+                  </dl>
+                </section>
+              </div>
+            </div>
+          </div>
+          <button class="icon-button" id="pluginsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Plugins" title="Plugins" data-i18n-aria="section.plugins" data-i18n-title="section.plugins">
+            <i data-lucide="plug"></i>
           </button>
           <div class="settings-menu-shell" id="settingsMenuShell">
             <button class="icon-button" id="settingsButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Settings menu" title="Settings menu" data-i18n-aria="action.settingsMenu" data-i18n-title="action.settingsMenu">
@@ -123,12 +198,12 @@ export function renderShell(app: HTMLElement): ShellElements {
       </header>
 
       <section class="herdr-dock" id="herdrDock" aria-label="Herdr controls" data-i18n-aria="section.herdr" hidden>
-        <select class="herdr-mode" id="herdrMode" aria-label="Session backend">
-          <option value="webshell">WebShell native</option>
-        </select>
         <div class="herdr-workspaces" id="herdrWorkspaceList" role="listbox" aria-label="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces"></div>
         <div class="herdr-tabs-shell">
           <div class="herdr-tabs" id="herdrTabList" role="tablist" aria-label="Herdr tabs" data-i18n-aria="section.herdrTabs"></div>
+          <button class="herdr-icon-button" id="herdrNewWorkspace" type="button" aria-label="New Herdr space" title="New Herdr space" data-i18n-aria="action.newHerdrSpace" data-i18n-title="action.newHerdrSpace">
+            <i data-lucide="folder-plus"></i>
+          </button>
           <button class="herdr-icon-button" id="herdrNewTab" type="button" aria-label="New Herdr tab" title="New Herdr tab" data-i18n-aria="action.newHerdrTab" data-i18n-title="action.newHerdrTab">
             <i data-lucide="plus"></i>
           </button>
@@ -188,6 +263,8 @@ export function renderShell(app: HTMLElement): ShellElements {
             <button type="button" data-mobile-action="split-down" aria-label="Split down"><i data-lucide="panel-bottom"></i></button>
             <button type="button" data-mobile-action="copy-selection" aria-label="Copy selection"><i data-lucide="copy"></i></button>
             <button type="button" data-mobile-action="paste-clipboard" aria-label="Paste"><i data-lucide="clipboard-paste"></i></button>
+            <button type="button" data-mobile-action="font-larger" aria-label="Increase terminal font">A+</button>
+            <button type="button" data-mobile-action="font-smaller" aria-label="Decrease terminal font">A-</button>
           </div>
           <div class="mobile-keyboard-panel" data-mobile-panel="nav" hidden>
             <button type="button" data-mobile-shortcut="home" data-mobile-repeat="true" aria-label="Home">Home</button>
@@ -237,6 +314,18 @@ export function renderShell(app: HTMLElement): ShellElements {
         </div>
       </section>
 
+      <aside class="plugin-sidebar" id="pluginSidebar" aria-label="Plugins" data-i18n-aria="section.plugins" hidden>
+        <header class="plugin-sidebar-header">
+          <strong data-i18n="section.plugins">Plugins</strong>
+          <button class="icon-button" id="closePluginSidebar" type="button" aria-label="Close plugins" title="Close plugins" data-i18n-aria="action.closePlugins" data-i18n-title="action.closePlugins">
+            <i data-lucide="x"></i>
+          </button>
+        </header>
+        <div class="plugin-tool-tabs" id="pluginToolTabs" role="tablist" aria-label="Plugins" data-i18n-aria="section.plugins"></div>
+        <div class="plugin-tool-body" id="pluginToolBody"></div>
+        <p id="pluginToolStatus" class="field-status"></p>
+      </aside>
+
       <section class="settings-page" id="settingsPage" hidden aria-label="Settings" data-i18n-aria="action.settings">
         <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
           <header class="settings-header">
@@ -285,6 +374,11 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <option value="brass" data-i18n="interfaceStyle.brass">Brass</option>
                   <option value="spectrum" data-i18n="interfaceStyle.spectrum">Spectrum</option>
                   <option value="geek" data-i18n="interfaceStyle.geek">Geek</option>
+                  <option value="porcelain" data-i18n="interfaceStyle.porcelain">Porcelain</option>
+                  <option value="frost" data-i18n="interfaceStyle.frost">Frost</option>
+                  <option value="champagne" data-i18n="interfaceStyle.champagne">Champagne</option>
+                  <option value="candy" data-i18n="interfaceStyle.candy">Candy</option>
+                  <option value="lab" data-i18n="interfaceStyle.lab">Lab</option>
                 </select>
               </label>
               <label class="field">
@@ -294,6 +388,28 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <option value="vertical" data-i18n="layout.vertical">Vertical</option>
                 </select>
               </label>
+              <div class="settings-group" id="sessionBackendSettings" hidden>
+                <div class="settings-group-title" data-i18n="section.sessionBackend">Session backend</div>
+                <label class="field">
+                  <span data-i18n="field.defaultSessionBackend">New tab backend</span>
+                  <select id="defaultSessionBackend">
+                    <option value="webshell" data-i18n="backend.webshell">WebShell native</option>
+                  </select>
+                </label>
+                <p id="sessionBackendHelp" class="settings-help" data-i18n="setting.defaultSessionBackendHelp">The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.</p>
+              </div>
+              <div class="settings-group" id="herdrHighlightSettings" hidden>
+                <div class="settings-group-title" data-i18n="section.herdrHighlight">Herdr selection</div>
+                <p class="settings-help" data-i18n="setting.herdrHighlightHelp">Customize the active Herdr workspace and tab background for dark and light interface styles.</p>
+                <label class="field color-field">
+                  <span data-i18n="field.herdrActiveBackgroundDark">Dark highlight</span>
+                  <input id="herdrActiveBackgroundDark" type="color" />
+                </label>
+                <label class="field color-field">
+                  <span data-i18n="field.herdrActiveBackgroundLight">Light highlight</span>
+                  <input id="herdrActiveBackgroundLight" type="color" />
+                </label>
+              </div>
               <label class="field">
                 <span data-i18n="field.cursor">Cursor</span>
                 <select id="cursorShape">
@@ -495,16 +611,24 @@ export function renderShell(app: HTMLElement): ShellElements {
     instanceStatusDot: qs<HTMLSpanElement>("#instanceStatusDot"),
     refreshInstances: qs<HTMLButtonElement>("#refreshInstances"),
     newTabButton: qs<HTMLButtonElement>("#newTabButton"),
+    newTabShell: qs<HTMLDivElement>("#newTabShell"),
+    newTabMenu: qs<HTMLDivElement>("#newTabMenu"),
     emptyNewTab: qs<HTMLButtonElement>("#emptyNewTab"),
     statusLine: qs<HTMLParagraphElement>("#statusLine"),
     targetLabel: qs<HTMLElement>("#targetLabel"),
     tabList: qs<HTMLDivElement>("#tabList"),
+    herdrWorkspaceSwitcher: qs<HTMLDivElement>("#herdrWorkspaceSwitcher"),
+    herdrWorkspaceButton: qs<HTMLButtonElement>("#herdrWorkspaceButton"),
+    herdrWorkspaceMenu: qs<HTMLDivElement>("#herdrWorkspaceMenu"),
+    herdrWorkspaceRefresh: qs<HTMLButtonElement>("#herdrWorkspaceRefresh"),
+    herdrWorkspaceMenuList: qs<HTMLDivElement>("#herdrWorkspaceMenuList"),
+    herdrWorkspaceMenuStatus: qs<HTMLParagraphElement>("#herdrWorkspaceMenuStatus"),
     herdrDock: qs<HTMLElement>("#herdrDock"),
-    herdrMode: qs<HTMLSelectElement>("#herdrMode"),
     herdrWorkspaceList: qs<HTMLDivElement>("#herdrWorkspaceList"),
     herdrTabList: qs<HTMLDivElement>("#herdrTabList"),
     herdrStatus: qs<HTMLParagraphElement>("#herdrStatus"),
     herdrRefresh: qs<HTMLButtonElement>("#herdrRefresh"),
+    herdrNewWorkspace: qs<HTMLButtonElement>("#herdrNewWorkspace"),
     herdrNewTab: qs<HTMLButtonElement>("#herdrNewTab"),
     terminalStage: qs<HTMLDivElement>("#terminalStage"),
     mobileShortcuts: qs<HTMLDivElement>("#mobileShortcuts"),
@@ -513,6 +637,12 @@ export function renderShell(app: HTMLElement): ShellElements {
     settingsButton: qs<HTMLButtonElement>("#settingsButton"),
     settingsMenu: qs<HTMLDivElement>("#settingsMenu"),
     openSettingsItem: qs<HTMLButtonElement>("#openSettingsItem"),
+    pluginsButton: qs<HTMLButtonElement>("#pluginsButton"),
+    pluginSidebar: qs<HTMLElement>("#pluginSidebar"),
+    closePluginSidebar: qs<HTMLButtonElement>("#closePluginSidebar"),
+    pluginToolTabs: qs<HTMLDivElement>("#pluginToolTabs"),
+    pluginToolBody: qs<HTMLDivElement>("#pluginToolBody"),
+    pluginToolStatus: qs<HTMLElement>("#pluginToolStatus"),
     closeSettings: qs<HTMLButtonElement>("#closeSettings"),
     settingsPage: qs<HTMLElement>("#settingsPage"),
     settingsTabs: qs<HTMLDivElement>("#settingsTabs"),
@@ -522,6 +652,12 @@ export function renderShell(app: HTMLElement): ShellElements {
     refreshPlugins: qs<HTMLButtonElement>("#refreshPlugins"),
     localeSelect: qs<HTMLSelectElement>("#localeSelect"),
     interfaceStyleSelect: qs<HTMLSelectElement>("#interfaceStyleSelect"),
+    sessionBackendSettings: qs<HTMLDivElement>("#sessionBackendSettings"),
+    defaultSessionBackend: qs<HTMLSelectElement>("#defaultSessionBackend"),
+    sessionBackendHelp: qs<HTMLParagraphElement>("#sessionBackendHelp"),
+    herdrHighlightSettings: qs<HTMLDivElement>("#herdrHighlightSettings"),
+    herdrActiveBackgroundDark: qs<HTMLInputElement>("#herdrActiveBackgroundDark"),
+    herdrActiveBackgroundLight: qs<HTMLInputElement>("#herdrActiveBackgroundLight"),
     themeSelect: qs<HTMLSelectElement>("#themeSelect"),
     customThemeName: qs<HTMLInputElement>("#customThemeName"),
     customThemeSource: qs<HTMLTextAreaElement>("#customThemeSource"),
@@ -555,6 +691,8 @@ export function renderShell(app: HTMLElement): ShellElements {
     touchSelectionMode: qs<HTMLSelectElement>("#touchSelectionMode"),
     autoRestartSessions: qs<HTMLInputElement>("#autoRestartSessions"),
     debugMode: qs<HTMLInputElement>("#debugMode"),
+    shortcutHelpButton: qs<HTMLButtonElement>("#shortcutHelpButton"),
+    shortcutHelp: qs<HTMLDivElement>("#shortcutHelp"),
     paneMenu: qs<HTMLDivElement>("#paneMenu"),
     fitTerminal: qs<HTMLButtonElement>("#fitTerminal"),
   };

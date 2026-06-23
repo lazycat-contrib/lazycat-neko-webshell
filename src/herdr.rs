@@ -1,11 +1,17 @@
 use std::time::Duration;
 
+use anyhow::anyhow;
 use axum::Json;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::header::{HOST, ORIGIN};
+use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use futures::stream::SplitSink;
+use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::warn;
@@ -15,6 +21,88 @@ use crate::lightos;
 use crate::validation::validate_selector;
 
 const HERDR_API_TIMEOUT: Duration = Duration::from_secs(6);
+const MAX_HERDR_SOCKET_REQUEST_BYTES: usize = 1024 * 1024;
+const HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS: u64 = 5;
+
+type HerdrSocketSender = SplitSink<WebSocket, Message>;
+
+const ALLOWED_HERDR_METHODS: &[&str] = &[
+    "ping",
+    "server.stop",
+    "server.live_handoff",
+    "server.reload_config",
+    "server.agent_manifests",
+    "server.reload_agent_manifests",
+    "notification.show",
+    "client.window_title.set",
+    "client.window_title.clear",
+    "workspace.create",
+    "workspace.list",
+    "workspace.get",
+    "workspace.focus",
+    "workspace.rename",
+    "workspace.close",
+    "worktree.list",
+    "worktree.create",
+    "worktree.open",
+    "worktree.remove",
+    "tab.create",
+    "tab.list",
+    "tab.get",
+    "tab.focus",
+    "tab.rename",
+    "tab.close",
+    "pane.split",
+    "pane.swap",
+    "pane.move",
+    "pane.zoom",
+    "pane.layout",
+    "pane.process_info",
+    "pane.neighbor",
+    "pane.edges",
+    "pane.focus_direction",
+    "pane.resize",
+    "pane.list",
+    "pane.current",
+    "pane.get",
+    "pane.rename",
+    "pane.send_text",
+    "pane.send_keys",
+    "pane.send_input",
+    "pane.read",
+    "pane.report_agent",
+    "pane.report_agent_session",
+    "pane.report_metadata",
+    "pane.clear_agent_authority",
+    "pane.release_agent",
+    "pane.close",
+    "pane.wait_for_output",
+    "layout.export",
+    "layout.apply",
+    "agent.list",
+    "agent.get",
+    "agent.read",
+    "agent.explain",
+    "agent.send",
+    "agent.rename",
+    "agent.focus",
+    "agent.start",
+    "events.subscribe",
+    "events.wait",
+    "integration.install",
+    "integration.uninstall",
+    "plugin.link",
+    "plugin.list",
+    "plugin.unlink",
+    "plugin.enable",
+    "plugin.disable",
+    "plugin.action.list",
+    "plugin.action.invoke",
+    "plugin.log.list",
+    "plugin.pane.open",
+    "plugin.pane.focus",
+    "plugin.pane.close",
+];
 
 #[derive(Debug, Deserialize)]
 pub struct HerdrQuery {
@@ -29,12 +117,23 @@ pub struct HerdrActionRequest {
     tab_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct HerdrSocketRequest {
+    name: String,
+    method: String,
+    #[serde(default = "empty_json_object")]
+    params: Value,
+    id: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum HerdrAction {
     FocusWorkspace,
     FocusTab,
     CreateTab,
+    CloseWorkspace,
+    CreateWorkspace,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,8 +215,72 @@ pub(crate) async fn post_herdr_action(
             )
             .await?;
         }
+        HerdrAction::CloseWorkspace => {
+            let workspace_id = required_id(request.workspace_id.as_deref(), "workspace_id")?;
+            run_herdr_request(
+                &target,
+                "workspace.close",
+                json!({ "workspace_id": workspace_id }),
+            )
+            .await?;
+        }
+        HerdrAction::CreateWorkspace => {
+            run_herdr_request(
+                &target,
+                "workspace.create",
+                json!({
+                    "focus": true,
+                }),
+            )
+            .await?;
+        }
     }
     Ok(Json(snapshot_herdr_state(&target).await))
+}
+
+pub(crate) async fn post_herdr_socket(
+    Json(request): Json<HerdrSocketRequest>,
+) -> Result<Json<Value>, HerdrBridgeError> {
+    let target = authorize_herdr_target(&request.name).await?;
+    validate_herdr_method(&request.method)?;
+    let request_id = request
+        .id
+        .unwrap_or_else(|| format!("lazycat-webshell:{}", request.method));
+    let response = run_herdr_request_raw(
+        &target,
+        &request.method,
+        normalize_herdr_params(request.params),
+    )
+    .await
+    .map(|mut response| {
+        if let Some(object) = response.as_object_mut() {
+            object
+                .entry("id")
+                .or_insert_with(|| Value::String(request_id));
+        }
+        response
+    })?;
+    Ok(Json(response))
+}
+
+pub(crate) async fn herdr_ws(
+    headers: HeaderMap,
+    Query(query): Query<HerdrQuery>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if !origin_allowed(&headers) {
+        return (StatusCode::FORBIDDEN, "invalid websocket origin").into_response();
+    }
+    let target = match authorize_herdr_target(&query.name).await {
+        Ok(target) => target,
+        Err(err) => return err.into_response(),
+    };
+
+    ws.on_upgrade(move |socket| async move {
+        if let Err(err) = handle_herdr_socket(socket, target).await {
+            warn!(error = %err, "Herdr socket bridge ended with error");
+        }
+    })
 }
 
 async fn authorize_herdr_target(selector: &str) -> Result<AuthorizedHerdrTarget, HerdrBridgeError> {
@@ -205,10 +368,30 @@ async fn run_herdr_request(
     method: &str,
     params: Value,
 ) -> Result<Value, HerdrBridgeError> {
+    let response = run_herdr_request_raw(target, method, params).await?;
+    if let Some(error) = response.get("error") {
+        return Err(HerdrBridgeError {
+            status: StatusCode::BAD_GATEWAY,
+            message: error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("Herdr socket request failed")
+                .to_owned(),
+        });
+    }
+    Ok(response)
+}
+
+async fn run_herdr_request_raw(
+    target: &AuthorizedHerdrTarget,
+    method: &str,
+    params: Value,
+) -> Result<Value, HerdrBridgeError> {
+    validate_herdr_method(method)?;
     let request = json!({
         "id": format!("lazycat-webshell:{method}"),
         "method": method,
-        "params": params,
+        "params": normalize_herdr_params(params),
     });
     let script = herdr_socket_script(&target.login_user, &request.to_string());
     let mut command = Command::new(LIGHTOSCTL);
@@ -249,26 +432,294 @@ async fn run_herdr_request(
         status: StatusCode::BAD_GATEWAY,
         message: format!("invalid Herdr socket response: {err}"),
     })?;
-    if let Some(error) = response.get("error") {
-        return Err(HerdrBridgeError {
-            status: StatusCode::BAD_GATEWAY,
-            message: error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("Herdr socket request failed")
-                .to_owned(),
-        });
-    }
     Ok(response)
 }
 
+async fn handle_herdr_socket(
+    socket: WebSocket,
+    target: AuthorizedHerdrTarget,
+) -> anyhow::Result<()> {
+    let mut command = Command::new(LIGHTOSCTL);
+    command
+        .args([
+            "exec",
+            "-i",
+            target.selector.as_str(),
+            "/bin/sh",
+            "-lc",
+            herdr_socket_stream_script(&target.login_user).as_str(),
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn()?;
+    let mut child_stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("Herdr bridge stdin is unavailable"))?;
+    let child_stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("Herdr bridge stdout is unavailable"))?;
+    let child_stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("Herdr bridge stderr is unavailable"))?;
+
+    let (mut sender, mut receiver) = socket.split();
+    let mut stdout_lines = BufReader::new(child_stdout).lines();
+    let mut stderr_lines = BufReader::new(child_stderr).lines();
+
+    loop {
+        tokio::select! {
+            line = stdout_lines.next_line() => {
+                match line? {
+                    Some(line) => sender.send(Message::Text(line.into())).await?,
+                    None => break,
+                }
+            }
+            line = stderr_lines.next_line() => {
+                match line? {
+                    Some(line) if !line.trim().is_empty() => {
+                        warn!(selector = %target.selector, message = %line, "Herdr socket bridge stderr");
+                    }
+                    Some(_) | None => {}
+                }
+            }
+            message = receiver.next() => {
+                if !handle_herdr_socket_client_message(
+                    &mut sender,
+                    &mut child_stdin,
+                    &target.selector,
+                    message,
+                ).await? {
+                    break;
+                }
+            }
+            else => break,
+        }
+    }
+
+    let _ = child.start_kill();
+    let _ = timeout(Duration::from_secs(1), child.wait()).await;
+    Ok(())
+}
+
+async fn handle_herdr_socket_client_message(
+    sender: &mut HerdrSocketSender,
+    child_stdin: &mut tokio::process::ChildStdin,
+    selector: &str,
+    message: Option<Result<Message, axum::Error>>,
+) -> anyhow::Result<bool> {
+    let Some(message) = message else {
+        return Ok(false);
+    };
+    match message? {
+        Message::Text(text) => {
+            let text = text.to_string();
+            if text.len() > MAX_HERDR_SOCKET_REQUEST_BYTES {
+                sender
+                    .send(Message::Text(
+                        herdr_wire_error(
+                            None,
+                            "request_too_large",
+                            "Herdr socket request is too large",
+                        )
+                        .into(),
+                    ))
+                    .await?;
+                return Ok(true);
+            }
+            match validate_herdr_wire_request(&text) {
+                Ok(()) => {
+                    child_stdin.write_all(text.as_bytes()).await?;
+                    if !text.ends_with('\n') {
+                        child_stdin.write_all(b"\n").await?;
+                    }
+                    child_stdin.flush().await?;
+                }
+                Err(error) => {
+                    sender.send(Message::Text(error.into())).await?;
+                }
+            }
+            Ok(true)
+        }
+        Message::Binary(_) => {
+            sender
+                .send(Message::Text(
+                    herdr_wire_error(
+                        None,
+                        "invalid_request",
+                        "Herdr socket bridge accepts JSON text only",
+                    )
+                    .into(),
+                ))
+                .await?;
+            Ok(true)
+        }
+        Message::Ping(payload) => {
+            sender.send(Message::Pong(payload)).await?;
+            Ok(true)
+        }
+        Message::Pong(_) => Ok(true),
+        Message::Close(_) => {
+            warn!(selector = %selector, "Herdr socket bridge closed by client");
+            Ok(false)
+        }
+    }
+}
+
+fn validate_herdr_wire_request(text: &str) -> Result<(), String> {
+    let value = serde_json::from_str::<Value>(text)
+        .map_err(|err| herdr_wire_error(None, "invalid_json", &format!("invalid JSON: {err}")))?;
+    let id = herdr_request_id(&value);
+    let Some(method) = value.get("method").and_then(Value::as_str) else {
+        return Err(herdr_wire_error(
+            id.as_deref(),
+            "invalid_request",
+            "method is required",
+        ));
+    };
+    validate_herdr_method(method)
+        .map_err(|err| herdr_wire_error(id.as_deref(), "method_not_allowed", &err.message))
+}
+
+fn herdr_request_id(value: &Value) -> Option<String> {
+    value
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn herdr_wire_error(id: Option<&str>, code: &str, message: &str) -> String {
+    json!({
+        "id": id.unwrap_or("lazycat-webshell:error"),
+        "error": {
+            "code": code,
+            "message": message,
+        },
+    })
+    .to_string()
+}
+
+fn validate_herdr_method(method: &str) -> Result<(), HerdrBridgeError> {
+    let method = method.trim();
+    if is_allowed_herdr_method(method) {
+        return Ok(());
+    }
+    Err(HerdrBridgeError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!("Herdr socket method is not allowed: {method}"),
+    })
+}
+
+fn is_allowed_herdr_method(method: &str) -> bool {
+    ALLOWED_HERDR_METHODS.contains(&method.trim())
+}
+
+fn normalize_herdr_params(params: Value) -> Value {
+    if params.is_null() {
+        empty_json_object()
+    } else {
+        params
+    }
+}
+
+fn empty_json_object() -> Value {
+    json!({})
+}
+
 fn herdr_socket_script(login_user: &str, request_json: &str) -> String {
-    let login_user = shell_quote(login_user.trim());
     let request_json = shell_quote(request_json);
+    format!(
+        r#"{}
+request_json={request_json}
+export HERDR_WEB_REQUEST="$request_json"
+export HERDR_WEB_SOCKET="$socket_path"
+if command -v python3 >/dev/null 2>&1; then
+  python3 - <<'PY'
+import os
+import socket
+import sys
+
+request = os.environ["HERDR_WEB_REQUEST"].encode("utf-8")
+path = os.environ["HERDR_WEB_SOCKET"]
+client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+client.settimeout(5)
+client.connect(path)
+client.sendall(request + b"\n")
+chunks = []
+while True:
+    data = client.recv(65536)
+    if not data:
+        break
+    chunks.append(data)
+    if b"\n" in data:
+        break
+payload = b"".join(chunks).split(b"\n", 1)[0]
+sys.stdout.buffer.write(payload + b"\n")
+PY
+elif command -v socat >/dev/null 2>&1; then
+  printf '%s\n' "$request_json" | socat -t {HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS} - "UNIX-CONNECT:$socket_path" | sed -n '1p'
+elif command -v nc >/dev/null 2>&1 && nc -h 2>&1 | grep -q -- ' -U\|-U '; then
+  printf '%s\n' "$request_json" | nc -U "$socket_path" | sed -n '1p'
+else
+  printf '%s\n' '{{"id":"lazycat-webshell","error":{{"code":"unavailable","message":"python3, socat, or nc -U is required for Herdr socket access"}}}}'
+fi"#,
+        herdr_socket_prelude(login_user),
+    )
+}
+
+fn herdr_socket_stream_script(login_user: &str) -> String {
+    format!(
+        r#"{}
+export HERDR_WEB_SOCKET="$socket_path"
+if ! command -v python3 >/dev/null 2>&1; then
+  printf '%s\n' '{{"id":"lazycat-webshell","error":{{"code":"unavailable","message":"python3 is required for streaming Herdr socket access"}}}}'
+  exit 0
+fi
+python3 - <<'PY'
+import os
+import selectors
+import socket
+import sys
+
+path = os.environ["HERDR_WEB_SOCKET"]
+client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+client.settimeout({HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS})
+client.connect(path)
+client.setblocking(False)
+stdin = sys.stdin.buffer
+stdout = sys.stdout.buffer
+selector = selectors.DefaultSelector()
+selector.register(client, selectors.EVENT_READ, "socket")
+selector.register(stdin, selectors.EVENT_READ, "stdin")
+
+while True:
+    for key, _ in selector.select():
+        if key.data == "stdin":
+            line = stdin.readline()
+            if not line:
+                sys.exit(0)
+            client.sendall(line.rstrip(b"\n") + b"\n")
+        else:
+            data = client.recv(65536)
+            if not data:
+                sys.exit(0)
+            stdout.write(data)
+            stdout.flush()
+PY"#,
+        herdr_socket_prelude(login_user),
+    )
+}
+
+fn herdr_socket_prelude(login_user: &str) -> String {
+    let login_user = shell_quote(login_user.trim());
     format!(
         r#"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 login_user={login_user}
-request_json={request_json}
 home_dir=""
 if [ -n "$login_user" ]; then
   entry="$(getent passwd "$login_user" 2>/dev/null || true)"
@@ -300,38 +751,6 @@ fi
 if [ -z "$socket_path" ]; then
   printf '%s\n' '{{"id":"lazycat-webshell","error":{{"code":"unavailable","message":"Herdr socket not found"}}}}'
   exit 0
-fi
-export HERDR_WEB_REQUEST="$request_json"
-export HERDR_WEB_SOCKET="$socket_path"
-if command -v python3 >/dev/null 2>&1; then
-  python3 - <<'PY'
-import os
-import socket
-import sys
-
-request = os.environ["HERDR_WEB_REQUEST"].encode("utf-8")
-path = os.environ["HERDR_WEB_SOCKET"]
-client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-client.settimeout(5)
-client.connect(path)
-client.sendall(request + b"\n")
-chunks = []
-while True:
-    data = client.recv(65536)
-    if not data:
-        break
-    chunks.append(data)
-    if b"\n" in data:
-        break
-payload = b"".join(chunks).split(b"\n", 1)[0]
-sys.stdout.buffer.write(payload + b"\n")
-PY
-elif command -v socat >/dev/null 2>&1; then
-  printf '%s\n' "$request_json" | socat -t 5 - "UNIX-CONNECT:$socket_path" | sed -n '1p'
-elif command -v nc >/dev/null 2>&1 && nc -h 2>&1 | grep -q -- ' -U\|-U '; then
-  printf '%s\n' "$request_json" | nc -U "$socket_path" | sed -n '1p'
-else
-  printf '%s\n' '{{"id":"lazycat-webshell","error":{{"code":"unavailable","message":"python3, socat, or nc -U is required for Herdr socket access"}}}}'
 fi"#
     )
 }
@@ -428,6 +847,20 @@ fn shell_quote(value: &str) -> String {
     quoted
 }
 
+fn origin_allowed(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(ORIGIN).and_then(|value| value.to_str().ok()) else {
+        return true;
+    };
+    let Some(host) = headers.get(HOST).and_then(|value| value.to_str().ok()) else {
+        return false;
+    };
+    origin
+        .parse::<Uri>()
+        .ok()
+        .and_then(|uri| uri.authority().map(|authority| authority.as_str() == host))
+        .unwrap_or(false)
+}
+
 impl IntoResponse for HerdrBridgeError {
     fn into_response(self) -> Response {
         (self.status, self.message).into_response()
@@ -438,7 +871,10 @@ impl IntoResponse for HerdrBridgeError {
 mod tests {
     use serde_json::json;
 
-    use super::{parse_tabs, parse_workspaces, shell_quote};
+    use super::{
+        ALLOWED_HERDR_METHODS, is_allowed_herdr_method, parse_tabs, parse_workspaces, shell_quote,
+        validate_herdr_wire_request,
+    };
 
     #[test]
     fn parses_workspace_and_tab_lists_from_herdr_responses() {
@@ -481,5 +917,34 @@ mod tests {
     #[test]
     fn shell_quote_handles_single_quotes() {
         assert_eq!(shell_quote("dev'user"), "'dev'\"'\"'user'");
+    }
+
+    #[test]
+    fn herdr_socket_allowlist_covers_documented_methods() {
+        assert!(ALLOWED_HERDR_METHODS.len() > 60);
+        for method in ALLOWED_HERDR_METHODS {
+            assert!(
+                is_allowed_herdr_method(method),
+                "{method} should be allowed"
+            );
+        }
+        assert!(!is_allowed_herdr_method("workspace.delete"));
+        assert!(!is_allowed_herdr_method("../../../bin/sh"));
+    }
+
+    #[test]
+    fn validates_raw_herdr_socket_requests_before_proxying() {
+        assert!(
+            validate_herdr_wire_request(
+                r#"{"id":"req_1","method":"pane.read","params":{"pane_id":"w1:p1","source":"recent"}}"#,
+            )
+            .is_ok()
+        );
+
+        let error =
+            validate_herdr_wire_request(r#"{"id":"req_2","method":"not.real","params":{}}"#)
+                .expect_err("unknown method should be rejected");
+        assert!(error.contains("method_not_allowed"));
+        assert!(error.contains("req_2"));
     }
 }

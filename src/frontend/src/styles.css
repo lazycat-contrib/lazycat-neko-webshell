@@ -284,6 +284,7 @@ textarea:focus-visible {
 }
 
 .tabs-shell {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
@@ -299,6 +300,12 @@ textarea:focus-visible {
 
 .webshell[data-tab-layout="vertical"].has-named-tabs .tabs-shell {
   align-items: stretch;
+}
+
+.new-tab-shell {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
 }
 
 .tab-list {
@@ -552,6 +559,61 @@ textarea:focus-visible {
   margin: 2px 0 6px;
 }
 
+.new-tab-menu {
+  position: absolute;
+  z-index: 82;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(280px, calc(100vw - 20px));
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 64px),
+    color-mix(in srgb, var(--chrome) 94%, black);
+  box-shadow: var(--shadow-raised);
+  backdrop-filter: blur(16px);
+}
+
+.new-tab-menu button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  padding: 0 9px;
+  text-align: left;
+}
+
+.new-tab-menu button:hover,
+.new-tab-menu button:focus-visible {
+  background: rgba(148, 163, 184, 0.13);
+}
+
+.new-tab-menu svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+
+.new-tab-menu span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-tab-menu small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .tab-add:hover,
 .icon-button:hover {
   border-color: rgba(148, 163, 184, 0.22);
@@ -599,23 +661,6 @@ textarea:focus-visible {
   display: none;
 }
 
-.herdr-mode {
-  min-width: 128px;
-  height: 30px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 6px;
-  background: #0f171c;
-  color: var(--text);
-  padding: 0 28px 0 9px;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.herdr-mode[hidden] {
-  display: none;
-}
-
 .herdr-workspaces,
 .herdr-tabs {
   display: flex;
@@ -634,10 +679,17 @@ textarea:focus-visible {
 
 .herdr-tabs-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 5px;
   min-width: 0;
+}
+
+.herdr-space {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
 }
 
 .herdr-chip,
@@ -667,13 +719,44 @@ textarea:focus-visible {
   gap: 6px;
 }
 
+.herdr-space[aria-selected="true"] .herdr-chip,
 .herdr-chip[aria-selected="true"],
 .herdr-tab[aria-selected="true"] {
   border-color: color-mix(in srgb, var(--accent) 66%, black);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent),
-    rgba(125, 211, 191, 0.16);
-  color: #e8fff4;
+    var(--herdr-active-bg);
+  color: var(--herdr-active-fg);
+}
+
+.herdr-space-close,
+.herdr-workspace-close {
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: currentColor;
+  opacity: 0.58;
+}
+
+.herdr-space-close {
+  width: 18px;
+  height: 18px;
+  margin-left: -6px;
+  margin-right: 2px;
+}
+
+.herdr-space-close:hover,
+.herdr-workspace-close:hover {
+  background: rgba(148, 163, 184, 0.18);
+  opacity: 1;
+}
+
+.herdr-space-close svg,
+.herdr-workspace-close svg {
+  width: 12px;
+  height: 12px;
 }
 
 .herdr-tab span,
@@ -836,6 +919,8 @@ textarea:focus-visible {
 }
 
 .switcher-menu[hidden],
+.new-tab-menu[hidden],
+.herdr-workspace-menu[hidden],
 .settings-menu[hidden],
 .settings-page[hidden],
 .pane-menu[hidden] {
@@ -915,6 +1000,117 @@ textarea:focus-visible {
   color: #cbd5dc;
   font-size: 12px;
   font-weight: 700;
+}
+
+.herdr-workspace-switcher {
+  position: relative;
+}
+
+.herdr-workspace-switcher[hidden] {
+  display: none;
+}
+
+.herdr-workspace-menu {
+  position: absolute;
+  z-index: 82;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(340px, calc(100vw - 20px));
+  max-height: min(520px, calc(var(--app-viewport-height) - 56px));
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 64px),
+    color-mix(in srgb, var(--chrome) 94%, black);
+  box-shadow: var(--shadow-raised);
+  backdrop-filter: blur(16px);
+}
+
+.herdr-workspace-menu-list {
+  display: grid;
+  gap: 6px;
+}
+
+.herdr-workspace-row-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
+    var(--surface);
+  color: var(--text);
+  padding: 8px 9px;
+}
+
+.herdr-workspace-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.herdr-workspace-row-shell:hover,
+.herdr-workspace-row-shell:focus-within {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.herdr-workspace-row-shell.selected {
+  border-color: var(--accent);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent),
+    var(--herdr-active-bg);
+  color: var(--herdr-active-fg);
+}
+
+.herdr-workspace-row strong,
+.herdr-workspace-row small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.herdr-workspace-row small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.herdr-workspace-row svg {
+  width: 15px;
+  height: 15px;
+}
+
+.herdr-workspace-close {
+  width: 28px;
+  height: 28px;
+}
+
+.herdr-workspace-menu-status {
+  min-height: 16px;
+  margin: 8px 2px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.herdr-workspace-menu-status:empty {
+  display: none;
 }
 
 .instance-list {
@@ -2106,12 +2302,6 @@ output {
     padding: 5px max(8px, var(--lzc-safe-area-inset-right)) 5px max(8px, var(--lzc-safe-area-inset-left));
   }
 
-  .herdr-mode {
-    grid-column: 1 / -1;
-    width: 100%;
-    height: 36px;
-  }
-
   .herdr-workspaces {
     grid-column: 1 / -1;
     min-height: 36px;
@@ -2185,6 +2375,17 @@ output {
     left: 8px;
     width: auto;
     max-height: min(420px, calc(var(--app-viewport-height) - 64px));
+  }
+
+  .new-tab-menu,
+  .herdr-workspace-menu {
+    position: fixed;
+    top: calc(var(--app-viewport-offset-top) + 52px);
+    right: max(8px, var(--lzc-safe-area-inset-right));
+    left: max(8px, var(--lzc-safe-area-inset-left));
+    width: auto;
+    max-height: min(420px, calc(var(--app-viewport-height) - 64px));
+    overflow: auto;
   }
 
   .settings-menu {
