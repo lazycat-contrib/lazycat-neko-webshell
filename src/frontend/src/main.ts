@@ -33,14 +33,12 @@ import {
 } from "./clipboard-image";
 import {
   DEFAULT_SETTINGS,
-  FONT_PRESETS,
   INITIAL_COLS,
   INITIAL_ROWS,
   MAX_CUSTOM_THEME_SOURCE_BYTES,
   MAX_OUTPUT_BUFFER_LIMIT,
   MIN_OUTPUT_BUFFER_LIMIT,
   STATUS_REFRESH_MS,
-  THEMES,
 } from "./config";
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
 import { FileBrowserStore } from "./file-browser-store";
@@ -91,6 +89,7 @@ import {
 } from "./plugin-utils";
 import { fileNameFromPath, normalizeRemotePath, parentRemotePath, parseFileBrowserEntries, uploadTargetPath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
+import { renderFontFamilyOptions, renderThemeSelectOptions } from "./settings-options-view";
 import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
@@ -111,7 +110,7 @@ import {
   terminalAppearanceContext,
 } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
-import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX } from "./theme-registry";
+import { CUSTOM_THEME_PREFIX } from "./theme-registry";
 import { aiChatTranscript, renderAIChatMessages as renderAIChatMessagesView, renderAIChatToolView, renderFileTransferToolView } from "./plugin-views";
 import type {
   AIChatMessage,
@@ -330,40 +329,11 @@ function applyI18n() {
 
 function renderOptions() {
   renderThemeOptions();
-  const customOptions = customFonts.map(
-    (font) => `<option value="${font.id}">${escapeHtml(font.label)}</option>`,
-  ).join("");
-  elements.fontFamily.innerHTML = `
-    <optgroup label="${escapeAttr(tr("font.builtIn"))}">
-      ${FONT_PRESETS.map((font) => `<option value="${font.id}">${font.label}</option>`).join("")}
-    </optgroup>
-    <optgroup label="${escapeAttr(tr("font.uploaded"))}">
-      ${customOptions || `<option disabled>${escapeHtml(tr("font.noUploaded"))}</option>`}
-    </optgroup>
-  `;
+  elements.fontFamily.innerHTML = renderFontFamilyOptions(customFonts, tr);
 }
 
 function renderThemeOptions() {
-  const recommended = THEMES.map(
-    (theme) => `<option value="${escapeAttr(theme.id)}">${escapeHtml(theme.label)}</option>`,
-  ).join("");
-  const builtIn = builtInGhosttyThemes().map(
-    (theme) => `<option value="${escapeAttr(theme.id)}">${escapeHtml(theme.label)}</option>`,
-  ).join("");
-  const custom = settings.customThemes.map(
-    (theme) => `<option value="${escapeAttr(theme.id)}">${escapeHtml(theme.label)}</option>`,
-  ).join("");
-  elements.themeSelect.innerHTML = `
-    <optgroup label="${escapeAttr(tr("theme.recommended"))}">
-      ${recommended}
-    </optgroup>
-    <optgroup label="${escapeAttr(tr("theme.builtIn"))}">
-      ${builtIn}
-    </optgroup>
-    <optgroup label="${escapeAttr(tr("theme.custom"))}">
-      ${custom || `<option disabled>${escapeHtml(tr("theme.noCustom"))}</option>`}
-    </optgroup>
-  `;
+  elements.themeSelect.innerHTML = renderThemeSelectOptions(settings.customThemes, tr);
 }
 
 function bindSettings() {
