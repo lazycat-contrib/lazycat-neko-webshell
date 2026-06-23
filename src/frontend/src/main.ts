@@ -69,6 +69,15 @@ const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
 const FILE_TRANSFER_PLUGIN_ID = "file-transfer";
 const AI_CHAT_PLUGIN_ID = "ai-chat";
 const LIGHT_INTERFACE_STYLES = new Set<InterfaceStyleId>(["porcelain", "frost", "champagne", "candy", "lab"]);
+const HERDR_SPLIT_DIRECTIONS: Partial<Record<SplitPlacement, "right" | "down">> = {
+  right: "right",
+  down: "down",
+};
+const ZELLIJ_SPLIT_KEYS: Partial<Record<SplitPlacement, string>> = {
+  right: "r",
+  down: "d",
+};
+const ZELLIJ_PANE_MODE_PREFIX = "\x10";
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -1387,10 +1396,34 @@ function openActivePaneMenu() {
 function updatePaneMenuForPane(paneId: string) {
   const pane = findPaneById(paneId);
   const tab = pane ? tabForPane(pane) : undefined;
-  const promote = elements.paneMenu.querySelector<HTMLButtonElement>('[data-pane-action="promote-session-to-tab"]');
-  if (promote) {
-    promote.hidden = !tab || visiblePanes(tab).length <= 1;
+  elements.paneMenu.querySelectorAll<HTMLButtonElement>("[data-pane-action]").forEach((button) => {
+    button.hidden = !paneMenuActionSupported(button.dataset.paneAction ?? "", pane, tab);
+  });
+}
+
+function paneMenuActionSupported(
+  action: string,
+  pane: TerminalPane | undefined,
+  tab: TerminalTab | undefined,
+): boolean {
+  if (!pane) return false;
+  if (pane.sessionBackend === "herdr" || pane.sessionBackend === "zellij") {
+    return action === "split-right"
+      || action === "split-down"
+      || action === "copy-selection"
+      || action === "paste-clipboard"
+      || action === "close-active-session";
   }
+  if (action === "promote-session-to-tab") {
+    return Boolean(tab && visiblePanes(tab).length > 1);
+  }
+  return action === "split-up"
+    || action === "split-down"
+    || action === "split-left"
+    || action === "split-right"
+    || action === "copy-selection"
+    || action === "paste-clipboard"
+    || action === "close-active-session";
 }
 
 function closePaneMenu() {
@@ -1406,6 +1439,14 @@ async function runPaneMenuAction(action: string) {
   closePaneMenu();
   if (tab && pane) {
     activatePane(tab.id, pane.id);
+  }
+  if (pane?.sessionBackend === "herdr") {
+    await runHerdrPaneMenuAction(action, pane);
+    return;
+  }
+  if (pane?.sessionBackend === "zellij") {
+    await runZellijPaneMenuAction(action, pane);
+    return;
   }
   if (action === "split-up") {
     await splitActivePane("up");
@@ -1424,6 +1465,174 @@ async function runPaneMenuAction(action: string) {
   } else if (action === "close-active-session" && tab && pane) {
     await closeActiveSession(tab, pane);
   }
+}
+
+async function runHerdrPaneMenuAction(action: string, pane: TerminalPane) {
+  try {
+    const placement = splitPlacementForPaneAction(action);
+    if (placement) {
+      await splitHerdrPane(pane, placement);
+    } else if (action === "copy-selection") {
+      await copySelection(true, pane);
+    } else if (action === "paste-clipboard") {
+      await pasteIntoHerdrPane(pane, true);
+    } else if (action === "close-active-session") {
+      await closeHerdrPane(pane);
+    }
+  } catch (error) {
+    setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+async function runZellijPaneMenuAction(action: string, pane: TerminalPane) {
+  const placement = splitPlacementForPaneAction(action);
+  if (placement) {
+    splitZellijPane(pane, placement);
+  } else if (action === "copy-selection") {
+    await copySelection(true, pane);
+  } else if (action === "paste-clipboard") {
+    await pasteIntoPane(pane, true);
+  } else if (action === "close-active-session") {
+    closeZellijPane(pane);
+  }
+}
+
+function splitPlacementForPaneAction(action: string): SplitPlacement | undefined {
+  if (action === "split-up") return "up";
+  if (action === "split-down") return "down";
+  if (action === "split-left") return "left";
+  if (action === "split-right") return "right";
+  return undefined;
+}
+
+async function splitHerdrPane(pane: TerminalPane, placement: SplitPlacement): Promise<boolean> {
+  const direction = HERDR_SPLIT_DIRECTIONS[placement];
+  if (!direction) {
+    setBackendActionUnavailable(pane);
+    return false;
+  }
+  const selector = await ensureHerdrSocketReady(pane);
+  const paneId = await currentHerdrPaneId(selector);
+  await runHerdrSocketRequest("pane.split", {
+    target_pane_id: paneId,
+    direction,
+    focus: true,
+  }, {
+    selector,
+    id: `lazycat-webshell:pane-split-${direction}`,
+    mirrorNotification: false,
+  });
+  await refreshHerdrState(selector);
+  await syncHerdrEventBridge({ force: true });
+  activePane()?.term?.focus();
+  return true;
+}
+
+async function closeHerdrPane(pane: TerminalPane): Promise<boolean> {
+  const selector = await ensureHerdrSocketReady(pane);
+  const paneId = await currentHerdrPaneId(selector);
+  await runHerdrSocketRequest("pane.close", { pane_id: paneId }, {
+    selector,
+    id: "lazycat-webshell:pane-close",
+    mirrorNotification: false,
+  });
+  await refreshHerdrState(selector);
+  await syncHerdrEventBridge({ force: true });
+  activePane()?.term?.focus();
+  return true;
+}
+
+async function pasteIntoHerdrPane(pane: TerminalPane, report: boolean): Promise<boolean> {
+  try {
+    const text = await navigator.clipboard?.readText?.() ?? "";
+    if (!text) return false;
+    const selector = await ensureHerdrSocketReady(pane);
+    const paneId = await currentHerdrPaneId(selector);
+    await runHerdrSocketRequest("pane.send_text", { pane_id: paneId, text }, {
+      selector,
+      id: "lazycat-webshell:pane-paste",
+      mirrorNotification: false,
+    });
+    activePane()?.term?.focus();
+    return true;
+  } catch (error) {
+    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+    return false;
+  }
+}
+
+async function ensureHerdrSocketReady(pane: TerminalPane): Promise<string> {
+  const selector = normalizeSelector(pane.selector || selectedSelector);
+  if (!selector) throw new Error(tr("status.selectRunningInstance"));
+  const stateMatches = herdrState?.available && normalizeSelector(herdrState.selector) === selector;
+  if (stateMatches || await refreshHerdrState(selector)) return selector;
+  throw new Error(tr("status.herdrUnavailable"));
+}
+
+async function currentHerdrPaneId(selector: string): Promise<string> {
+  const current = await runHerdrSocketRequest("pane.current", {}, {
+    selector,
+    id: "lazycat-webshell:pane-current",
+    mirrorNotification: false,
+  });
+  const currentPane = recordField(current.result, "pane");
+  const currentPaneId = stringField(currentPane, "pane_id");
+  if (currentPaneId) return currentPaneId;
+
+  const workspaceId = herdrState?.workspaces.find((workspace) => workspace.focused)?.workspace_id;
+  const list = await runHerdrSocketRequest("pane.list", workspaceId ? { workspace_id: workspaceId } : {}, {
+    selector,
+    id: "lazycat-webshell:pane-list-current",
+    mirrorNotification: false,
+  });
+  const panes = Array.isArray(list.result?.panes) ? list.result.panes : [];
+  const records = panes
+    .filter((item): item is JsonRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+  const focusedPane = records.find((item) => boolField(item, "focused"));
+  const fallbackPaneId = stringField(focusedPane ?? records[0], "pane_id");
+  if (fallbackPaneId) return fallbackPaneId;
+  throw new Error("Herdr pane not found");
+}
+
+function splitZellijPane(pane: TerminalPane, placement: SplitPlacement): boolean {
+  const key = ZELLIJ_SPLIT_KEYS[placement];
+  if (!key) {
+    setBackendActionUnavailable(pane);
+    return false;
+  }
+  return sendZellijPaneModeKey(pane, key);
+}
+
+function closeZellijPane(pane: TerminalPane): boolean {
+  return sendZellijPaneModeKey(pane, "x");
+}
+
+function sendZellijPaneModeKey(pane: TerminalPane, key: string): boolean {
+  if (sendPaneInput(pane, `${ZELLIJ_PANE_MODE_PREFIX}${key}`)) {
+    pane.term?.focus();
+    return true;
+  }
+  setBackendActionFailed(pane, "input unavailable");
+  return false;
+}
+
+function setBackendActionUnavailable(pane: TerminalPane) {
+  setGlobalStatus(
+    tr("status.backendActionUnavailable", {
+      backend: sessionBackendLabel(pane.sessionBackend, pane.sessionBackend),
+    }),
+    "neutral",
+  );
+}
+
+function setBackendActionFailed(pane: TerminalPane, message: string) {
+  setGlobalStatus(
+    tr("status.backendActionFailed", {
+      backend: sessionBackendLabel(pane.sessionBackend, pane.sessionBackend),
+      message,
+    }),
+    "error",
+  );
 }
 
 function handleFontZoomShortcut(event: KeyboardEvent): boolean {
@@ -3048,6 +3257,11 @@ function stringField(record: JsonRecord | undefined, key: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function recordField(record: JsonRecord | undefined, key: string): JsonRecord | undefined {
+  const value = record?.[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : undefined;
+}
+
 function boolField(record: JsonRecord | undefined, key: string): boolean {
   return record?.[key] === true;
 }
@@ -4284,19 +4498,28 @@ function createPaneTransport(pane: TerminalPane): PaneTerminalTransport {
 }
 
 async function createPane(tab: TerminalTab, placement: SplitPlacement) {
-  if (activePane(tab)?.sessionBackend !== "webshell") {
+  const pane = activePane(tab);
+  if (pane?.sessionBackend === "herdr") {
     try {
-      await runWorkspaceAction("create_tab", { selector: tab.selector, sessionBackend: "webshell" });
+      await splitHerdrPane(pane, placement);
     } catch (error) {
-      setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+      setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
     }
+    return;
+  }
+  if (pane?.sessionBackend === "zellij") {
+    splitZellijPane(pane, placement);
+    return;
+  }
+  if (!pane || pane.sessionBackend !== "webshell") {
+    if (pane) setBackendActionUnavailable(pane);
     return;
   }
   try {
     await runWorkspaceAction("split_pane", {
       selector: tab.selector,
       tabId: tab.id,
-      paneId: activePane(tab)?.id,
+      paneId: pane.id,
       direction: placement,
       sessionBackend: "webshell",
     });
@@ -5021,6 +5244,18 @@ async function closeTab(tabId: string) {
 }
 
 async function closeActiveSession(tab: TerminalTab, pane: TerminalPane) {
+  if (pane.sessionBackend === "herdr") {
+    try {
+      await closeHerdrPane(pane);
+    } catch (error) {
+      setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
+    }
+    return;
+  }
+  if (pane.sessionBackend === "zellij") {
+    closeZellijPane(pane);
+    return;
+  }
   if (visiblePanes(tab).length <= 1) {
     await closeTab(tab.id);
     return;

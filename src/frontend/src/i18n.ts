@@ -189,6 +189,8 @@ export type MessageKey =
   | "status.backgroundRemoved"
   | "status.backgroundUploadFailed"
   | "status.backgroundDeleteFailed"
+  | "status.backendActionFailed"
+  | "status.backendActionUnavailable"
   | "status.herdrActionFailed"
   | "status.herdrEvent"
   | "status.herdrEventAgent"
@@ -450,6 +452,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.backgroundRemoved": "Terminal background removed",
     "status.backgroundUploadFailed": "Background upload failed: {message}",
     "status.backgroundDeleteFailed": "Background delete failed: {message}",
+    "status.backendActionFailed": "{backend} action failed: {message}",
+    "status.backendActionUnavailable": "{backend} does not support this pane action",
     "status.herdrActionFailed": "Herdr action failed: {message}",
     "status.herdrEvent": "Herdr {event}: {subject}",
     "status.herdrEventAgent": "Herdr {agent}: {status}",
@@ -710,6 +714,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.backgroundRemoved": "终端背景已移除",
     "status.backgroundUploadFailed": "背景上传失败：{message}",
     "status.backgroundDeleteFailed": "背景删除失败：{message}",
+    "status.backendActionFailed": "{backend} 操作失败：{message}",
+    "status.backendActionUnavailable": "{backend} 不支持这个面板操作",
     "status.herdrActionFailed": "Herdr 操作失败：{message}",
     "status.herdrEvent": "Herdr {event}：{subject}",
     "status.herdrEventAgent": "Herdr {agent}：{status}",

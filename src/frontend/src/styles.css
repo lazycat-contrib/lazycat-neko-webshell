@@ -811,8 +811,8 @@ textarea:focus-visible {
   z-index: 82;
   top: calc(100% + 8px);
   right: 0;
-  width: min(280px, calc(100vw - 20px));
-  padding: 8px;
+  width: min(232px, calc(100vw - 20px));
+  padding: 6px;
   border: 1px solid var(--menu-border);
   border-radius: 8px;
   background:
@@ -825,16 +825,18 @@ textarea:focus-visible {
 
 .new-tab-menu button {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 17px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   width: 100%;
-  min-height: 36px;
+  min-height: 32px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--menu-text);
-  padding: 0 9px;
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 1.15;
   text-align: left;
 }
 
@@ -859,14 +861,21 @@ textarea:focus-visible {
 .new-tab-menu small {
   display: inline-flex;
   align-items: center;
-  min-height: 20px;
+  min-height: 18px;
   border: 1px solid var(--menu-badge-border);
   border-radius: 999px;
   background: var(--menu-badge-bg);
   color: var(--menu-badge-text);
-  padding: 0 7px;
-  font-size: 11px;
+  padding: 0 6px;
+  font-size: 10px;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+.webshell[data-tab-layout="vertical"] .new-tab-menu {
+  top: 0;
+  right: auto;
+  left: calc(100% + 8px);
 }
 
 .tab-add:hover,
@@ -3571,6 +3580,12 @@ output {
     width: auto;
     max-height: min(420px, calc(var(--app-viewport-height) - 64px));
     overflow: auto;
+  }
+
+  .webshell[data-tab-layout="vertical"] .new-tab-menu {
+    top: calc(var(--app-viewport-offset-top) + 52px);
+    right: max(8px, var(--lzc-safe-area-inset-right));
+    left: max(8px, var(--lzc-safe-area-inset-left));
   }
 
   .settings-menu {
