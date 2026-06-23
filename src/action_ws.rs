@@ -567,20 +567,53 @@ fn parse_openai_message_content(value: &Value) -> String {
 }
 
 fn parse_openai_model_ids(value: &Value) -> Vec<String> {
-    let models = value
-        .get("data")
-        .and_then(Value::as_array)
-        .or_else(|| value.as_array());
-    let Some(models) = models else {
-        return Vec::new();
-    };
+    let mut models = Vec::new();
+    collect_model_ids(value, &mut models);
     models
-        .iter()
-        .filter_map(|model| model.get("id").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
+}
+
+fn collect_model_ids(value: &Value, models: &mut Vec<String>) {
+    if let Some(model) = model_id_from_value(value) {
+        models.push(model.to_owned());
+    }
+    if let Some(items) = value.as_array() {
+        collect_model_array(items, models);
+        return;
+    }
+    let Some(object) = value.as_object() else {
+        return;
+    };
+    for key in ["data", "models", "available_models", "availableModels"] {
+        let Some(child) = object.get(key) else {
+            continue;
+        };
+        if let Some(items) = child.as_array() {
+            collect_model_array(items, models);
+        } else {
+            collect_model_ids(child, models);
+        }
+    }
+}
+
+fn collect_model_array(items: &[Value], models: &mut Vec<String>) {
+    for item in items {
+        if let Some(model) = model_id_from_value(item) {
+            models.push(model.to_owned());
+        } else {
+            collect_model_ids(item, models);
+        }
+    }
+}
+
+fn model_id_from_value(value: &Value) -> Option<&str> {
+    let raw = value.as_str().or_else(|| {
+        let object = value.as_object()?;
+        ["id", "name", "model"]
+            .iter()
+            .find_map(|key| object.get(*key).and_then(Value::as_str))
+    })?;
+    let trimmed = raw.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 fn build_prompt(action: &str, payload: &Value) -> String {
@@ -828,4 +861,45 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
         .ok()
         .and_then(|uri| uri.authority().map(|authority| authority.as_str() == host))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_openai_model_ids;
+    use serde_json::json;
+
+    #[test]
+    fn parses_openai_and_anthropic_model_lists() {
+        assert_eq!(
+            parse_openai_model_ids(&json!({
+                "data": [
+                    { "id": "gpt-4.1" },
+                    { "id": " claude-3-5-sonnet-20241022 " }
+                ]
+            })),
+            vec!["gpt-4.1", "claude-3-5-sonnet-20241022"]
+        );
+
+        assert_eq!(
+            parse_openai_model_ids(&json!({
+                "models": [
+                    "claude-opus-4-20250514",
+                    { "name": "claude-sonnet-4-20250514" }
+                ]
+            })),
+            vec!["claude-opus-4-20250514", "claude-sonnet-4-20250514"]
+        );
+    }
+
+    #[test]
+    fn parses_string_and_model_object_arrays() {
+        assert_eq!(
+            parse_openai_model_ids(&json!([
+                "deepseek-chat",
+                { "model": "qwen-max" },
+                { "id": "" }
+            ])),
+            vec!["deepseek-chat", "qwen-max"]
+        );
+    }
 }

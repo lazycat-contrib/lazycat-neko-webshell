@@ -95,6 +95,7 @@ pub struct WorkspacePaneState {
     pub id: String,
     pub session_id: String,
     pub status: String,
+    pub session_backend: String,
     pub cols: u16,
     pub rows: u16,
 }
@@ -448,7 +449,11 @@ fn apply_workspace_action(
         let workspace = workspaces
             .entry(selector.to_owned())
             .or_insert_with(|| WorkspaceRecord::new(selector));
-        workspace.ensure_ready(&mut sessions, defaults);
+        if request.action == WorkspaceAction::CreateTab {
+            workspace.repair();
+        } else {
+            workspace.ensure_ready(&mut sessions, defaults);
+        }
         workspace
             .apply_action(request, &mut sessions, defaults, &mut closed_sessions)
             .map_err(WorkspaceActionError::BadRequest)?;
@@ -612,6 +617,7 @@ impl WorkspaceRecord {
                                     || "stopped".to_owned(),
                                     |session| session.status.clone(),
                                 ),
+                                session_backend: session_backend_from_session(session),
                                 cols: session.map_or(pane.cols, |session| session.cols),
                                 rows: session.map_or(pane.rows, |session| session.rows),
                             }
@@ -1026,6 +1032,15 @@ fn session_record(
     session_record_with_metadata(selector, session_id, defaults, status, HashMap::new())
 }
 
+fn session_backend_from_session(session: Option<&SessionRecord>) -> String {
+    session
+        .and_then(|session| session.metadata.get("sessionBackend"))
+        .map(String::as_str)
+        .filter(|backend| matches!(*backend, "webshell" | "herdr" | "zellij"))
+        .unwrap_or("webshell")
+        .to_owned()
+}
+
 fn session_record_with_metadata(
     selector: &str,
     session_id: &str,
@@ -1409,6 +1424,7 @@ fn internal_error(message: String) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
 }
 
+#[derive(Debug)]
 enum WorkspaceActionError {
     BadRequest(String),
     Internal(String),
@@ -1540,6 +1556,42 @@ mod tests {
                 .and_then(|workspace| workspace.tabs[0].custom_label.as_deref()),
             Some("Build")
         );
+    }
+
+    #[test]
+    fn create_tab_action_on_empty_workspace_creates_one_tab() {
+        let state = test_app_state();
+        let defaults = WorkspaceTerminalDefaults::new(
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            DEFAULT_OUTPUT_FRAME_LIMIT,
+            false,
+            "",
+            SessionBackend::Herdr,
+        );
+        let request = WorkspaceActionRequest {
+            name: "demo@owner".to_owned(),
+            action: WorkspaceAction::CreateTab,
+            tab_id: None,
+            pane_id: None,
+            direction: None,
+            label: None,
+            layout: None,
+            active_pane_id: None,
+            cols: None,
+            rows: None,
+            output_limit: None,
+            auto_restart: None,
+            session_backend: Some(SessionBackend::Herdr),
+        };
+
+        let (workspace, closed) =
+            apply_workspace_action(&state, "demo@owner", &defaults, &request).unwrap();
+
+        assert!(closed.is_empty());
+        assert_eq!(workspace.tabs.len(), 1);
+        assert_eq!(workspace.tabs[0].panes.len(), 1);
+        assert_eq!(workspace.tabs[0].panes[0].session_backend, "herdr");
     }
 
     #[test]

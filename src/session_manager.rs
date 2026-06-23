@@ -11,6 +11,7 @@ use crate::terminal_manager::{ManagedTerminal, OutputBuffer, TerminalRegistry, T
 use crate::validation::normalize_output_frame_limit;
 
 const METADATA_OUTPUT_BUFFER_LIMIT: &str = "outputBufferLimit";
+const METADATA_SESSION_BACKEND: &str = "sessionBackend";
 
 pub struct SessionManager {
     records: Arc<RwLock<HashMap<String, SessionRecord>>>,
@@ -49,21 +50,38 @@ impl SessionManager {
 
     pub fn output_buffer(&self, session_id: &str, limit: usize) -> Arc<OutputBuffer> {
         let normalized_limit = normalize_output_frame_limit(Some(limit));
+        let persist_history = self.persist_output_history(session_id);
         let buffer = self
             .output_buffers
             .write()
             .expect("terminal output buffer registry poisoned")
             .entry(session_id.to_owned())
             .or_insert_with(|| {
-                Arc::new(OutputBuffer::persistent(
-                    normalized_limit,
-                    session_id.to_owned(),
-                    Arc::clone(&self.database),
-                ))
+                if persist_history {
+                    Arc::new(OutputBuffer::persistent(
+                        normalized_limit,
+                        session_id.to_owned(),
+                        Arc::clone(&self.database),
+                    ))
+                } else {
+                    Arc::new(OutputBuffer::new(normalized_limit))
+                }
             })
             .clone();
         buffer.set_limit(normalized_limit);
         buffer
+    }
+
+    fn persist_output_history(&self, session_id: &str) -> bool {
+        self.records
+            .read()
+            .ok()
+            .and_then(|records| {
+                records
+                    .get(session_id)
+                    .and_then(|session| session.metadata.get(METADATA_SESSION_BACKEND).cloned())
+            })
+            .is_none_or(|backend| backend.trim().is_empty() || backend == "webshell")
     }
 
     pub fn open_terminal(
@@ -97,7 +115,19 @@ impl SessionManager {
             .ok()
             .and_then(|mut buffers| buffers.remove(session_id));
         if let Some(buffer) = buffer {
-            buffer.close_history();
+            buffer.detach_history();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn delete_output_history(&self, session_id: &str) {
+        let buffer = self
+            .output_buffers
+            .write()
+            .ok()
+            .and_then(|mut buffers| buffers.remove(session_id));
+        if let Some(buffer) = buffer {
+            buffer.delete_history();
         } else if let Err(err) = self.database.delete_output_history(session_id) {
             warn!(error = %err, session_id = %session_id, "failed to remove terminal output history");
         }
@@ -231,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn close_sessions_removes_output_buffer_and_history_rows() {
+    fn close_sessions_detaches_output_buffer_without_deleting_history() {
         let (manager, database) = test_manager(HashMap::new());
         let first = manager.output_buffer("session-one", 128);
         database
@@ -247,14 +277,61 @@ mod tests {
 
         manager.close_sessions(["session-one"]);
 
+        assert_eq!(
+            database.load_output_history("session-one").unwrap().len(),
+            1
+        );
+        let recreated = manager.output_buffer("session-one", 128);
+        assert!(!Arc::ptr_eq(&first, &recreated));
+        assert_eq!(recreated.snapshot_after(0).0.len(), 1);
+    }
+
+    #[test]
+    fn delete_output_history_removes_persisted_history_rows() {
+        let (manager, database) = test_manager(HashMap::new());
+        database
+            .append_output_frame(
+                "session-one",
+                &crate::terminal_manager::OutputFrame {
+                    sequence: 1,
+                    data: b"stale history".to_vec(),
+                },
+                1,
+            )
+            .unwrap();
+
+        manager.delete_output_history("session-one");
+
         assert!(
             database
                 .load_output_history("session-one")
                 .unwrap()
                 .is_empty()
         );
-        let recreated = manager.output_buffer("session-one", 128);
-        assert!(!Arc::ptr_eq(&first, &recreated));
+    }
+
+    #[test]
+    fn non_webshell_sessions_do_not_load_persisted_output_history() {
+        let mut session = test_session("session-one", "running");
+        session
+            .metadata
+            .insert("sessionBackend".to_owned(), "herdr".to_owned());
+        let (manager, database) =
+            test_manager(HashMap::from([("session-one".to_owned(), session)]));
+        database
+            .append_output_frame(
+                "session-one",
+                &crate::terminal_manager::OutputFrame {
+                    sequence: 1,
+                    data: b"managed by herdr".to_vec(),
+                },
+                1,
+            )
+            .unwrap();
+
+        let buffer = manager.output_buffer("session-one", 128);
+
+        assert!(buffer.snapshot_after(0).0.is_empty());
     }
 
     fn test_manager(records: HashMap<String, SessionRecord>) -> (SessionManager, Arc<AppDatabase>) {

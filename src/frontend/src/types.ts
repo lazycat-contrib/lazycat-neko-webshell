@@ -27,6 +27,7 @@ export type WorkspacePaneState = {
   id: string;
   session_id: string;
   status: string;
+  session_backend?: SessionBackendId;
   cols: number;
   rows: number;
 };
@@ -206,6 +207,7 @@ export type TerminalPane = {
   mount: HTMLDivElement;
   sessionId?: string;
   sessionStatus?: string;
+  sessionBackend: SessionBackendId;
   term?: Terminal;
   socket?: WebSocket;
   transport?: PaneTerminalTransport;

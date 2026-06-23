@@ -519,7 +519,7 @@ function bindActions() {
   elements.herdrMode.addEventListener("change", (event) => {
     const select = event.target instanceof HTMLSelectElement ? event.target : null;
     if (!select) return;
-    setSessionMode(normalizeSessionMode(select.value));
+    void setSessionMode(normalizeSessionMode(select.value));
   });
   elements.herdrNewTab.addEventListener("click", () => {
     const workspaceId = focusedHerdrWorkspace()?.workspace_id;
@@ -1641,9 +1641,14 @@ function renderFileTransferTool(plugin: PluginDescriptor): string {
 function renderAIControlTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
   const disabledAttr = disabled ? "disabled" : "";
-  const modelOptions = aiModelOptions
-    .map((model) => `<option value="${escapeAttr(model)}"></option>`)
-    .join("");
+  const modelValues = aiModelOptions.includes(settings.aiModel) || !settings.aiModel
+    ? aiModelOptions
+    : [settings.aiModel, ...aiModelOptions];
+  const modelOptions = modelValues.length
+    ? modelValues
+      .map((model) => `<option value="${escapeAttr(model)}" ${model === settings.aiModel ? "selected" : ""}>${escapeHtml(model)}</option>`)
+      .join("")
+    : `<option value="" selected disabled>${escapeHtml(tr("action.aiFetchModels"))}</option>`;
   return `
     <div class="plugin-tool ai-control-tool">
       <div class="settings-group-title">${escapeHtml(tr("section.aiAccess"))}</div>
@@ -1665,8 +1670,9 @@ function renderAIControlTool(plugin: PluginDescriptor): string {
         </label>
         <label class="field">
           <span>${escapeHtml(tr("field.aiModel"))}</span>
-          <input data-ai-setting="model" list="aiModelOptions" type="text" value="${escapeAttr(settings.aiModel)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
-          <datalist id="aiModelOptions">${modelOptions}</datalist>
+          <select data-ai-setting="model" ${disabledAttr}>
+            ${modelOptions}
+          </select>
         </label>
       </div>
       <div class="plugin-action-row ai-action-row">
@@ -2393,6 +2399,8 @@ async function runHerdrAction(
       return;
     }
     herdrState = state;
+    writeSessionModePreference("herdr");
+    await ensureSessionModeTab("herdr");
     renderHerdrDock();
     activePane()?.term?.focus();
   } catch (error) {
@@ -2410,7 +2418,10 @@ function renderHerdrDock() {
   const backends = sessionBackendsState?.backends ?? [{ id: "webshell" as const, label: "WebShell native", available: true }];
   const hasOptionalBackend = backends.some((backend) => backend.id !== "webshell");
   const hasHerdrControls = Boolean(herdrState?.available);
-  if (!hasOptionalBackend && !hasHerdrControls) {
+  const activeMode = activePane()?.sessionBackend;
+  const mode = activeMode ?? currentSessionMode();
+  const showHerdrControls = hasHerdrControls && mode === "herdr" && activeMode === "herdr";
+  if (!hasOptionalBackend && !showHerdrControls) {
     elements.webshell.classList.remove("has-herdr");
     elements.herdrDock.hidden = true;
     elements.herdrDock.classList.remove("webshell-mode");
@@ -2424,8 +2435,6 @@ function renderHerdrDock() {
     return;
   }
 
-  const mode = currentSessionMode();
-  const showHerdrControls = hasHerdrControls && mode === "herdr";
   elements.webshell.classList.add("has-herdr");
   elements.herdrDock.hidden = false;
   elements.herdrDock.classList.toggle("webshell-mode", !showHerdrControls);
@@ -2462,16 +2471,67 @@ function currentSessionMode(): SessionMode {
   }
 }
 
-function setSessionMode(mode: SessionMode) {
+async function setSessionMode(mode: SessionMode) {
   if (!selectedSelector) return;
-  const backends = sessionBackendsState?.backends ?? [];
-  if (!backends.some((backend) => backend.id === mode)) return;
+  if (!sessionBackendIsSelectable(mode)) return;
+  writeSessionModePreference(mode);
+  renderHerdrDock();
+  await ensureSessionModeTab(mode);
+  renderHerdrDock();
+}
+
+function sessionBackendIsSelectable(mode: SessionMode): boolean {
+  if (mode === "webshell") return true;
+  if (mode === "herdr" && herdrState?.available) return true;
+  return (sessionBackendsState?.backends ?? []).some((backend) => backend.id === mode);
+}
+
+function writeSessionModePreference(mode: SessionMode) {
+  if (!selectedSelector) return;
   try {
     window.localStorage.setItem(sessionModeStorageKey(selectedSelector), mode);
   } catch {
     // This preference is non-critical.
   }
-  renderHerdrDock();
+}
+
+function syncSessionModePreferenceToActivePane() {
+  const mode = activePane()?.sessionBackend;
+  if (mode) writeSessionModePreference(mode);
+}
+
+async function ensureSessionModeTab(mode: SessionMode): Promise<boolean> {
+  const selector = selectedSelector;
+  if (!selector || !sessionBackendIsSelectable(mode)) return false;
+  const existing = findPaneBySessionBackend(selector, mode);
+  if (existing) {
+    activatePane(existing.tab.id, existing.pane.id);
+    return true;
+  }
+  try {
+    await runWorkspaceAction("create_tab", { selector, sessionBackend: mode });
+    return true;
+  } catch (error) {
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+    return false;
+  }
+}
+
+function findPaneBySessionBackend(
+  selector: string,
+  mode: SessionMode,
+): { tab: TerminalTab; pane: TerminalPane } | undefined {
+  const normalizedSelector = normalizeSelector(selector);
+  const sameSelectorTabs = tabs.filter((tab) => normalizeSelector(tab.selector) === normalizedSelector);
+  for (const tab of sameSelectorTabs) {
+    const pane = activePane(tab);
+    if (pane?.sessionBackend === mode) return { tab, pane };
+  }
+  for (const tab of sameSelectorTabs) {
+    const pane = tab.panes.find((item) => item.sessionBackend === mode);
+    if (pane) return { tab, pane };
+  }
+  return undefined;
 }
 
 function sessionModeStorageKey(selector: string): string {
@@ -2594,6 +2654,7 @@ async function restoreWorkspacePane(
   pane.label = tab.label;
   pane.sessionId = paneState.session_id;
   pane.sessionStatus = paneState.status;
+  pane.sessionBackend = normalizeSessionMode(paneState.session_backend);
   pane.cols = paneState.cols || INITIAL_COLS;
   pane.rows = paneState.rows || INITIAL_ROWS;
   pane.exited = paneState.status === "exited";
@@ -2761,6 +2822,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     exited: false,
     closing: false,
     titleBuffer: "",
+    sessionBackend: "webshell",
     cols: INITIAL_COLS,
     rows: INITIAL_ROWS,
   };
@@ -3278,6 +3340,8 @@ function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: 
   }
   renderTabs();
   updateActiveDetails();
+  syncSessionModePreferenceToActivePane();
+  renderHerdrDock();
   activePane()?.term?.focus();
   if (options.updateLocation !== false) {
     rememberActiveTab();
@@ -3305,6 +3369,8 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   updatePaneActiveState(tab);
   renderTabs();
   updateActiveDetails();
+  syncSessionModePreferenceToActivePane();
+  renderHerdrDock();
   if (options.focus !== false) {
     activePane(tab)?.term?.focus();
   }

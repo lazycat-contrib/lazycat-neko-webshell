@@ -493,7 +493,12 @@ impl OutputBuffer {
         }
     }
 
-    pub fn close_history(&self) {
+    pub fn detach_history(&self) {
+        self.history_closed.store(true, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub fn delete_history(&self) {
         self.history_closed.store(true, Ordering::Relaxed);
         let _history_guard = self
             .history_lock
