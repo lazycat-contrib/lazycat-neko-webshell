@@ -5,6 +5,7 @@ import { createConnectTransport } from "@connectrpc/connect-web";
 import { createIcons, icons } from "lucide";
 import { Terminal } from "restty/xterm";
 
+import { AIChatStore } from "./ai-chat-store";
 import { TerminalActionWSClient, type ActionResponseMeta } from "./action-ws-client";
 import { appendAIContextText, recentAIContextText } from "./ai-context";
 import {
@@ -155,7 +156,7 @@ let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
 let pluginsLoading = false;
 let activePluginToolId = "";
-let aiModelOptions: string[] = [];
+const aiChat = new AIChatStore();
 let fileBrowserPath = "/";
 let selectedFileBrowserPath = "";
 let fileBrowserEntries: FileBrowserEntry[] = [];
@@ -163,9 +164,6 @@ let fileBrowserLoading = false;
 let fileBrowserLoadedPath = "";
 let fileBrowserPaneId = "";
 let fileBrowserContextMenu: FileBrowserContextMenu | undefined;
-let aiChatSessions: AIChatSession[] = [];
-let activeAIChatSessionId = "";
-let aiChatStreaming = false;
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
@@ -2336,9 +2334,9 @@ function pluginControlsDisabled(plugin: PluginDescriptor): boolean {
 function renderAIAccessSettings(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
   const disabledAttr = disabled ? "disabled" : "";
-  const modelValues = aiModelOptions.includes(settings.aiModel) || !settings.aiModel
-    ? aiModelOptions
-    : [settings.aiModel, ...aiModelOptions];
+  const modelValues = aiChat.modelOptions.includes(settings.aiModel) || !settings.aiModel
+    ? aiChat.modelOptions
+    : [settings.aiModel, ...aiChat.modelOptions];
   const modelOptions = modelValues.length
     ? modelValues
       .map((model) => `<option value="${escapeAttr(model)}" ${model === settings.aiModel ? "selected" : ""}>${escapeHtml(model)}</option>`)
@@ -2451,11 +2449,11 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
     description: pluginDescription(plugin),
     session,
     messages: session.messages,
-    streaming: aiChatStreaming,
+    streaming: aiChat.streaming,
     modelOptions: aiModelValues(),
     selectedModel: currentAIModel(),
     sessionOptions: aiChatSessionsForModel(session.model).map((item) => ({ value: item.id, label: item.title })),
-    selectedSessionId: activeAIChatSessionId,
+    selectedSessionId: aiChat.activeSessionId,
     tr,
   });
 }
@@ -2566,15 +2564,15 @@ function updateAISetting(field: string, value: string) {
     settings.aiProvider = value || DEFAULT_SETTINGS.aiProvider;
   } else if (field === "baseUrl") {
     settings.aiBaseUrl = value.trim();
-    aiModelOptions = [];
+    aiChat.modelOptions = [];
   } else if (field === "apiKey") {
     settings.aiApiKey = value;
-    aiModelOptions = [];
+    aiChat.modelOptions = [];
   } else if (field === "model") {
     settings.aiModel = value.trim();
-    activeAIChatSessionId = ensureAIChatSession(currentAIModel()).id;
+    aiChat.activeSessionId = ensureAIChatSession(currentAIModel()).id;
   } else if (field === "session") {
-    activeAIChatSessionId = value;
+    aiChat.activeSessionId = value;
   } else if (field === "sendContext") {
     settings.aiSendTerminalContext = value === "true";
   } else if (field === "contextLines") {
@@ -2593,10 +2591,10 @@ async function fetchAIModels() {
   try {
     const done = await actionClient.send("ai", "models", {});
     const models = metaStringArray(done.meta, "models");
-    aiModelOptions = models;
+    aiChat.modelOptions = models;
     if (!settings.aiModel && models[0]) {
       settings.aiModel = models[0];
-      activeAIChatSessionId = ensureAIChatSession(models[0]).id;
+      aiChat.activeSessionId = ensureAIChatSession(models[0]).id;
       saveSettings();
     }
     removeAIModelListMessages(models);
@@ -2618,10 +2616,10 @@ async function testAIAccess() {
     const done = await actionClient.send("ai", "test", {});
     const models = metaStringArray(done.meta, "models");
     if (models.length) {
-      aiModelOptions = models;
+      aiChat.modelOptions = models;
       if (!settings.aiModel && models[0]) {
         settings.aiModel = models[0];
-        activeAIChatSessionId = ensureAIChatSession(models[0]).id;
+        aiChat.activeSessionId = ensureAIChatSession(models[0]).id;
         saveSettings();
       }
       renderPlugins();
@@ -2637,7 +2635,7 @@ async function testAIAccess() {
 }
 
 async function runAIChat() {
-  if (!pluginIsEnabled(AI_CHAT_PLUGIN_ID) || aiChatStreaming) return;
+  if (!pluginIsEnabled(AI_CHAT_PLUGIN_ID) || aiChat.streaming) return;
   if (!aiAccessConfigured()) {
     appendAIChatSystem(tr("validation.aiAccess"), "error");
     return;
@@ -2659,7 +2657,7 @@ async function runAIChat() {
   session.messages.push({ role: "user", content: prompt });
   const assistant: AIChatMessage = { role: "assistant", content: "" };
   session.messages.push(assistant);
-  aiChatStreaming = true;
+  aiChat.streaming = true;
   renderPluginTools();
   try {
     await actionClient.send("ai", "chat", {
@@ -2682,7 +2680,7 @@ async function runAIChat() {
     assistant.tone = "error";
     setPluginStatus(errorMessage(error), "error");
   } finally {
-    aiChatStreaming = false;
+    aiChat.streaming = false;
     renderPluginTools();
   }
 }
@@ -2726,83 +2724,45 @@ function clearAIOutput() {
 }
 
 function currentAIModel(): string {
-  return settings.aiModel.trim() || aiModelOptions[0] || "";
+  return aiChat.currentModel(settings.aiModel);
 }
 
 function activeAIChatSession(): AIChatSession | undefined {
-  return aiChatSessions.find((session) => session.id === activeAIChatSessionId);
+  return aiChat.activeSession();
 }
 
 function ensureAIChatSession(model: string): AIChatSession {
-  const normalizedModel = model.trim() || "default";
-  const active = activeAIChatSession();
-  if (active?.model === normalizedModel) return active;
-  const existing = aiChatSessions.find((session) => session.model === normalizedModel);
-  if (existing) {
-    activeAIChatSessionId = existing.id;
-    return existing;
-  }
-  const count = aiChatSessions.filter((session) => session.model === normalizedModel).length + 1;
-  const session: AIChatSession = {
-    id: newId(),
-    model: normalizedModel,
-    title: `${tr("plugin.aiChat.block")} ${count}`,
-    messages: [],
-  };
-  aiChatSessions = [...aiChatSessions, session];
-  activeAIChatSessionId = session.id;
-  return session;
+  return aiChat.ensureSession(model, tr("plugin.aiChat.block"), newId);
 }
 
 function newAIChatSession() {
   const model = currentAIModel() || "default";
-  const count = aiChatSessions.filter((session) => session.model === model).length + 1;
-  const session: AIChatSession = {
-    id: newId(),
-    model,
-    title: `${tr("plugin.aiChat.block")} ${count}`,
-    messages: [],
-  };
-  aiChatSessions = [...aiChatSessions, session];
-  activeAIChatSessionId = session.id;
+  aiChat.newSession(model, tr("plugin.aiChat.block"), newId);
   renderPluginTools();
 }
 
 function appendAIChatSystem(content: string, tone: Tone = "neutral") {
-  const session = ensureAIChatSession(currentAIModel());
-  session.messages.push({ role: "system", content, tone });
+  aiChat.appendSystem(content, tone, currentAIModel(), tr("plugin.aiChat.block"), newId);
   renderPluginTools();
 }
 
 function aiModelValues(): Array<{ value: string; label: string }> {
-  const values = Array.from(new Set([settings.aiModel, ...aiModelOptions].map((value) => value.trim()).filter(Boolean)));
-  if (!values.length) {
-    return [{ value: "", label: tr("action.aiFetchModels") }];
-  }
-  return values.map((model) => ({ value: model, label: model }));
+  return aiChat.modelValues(settings.aiModel, tr("action.aiFetchModels"));
 }
 
 function aiChatSessionsForModel(model: string): AIChatSession[] {
-  return aiChatSessions.filter((item) => item.model === model);
+  return aiChat.sessionsForModel(model);
 }
 
 function removeAIModelListMessages(models: string[]) {
-  if (models.length < 3) return;
-  const modelSet = new Set(models);
-  for (const session of aiChatSessions) {
-    session.messages = session.messages.filter((message) => {
-      if (message.role !== "system" || message.tone !== "ok") return true;
-      const lines = message.content.split("\n").map((line) => line.trim()).filter(Boolean);
-      return lines.length < 3 || !lines.every((line) => modelSet.has(line));
-    });
-  }
+  aiChat.removeModelListMessages(models);
 }
 
 function renderAIChatMessages(): string {
   const session = ensureAIChatSession(currentAIModel());
   return renderAIChatMessagesView({
     messages: session.messages,
-    streaming: aiChatStreaming,
+    streaming: aiChat.streaming,
     tr,
   });
 }
