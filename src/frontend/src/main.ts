@@ -2380,8 +2380,8 @@ async function fetchAIModels() {
       activeAIChatSessionId = ensureAIChatSession(models[0]).id;
       saveSettings();
     }
+    removeAIModelListMessages(models);
     renderPlugins();
-    appendAIChatSystem(models.join("\n") || tr("status.noSessions"), "ok");
     setPluginStatus(tr("status.aiModelsReady", { count: models.length }), "ok");
   } catch (error) {
     appendAIChatSystem(errorMessage(error), "error");
@@ -2565,6 +2565,18 @@ function aiModelValues(): Array<{ value: string; label: string }> {
 
 function aiChatSessionsForModel(model: string): AIChatSession[] {
   return aiChatSessions.filter((item) => item.model === model);
+}
+
+function removeAIModelListMessages(models: string[]) {
+  if (models.length < 3) return;
+  const modelSet = new Set(models);
+  for (const session of aiChatSessions) {
+    session.messages = session.messages.filter((message) => {
+      if (message.role !== "system" || message.tone !== "ok") return true;
+      const lines = message.content.split("\n").map((line) => line.trim()).filter(Boolean);
+      return lines.length < 3 || !lines.every((line) => modelSet.has(line));
+    });
+  }
 }
 
 function renderAIChatPicker(

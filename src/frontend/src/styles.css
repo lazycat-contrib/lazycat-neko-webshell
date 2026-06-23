@@ -579,7 +579,7 @@ textarea:focus-visible {
   align-items: center;
   flex: 0 1 auto;
   width: auto;
-  min-width: 58px;
+  min-width: 46px;
   max-width: min(248px, 34vw);
   height: 100%;
   color: var(--tab-fg);
@@ -588,7 +588,7 @@ textarea:focus-visible {
 
 .tab.named {
   width: auto;
-  min-width: 76px;
+  min-width: 56px;
   max-width: min(260px, 38vw);
 }
 
@@ -654,7 +654,7 @@ textarea:focus-visible {
 
 .tab.named .tab-main {
   justify-content: flex-start;
-  min-width: 68px;
+  min-width: 0;
   max-width: 100%;
 }
 
@@ -900,7 +900,7 @@ textarea:focus-visible {
   position: relative;
   z-index: 16;
   display: grid;
-  grid-template-columns: minmax(110px, auto) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(72px, min(34vw, 330px)) minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-height: 38px;
@@ -920,7 +920,7 @@ textarea:focus-visible {
 .herdr-tabs {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -945,7 +945,7 @@ textarea:focus-visible {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  max-width: 190px;
+  max-width: 168px;
   transition: max-width 0.18s ease;
 }
 
@@ -971,8 +971,8 @@ textarea:focus-visible {
 }
 
 .herdr-chip {
-  gap: 6px;
-  max-width: 178px;
+  gap: 5px;
+  max-width: 156px;
   overflow: hidden;
   transition:
     width 0.18s ease,
@@ -1026,34 +1026,49 @@ textarea:focus-visible {
 }
 
 .herdr-space:not([aria-selected="true"]) {
-  max-width: 118px;
+  max-width: 92px;
 }
 
 .herdr-space:not([aria-selected="true"]):hover,
 .herdr-space:not([aria-selected="true"]):focus-within {
-  max-width: 178px;
+  max-width: 148px;
 }
 
 .herdr-space:not([aria-selected="true"]) .herdr-chip {
-  max-width: 110px;
+  max-width: 88px;
   min-width: 0;
-  padding: 0 7px 0 5px;
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 11.5px;
 }
 
 .herdr-space:not([aria-selected="true"]):hover .herdr-chip,
 .herdr-space:not([aria-selected="true"]):focus-within .herdr-chip {
-  max-width: 178px;
-  padding: 0 9px;
+  max-width: 140px;
+  padding: 0 8px;
+}
+
+.herdr-space:not([aria-selected="true"]) .herdr-chip small {
+  width: 0;
+  opacity: 0;
+  transform: scale(0.72);
+}
+
+.herdr-space:not([aria-selected="true"]):hover .herdr-chip small,
+.herdr-space:not([aria-selected="true"]):focus-within .herdr-chip small {
+  width: 18px;
+  opacity: 1;
+  transform: scale(1);
 }
 
 .herdr-space:not([aria-selected="true"]) .herdr-chip span {
-  max-width: 78px;
+  max-width: 72px;
   opacity: 0.86;
 }
 
 .herdr-space:not([aria-selected="true"]):hover .herdr-chip span,
 .herdr-space:not([aria-selected="true"]):focus-within .herdr-chip span {
-  max-width: 116px;
+  max-width: 104px;
   opacity: 1;
 }
 
@@ -1074,26 +1089,21 @@ textarea:focus-visible {
 }
 
 .herdr-space-close {
-  width: 18px;
-  height: 18px;
-  margin-left: -6px;
-  margin-right: 2px;
-}
-
-.herdr-space:not([aria-selected="true"]) .herdr-space-close {
   width: 0;
-  margin-right: 0;
+  height: 18px;
   margin-left: 0;
+  margin-right: 0;
   opacity: 0;
+  overflow: hidden;
   pointer-events: none;
 }
 
-.herdr-space:not([aria-selected="true"]):hover .herdr-space-close,
-.herdr-space:not([aria-selected="true"]):focus-within .herdr-space-close {
+.herdr-space:hover .herdr-space-close,
+.herdr-space:focus-within .herdr-space-close {
   width: 18px;
-  margin-left: -6px;
-  margin-right: 2px;
-  opacity: 0.58;
+  margin-left: -5px;
+  margin-right: 1px;
+  opacity: 0.82;
   pointer-events: auto;
 }
 
@@ -2164,7 +2174,8 @@ kbd {
 .plugin-tool-body {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: visible;
+  overflow-y: auto;
   padding: 12px;
 }
 
@@ -2625,7 +2636,7 @@ kbd {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .ai-chat-history {
@@ -2634,6 +2645,7 @@ kbd {
   gap: 10px;
   min-height: 260px;
   overflow: auto;
+  border-radius: 8px 8px 0 0;
   padding: 12px;
 }
 
@@ -2777,9 +2789,12 @@ kbd {
 }
 
 .ai-chat-composer {
+  position: relative;
+  z-index: 3;
   display: grid;
   gap: 8px;
   border-top: 1px solid var(--line-soft);
+  border-radius: 0 0 8px 8px;
   background: color-mix(in srgb, var(--chrome) 72%, transparent);
   padding: 10px;
 }
@@ -2860,7 +2875,7 @@ kbd {
   position: absolute;
   right: 0;
   bottom: calc(100% + 8px);
-  z-index: 6;
+  z-index: 30;
   display: grid;
   gap: 3px;
   width: max(100%, min(260px, 72vw));
@@ -3421,7 +3436,7 @@ output {
 
   .tab.named {
     width: auto;
-    min-width: 72px;
+    min-width: 56px;
     max-width: min(172px, 46vw);
   }
 
@@ -3476,6 +3491,15 @@ output {
     min-height: 38px;
     border-radius: 6px;
     font-size: 12px;
+  }
+
+  .herdr-space-close {
+    width: 22px;
+    height: 22px;
+    margin-left: -4px;
+    margin-right: 1px;
+    opacity: 0.72;
+    pointer-events: auto;
   }
 
   .herdr-tab {
