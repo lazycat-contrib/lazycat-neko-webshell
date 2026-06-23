@@ -3410,8 +3410,12 @@ output {
   }
 
   .tab.active {
-    min-width: 76px;
-    max-width: min(168px, 46vw);
+    min-width: 92px;
+    max-width: min(180px, 52vw);
+  }
+
+  .tab.active::after {
+    display: none;
   }
 
   .tab.named {
@@ -3420,8 +3424,8 @@ output {
   }
 
   .tab.named.active {
-    min-width: 88px;
-    max-width: min(172px, 48vw);
+    min-width: 104px;
+    max-width: min(188px, 54vw);
   }
 
   .tab.named .tab-main {
@@ -3430,7 +3434,7 @@ output {
 
   .tab.active .tab-main {
     justify-content: flex-start;
-    padding: 0 24px 0 10px;
+    padding: 0 38px 0 10px;
   }
 
   .tab:not(.active) .tab-title {
@@ -3455,9 +3459,18 @@ output {
   }
 
   .tab-close {
-    opacity: 0.72;
-    width: 22px;
-    height: 22px;
+    right: 4px;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--control-hover-border);
+    background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
+    color: var(--control-fg-hover);
+    opacity: 0.9;
+  }
+
+  .tab-close svg {
+    width: 16px;
+    height: 16px;
   }
 
   .tab:not(.active) .tab-close {

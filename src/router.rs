@@ -11,7 +11,7 @@ use tower_http::trace::TraceLayer;
 use crate::action_ws::action_ws;
 use crate::assets::{frontend_asset, frontend_font, index, security_header};
 use crate::backgrounds::{background_file, delete_background, upload_background};
-use crate::config::{MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES};
+use crate::config::{MAX_CLIPBOARD_IMAGE_BYTES, MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES};
 use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
 use crate::herdr::{get_herdr_state, herdr_ws, post_herdr_action, post_herdr_socket};
 use crate::lightos::{self, AdminInfo};
@@ -20,7 +20,7 @@ use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
 use crate::service::CapabilityServiceImpl;
 use crate::session_backend::get_session_backends;
 use crate::state::AppState;
-use crate::terminal::terminal_ws;
+use crate::terminal::{terminal_ws, upload_clipboard_image};
 use crate::workspace::{get_workspace, put_workspace_action};
 
 pub fn build_app(state: Arc<AppState>) -> Router {
@@ -43,6 +43,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
         .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
         .route("/api/herdr/socket", post(post_herdr_socket))
+        .route("/api/clipboard-image", post(upload_clipboard_image))
         .route("/api/fonts", get(list_fonts).post(upload_font))
         .route("/api/fonts/{id}", delete(delete_font))
         .route("/api/fonts/{id}/file", get(font_file))
@@ -52,8 +53,8 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .with_state(state)
         .merge(connect)
         .layer(axum::extract::DefaultBodyLimit::max(usize::max(
-            MAX_FONT_BYTES,
-            MAX_TERMINAL_BACKGROUND_BYTES,
+            usize::max(MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES),
+            MAX_CLIPBOARD_IMAGE_BYTES,
         )))
         .layer(TraceLayer::new_for_http())
         .layer(security_header(

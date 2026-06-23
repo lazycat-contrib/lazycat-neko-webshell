@@ -1609,9 +1609,24 @@ async function closeHerdrPane(pane: TerminalPane): Promise<boolean> {
 }
 
 async function pasteIntoHerdrPane(pane: TerminalPane, report: boolean): Promise<boolean> {
+  const imagePayload = await readClipboardImagePayload();
+  if (imagePayload) {
+    return pasteClipboardImageIntoHerdrPane(pane, imagePayload, report);
+  }
+
   try {
     const text = await navigator.clipboard?.readText?.() ?? "";
     if (!text) return false;
+    return pasteTextIntoHerdrPane(pane, text, report);
+  } catch (error) {
+    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+    return false;
+  }
+}
+
+async function pasteTextIntoHerdrPane(pane: TerminalPane, text: string, report: boolean): Promise<boolean> {
+  if (!text) return false;
+  try {
     const selector = await ensureHerdrSocketReady(pane);
     const paneId = await currentHerdrPaneId(selector);
     await runHerdrSocketRequest("pane.send_text", { pane_id: paneId, text }, {
@@ -1619,7 +1634,31 @@ async function pasteIntoHerdrPane(pane: TerminalPane, report: boolean): Promise<
       id: "lazycat-webshell:pane-paste",
       mirrorNotification: false,
     });
-    activePane()?.term?.focus();
+    pane.term?.focus();
+    return true;
+  } catch (error) {
+    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+    return false;
+  }
+}
+
+async function pasteClipboardImageIntoHerdrPane(
+  pane: TerminalPane,
+  payload: ClipboardImagePayload,
+  report: boolean,
+): Promise<boolean> {
+  if (payload.data.byteLength <= 0 || payload.data.byteLength > MAX_CLIPBOARD_IMAGE_BYTES) return false;
+  try {
+    const selector = await ensureHerdrSocketReady(pane);
+    const paneId = await currentHerdrPaneId(selector);
+    const path = await stageClipboardImage(selector, payload);
+    if (!path) return false;
+    await runHerdrSocketRequest("pane.send_text", { pane_id: paneId, text: path }, {
+      selector,
+      id: "lazycat-webshell:pane-paste-image",
+      mirrorNotification: false,
+    });
+    pane.term?.focus();
     return true;
   } catch (error) {
     if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
@@ -5088,6 +5127,9 @@ function paneScrollbackHost(pane: TerminalPane): HTMLElement | null {
 
 function paneMouseReportingActive(pane: TerminalPane, event: MouseEvent | PointerEvent): boolean {
   if (event.shiftKey) return false;
+  // Herdr enables terminal mouse reporting, but webshell still owns the outer
+  // Restty scrollback viewport for history navigation.
+  if (pane.sessionBackend === "herdr") return false;
   return Boolean(pane.term?.restty?.getMouseStatus().active);
 }
 
@@ -5668,7 +5710,11 @@ function handleTerminalPasteEvent(event: ClipboardEvent) {
   }
   const text = event.clipboardData?.getData("text/plain") ?? "";
   if (text) {
-    pasteTextIntoPane(pane, text);
+    if (pane.sessionBackend === "herdr") {
+      void pasteTextIntoHerdrPane(pane, text, false);
+    } else {
+      pasteTextIntoPane(pane, text);
+    }
   } else {
     void pasteIntoPane(pane, false);
   }
@@ -5861,6 +5907,9 @@ async function copySelection(report: boolean, pane = activePane()): Promise<bool
 
 async function pasteIntoPane(pane: TerminalPane | undefined, report: boolean): Promise<boolean> {
   if (!pane?.term?.restty) return false;
+  if (pane.sessionBackend === "herdr") {
+    return pasteIntoHerdrPane(pane, report);
+  }
   const imagePayload = await readClipboardImagePayload();
   if (imagePayload) {
     return sendClipboardImageIntoPane(pane, imagePayload, report);
@@ -5916,6 +5965,9 @@ async function readClipboardImagePayload(): Promise<ClipboardImagePayload | unde
 async function pasteImageFileIntoPane(pane: TerminalPane, file: File, report: boolean): Promise<boolean> {
   try {
     const payload = await imageBlobPayload(file, file.type);
+    if (pane.sessionBackend === "herdr") {
+      return pasteClipboardImageIntoHerdrPane(pane, payload, report);
+    }
     return sendClipboardImageIntoPane(pane, payload, report);
   } catch (error) {
     if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
@@ -5971,6 +6023,25 @@ function sendClipboardImageIntoPane(
     scheduleReconnect(pane);
     return false;
   }
+}
+
+async function stageClipboardImage(selector: string, payload: ClipboardImagePayload): Promise<string> {
+  const url = new URL("./api/clipboard-image", window.location.href);
+  url.searchParams.set("name", selector);
+  url.searchParams.set("extension", payload.extension);
+  const response = await fetch(url, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/octet-stream" },
+    body: payload.data,
+  });
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  const result = await response.json() as { path?: unknown };
+  const path = typeof result.path === "string" ? result.path.trim() : "";
+  if (!path) throw new Error("clipboard image path is missing");
+  return path;
 }
 
 function pasteTextIntoPane(pane: TerminalPane | undefined, text: string): boolean {

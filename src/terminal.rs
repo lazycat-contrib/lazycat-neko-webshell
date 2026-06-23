@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
+use axum::Json;
+use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
 use axum::http::header::{HOST, ORIGIN};
@@ -48,6 +50,12 @@ pub struct TerminalQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ClipboardImageUploadQuery {
+    name: String,
+    extension: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum TerminalClientMessage {
     Input { data: String },
@@ -61,6 +69,13 @@ enum TerminalClientMessage {
 #[derive(Debug)]
 struct PendingClipboardImage {
     extension: String,
+    size: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardImageUploadResponse {
+    path: String,
     size: usize,
 }
 
@@ -138,6 +153,55 @@ pub async fn terminal_ws(
             warn!(error = %err, "terminal websocket ended with error");
         }
     })
+}
+
+pub async fn upload_clipboard_image(
+    Query(query): Query<ClipboardImageUploadQuery>,
+    body: Bytes,
+) -> Response {
+    let selector = query.name.trim();
+    if selector.is_empty() {
+        return (StatusCode::BAD_REQUEST, "name is required").into_response();
+    }
+    if let Err(err) = validate_selector(selector) {
+        return (
+            StatusCode::BAD_REQUEST,
+            err.message
+                .unwrap_or_else(|| "invalid LightOS selector".to_owned()),
+        )
+            .into_response();
+    }
+    if body.is_empty() {
+        return (StatusCode::BAD_REQUEST, "clipboard image payload is empty").into_response();
+    }
+    if body.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("clipboard image exceeds {MAX_CLIPBOARD_IMAGE_BYTES} bytes"),
+        )
+            .into_response();
+    }
+    if let Err(err) = authorize_terminal_selector(selector, true).await {
+        return (StatusCode::FORBIDDEN, err.to_string()).into_response();
+    }
+
+    let extension = query.extension.as_deref().unwrap_or("png");
+    let remote_path = remote_clipboard_image_path(extension);
+    match stage_clipboard_image(selector, &remote_path, body.as_ref()).await {
+        Ok(()) => (
+            StatusCode::CREATED,
+            Json(ClipboardImageUploadResponse {
+                path: remote_path,
+                size: body.len(),
+            }),
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            format!("failed to stage clipboard image: {err}"),
+        )
+            .into_response(),
+    }
 }
 
 async fn handle_terminal_socket(
