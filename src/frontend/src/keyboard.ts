@@ -114,6 +114,30 @@ const MOBILE_SHORTCUT_KEYS: Record<string, string> = {
   up: "ArrowUp",
 };
 
+const SHIFTED_PRINTABLE_KEYS: Record<string, string> = {
+  "`": "~",
+  "1": "!",
+  "2": "@",
+  "3": "#",
+  "4": "$",
+  "5": "%",
+  "6": "^",
+  "7": "&",
+  "8": "*",
+  "9": "(",
+  "0": ")",
+  "-": "_",
+  "=": "+",
+  "[": "{",
+  "]": "}",
+  "\\": "|",
+  ";": ":",
+  "'": "\"",
+  ",": "<",
+  ".": ">",
+  "/": "?",
+};
+
 export function keyEventToTerminalSequence(event: TerminalKeyLike, cursorKeysApp = false): string | undefined {
   if (event.metaKey) return undefined;
   if (event.key === "Tab" && event.shiftKey) return "\x1b[Z";
@@ -165,6 +189,24 @@ export function encodeMobileShortcutKeyInput(inputKey: string, modifiers: Termin
   });
 }
 
+export function encodeModifiedTextInput(text: string, modifiers: TerminalShortcutModifiers = {}): string | undefined {
+  const points = Array.from(String(text || ""));
+  if (points.length !== 1 || !canModifyTextInput(points[0])) return undefined;
+  if (!modifiers.ctrl && !modifiers.alt && !modifiers.shift) return points[0];
+
+  let encoded = points[0];
+  if (modifiers.shift) {
+    encoded = shiftedTextInput(encoded);
+  }
+  if (modifiers.ctrl) {
+    encoded = controlKeySequence(encoded) ?? kittyCtrlSequence(encoded);
+  }
+  if (modifiers.alt) {
+    encoded = `\x1b${encoded}`;
+  }
+  return encoded;
+}
+
 function controlKeySequence(key: string): string | undefined {
   if (key.length === 1) {
     const code = key.toLowerCase().charCodeAt(0);
@@ -177,6 +219,22 @@ function controlKeySequence(key: string): string | undefined {
   if (key === "^" || key === "~" || key === "6") return "\x1e";
   if (key === "_" || key === "-" || key === "/") return "\x1f";
   return undefined;
+}
+
+function canModifyTextInput(text: string): boolean {
+  const point = text.codePointAt(0);
+  return point !== undefined && point >= 0x20 && point !== 0x7f;
+}
+
+function shiftedTextInput(text: string): string {
+  const shifted = SHIFTED_PRINTABLE_KEYS[text];
+  if (shifted) return shifted;
+  const upper = text.toUpperCase();
+  return Array.from(upper).length === 1 ? upper : text;
+}
+
+function kittyCtrlSequence(text: string): string {
+  return `\x1b[${text.codePointAt(0) ?? 0};5u`;
 }
 
 function xtermModifier(event: TerminalKeyLike): number | undefined {

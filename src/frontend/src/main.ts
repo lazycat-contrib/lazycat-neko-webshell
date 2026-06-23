@@ -28,7 +28,7 @@ import {
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
 import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
 import { translate, type MessageKey } from "./i18n";
-import { encodeMobileShortcutKeyInput } from "./keyboard";
+import { encodeMobileShortcutKeyInput, encodeModifiedTextInput } from "./keyboard";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
@@ -64,6 +64,12 @@ const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
+const MOBILE_TERMINAL_TAP_MOVE_THRESHOLD_PX = 18;
+const MOBILE_TERMINAL_DOUBLE_TAP_DISTANCE_PX = 32;
+const MOBILE_TERMINAL_DOUBLE_TAP_DELAY_MS = 420;
+const MOBILE_TERMINAL_TAB_SWIPE_DISTANCE_PX = 72;
+const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
+const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MAX_AI_CONTEXT_CHARS = 12000;
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
@@ -1157,14 +1163,13 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
   if (shortcut === "ctrl" || shortcut === "alt" || shortcut === "shift") {
     mobileSticky[shortcut] = !mobileSticky[shortcut];
     updateMobileShortcutState();
-    focusActivePaneCanvas();
     return;
   }
 
   if (shortcut === "paste") {
     await pasteIntoPane(activePane(), false);
     clearMobileSticky();
-    focusActivePaneCanvas();
+    focusAfterMobileShortcut();
     return;
   }
 
@@ -1175,7 +1180,7 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
   if (!options.keepModifiers) {
     clearMobileSticky();
   }
-  focusActivePaneCanvas();
+  focusAfterMobileShortcut();
 }
 
 function runMobileChord(chord: string) {
@@ -1184,7 +1189,7 @@ function runMobileChord(chord: string) {
     sendActivePaneKeyInput(data);
   }
   clearMobileSticky();
-  focusActivePaneCanvas();
+  focusAfterMobileShortcut();
 }
 
 async function runMobileAction(action: string) {
@@ -1217,7 +1222,7 @@ async function runMobileAction(action: string) {
   }
   clearMobileSticky();
   if (action !== "pane-menu") {
-    focusActivePaneCanvas();
+    focusAfterMobileShortcut();
   }
 }
 
@@ -1226,6 +1231,18 @@ function mobileChordInput(chord: string): string | undefined {
   if (chord === "ctrl-e") return "\x05";
   if (chord === "shift-tab") return "\x1b[Z";
   return undefined;
+}
+
+function hasMobileStickyModifiers(): boolean {
+  return mobileSticky.ctrl || mobileSticky.alt || mobileSticky.shift;
+}
+
+function transformMobileStickyInput(text: string, source: string): string | undefined {
+  if (!hasMobileStickyModifiers() || source === "pty" || source === "program") return undefined;
+  const encoded = encodeModifiedTextInput(text, mobileSticky);
+  if (!encoded) return undefined;
+  clearMobileSticky();
+  return encoded;
 }
 
 function clearMobileSticky() {
@@ -4455,13 +4472,21 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
   mount.addEventListener("pointerup", (event) => {
     if (event.pointerType !== "touch") return;
     const current = findPaneById(id);
-    if (current && runMobileTerminalSwipe(current, event)) {
+    const gesture = current ? readMobileTerminalGesture(current, event) : undefined;
+    if (current && gesture && runMobileTerminalSwipe(gesture)) {
+      clearMobileTerminalGesture();
       event.preventDefault();
       return;
     }
-    if (current && isDoubleTerminalTap(current, event)) {
+    clearMobileTerminalGesture();
+    if (current && gesture && isMobileTerminalTapGesture(gesture) && isDoubleTerminalTap(current, event)) {
       event.preventDefault();
       focusPaneSystemKeyboard(current);
+    }
+  });
+  mount.addEventListener("pointercancel", (event) => {
+    if (event.pointerType === "touch" && mobileTerminalSwipe.paneId === id) {
+      clearMobileTerminalGesture();
     }
   });
   mount.addEventListener("dblclick", (event) => {
@@ -4683,6 +4708,7 @@ async function mountTerminal(pane: TerminalPane) {
       touchSelectionMode: settings.touchSelectionMode,
       touchSelectionLongPressMs: 450,
       touchSelectionMoveThresholdPx: 10,
+      beforeInput: ({ text, source }) => transformMobileStickyInput(text, source),
       maxScrollbackBytes: Math.max(1_000_000, settings.scrollbackLimit * 160),
       ptyTransport: pane.transport,
       callbacks: {
@@ -5003,8 +5029,7 @@ function schedulePaneViewportReset(pane: TerminalPane) {
 
 function resetPaneViewport(pane: TerminalPane) {
   const hosts = [
-    pane.mount,
-    ...pane.mount.querySelectorAll<HTMLElement>(".restty-pane-root, textarea, [contenteditable='true']"),
+    ...pane.mount.querySelectorAll<HTMLElement>("textarea, [contenteditable='true']"),
   ];
   for (const host of hosts) {
     if (host.scrollTop !== 0) host.scrollTop = 0;
@@ -5435,6 +5460,11 @@ function focusActivePaneCanvas() {
   focusPaneCanvas(activePane());
 }
 
+function focusAfterMobileShortcut() {
+  if (isCoarseTouchPointer()) return;
+  focusActivePaneCanvas();
+}
+
 function focusPaneCanvas(pane: TerminalPane | undefined) {
   if (!pane) return;
   if (isCoarseTouchPointer()) {
@@ -5463,8 +5493,8 @@ function isDoubleTerminalTap(pane: TerminalPane, event: PointerEvent): boolean {
   const dx = event.clientX - lastMobileTerminalTap.x;
   const dy = event.clientY - lastMobileTerminalTap.y;
   const samePane = lastMobileTerminalTap.paneId === pane.id;
-  const close = dx * dx + dy * dy <= 32 * 32;
-  const fast = now - lastMobileTerminalTap.time <= 420;
+  const close = dx * dx + dy * dy <= MOBILE_TERMINAL_DOUBLE_TAP_DISTANCE_PX * MOBILE_TERMINAL_DOUBLE_TAP_DISTANCE_PX;
+  const fast = now - lastMobileTerminalTap.time <= MOBILE_TERMINAL_DOUBLE_TAP_DELAY_MS;
   lastMobileTerminalTap.paneId = pane.id;
   lastMobileTerminalTap.time = now;
   lastMobileTerminalTap.x = event.clientX;
@@ -5480,17 +5510,33 @@ function trackMobileTerminalSwipeStart(pane: TerminalPane, event: PointerEvent) 
   mobileTerminalSwipe.time = performance.now();
 }
 
-function runMobileTerminalSwipe(pane: TerminalPane, event: PointerEvent): boolean {
-  if (event.pointerType !== "touch" || mobileTerminalSwipe.paneId !== pane.id) return false;
-  const dx = event.clientX - mobileTerminalSwipe.x;
-  const dy = event.clientY - mobileTerminalSwipe.y;
-  const elapsed = performance.now() - mobileTerminalSwipe.time;
+function readMobileTerminalGesture(pane: TerminalPane, event: PointerEvent): { dx: number; dy: number; elapsed: number } | undefined {
+  if (event.pointerType !== "touch" || mobileTerminalSwipe.paneId !== pane.id) return undefined;
+  return {
+    dx: event.clientX - mobileTerminalSwipe.x,
+    dy: event.clientY - mobileTerminalSwipe.y,
+    elapsed: performance.now() - mobileTerminalSwipe.time,
+  };
+}
+
+function clearMobileTerminalGesture() {
   mobileTerminalSwipe.paneId = "";
-  if (elapsed > 700 || Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.6) {
+}
+
+function runMobileTerminalSwipe(gesture: { dx: number; dy: number; elapsed: number }): boolean {
+  if (
+    gesture.elapsed > MOBILE_TERMINAL_TAB_SWIPE_MAX_MS
+    || Math.abs(gesture.dx) < MOBILE_TERMINAL_TAB_SWIPE_DISTANCE_PX
+    || Math.abs(gesture.dx) < Math.abs(gesture.dy) * MOBILE_TERMINAL_TAB_SWIPE_RATIO
+  ) {
     return false;
   }
-  activateAdjacentTab(dx < 0 ? 1 : -1);
+  activateAdjacentTab(gesture.dx < 0 ? 1 : -1);
   return true;
+}
+
+function isMobileTerminalTapGesture(gesture: { dx: number; dy: number }): boolean {
+  return Math.hypot(gesture.dx, gesture.dy) <= MOBILE_TERMINAL_TAP_MOVE_THRESHOLD_PX;
 }
 
 function handleTerminalInterruptCapture(event: KeyboardEvent) {
