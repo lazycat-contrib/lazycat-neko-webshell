@@ -8,5 +8,5 @@ permissions:
     - lightos.manage
 locales:
   zh:
-    name: 小橘Web Shell
+    name: 小橘WebShell
     description: 基于 Rust、Restty 终端数据面和 Connect 控制面的 LightOS WebShell provider
