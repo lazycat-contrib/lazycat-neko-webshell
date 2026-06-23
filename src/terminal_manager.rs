@@ -1,7 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
@@ -12,12 +10,10 @@ use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES};
+use crate::database::AppDatabase;
 use crate::validation::{normalize_output_frame_limit, validate_size};
 
 const EVENT_CAPACITY: usize = 1024;
-const HISTORY_MAGIC: &[u8; 8] = b"LCWSH01\n";
-const HISTORY_RECORD_HEADER_BYTES: usize = 12;
-const HISTORY_COMPACT_BYTES: u64 = (MAX_OUTPUT_BUFFER_BYTES as u64) * 2;
 
 #[derive(Clone, Debug)]
 pub struct TerminalSpec {
@@ -353,8 +349,9 @@ pub struct OutputBuffer {
 struct OutputBufferInner {
     frames: VecDeque<OutputFrame>,
     total_bytes: usize,
+    total_lines: usize,
     next_sequence: u64,
-    max_frames: usize,
+    max_lines: usize,
 }
 
 impl OutputBuffer {
@@ -363,8 +360,9 @@ impl OutputBuffer {
             inner: Mutex::new(OutputBufferInner {
                 frames: VecDeque::new(),
                 total_bytes: 0,
+                total_lines: 0,
                 next_sequence: 0,
-                max_frames: normalize_output_frame_limit(Some(max_frames)),
+                max_lines: normalize_output_frame_limit(Some(max_frames)),
             }),
             history_lock: Mutex::new(()),
             store: None,
@@ -372,13 +370,16 @@ impl OutputBuffer {
         }
     }
 
-    pub fn persistent(max_frames: usize, path: PathBuf) -> Self {
-        let store = OutputHistoryStore { path };
+    pub fn persistent(max_frames: usize, session_id: String, database: Arc<AppDatabase>) -> Self {
+        let store = OutputHistoryStore {
+            session_id,
+            database,
+        };
         let max_frames = normalize_output_frame_limit(Some(max_frames));
         let loaded = match store.load() {
             Ok(loaded) => loaded,
             Err(err) => {
-                warn!(error = %err, path = %store.path.display(), "failed to load terminal output history");
+                warn!(error = %err, session_id = %store.session_id, "failed to load terminal output history");
                 let _ = store.remove();
                 LoadedHistory::default()
             }
@@ -386,8 +387,9 @@ impl OutputBuffer {
         let mut inner = OutputBufferInner {
             frames: loaded.frames,
             total_bytes: loaded.total_bytes,
+            total_lines: loaded.total_lines,
             next_sequence: loaded.next_sequence,
-            max_frames,
+            max_lines: max_frames,
         };
         prune_output_buffer(&mut inner);
         let output = Self {
@@ -405,7 +407,7 @@ impl OutputBuffer {
             .history_lock
             .lock()
             .expect("terminal output history lock poisoned");
-        let frame = {
+        let (frame, first_retained_sequence) = {
             let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
             inner.total_bytes = inner.total_bytes.saturating_add(data.len());
             inner.next_sequence = inner.next_sequence.saturating_add(1);
@@ -413,19 +415,24 @@ impl OutputBuffer {
                 sequence: inner.next_sequence,
                 data,
             };
+            inner.total_lines = inner
+                .total_lines
+                .saturating_add(output_history_line_count(&frame.data));
             inner.frames.push_back(frame.clone());
             prune_output_buffer(&mut inner);
-            frame
+            let first_retained_sequence = inner
+                .frames
+                .front()
+                .map_or(frame.sequence, |frame| frame.sequence);
+            (frame, first_retained_sequence)
         };
-        if self.append_history(&frame) {
-            self.compact_history_locked();
-        }
+        self.append_history(&frame, first_retained_sequence);
         frame
     }
 
     pub fn set_limit(&self, max_frames: usize) {
         let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
-        inner.max_frames = normalize_output_frame_limit(Some(max_frames));
+        inner.max_lines = normalize_output_frame_limit(Some(max_frames));
         prune_output_buffer(&mut inner);
         drop(inner);
         self.compact_history();
@@ -447,24 +454,15 @@ impl OutputBuffer {
         )
     }
 
-    fn append_history(&self, frame: &OutputFrame) -> bool {
+    fn append_history(&self, frame: &OutputFrame, first_retained_sequence: u64) {
         if self.history_closed.load(Ordering::Relaxed) {
-            return false;
+            return;
         }
         let Some(store) = &self.store else {
-            return false;
+            return;
         };
-        if let Err(err) = store.append(frame) {
-            warn!(error = %err, path = %store.path.display(), "failed to append terminal output history");
-            return false;
-        }
-        match store.needs_compaction() {
-            Ok(true) => true,
-            Ok(false) => false,
-            Err(err) => {
-                warn!(error = %err, path = %store.path.display(), "failed to inspect terminal output history");
-                false
-            }
+        if let Err(err) = store.append(frame, first_retained_sequence) {
+            warn!(error = %err, session_id = %store.session_id, "failed to append terminal output history");
         }
     }
 
@@ -491,7 +489,7 @@ impl OutputBuffer {
             inner.frames.iter().cloned().collect::<Vec<_>>()
         };
         if let Err(err) = store.compact(&frames) {
-            warn!(error = %err, path = %store.path.display(), "failed to compact terminal output history");
+            warn!(error = %err, session_id = %store.session_id, "failed to compact terminal output history");
         }
     }
 
@@ -504,7 +502,7 @@ impl OutputBuffer {
         if let Some(store) = &self.store
             && let Err(err) = store.remove()
         {
-            warn!(error = %err, path = %store.path.display(), "failed to remove terminal output history");
+            warn!(error = %err, session_id = %store.session_id, "failed to remove terminal output history");
         }
     }
 }
@@ -516,140 +514,73 @@ impl Default for OutputBuffer {
 }
 
 fn prune_output_buffer(inner: &mut OutputBufferInner) {
-    while inner.frames.len() > inner.max_frames || inner.total_bytes > MAX_OUTPUT_BUFFER_BYTES {
+    while inner.frames.len() > inner.max_lines
+        || inner.total_lines > inner.max_lines
+        || inner.total_bytes > MAX_OUTPUT_BUFFER_BYTES
+    {
         let Some(removed) = inner.frames.pop_front() else {
             break;
         };
         inner.total_bytes = inner.total_bytes.saturating_sub(removed.data.len());
+        inner.total_lines = inner
+            .total_lines
+            .saturating_sub(output_history_line_count(&removed.data));
     }
+}
+
+fn output_history_line_count(data: &[u8]) -> usize {
+    data.iter().filter(|byte| matches!(byte, b'\n')).count()
 }
 
 #[derive(Clone)]
 struct OutputHistoryStore {
-    path: PathBuf,
+    session_id: String,
+    database: Arc<AppDatabase>,
 }
 
 #[derive(Default)]
 struct LoadedHistory {
     frames: VecDeque<OutputFrame>,
     total_bytes: usize,
+    total_lines: usize,
     next_sequence: u64,
 }
 
 impl OutputHistoryStore {
     fn load(&self) -> io::Result<LoadedHistory> {
-        let bytes = match fs::read(&self.path) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                return Ok(LoadedHistory::default());
-            }
-            Err(err) => return Err(err),
-        };
-        if bytes.is_empty() {
-            return Ok(LoadedHistory::default());
-        }
-        if !bytes.starts_with(HISTORY_MAGIC) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "terminal output history has an invalid header",
-            ));
-        }
-
+        let frames = self.database.load_output_history(&self.session_id)?;
         let mut loaded = LoadedHistory::default();
-        let mut offset = HISTORY_MAGIC.len();
-        while offset + HISTORY_RECORD_HEADER_BYTES <= bytes.len() {
-            let sequence = read_u64(&bytes[offset..offset + 8]);
-            let length = read_u32(&bytes[offset + 8..offset + 12]) as usize;
-            offset += HISTORY_RECORD_HEADER_BYTES;
-            let Some(end) = offset.checked_add(length) else {
-                break;
-            };
-            if end > bytes.len() {
-                break;
-            }
-            let data = bytes[offset..end].to_vec();
-            offset = end;
-            loaded.next_sequence = loaded.next_sequence.max(sequence);
-            loaded.total_bytes = loaded.total_bytes.saturating_add(data.len());
-            loaded.frames.push_back(OutputFrame { sequence, data });
+        for frame in frames {
+            loaded.next_sequence = loaded.next_sequence.max(frame.sequence);
+            loaded.total_bytes = loaded.total_bytes.saturating_add(frame.data.len());
+            loaded.total_lines = loaded
+                .total_lines
+                .saturating_add(output_history_line_count(&frame.data));
+            loaded.frames.push_back(frame);
         }
         Ok(loaded)
     }
 
-    fn append(&self, frame: &OutputFrame) -> io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let needs_header = fs::metadata(&self.path).map_or(true, |metadata| metadata.len() == 0);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        if needs_header {
-            file.write_all(HISTORY_MAGIC)?;
-        }
-        write_frame(&mut file, frame)?;
-        file.flush()
+    fn append(&self, frame: &OutputFrame, first_retained_sequence: u64) -> io::Result<()> {
+        self.database
+            .append_output_frame(&self.session_id, frame, first_retained_sequence)
     }
 
     fn compact(&self, frames: &[OutputFrame]) -> io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let temp_path = self.path.with_extension("tmp");
-        {
-            let mut file = fs::File::create(&temp_path)?;
-            file.write_all(HISTORY_MAGIC)?;
-            for frame in frames {
-                write_frame(&mut file, frame)?;
-            }
-            file.flush()?;
-        }
-        fs::rename(temp_path, &self.path)
-    }
-
-    fn needs_compaction(&self) -> io::Result<bool> {
-        fs::metadata(&self.path).map(|metadata| metadata.len() > HISTORY_COMPACT_BYTES)
+        self.database
+            .replace_output_history(&self.session_id, frames)
     }
 
     fn remove(&self) -> io::Result<()> {
-        match fs::remove_file(&self.path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err),
-        }
+        self.database.delete_output_history(&self.session_id)
     }
-}
-
-fn write_frame(writer: &mut impl Write, frame: &OutputFrame) -> io::Result<()> {
-    let length = u32::try_from(frame.data.len()).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "terminal output history frame is too large",
-        )
-    })?;
-    writer.write_all(&frame.sequence.to_le_bytes())?;
-    writer.write_all(&length.to_le_bytes())?;
-    writer.write_all(&frame.data)
-}
-
-fn read_u64(bytes: &[u8]) -> u64 {
-    let mut value = [0_u8; 8];
-    value.copy_from_slice(bytes);
-    u64::from_le_bytes(value)
-}
-
-fn read_u32(bytes: &[u8]) -> u32 {
-    let mut value = [0_u8; 4];
-    value.copy_from_slice(bytes);
-    u32::from_le_bytes(value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::OutputBuffer;
-    use std::fs;
-    use std::path::PathBuf;
+    use crate::database::AppDatabase;
+    use std::sync::Arc;
 
     #[test]
     fn snapshots_output_after_sequence() {
@@ -684,14 +615,29 @@ mod tests {
     }
 
     #[test]
+    fn prunes_output_by_line_limit() {
+        let output = OutputBuffer::new(128);
+        for index in 0..130 {
+            output.push(format!("{index}\n").into_bytes());
+        }
+
+        let (frames, last_sequence) = output.snapshot_after(0);
+
+        assert_eq!(last_sequence, 130);
+        assert_eq!(frames.len(), 128);
+        assert_eq!(frames[0].sequence, 3);
+        assert_eq!(frames[0].data, b"2\n");
+    }
+
+    #[test]
     fn persistent_output_round_trips_history() {
-        let path = temp_history_path();
-        let output = OutputBuffer::persistent(128, path.clone());
+        let database = temp_database();
+        let output = OutputBuffer::persistent(128, "session-one".to_owned(), Arc::clone(&database));
 
         output.push(b"one".to_vec());
         output.push(b"two".to_vec());
 
-        let reloaded = OutputBuffer::persistent(128, path.clone());
+        let reloaded = OutputBuffer::persistent(128, "session-one".to_owned(), database);
         let (frames, last_sequence) = reloaded.snapshot_after(0);
 
         assert_eq!(last_sequence, 2);
@@ -703,33 +649,32 @@ mod tests {
 
         let third = reloaded.push(b"three".to_vec());
         assert_eq!(third.sequence, 3);
-
-        let _ = fs::remove_file(path);
     }
 
     #[test]
     fn persistent_output_prunes_history_on_load() {
-        let path = temp_history_path();
-        let output = OutputBuffer::persistent(128, path.clone());
+        let database = temp_database();
+        let output = OutputBuffer::persistent(128, "session-one".to_owned(), Arc::clone(&database));
         for index in 0..130 {
             output.push(vec![index]);
         }
 
-        let reloaded = OutputBuffer::persistent(128, path.clone());
+        let reloaded = OutputBuffer::persistent(128, "session-one".to_owned(), database);
         let (frames, last_sequence) = reloaded.snapshot_after(0);
 
         assert_eq!(last_sequence, 130);
         assert_eq!(frames.len(), 128);
         assert_eq!(frames[0].sequence, 3);
         assert_eq!(frames[0].data, vec![2]);
-
-        let _ = fs::remove_file(path);
     }
 
-    fn temp_history_path() -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "lazycat-neko-webshell-output-history-{}.bin",
-            uuid::Uuid::new_v4()
-        ))
+    fn temp_database() -> Arc<AppDatabase> {
+        Arc::new(
+            AppDatabase::open(std::env::temp_dir().join(format!(
+                "lazycat-neko-webshell-output-history-{}.db",
+                uuid::Uuid::new_v4()
+            )))
+            .unwrap(),
+        )
     }
 }

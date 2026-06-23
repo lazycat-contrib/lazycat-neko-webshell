@@ -1,15 +1,18 @@
-import type { FontPreset, Settings, TerminalTheme } from "./types";
+import type { FontPreset, InterfaceStyleId, Settings, TerminalTheme } from "./types";
 
 export const INITIAL_COLS = 120;
 export const INITIAL_ROWS = 32;
 export const STATUS_REFRESH_MS = 700;
 export const MAX_FONT_BYTES = 10 * 1024 * 1024;
+export const MAX_TERMINAL_BACKGROUND_BYTES = 10 * 1024 * 1024;
+export const MAX_CLIPBOARD_IMAGE_BYTES = 16 * 1024 * 1024;
 export const PREINSTALLED_FONT_BASE = "./fonts/preinstalled/";
 export const MIN_OUTPUT_BUFFER_LIMIT = 128;
 export const MAX_OUTPUT_BUFFER_LIMIT = 20000;
 export const MAX_CUSTOM_THEME_SOURCE_BYTES = 64 * 1024;
 
 export const FONT_EXTENSIONS = [".woff2", ".woff", ".ttf", ".otf"];
+export const TERMINAL_BACKGROUND_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"];
 
 export const FONT_MIME_TYPES = new Set([
   "font/woff2",
@@ -22,6 +25,15 @@ export const FONT_MIME_TYPES = new Set([
   "application/x-font-otf",
   "application/octet-stream",
 ]);
+
+export const TERMINAL_BACKGROUND_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "application/octet-stream",
+]);
+
+export const INTERFACE_STYLE_IDS: InterfaceStyleId[] = ["steel", "glass", "brass", "spectrum", "geek"];
 
 export const THEMES: TerminalTheme[] = [
   { id: "ghostty", label: "Ghostty Default", ghosttyName: "Ghostty Default Style Dark" },
@@ -122,6 +134,7 @@ export const FONT_PRESETS: FontPreset[] = [
 export const DEFAULT_SETTINGS: Settings = {
   locale: "auto",
   themeId: "catppuccin-mocha",
+  interfaceStyleId: "steel",
   customThemes: [],
   fontFamilyId: "system-mono",
   tabLayout: "horizontal",
@@ -132,6 +145,10 @@ export const DEFAULT_SETTINGS: Settings = {
   copyOnSelect: false,
   useResttyClipboard: true,
   touchSelectionMode: "long-press",
+  terminalBackgroundEnabled: false,
+  terminalBackgroundUrl: "",
+  terminalBackgroundOpacity: 0.24,
+  terminalBackgroundBlur: 0,
   scrollbackLimit: 10000,
   outputBufferLimit: 4096,
   autoRestartSessions: false,

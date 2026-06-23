@@ -1,7 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Json;
@@ -12,10 +10,8 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::config::{
-    DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, DEFAULT_WORKSPACE_STATE_FILE, MAX_COLS,
-    MAX_ROWS,
-};
+use crate::config::{DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, MAX_COLS, MAX_ROWS};
+use crate::database::{AppDatabase, KV_KEY_WORKSPACES, KV_NAMESPACE_STATE};
 use crate::lightos;
 use crate::state::{
     AppState, METADATA_LOGIN_USER, SessionRecord, default_session_command_for_user,
@@ -126,6 +122,7 @@ pub struct WorkspaceActionRequest {
     rows: Option<u16>,
     output_limit: Option<usize>,
     auto_restart: Option<bool>,
+    session_backend: Option<SessionBackend>,
 }
 
 #[derive(Clone)]
@@ -135,6 +132,15 @@ pub(crate) struct WorkspaceTerminalDefaults {
     output_limit: usize,
     auto_restart: bool,
     login_user: String,
+    session_backend: SessionBackend,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SessionBackend {
+    Webshell,
+    Herdr,
+    Zellij,
 }
 
 impl WorkspaceTerminalDefaults {
@@ -144,6 +150,7 @@ impl WorkspaceTerminalDefaults {
         output_limit: usize,
         auto_restart: bool,
         login_user: &str,
+        session_backend: SessionBackend,
     ) -> Self {
         Self {
             cols,
@@ -151,6 +158,7 @@ impl WorkspaceTerminalDefaults {
             output_limit,
             auto_restart,
             login_user: login_user.trim().to_owned(),
+            session_backend,
         }
     }
 }
@@ -203,19 +211,21 @@ struct PersistedWorkspaceState {
 }
 
 pub struct WorkspaceStore {
-    path: PathBuf,
+    database: Arc<AppDatabase>,
 }
 
 impl WorkspaceStore {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
+    pub fn new(database: Arc<AppDatabase>) -> Self {
+        Self { database }
     }
 
     pub fn load(&self) -> io::Result<HashMap<String, WorkspaceRecord>> {
-        match fs::read(&self.path) {
-            Ok(bytes) => Self::decode(&bytes),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(HashMap::new()),
-            Err(err) => Err(err),
+        match self
+            .database
+            .load_kv(KV_NAMESPACE_STATE, KV_KEY_WORKSPACES)?
+        {
+            Some(bytes) => Self::decode(&bytes),
+            None => Ok(HashMap::new()),
         }
     }
 
@@ -236,10 +246,9 @@ impl WorkspaceStore {
 
     pub fn save(&self, workspaces: &HashMap<String, WorkspaceRecord>) -> io::Result<()> {
         if workspaces.is_empty() {
-            return remove_workspace_file(&self.path);
-        }
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
+            return self
+                .database
+                .delete_kv(KV_NAMESPACE_STATE, KV_KEY_WORKSPACES);
         }
         let mut workspaces = workspaces.values().cloned().collect::<Vec<_>>();
         workspaces.sort_by(|left, right| left.selector.cmp(&right.selector));
@@ -247,12 +256,10 @@ impl WorkspaceStore {
             version: 1,
             workspaces,
         };
-        let bytes = serde_json::to_vec_pretty(&persisted)
-            .map_err(|err| io::Error::other(err.to_string()))?;
-        let temp = temp_path_for(&self.path);
-        fs::write(&temp, bytes)?;
-        fs::rename(temp, &self.path)?;
-        Ok(())
+        let bytes =
+            serde_json::to_vec(&persisted).map_err(|err| io::Error::other(err.to_string()))?;
+        self.database
+            .store_kv(KV_NAMESPACE_STATE, KV_KEY_WORKSPACES, &bytes)
     }
 }
 
@@ -272,8 +279,14 @@ pub async fn get_workspace(
     let output_limit = normalize_output_frame_limit(query.output_limit);
     let auto_restart = query.auto_restart.unwrap_or(false);
 
-    let defaults =
-        WorkspaceTerminalDefaults::new(cols, rows, output_limit, auto_restart, &login_user);
+    let defaults = WorkspaceTerminalDefaults::new(
+        cols,
+        rows,
+        output_limit,
+        auto_restart,
+        &login_user,
+        SessionBackend::Webshell,
+    );
 
     match ensure_workspace_state(&state, selector, &defaults) {
         Ok(workspace) => Json(workspace).into_response(),
@@ -297,8 +310,14 @@ pub async fn put_workspace_action(
     let output_limit = normalize_output_frame_limit(request.output_limit);
     let auto_restart = request.auto_restart.unwrap_or(false);
 
-    let defaults =
-        WorkspaceTerminalDefaults::new(cols, rows, output_limit, auto_restart, &login_user);
+    let defaults = WorkspaceTerminalDefaults::new(
+        cols,
+        rows,
+        output_limit,
+        auto_restart,
+        &login_user,
+        request.session_backend.unwrap_or(SessionBackend::Webshell),
+    );
 
     match apply_workspace_action(&state, &selector, &defaults, &request) {
         Ok((workspace, closed_sessions)) => {
@@ -1017,7 +1036,8 @@ fn session_record_with_metadata(
     let host = host_from_selector(selector);
     let mut metadata = extra_metadata;
     let login_user = defaults.login_user.trim();
-    let (command, args) = default_session_command_for_user(selector, login_user);
+    let (command, args) =
+        session_command_for_backend(selector, login_user, defaults.session_backend);
     metadata.insert("host".to_owned(), host.clone());
     metadata.insert("restartable".to_owned(), defaults.auto_restart.to_string());
     if login_user.is_empty() {
@@ -1025,6 +1045,15 @@ fn session_record_with_metadata(
     } else {
         metadata.insert(METADATA_LOGIN_USER.to_owned(), login_user.to_owned());
     }
+    metadata.insert(
+        "sessionBackend".to_owned(),
+        match defaults.session_backend {
+            SessionBackend::Webshell => "webshell",
+            SessionBackend::Herdr => "herdr",
+            SessionBackend::Zellij => "zellij",
+        }
+        .to_owned(),
+    );
     metadata.insert(
         "outputBufferLimit".to_owned(),
         normalize_output_frame_limit(Some(defaults.output_limit)).to_string(),
@@ -1047,6 +1076,81 @@ fn session_record_with_metadata(
         control: None,
         metadata,
     }
+}
+
+fn session_command_for_backend(
+    selector: &str,
+    login_user: &str,
+    backend: SessionBackend,
+) -> (String, Vec<String>) {
+    match backend {
+        SessionBackend::Webshell => default_session_command_for_user(selector, login_user),
+        SessionBackend::Herdr => {
+            let (command, mut args) = default_session_command_for_user(selector, login_user);
+            if let Some(script) = args.last_mut() {
+                *script = herdr_bootstrap_script(script);
+            }
+            (command, args)
+        }
+        SessionBackend::Zellij => {
+            let (command, mut args) = default_session_command_for_user(selector, login_user);
+            if let Some(script) = args.last_mut() {
+                *script = zellij_bootstrap_script(script, selector);
+            }
+            (command, args)
+        }
+    }
+}
+
+fn herdr_bootstrap_script(shell_bootstrap: &str) -> String {
+    format!(
+        r#"{shell_bootstrap}
+if ! command -v herdr >/dev/null 2>&1; then
+  echo "Herdr is not installed in this instance."
+  exit 127
+fi
+exec herdr"#
+    )
+}
+
+fn zellij_bootstrap_script(shell_bootstrap: &str, selector: &str) -> String {
+    let session_name = format!("webshell-{}", zellij_session_suffix(selector));
+    format!(
+        r#"{shell_bootstrap}
+if ! command -v zellij >/dev/null 2>&1; then
+  echo "zellij is not installed in this instance."
+  exit 127
+fi
+exec zellij attach --create {}"#,
+        shell_quote(&session_name),
+    )
+}
+
+fn zellij_session_suffix(selector: &str) -> String {
+    selector
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn shell_quote(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\"'\"'");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 fn next_pane_layout(
@@ -1297,31 +1401,8 @@ async fn authorize_workspace_selector(
         })
 }
 
-fn workspace_state_path() -> PathBuf {
-    std::env::var_os("PURE_TERMINAL_WORKSPACE_STATE_FILE").map_or_else(
-        || PathBuf::from(DEFAULT_WORKSPACE_STATE_FILE),
-        PathBuf::from,
-    )
-}
-
-pub fn default_workspace_store() -> WorkspaceStore {
-    WorkspaceStore::new(workspace_state_path())
-}
-
-fn remove_workspace_file(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err),
-    }
-}
-
-fn temp_path_for(path: &Path) -> PathBuf {
-    let filename = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("workspaces.json");
-    path.with_file_name(format!("{filename}.tmp"))
+pub fn default_workspace_store(database: Arc<AppDatabase>) -> WorkspaceStore {
+    WorkspaceStore::new(database)
 }
 
 fn internal_error(message: String) -> Response {
@@ -1347,6 +1428,7 @@ mod tests {
             DEFAULT_OUTPUT_FRAME_LIMIT,
             false,
             "",
+            SessionBackend::Webshell,
         );
         assert!(workspace.ensure_ready(&mut sessions, &defaults));
 
@@ -1378,6 +1460,7 @@ mod tests {
             rows: None,
             output_limit: None,
             auto_restart: None,
+            session_backend: None,
         };
         let defaults = WorkspaceTerminalDefaults::new(
             DEFAULT_COLS,
@@ -1385,6 +1468,7 @@ mod tests {
             DEFAULT_OUTPUT_FRAME_LIMIT,
             false,
             "admin",
+            SessionBackend::Webshell,
         );
         let mut closed_sessions = Vec::new();
         workspace
@@ -1421,11 +1505,8 @@ mod tests {
 
     #[test]
     fn workspace_store_round_trips_state() {
-        let path = std::env::temp_dir().join(format!(
-            "lazycat-neko-webshell-workspaces-{}.json",
-            Uuid::new_v4()
-        ));
-        let store = WorkspaceStore::new(path.clone());
+        let database = test_database();
+        let store = WorkspaceStore::new(Arc::clone(&database));
         let tab_id = Uuid::new_v4().to_string();
         let pane_id = Uuid::new_v4().to_string();
         let session_id = Uuid::new_v4().to_string();
@@ -1459,8 +1540,6 @@ mod tests {
                 .and_then(|workspace| workspace.tabs[0].custom_label.as_deref()),
             Some("Build")
         );
-
-        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -1472,6 +1551,7 @@ mod tests {
             DEFAULT_OUTPUT_FRAME_LIMIT,
             true,
             "admin",
+            SessionBackend::Webshell,
         );
         let created = create_workspace_session(
             &state,
@@ -1538,6 +1618,7 @@ mod tests {
             DEFAULT_OUTPUT_FRAME_LIMIT,
             false,
             "",
+            SessionBackend::Webshell,
         );
         let first =
             create_workspace_session(&state, "demo@owner", &defaults, HashMap::new()).unwrap();
@@ -1567,6 +1648,7 @@ mod tests {
             DEFAULT_OUTPUT_FRAME_LIMIT,
             false,
             "",
+            SessionBackend::Webshell,
         );
         let created =
             create_workspace_session(&state, "demo@owner", &defaults, HashMap::new()).unwrap();
@@ -1589,11 +1671,17 @@ mod tests {
     fn test_app_state() -> AppState {
         let suffix = Uuid::new_v4();
         AppState::new_for_test(
-            std::env::temp_dir().join(format!("lazycat-neko-webshell-session-test-{suffix}.json")),
-            std::env::temp_dir().join(format!(
-                "lazycat-neko-webshell-workspace-test-{suffix}.json"
-            )),
-            std::env::temp_dir().join(format!("lazycat-neko-webshell-output-test-{suffix}")),
+            std::env::temp_dir().join(format!("lazycat-neko-webshell-workspace-test-{suffix}.db")),
+        )
+    }
+
+    fn test_database() -> Arc<AppDatabase> {
+        Arc::new(
+            AppDatabase::open(std::env::temp_dir().join(format!(
+                "lazycat-neko-webshell-workspace-store-{}.db",
+                Uuid::new_v4()
+            )))
+            .unwrap(),
         )
     }
 }

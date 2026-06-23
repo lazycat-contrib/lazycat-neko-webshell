@@ -72,6 +72,28 @@ pub async fn login_user_for_selector(
     Ok(instance.username.trim().to_owned())
 }
 
+pub async fn target_command_available(
+    selector: &str,
+    command_name: &str,
+) -> Result<bool, ConnectError> {
+    validate_selector(selector)?;
+    if !command_name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+    {
+        return Err(ConnectError::invalid_argument("invalid command name"));
+    }
+    authorize_selector(selector, true).await?;
+    let script = format!("command -v {command_name} >/dev/null 2>&1");
+    let mut command = tokio::process::Command::new(LIGHTOSCTL);
+    command.args(["exec", "-i", selector, "/bin/sh", "-lc", script.as_str()]);
+    let output = timeout(Duration::from_secs(5), command.output())
+        .await
+        .map_err(|_| ConnectError::deadline_exceeded("lightosctl exec timed out"))?
+        .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
+    Ok(output.status.success())
+}
+
 async fn authorized_instance(
     selector: &str,
     require_running: bool,

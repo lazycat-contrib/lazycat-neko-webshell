@@ -1,10 +1,10 @@
-# LazyCat Neko WebShell
+# Neko Webshell
 
 Rust + Restty/Ghostty WebShell provider for LazyCat/LightOS.
 
 ## Architecture
 
-LazyCat Neko WebShell uses two protocol lanes:
+Neko Webshell uses two protocol lanes:
 
 - WebSocket data plane: `/ws/terminal` carries terminal bytes, resize events, and process lifecycle notices. Browser terminal input is sent as binary UTF-8 frames; text frames are reserved for JSON control messages such as resize and close.
 - Connect control plane: `lazycat.webshell.v1.CapabilityService` manages instances, sessions, plugin descriptors, plugin enablement, and control leases.
@@ -15,10 +15,10 @@ The protobuf schema is intentionally generic. It describes capabilities, session
 
 Two built-in plugin descriptors are registered by default:
 
-- `file-transfer`: reserved adapter for sz/rz and tssh-style uploads/downloads.
-- `ai-control`: reserved adapter for future AI-assisted shell delegation and supervision.
+- `file-transfer`: reads, writes, lists, and stats files inside the selected LightOS instance through `/lzcinit/lightosctl exec -i`.
+- `ai-control`: observes, requests, and releases control leases for AI or automation actors.
 
-Both are protocol placeholders. The backend currently accepts invocations for enabled plugins and returns a `pending-implementation` response. The frontend intentionally hides plugin management until file transfer and AI execution workers are implemented.
+Both plugins are exposed through the Connect control plane. Built-in plugin enablement is managed from Settings -> Plugins and persisted in the application database. The frontend still avoids a generic plugin invocation form; file movement, image paste, and session control are surfaced as product workflows instead of raw payload editors.
 
 ## Frontend Interaction
 
@@ -26,7 +26,7 @@ The default screen is terminal-first: tabs and common actions are compact icon c
 
 Tabs can be horizontal or vertical. Each tab can also be split into stacked panes with split up/down actions. A split pane is implemented by creating another WebShell session for the same LightOS selector and rendering another Restty terminal instance; the Rust WebSocket data plane remains the owner of PTY bytes.
 
-Themes are applied through Restty's Ghostty theme API and mirrored into local CSS variables for the shell chrome. Built-in terminal fonts are served from the app bundle so the CSP does not depend on CDN font loading. Uploaded fonts are stored under `/lzcapp/var/fonts` in LazyCat; local development can override this with `PURE_TERMINAL_FONT_DIR`.
+Themes are applied through Restty's Ghostty theme API and mirrored into local CSS variables for the shell chrome. Built-in terminal fonts are served from the app bundle so the CSP does not depend on CDN font loading. Uploaded fonts are stored under `/lzcapp/var/fonts` in LazyCat; local development can override this with `NEKO_WEBSHELL_FONT_DIR`. A single personalized terminal background image is stored under `/lzcapp/var/backgrounds`; local development can override this with `NEKO_WEBSHELL_BACKGROUND_DIR`, while opacity, blur, and enablement stay in the settings database. The SQLite settings/session database defaults to `/lzcapp/var/webshell.db` and can be overridden with `NEKO_WEBSHELL_DATABASE_FILE`.
 
 On touch/coarse-pointer mobile devices, the terminal surface exposes a Termux-style paged extra keyboard for Esc, Tab, sticky modifiers, arrows, Enter, paste, navigation/editing keys, symbols, and F1-F12. Restty owns desktop keyboard, paste, and IME input so terminal input is not duplicated by global document handlers.
 

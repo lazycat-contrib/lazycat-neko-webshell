@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::config::{DEFAULT_FONT_DIR, MAX_FONT_BYTES};
+use crate::config::{DEFAULT_FONT_DIR, ENV_FONT_DIR, MAX_FONT_BYTES};
 
 #[derive(Debug, Deserialize)]
 pub struct FontUploadQuery {
@@ -231,8 +231,7 @@ async fn ensure_font_dir() -> std::io::Result<PathBuf> {
 }
 
 fn font_dir() -> PathBuf {
-    std::env::var_os("PURE_TERMINAL_FONT_DIR")
-        .map_or_else(|| PathBuf::from(DEFAULT_FONT_DIR), PathBuf::from)
+    std::env::var_os(ENV_FONT_DIR).map_or_else(|| PathBuf::from(DEFAULT_FONT_DIR), PathBuf::from)
 }
 
 fn font_metadata_path(dir: &FsPath, id: &str) -> PathBuf {

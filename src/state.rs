@@ -1,15 +1,18 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::io;
+#[cfg(test)]
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use std::{fs, io};
 
 use buffa::MessageField;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::config::{
-    DEFAULT_OUTPUT_HISTORY_DIR, DEFAULT_SESSION_STATE_FILE, LIGHTOSCTL, MAX_COLS, MAX_ROWS,
+use crate::config::{LIGHTOSCTL, MAX_COLS, MAX_ROWS};
+#[cfg(test)]
+use crate::database::remove_database_file;
+use crate::database::{
+    AppDatabase, KV_KEY_PLUGINS, KV_KEY_SESSIONS, KV_NAMESPACE_STATE, database_path,
 };
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
 use crate::session_manager::SessionManager;
@@ -27,14 +30,15 @@ pub struct AppState {
     pub sessions: Arc<SessionManager>,
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
     pub workspaces: Arc<RwLock<HashMap<String, WorkspaceRecord>>>,
+    database: Arc<AppDatabase>,
     workspace_store: Arc<WorkspaceStore>,
 }
 
 impl AppState {
-    pub fn new() -> Self {
-        let session_store = Arc::new(SessionStore::new(session_state_path()));
-        let workspace_store = Arc::new(default_workspace_store());
-        let output_history_dir = output_history_dir();
+    pub fn new() -> anyhow::Result<Self> {
+        let database = Arc::new(AppDatabase::open(database_path())?);
+        let session_store = Arc::new(SessionStore::new(Arc::clone(&database)));
+        let workspace_store = Arc::new(default_workspace_store(Arc::clone(&database)));
         let workspaces = workspace_store.load().unwrap_or_else(|err| {
             warn!(error = %err, "failed to load persisted terminal workspaces");
             HashMap::new()
@@ -44,23 +48,30 @@ impl AppState {
             HashMap::new()
         });
         for session_id in prune_unreferenced_sessions(&mut sessions, &workspaces) {
-            if let Err(err) = remove_output_history_file_at(&output_history_dir, &session_id) {
+            if let Err(err) = database.delete_output_history(&session_id) {
                 warn!(error = %err, session_id = %session_id, "failed to remove unreferenced terminal output history");
             }
         }
         if let Err(err) = session_store.save(&sessions) {
             warn!(error = %err, "failed to prune unreferenced terminal sessions");
         }
-        Self {
+        let plugins = PluginStore::new(Arc::clone(&database))
+            .load()
+            .unwrap_or_else(|err| {
+                warn!(error = %err, "failed to load persisted plugin settings");
+                builtin_plugins()
+            });
+        Ok(Self {
             sessions: Arc::new(SessionManager::new(
                 sessions,
                 Arc::clone(&session_store),
-                output_history_dir,
+                Arc::clone(&database),
             )),
-            plugins: Arc::new(RwLock::new(builtin_plugins())),
+            plugins: Arc::new(RwLock::new(plugins)),
             workspaces: Arc::new(RwLock::new(workspaces)),
+            database,
             workspace_store,
-        }
+        })
     }
 
     pub fn persist_sessions_snapshot(
@@ -77,25 +88,35 @@ impl AppState {
         self.workspace_store.save(workspaces)
     }
 
+    pub fn persist_plugins_snapshot(
+        &self,
+        plugins: &HashMap<String, PluginRecord>,
+    ) -> io::Result<()> {
+        PluginStore::new(Arc::clone(&self.database)).save(plugins)
+    }
+
     pub fn output_buffer(&self, session_id: &str, limit: usize) -> Arc<OutputBuffer> {
         self.sessions.output_buffer(session_id, limit)
     }
 
+    pub fn database(&self) -> Arc<AppDatabase> {
+        Arc::clone(&self.database)
+    }
+
     #[cfg(test)]
-    pub(crate) fn new_for_test(
-        session_path: PathBuf,
-        workspace_path: PathBuf,
-        output_history_dir: PathBuf,
-    ) -> Self {
+    pub(crate) fn new_for_test(database_path: PathBuf) -> Self {
+        let _ = remove_database_file(&database_path);
+        let database = Arc::new(AppDatabase::open(database_path).expect("test database"));
         Self {
             sessions: Arc::new(SessionManager::new(
                 HashMap::new(),
-                Arc::new(SessionStore::new(session_path)),
-                output_history_dir,
+                Arc::new(SessionStore::new(Arc::clone(&database))),
+                Arc::clone(&database),
             )),
             plugins: Arc::new(RwLock::new(HashMap::new())),
             workspaces: Arc::new(RwLock::new(HashMap::new())),
-            workspace_store: Arc::new(WorkspaceStore::new(workspace_path)),
+            database: Arc::clone(&database),
+            workspace_store: Arc::new(WorkspaceStore::new(database)),
         }
     }
 }
@@ -243,6 +264,72 @@ impl PluginRecord {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedPluginState {
+    version: u32,
+    plugins: Vec<PersistedPluginRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PersistedPluginRecord {
+    id: String,
+    enabled: bool,
+    #[serde(default)]
+    metadata: HashMap<String, String>,
+}
+
+struct PluginStore {
+    database: Arc<AppDatabase>,
+}
+
+impl PluginStore {
+    fn new(database: Arc<AppDatabase>) -> Self {
+        Self { database }
+    }
+
+    fn load(&self) -> io::Result<HashMap<String, PluginRecord>> {
+        let mut plugins = builtin_plugins();
+        let Some(bytes) = self.database.load_kv(KV_NAMESPACE_STATE, KV_KEY_PLUGINS)? else {
+            return Ok(plugins);
+        };
+        let persisted = serde_json::from_slice::<PersistedPluginState>(&bytes)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+        for record in persisted.plugins {
+            let id = record.id.trim();
+            if id.is_empty() {
+                continue;
+            }
+            let Some(plugin) = plugins.get_mut(id) else {
+                warn!(plugin_id = %id, "ignored persisted settings for unknown plugin");
+                continue;
+            };
+            plugin.enabled = record.enabled;
+            plugin.metadata.extend(record.metadata);
+        }
+        Ok(plugins)
+    }
+
+    fn save(&self, plugins: &HashMap<String, PluginRecord>) -> io::Result<()> {
+        let mut plugins = plugins
+            .values()
+            .map(|plugin| PersistedPluginRecord {
+                id: plugin.id.clone(),
+                enabled: plugin.enabled,
+                metadata: plugin.metadata.clone(),
+            })
+            .collect::<Vec<_>>();
+        plugins.sort_by(|left, right| left.id.cmp(&right.id));
+        let persisted = PersistedPluginState {
+            version: 1,
+            plugins,
+        };
+        let bytes =
+            serde_json::to_vec(&persisted).map_err(|err| io::Error::other(err.to_string()))?;
+        self.database
+            .store_kv(KV_NAMESPACE_STATE, KV_KEY_PLUGINS, &bytes)
+    }
+}
+
 pub fn mark_session_status(state: &AppState, session_id: &str, status: &str) {
     state.sessions.mark_status(session_id, status);
 }
@@ -254,25 +341,24 @@ struct PersistedSessionState {
 }
 
 pub(crate) struct SessionStore {
-    path: PathBuf,
+    database: Arc<AppDatabase>,
 }
 
 impl SessionStore {
-    pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path }
+    pub(crate) fn new(database: Arc<AppDatabase>) -> Self {
+        Self { database }
     }
 
     pub(crate) fn load(&self) -> io::Result<HashMap<String, SessionRecord>> {
-        match fs::read(&self.path) {
-            Ok(bytes) => {
+        match self.database.load_kv(KV_NAMESPACE_STATE, KV_KEY_SESSIONS)? {
+            Some(bytes) => {
                 let sessions = Self::decode(&bytes)?;
                 if let Err(err) = self.save(&sessions) {
                     warn!(error = %err, "failed to prune persisted terminal sessions");
                 }
                 Ok(sessions)
             }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(HashMap::new()),
-            Err(err) => Err(err),
+            None => Ok(HashMap::new()),
         }
     }
 
@@ -296,21 +382,16 @@ impl SessionStore {
     pub(crate) fn save(&self, sessions: &HashMap<String, SessionRecord>) -> io::Result<()> {
         let sessions = persistable_sessions(sessions);
         if sessions.is_empty() {
-            return remove_session_file(&self.path);
-        }
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
+            return self.database.delete_kv(KV_NAMESPACE_STATE, KV_KEY_SESSIONS);
         }
         let persisted = PersistedSessionState {
             version: 1,
             sessions,
         };
-        let bytes = serde_json::to_vec_pretty(&persisted)
-            .map_err(|err| io::Error::other(err.to_string()))?;
-        let temp = temp_path_for(&self.path);
-        fs::write(&temp, bytes)?;
-        fs::rename(temp, &self.path)?;
-        Ok(())
+        let bytes =
+            serde_json::to_vec(&persisted).map_err(|err| io::Error::other(err.to_string()))?;
+        self.database
+            .store_kv(KV_NAMESPACE_STATE, KV_KEY_SESSIONS, &bytes)
     }
 }
 
@@ -324,14 +405,6 @@ fn persistable_sessions(sessions: &HashMap<String, SessionRecord>) -> Vec<Sessio
     sessions
 }
 
-fn remove_session_file(path: &Path) -> io::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err),
-    }
-}
-
 fn valid_persisted_session(session: &SessionRecord) -> bool {
     !session.id.trim().is_empty()
         && !session.host.trim().is_empty()
@@ -340,49 +413,6 @@ fn valid_persisted_session(session: &SessionRecord) -> bool {
         && session.rows <= MAX_ROWS
         && validate_size(session.cols, session.rows).is_ok()
         && validate_selector(&session.selector).is_ok()
-}
-
-fn session_state_path() -> PathBuf {
-    std::env::var_os("PURE_TERMINAL_SESSION_STATE_FILE")
-        .map_or_else(|| PathBuf::from(DEFAULT_SESSION_STATE_FILE), PathBuf::from)
-}
-
-fn output_history_dir() -> PathBuf {
-    std::env::var_os("PURE_TERMINAL_OUTPUT_HISTORY_DIR")
-        .map_or_else(|| PathBuf::from(DEFAULT_OUTPUT_HISTORY_DIR), PathBuf::from)
-}
-
-pub(crate) fn output_history_file_at(dir: &Path, session_id: &str) -> PathBuf {
-    dir.join(format!("{}.history", output_history_filename(session_id)))
-}
-
-fn output_history_filename(session_id: &str) -> String {
-    let trimmed = session_id.trim();
-    if uuid::Uuid::parse_str(trimmed).is_ok() {
-        return trimmed.to_ascii_lowercase();
-    }
-
-    let mut encoded = String::from("legacy-");
-    for byte in trimmed.as_bytes() {
-        let _ = write!(encoded, "{byte:02x}");
-    }
-    if encoded == "legacy-" {
-        "legacy-empty".to_owned()
-    } else {
-        encoded
-    }
-}
-
-pub(crate) fn remove_output_history_file_at(dir: &Path, session_id: &str) -> io::Result<()> {
-    remove_session_file(&output_history_file_at(dir, session_id))
-}
-
-fn temp_path_for(path: &Path) -> PathBuf {
-    let filename = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("sessions.json");
-    path.with_file_name(format!("{filename}.tmp"))
 }
 
 pub fn host_from_selector(selector: &str) -> String {
@@ -576,38 +606,40 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             id: "file-transfer".to_owned(),
             kind: "transfer".to_owned(),
             display_name: "File Transfer Adapter".to_owned(),
-            description: "Generic adapter placeholder for sz/rz and tssh-style uploads and downloads.".to_owned(),
+            description: "Read, write, list, and inspect files in the selected LightOS instance through the current WebShell session boundary.".to_owned(),
             scopes: vec!["session".to_owned(), "filesystem".to_owned()],
             accepted_content_types: vec![
+                "text/plain".to_owned(),
                 "application/json".to_owned(),
                 "application/octet-stream".to_owned(),
             ],
             produced_content_types: vec![
+                "text/plain".to_owned(),
                 "application/json".to_owned(),
                 "application/octet-stream".to_owned(),
             ],
-            input_schema_json: r#"{"operation":"upload|download|attach","path":"string","transport":"sz-rz|tssh|custom","payload":"bytes"}"#.to_owned(),
-            output_schema_json: r#"{"jobId":"string","status":"queued|running|complete|failed","message":"string"}"#.to_owned(),
+            input_schema_json: r#"{"sessionId":"string","operation":"list|stat|read|download|write|upload","metadata":{"path":"string"},"payload":"bytes for write/upload"}"#.to_owned(),
+            output_schema_json: r#"{"status":"complete","contentType":"text/plain|application/json|application/octet-stream","payload":"file bytes, directory listing, stat output, or write summary"}"#.to_owned(),
             enabled: true,
             metadata: HashMap::from([
                 ("builtin".to_owned(), "true".to_owned()),
-                ("stage".to_owned(), "reserved".to_owned()),
+                ("runtime".to_owned(), "lightosctl-exec".to_owned()),
             ]),
         },
         PluginRecord {
             id: "ai-control".to_owned(),
             kind: "control".to_owned(),
-            display_name: "AI Shell Control".to_owned(),
-            description: "Generic control plugin placeholder for future AI-assisted shell delegation and supervision.".to_owned(),
+            display_name: "Control Lease Adapter".to_owned(),
+            description: "Observe, request, and release session control leases for AI or automation actors without bypassing terminal input locks.".to_owned(),
             scopes: vec!["session".to_owned(), "control".to_owned()],
             accepted_content_types: vec!["application/json".to_owned()],
             produced_content_types: vec!["application/json".to_owned()],
-            input_schema_json: r#"{"mode":"observe|suggest|operate","leaseId":"string","prompt":"string"}"#.to_owned(),
-            output_schema_json: r#"{"invocationId":"string","status":"accepted|running|complete|failed"}"#.to_owned(),
+            input_schema_json: r#"{"sessionId":"string","operation":"observe|status|request_control|release_control","metadata":{"actorId":"string","actorKind":"human|ai|system|custom","leaseId":"string for release"}}"#.to_owned(),
+            output_schema_json: r#"{"status":"complete","sessionId":"string","control":"lease|null","lease":"lease when requested"}"#.to_owned(),
             enabled: false,
             metadata: HashMap::from([
                 ("builtin".to_owned(), "true".to_owned()),
-                ("stage".to_owned(), "reserved".to_owned()),
+                ("defaultEnabled".to_owned(), "false".to_owned()),
             ]),
         },
     ]
@@ -620,11 +652,12 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
 mod tests {
     use super::*;
     use crate::config::{DEFAULT_COLS, DEFAULT_ROWS};
+    use crate::database::{KV_KEY_SESSIONS, KV_NAMESPACE_STATE};
 
     #[test]
     fn load_keeps_non_restartable_sessions_as_stopped() {
-        let path = temp_session_path();
-        let store = SessionStore::new(path.clone());
+        let database = temp_database();
+        let store = SessionStore::new(Arc::clone(&database));
         let persisted = PersistedSessionState {
             version: 1,
             sessions: vec![
@@ -633,7 +666,13 @@ mod tests {
                 test_session("legacy-default", "running", None),
             ],
         };
-        fs::write(&path, serde_json::to_vec(&persisted).unwrap()).unwrap();
+        database
+            .store_kv(
+                KV_NAMESPACE_STATE,
+                KV_KEY_SESSIONS,
+                &serde_json::to_vec(&persisted).unwrap(),
+            )
+            .unwrap();
 
         let sessions = store.load().unwrap();
 
@@ -655,18 +694,20 @@ mod tests {
                 .map(String::as_str),
             Some("false")
         );
-        let persisted =
-            serde_json::from_slice::<PersistedSessionState>(&fs::read(&path).unwrap()).unwrap();
+        let persisted = serde_json::from_slice::<PersistedSessionState>(
+            &database
+                .load_kv(KV_NAMESPACE_STATE, KV_KEY_SESSIONS)
+                .unwrap()
+                .expect("persisted sessions"),
+        )
+        .unwrap();
         assert_eq!(persisted.sessions.len(), 3);
-
-        let _ = fs::remove_file(path);
     }
 
     #[test]
     fn save_keeps_non_restartable_session_records() {
-        let path = temp_session_path();
-        let store = SessionStore::new(path.clone());
-        fs::write(&path, b"stale").unwrap();
+        let database = temp_database();
+        let store = SessionStore::new(Arc::clone(&database));
         let sessions = HashMap::from([(
             "drop".to_owned(),
             test_session("drop", "running", Some(false)),
@@ -674,8 +715,13 @@ mod tests {
 
         store.save(&sessions).unwrap();
 
-        let persisted =
-            serde_json::from_slice::<PersistedSessionState>(&fs::read(&path).unwrap()).unwrap();
+        let persisted = serde_json::from_slice::<PersistedSessionState>(
+            &database
+                .load_kv(KV_NAMESPACE_STATE, KV_KEY_SESSIONS)
+                .unwrap()
+                .expect("persisted sessions"),
+        )
+        .unwrap();
         assert_eq!(persisted.sessions.len(), 1);
         assert_eq!(persisted.sessions[0].id, "drop");
         assert_eq!(
@@ -685,8 +731,6 @@ mod tests {
                 .map(String::as_str),
             Some("false")
         );
-
-        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -752,6 +796,38 @@ mod tests {
         assert!(!Arc::ptr_eq(&first, &recreated));
     }
 
+    #[test]
+    fn plugin_store_applies_persisted_builtin_settings() {
+        let database = temp_database();
+        let store = PluginStore::new(Arc::clone(&database));
+        let mut plugins = builtin_plugins();
+        let control = plugins
+            .get_mut("ai-control")
+            .expect("ai-control builtin plugin");
+        control.enabled = true;
+        control
+            .metadata
+            .insert("operator".to_owned(), "codex".to_owned());
+
+        store.save(&plugins).unwrap();
+        let loaded = store.load().unwrap();
+
+        assert_eq!(
+            loaded.get("file-transfer").map(|plugin| plugin.enabled),
+            Some(true)
+        );
+        let control = loaded.get("ai-control").expect("ai-control loaded");
+        assert!(control.enabled);
+        assert_eq!(
+            control.metadata.get("operator").map(String::as_str),
+            Some("codex")
+        );
+        assert_eq!(
+            control.metadata.get("builtin").map(String::as_str),
+            Some("true")
+        );
+    }
+
     fn test_session(id: &str, status: &str, restartable: Option<bool>) -> SessionRecord {
         let selector = format!("{id}@owner");
         let (command, args) = default_session_command(&selector);
@@ -773,21 +849,18 @@ mod tests {
         }
     }
 
-    fn temp_session_path() -> PathBuf {
+    fn temp_database_path() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "lazycat-neko-webshell-sessions-{}.json",
+            "lazycat-neko-webshell-sessions-{}.db",
             uuid::Uuid::new_v4()
         ))
     }
 
+    fn temp_database() -> Arc<AppDatabase> {
+        Arc::new(AppDatabase::open(temp_database_path()).unwrap())
+    }
+
     fn test_app_state() -> AppState {
-        AppState::new_for_test(
-            temp_session_path(),
-            temp_session_path(),
-            std::env::temp_dir().join(format!(
-                "lazycat-neko-webshell-output-history-{}",
-                uuid::Uuid::new_v4()
-            )),
-        )
+        AppState::new_for_test(temp_database_path())
     }
 }

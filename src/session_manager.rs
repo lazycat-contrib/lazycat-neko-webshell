@@ -1,14 +1,12 @@
 use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
 use std::sync::{Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use anyhow::anyhow;
 use tracing::warn;
 
-use crate::state::{
-    SessionRecord, SessionStore, output_history_file_at, remove_output_history_file_at,
-};
+use crate::database::AppDatabase;
+use crate::state::{SessionRecord, SessionStore};
 use crate::terminal_manager::{ManagedTerminal, OutputBuffer, TerminalRegistry, TerminalSpec};
 use crate::validation::normalize_output_frame_limit;
 
@@ -18,7 +16,7 @@ pub struct SessionManager {
     records: Arc<RwLock<HashMap<String, SessionRecord>>>,
     terminals: Arc<TerminalRegistry>,
     output_buffers: Arc<RwLock<HashMap<String, Arc<OutputBuffer>>>>,
-    output_history_dir: PathBuf,
+    database: Arc<AppDatabase>,
     store: Arc<SessionStore>,
 }
 
@@ -26,13 +24,13 @@ impl SessionManager {
     pub fn new(
         records: HashMap<String, SessionRecord>,
         store: Arc<SessionStore>,
-        output_history_dir: PathBuf,
+        database: Arc<AppDatabase>,
     ) -> Self {
         Self {
             records: Arc::new(RwLock::new(records)),
             terminals: Arc::new(TerminalRegistry::new()),
             output_buffers: Arc::new(RwLock::new(HashMap::new())),
-            output_history_dir,
+            database,
             store,
         }
     }
@@ -59,7 +57,8 @@ impl SessionManager {
             .or_insert_with(|| {
                 Arc::new(OutputBuffer::persistent(
                     normalized_limit,
-                    output_history_file_at(&self.output_history_dir, session_id),
+                    session_id.to_owned(),
+                    Arc::clone(&self.database),
                 ))
             })
             .clone();
@@ -99,8 +98,7 @@ impl SessionManager {
             .and_then(|mut buffers| buffers.remove(session_id));
         if let Some(buffer) = buffer {
             buffer.close_history();
-        } else if let Err(err) = remove_output_history_file_at(&self.output_history_dir, session_id)
-        {
+        } else if let Err(err) = self.database.delete_output_history(session_id) {
             warn!(error = %err, session_id = %session_id, "failed to remove terminal output history");
         }
     }
@@ -184,14 +182,13 @@ impl SessionManager {
 mod tests {
     use super::*;
     use crate::config::{DEFAULT_COLS, DEFAULT_ROWS};
+    use crate::database::AppDatabase;
     use crate::state::default_session_command;
-    use serde_json::Value;
-    use std::fs;
     use uuid::Uuid;
 
     #[test]
     fn persists_status_resize_restart_policy_and_output_limit() {
-        let (manager, session_path, _history_dir) = test_manager(HashMap::from([(
+        let (manager, database) = test_manager(HashMap::from([(
             "session-one".to_owned(),
             test_session("session-one", "starting"),
         )]));
@@ -217,8 +214,14 @@ mod tests {
         );
         drop(records);
 
-        let persisted = fs::read_to_string(&session_path).unwrap();
-        let persisted: Value = serde_json::from_str(&persisted).unwrap();
+        let persisted = database
+            .load_kv(
+                crate::database::KV_NAMESPACE_STATE,
+                crate::database::KV_KEY_SESSIONS,
+            )
+            .unwrap()
+            .expect("persisted sessions");
+        let persisted: serde_json::Value = serde_json::from_slice(&persisted).unwrap();
         let session = &persisted["sessions"][0];
         assert_eq!(session["status"], "running");
         assert_eq!(session["cols"], 100);
@@ -228,32 +231,46 @@ mod tests {
     }
 
     #[test]
-    fn close_sessions_removes_output_buffer_and_history_file() {
-        let (manager, _session_path, history_dir) = test_manager(HashMap::new());
+    fn close_sessions_removes_output_buffer_and_history_rows() {
+        let (manager, database) = test_manager(HashMap::new());
         let first = manager.output_buffer("session-one", 128);
-        let history_file = output_history_file_at(&history_dir, "session-one");
-        fs::create_dir_all(&history_dir).unwrap();
-        fs::write(&history_file, b"stale history").unwrap();
+        database
+            .append_output_frame(
+                "session-one",
+                &crate::terminal_manager::OutputFrame {
+                    sequence: 1,
+                    data: b"stale history".to_vec(),
+                },
+                1,
+            )
+            .unwrap();
 
         manager.close_sessions(["session-one"]);
 
-        assert!(!history_file.exists());
+        assert!(
+            database
+                .load_output_history("session-one")
+                .unwrap()
+                .is_empty()
+        );
         let recreated = manager.output_buffer("session-one", 128);
         assert!(!Arc::ptr_eq(&first, &recreated));
     }
 
-    fn test_manager(records: HashMap<String, SessionRecord>) -> (SessionManager, PathBuf, PathBuf) {
+    fn test_manager(records: HashMap<String, SessionRecord>) -> (SessionManager, Arc<AppDatabase>) {
         let suffix = Uuid::new_v4();
-        let session_path =
-            std::env::temp_dir().join(format!("lazycat-neko-webshell-manager-{suffix}.json"));
-        let history_dir =
-            std::env::temp_dir().join(format!("lazycat-neko-webshell-manager-history-{suffix}"));
+        let database = Arc::new(
+            AppDatabase::open(
+                std::env::temp_dir().join(format!("lazycat-neko-webshell-manager-{suffix}.db")),
+            )
+            .unwrap(),
+        );
         let manager = SessionManager::new(
             records,
-            Arc::new(SessionStore::new(session_path.clone())),
-            history_dir.clone(),
+            Arc::new(SessionStore::new(Arc::clone(&database))),
+            Arc::clone(&database),
         );
-        (manager, session_path, history_dir)
+        (manager, database)
     }
 
     fn test_session(id: &str, status: &str) -> SessionRecord {

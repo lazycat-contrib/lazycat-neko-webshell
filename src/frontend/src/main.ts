@@ -1,38 +1,54 @@
 import "./styles.css";
 
+import { createClient } from "@connectrpc/connect";
+import { createConnectTransport } from "@connectrpc/connect-web";
 import { createIcons, icons } from "lucide";
 import { Terminal } from "restty/xterm";
 
+import { TerminalActionWSClient, type ActionResponseMeta } from "./action-ws-client";
 import {
   DEFAULT_SETTINGS,
   FONT_EXTENSIONS,
   FONT_MIME_TYPES,
   FONT_PRESETS,
+  INTERFACE_STYLE_IDS,
   INITIAL_COLS,
   INITIAL_ROWS,
+  MAX_CLIPBOARD_IMAGE_BYTES,
   MAX_CUSTOM_THEME_SOURCE_BYTES,
   MAX_OUTPUT_BUFFER_LIMIT,
   MAX_FONT_BYTES,
+  MAX_TERMINAL_BACKGROUND_BYTES,
   MIN_OUTPUT_BUFFER_LIMIT,
   STATUS_REFRESH_MS,
+  TERMINAL_BACKGROUND_EXTENSIONS,
+  TERMINAL_BACKGROUND_MIME_TYPES,
   THEMES,
 } from "./config";
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
-import type { Instance } from "./gen/lazycat/webshell/v1/capability_pb";
+import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
 import { translate, type MessageKey } from "./i18n";
 import { encodeMobileShortcutKeyInput } from "./keyboard";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
-import { cursorStyleSequence, terminalThemeCssVars } from "./terminal-appearance";
+import { cursorStyleSequence, terminalThemeCssVars, withTransparentBackground } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
 import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX, parseCustomGhosttyTheme, resolveTheme, resttyThemeFor } from "./theme-registry";
 import type {
   FontPreset,
+  HerdrAction,
+  HerdrBridgeState,
+  HerdrTabInfo,
+  HerdrWorkspaceInfo,
+  InterfaceStyleId,
   PaneTerminalTransport,
+  SessionBackendId,
+  SessionBackendsState,
   SplitNode,
   SplitPlacement,
   StoredFont,
+  TerminalBackground,
   TerminalPane,
   TerminalTab,
   TerminalTheme,
@@ -48,6 +64,21 @@ const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
+const SESSION_MODE_STORAGE_PREFIX = "lazycat-neko-webshell.sessionMode";
+const capabilityClient = createClient(
+  CapabilityService,
+  createConnectTransport({
+    baseUrl: "/",
+    fetch: (input, init) => fetch(input, { ...init, credentials: "same-origin" }),
+  }),
+);
+const actionClient = new TerminalActionWSClient();
+
+type SessionMode = SessionBackendId;
+type ClipboardImagePayload = {
+  extension: string;
+  data: ArrayBuffer;
+};
 
 const params = new URLSearchParams(window.location.search);
 const initialSelector = normalizeSelector(params.get("name") ?? "");
@@ -60,6 +91,14 @@ let instances: Instance[] = [];
 let selectedSelector = initialSelector;
 let selectedSelectorGeneration = 0;
 let selectedSelectorExplicit = initialSelectorExplicit;
+let herdrState: HerdrBridgeState | undefined;
+let herdrStateGeneration = 0;
+let sessionBackendsState: SessionBackendsState | undefined;
+let sessionBackendsGeneration = 0;
+let plugins: PluginDescriptor[] = [];
+let pluginsLoaded = false;
+let pluginsLoading = false;
+let aiModelOptions: string[] = [];
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
@@ -70,6 +109,19 @@ const mobileSticky = {
   alt: false,
   shift: false,
 };
+const lastMobileTerminalTap = {
+  paneId: "",
+  time: 0,
+  x: 0,
+  y: 0,
+};
+const mobileTerminalSwipe = {
+  paneId: "",
+  x: 0,
+  y: 0,
+  time: 0,
+};
+const pluginSaveInFlight = new Set<string>();
 let mobileRepeatTimer: number | undefined;
 let mobileRepeatInterval: number | undefined;
 let terminalResizeTimers: number[] = [];
@@ -299,8 +351,65 @@ function bindSettings() {
     saveSettings();
     applySettings();
   });
+  elements.interfaceStyleSelect.addEventListener("change", () => {
+    settings.interfaceStyleId = normalizeInterfaceStyleId(elements.interfaceStyleSelect.value);
+    saveSettings();
+    applySettings();
+  });
   elements.saveTheme.addEventListener("click", () => saveCustomTheme());
   elements.removeTheme.addEventListener("click", () => removeSelectedCustomTheme());
+  elements.refreshPlugins.addEventListener("click", () => void loadPlugins());
+  elements.pluginList.addEventListener("change", (event) => {
+    const input = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-plugin-toggle]")
+      : null;
+    if (input) {
+      void configurePlugin(input.dataset.pluginToggle ?? "", input.checked);
+      return;
+    }
+    const aiSetting = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement | HTMLSelectElement>("[data-ai-setting]")
+      : null;
+    if (aiSetting) {
+      updateAISetting(aiSetting.dataset.aiSetting ?? "", aiSetting.value);
+      return;
+    }
+    const upload = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("#fileTransferUpload")
+      : null;
+    const file = upload?.files?.[0];
+    if (!upload || !file) return;
+    void uploadFileTransfer(file).finally(() => {
+      upload.value = "";
+    });
+  });
+  elements.pluginList.addEventListener("click", (event) => {
+    const fileButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-file-transfer-action]")
+      : null;
+    if (fileButton) {
+      void runFileTransfer(fileButton.dataset.fileTransferAction ?? "");
+      return;
+    }
+    const aiButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-ai-action]")
+      : null;
+    if (!aiButton) return;
+    const action = aiButton.dataset.aiAction ?? "";
+    if (action === "models") {
+      void fetchAIModels();
+    } else if (action === "test") {
+      void testAIAccess();
+    } else if (action === "insert-output") {
+      insertAIOutputIntoTerminal();
+    } else if (action === "copy-output") {
+      void copyAIOutput();
+    } else if (action === "clear-output") {
+      clearAIOutput();
+    } else {
+      void runAIAction(action);
+    }
+  });
   elements.fontFamily.addEventListener("change", () => {
     settings.fontFamilyId = elements.fontFamily.value;
     saveSettings();
@@ -335,6 +444,30 @@ function bindSettings() {
     );
     saveSettings();
     syncOutputBufferLimitToServer();
+    applySettings();
+  });
+  elements.terminalBackgroundEnabled.addEventListener("change", () => {
+    settings.terminalBackgroundEnabled = elements.terminalBackgroundEnabled.checked;
+    saveSettings();
+    applySettings();
+  });
+  elements.terminalBackgroundUpload.addEventListener("change", () => void uploadTerminalBackground());
+  elements.removeTerminalBackground.addEventListener("click", () => void removeTerminalBackground());
+  elements.terminalBackgroundOpacity.addEventListener("input", () => {
+    settings.terminalBackgroundOpacity = clampNumber(
+      elements.terminalBackgroundOpacity.value,
+      0.05,
+      0.8,
+      DEFAULT_SETTINGS.terminalBackgroundOpacity,
+    );
+    saveSettings();
+    applySettings();
+  });
+  elements.terminalBackgroundBlur.addEventListener("input", () => {
+    settings.terminalBackgroundBlur = Math.round(
+      clampNumber(elements.terminalBackgroundBlur.value, 0, 24, DEFAULT_SETTINGS.terminalBackgroundBlur),
+    );
+    saveSettings();
     applySettings();
   });
   elements.cursorBlink.addEventListener("change", () => {
@@ -382,6 +515,48 @@ function bindActions() {
   elements.refreshInstances.addEventListener("click", () => void loadInstances());
   elements.newTabButton.addEventListener("click", () => void createSelectedTab());
   elements.emptyNewTab.addEventListener("click", () => void createSelectedTab());
+  elements.herdrRefresh.addEventListener("click", () => void refreshHerdrState(selectedSelector));
+  elements.herdrMode.addEventListener("change", (event) => {
+    const select = event.target instanceof HTMLSelectElement ? event.target : null;
+    if (!select) return;
+    setSessionMode(normalizeSessionMode(select.value));
+  });
+  elements.herdrNewTab.addEventListener("click", () => {
+    const workspaceId = focusedHerdrWorkspace()?.workspace_id;
+    void runHerdrAction("create_tab", { workspaceId });
+  });
+  elements.herdrWorkspaceList.addEventListener("click", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
+      : null;
+    if (!button) return;
+    void runHerdrAction("focus_workspace", { workspaceId: button.dataset.herdrWorkspace });
+  });
+  elements.herdrWorkspaceList.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
+      : null;
+    if (!button) return;
+    event.preventDefault();
+    void runHerdrAction("focus_workspace", { workspaceId: button.dataset.herdrWorkspace });
+  });
+  elements.herdrTabList.addEventListener("click", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-tab]")
+      : null;
+    if (!button) return;
+    void runHerdrAction("focus_tab", { tabId: button.dataset.herdrTab });
+  });
+  elements.herdrTabList.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-tab]")
+      : null;
+    if (!button) return;
+    event.preventDefault();
+    void runHerdrAction("focus_tab", { tabId: button.dataset.herdrTab });
+  });
   elements.removeFont.addEventListener("click", () => void removeSelectedFont());
   elements.fitTerminal.addEventListener("click", () => void toggleFullscreen());
   elements.homeButton.addEventListener("click", () => void navigateLightOSHome());
@@ -406,9 +581,10 @@ function bindActions() {
     event.stopPropagation();
     toggleInstanceMenu();
   });
-  elements.terminalStage.addEventListener("pointerdown", () => {
-    activePane()?.term?.focus();
-    requestAnimationFrame(() => activePane()?.term?.focus());
+  elements.terminalStage.addEventListener("pointerdown", (event) => {
+    if (!shouldFocusTerminalFromPointer(event)) return;
+    focusActivePaneCanvas();
+    requestAnimationFrame(() => focusActivePaneCanvas());
   });
   document.addEventListener("click", (event) => {
     if (event.target instanceof Node && !elements.instanceSwitcher.contains(event.target)) {
@@ -463,7 +639,11 @@ function bindActions() {
 }
 
 function bindLifecycleEvents() {
-  window.addEventListener("online", () => void connectRestoredPanes());
+  window.addEventListener("online", () => {
+    void connectRestoredPanes();
+    void refreshSessionBackends(selectedSelector);
+    void refreshHerdrState(selectedSelector);
+  });
   window.addEventListener("popstate", () => {
     const nextParams = new URLSearchParams(window.location.search);
     const nextSelector = normalizeSelector(nextParams.get("name") ?? "");
@@ -485,6 +665,8 @@ function bindLifecycleEvents() {
   window.addEventListener("focus", () => {
     handleViewportChange();
     void connectRestoredPanes();
+    void refreshSessionBackends(selectedSelector);
+    void refreshHerdrState(selectedSelector);
   });
   window.addEventListener("resize", handleViewportChange);
   window.addEventListener("orientationchange", handleViewportChange);
@@ -494,6 +676,8 @@ function bindLifecycleEvents() {
     if (document.hidden) return;
     handleViewportChange();
     void connectRestoredPanes();
+    void refreshSessionBackends(selectedSelector);
+    void refreshHerdrState(selectedSelector);
   });
 }
 
@@ -530,9 +714,29 @@ function bindMobileShortcuts() {
   });
 
   elements.mobileShortcuts.addEventListener("click", (event) => {
-    if (event.target instanceof Element && event.target.closest("[data-mobile-shortcut], [data-mobile-page]")) {
+    if (
+      event.target instanceof Element
+      && event.target.closest("[data-mobile-shortcut], [data-mobile-action], [data-mobile-chord], [data-mobile-page]")
+    ) {
       event.preventDefault();
     }
+  });
+
+  elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
+    const chordButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-mobile-chord]")
+      : null;
+    if (chordButton) {
+      event.preventDefault();
+      runMobileChord(chordButton.dataset.mobileChord ?? "");
+      return;
+    }
+    const actionButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-mobile-action]")
+      : null;
+    if (!actionButton) return;
+    event.preventDefault();
+    void runMobileAction(actionButton.dataset.mobileAction ?? "");
   });
 
   elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
@@ -604,6 +808,9 @@ function activateSettingsTab(tabId: string) {
   elements.settingsPage.querySelectorAll<HTMLElement>("[data-settings-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.settingsPanel !== tabId;
   });
+  if (tabId === "plugins" && !pluginsLoaded && !pluginsLoading) {
+    void loadPlugins();
+  }
 }
 
 function activateFontTab(tabId: string) {
@@ -629,14 +836,14 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
   if (shortcut === "ctrl" || shortcut === "alt" || shortcut === "shift") {
     mobileSticky[shortcut] = !mobileSticky[shortcut];
     updateMobileShortcutState();
-    activePane()?.term?.focus();
+    focusActivePaneCanvas();
     return;
   }
 
   if (shortcut === "paste") {
     await pasteIntoPane(activePane(), false);
     clearMobileSticky();
-    activePane()?.term?.focus();
+    focusActivePaneCanvas();
     return;
   }
 
@@ -647,7 +854,53 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
   if (!options.keepModifiers) {
     clearMobileSticky();
   }
-  activePane()?.term?.focus();
+  focusActivePaneCanvas();
+}
+
+function runMobileChord(chord: string) {
+  const data = mobileChordInput(chord);
+  if (data) {
+    sendActivePaneKeyInput(data);
+  }
+  clearMobileSticky();
+  focusActivePaneCanvas();
+}
+
+async function runMobileAction(action: string) {
+  if (action === "previous-tab") {
+    activateAdjacentTab(-1);
+  } else if (action === "next-tab") {
+    activateAdjacentTab(1);
+  } else if (action === "new-tab") {
+    await createSelectedTab();
+  } else if (action === "close-tab") {
+    closeActiveTab();
+  } else if (action === "previous-pane") {
+    activateAdjacentPane(-1);
+  } else if (action === "next-pane" || action === "swap-pane") {
+    activateAdjacentPane(1);
+  } else if (action === "split-right") {
+    await splitActivePane("right");
+  } else if (action === "split-down") {
+    await splitActivePane("down");
+  } else if (action === "copy-selection") {
+    await copySelection(true);
+  } else if (action === "paste-clipboard") {
+    await pasteIntoPane(activePane(), true);
+  } else if (action === "pane-menu") {
+    openActivePaneMenu();
+  }
+  clearMobileSticky();
+  if (action !== "pane-menu") {
+    focusActivePaneCanvas();
+  }
+}
+
+function mobileChordInput(chord: string): string | undefined {
+  if (chord === "ctrl-c") return "\x03";
+  if (chord === "ctrl-e") return "\x05";
+  if (chord === "shift-tab") return "\x1b[Z";
+  return undefined;
 }
 
 function clearMobileSticky() {
@@ -723,6 +976,9 @@ function openSettings() {
   setAppBackgroundInert(true);
   closeInstanceMenu();
   closeSettingsMenu();
+  if (!pluginsLoaded && !pluginsLoading) {
+    void loadPlugins();
+  }
   requestAnimationFrame(() => elements.closeSettings.focus());
 }
 
@@ -796,6 +1052,17 @@ function openPaneMenu(clientX: number, clientY: number, paneId: string) {
   });
 }
 
+function openActivePaneMenu() {
+  const pane = activePane();
+  if (!pane) return;
+  const rect = pane.mount.getBoundingClientRect();
+  openPaneMenu(
+    rect.left + rect.width / 2,
+    Math.min(rect.bottom - 12, window.innerHeight - 12),
+    pane.id,
+  );
+}
+
 function updatePaneMenuForPane(paneId: string) {
   const pane = findPaneById(paneId);
   const tab = pane ? tabForPane(pane) : undefined;
@@ -846,6 +1113,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   applyThemeVariables(elements.webshell, resttyTheme);
   applyThemeVariables(elements.terminalStage, resttyTheme);
   elements.localeSelect.value = settings.locale;
+  elements.interfaceStyleSelect.value = settings.interfaceStyleId;
   renderThemeOptions();
   elements.themeSelect.value = theme.id;
   syncThemeEditor();
@@ -854,6 +1122,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.fontPreview.style.fontSize = `${settings.fontSize}px`;
   elements.tabLayout.value = settings.tabLayout;
   elements.webshell.dataset.tabLayout = settings.tabLayout;
+  elements.webshell.dataset.interfaceStyle = settings.interfaceStyleId;
   elements.removeFont.disabled = !font.custom;
   settings.themeId = theme.id;
   settings.fontFamilyId = font.id;
@@ -863,6 +1132,13 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.lineHeightValue.textContent = settings.lineHeight.toFixed(2);
   elements.scrollbackLimit.value = String(settings.scrollbackLimit);
   elements.outputBufferLimit.value = String(settings.outputBufferLimit);
+  elements.terminalBackgroundEnabled.checked = settings.terminalBackgroundEnabled;
+  elements.terminalBackgroundEnabled.disabled = !settings.terminalBackgroundUrl;
+  elements.removeTerminalBackground.disabled = !settings.terminalBackgroundUrl;
+  elements.terminalBackgroundOpacity.value = String(settings.terminalBackgroundOpacity);
+  elements.terminalBackgroundOpacityValue.textContent = `${Math.round(settings.terminalBackgroundOpacity * 100)}%`;
+  elements.terminalBackgroundBlur.value = String(settings.terminalBackgroundBlur);
+  elements.terminalBackgroundBlurValue.textContent = `${settings.terminalBackgroundBlur}px`;
   elements.cursorBlink.checked = settings.cursorBlink;
   elements.cursorShape.value = settings.cursorShape;
   elements.copyOnSelect.checked = settings.copyOnSelect;
@@ -870,6 +1146,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.touchSelectionMode.value = settings.touchSelectionMode;
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;
+  renderPlugins();
 
   for (const pane of allPanes()) {
     applyTerminalAppearance(pane, resttyTheme);
@@ -884,6 +1161,12 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
 
 function currentTheme(): TerminalTheme {
   return resolveTheme(settings.themeId, settings.customThemes);
+}
+
+function normalizeInterfaceStyleId(value: string): InterfaceStyleId {
+  return INTERFACE_STYLE_IDS.includes(value as InterfaceStyleId)
+    ? value as InterfaceStyleId
+    : DEFAULT_SETTINGS.interfaceStyleId;
 }
 
 function currentFont(): FontPreset {
@@ -912,19 +1195,22 @@ function applyThemeToMount(mount: HTMLElement, resttyTheme = resttyThemeFor(curr
   mount.style.setProperty("--term-font-family", font.family);
   mount.style.setProperty("--term-font-size", `${settings.fontSize}px`);
   mount.style.setProperty("--term-line-height", String(settings.lineHeight));
+  applyTerminalBackgroundToMount(mount);
 }
 
 function applyTerminalAppearance(pane: TerminalPane, theme = resttyThemeFor(currentTheme())) {
   applyThemeToMount(pane.mount, theme);
   const term = pane.term;
   if (!term?.restty) return;
-  if (theme) {
-    term.restty.applyTheme(theme, currentTheme().label);
+  const hasBackground = terminalBackgroundActive();
+  const renderTheme = hasBackground ? withTransparentBackground(theme) : theme;
+  if (renderTheme) {
+    term.restty.applyTheme(renderTheme, currentTheme().label);
   }
   const themeVars = terminalThemeCssVars(theme);
   term.restty.setPaneStyleOptions({
-    splitBackground: themeVars["--term-bg"],
-    paneBackground: themeVars["--term-bg"],
+    splitBackground: hasBackground ? "transparent" : themeVars["--term-bg"],
+    paneBackground: hasBackground ? "transparent" : themeVars["--term-bg"],
     inactivePaneOpacity: 1,
     activePaneOpacity: 1,
     opacityTransitionMs: 0,
@@ -936,6 +1222,24 @@ function applyTerminalAppearance(pane: TerminalPane, theme = resttyThemeFor(curr
     setFontStatus(tr("status.fontLoadFailed", { message: errorMessage(error) }), "error");
   });
   term.restty.updateSize(true);
+}
+
+function terminalBackgroundActive(): boolean {
+  return settings.terminalBackgroundEnabled && Boolean(settings.terminalBackgroundUrl);
+}
+
+function applyTerminalBackgroundToMount(mount: HTMLElement) {
+  const active = terminalBackgroundActive();
+  mount.classList.toggle("has-terminal-background", active);
+  if (!active) {
+    mount.style.removeProperty("--terminal-bg-image");
+    mount.style.removeProperty("--terminal-bg-opacity");
+    mount.style.removeProperty("--terminal-bg-blur");
+    return;
+  }
+  mount.style.setProperty("--terminal-bg-image", `url(${JSON.stringify(settings.terminalBackgroundUrl)})`);
+  mount.style.setProperty("--terminal-bg-opacity", String(settings.terminalBackgroundOpacity));
+  mount.style.setProperty("--terminal-bg-blur", `${settings.terminalBackgroundBlur}px`);
 }
 
 function applyCursorAppearance(pane: TerminalPane) {
@@ -1074,6 +1378,62 @@ async function removeSelectedFont() {
   setFontStatus(tr("status.fontRemoved", { name: font.label }));
 }
 
+async function uploadTerminalBackground() {
+  const file = elements.terminalBackgroundUpload.files?.[0];
+  elements.terminalBackgroundUpload.value = "";
+  if (!file) return;
+
+  try {
+    validateTerminalBackgroundFile(file);
+    const url = new URL("./api/terminal-backgrounds", window.location.href);
+    url.searchParams.set("filename", file.name);
+    const response = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": file.type || mimeTypeForTerminalBackground(file.name) },
+      body: file,
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const background = await response.json() as TerminalBackground;
+    if (!background.url) throw new Error("invalid background upload response");
+    settings.terminalBackgroundUrl = background.url;
+    settings.terminalBackgroundEnabled = true;
+    saveSettings();
+    applySettings();
+    setTerminalBackgroundStatus(tr("status.backgroundReady"), "ok");
+  } catch (error) {
+    setTerminalBackgroundStatus(tr("status.backgroundUploadFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+async function removeTerminalBackground() {
+  const id = terminalBackgroundIdFromUrl(settings.terminalBackgroundUrl);
+  if (!id) {
+    settings.terminalBackgroundUrl = "";
+    settings.terminalBackgroundEnabled = false;
+    saveSettings();
+    applySettings();
+    setTerminalBackgroundStatus("");
+    return;
+  }
+
+  const response = await fetch(new URL(`./api/terminal-backgrounds/${encodeURIComponent(id)}`, window.location.href), {
+    method: "DELETE",
+    credentials: "same-origin",
+  });
+  if (!response.ok && response.status !== 404) {
+    setTerminalBackgroundStatus(tr("status.backgroundDeleteFailed", { message: await response.text() }), "error");
+    return;
+  }
+  settings.terminalBackgroundUrl = "";
+  settings.terminalBackgroundEnabled = false;
+  saveSettings();
+  applySettings();
+  setTerminalBackgroundStatus(tr("status.backgroundRemoved"));
+}
+
 function validateFontFile(file: File) {
   const lowerName = file.name.toLowerCase();
   if (!FONT_EXTENSIONS.some((extension) => lowerName.endsWith(extension))) {
@@ -1096,9 +1456,620 @@ function mimeTypeForFont(name: string): string {
   return "application/octet-stream";
 }
 
+function validateTerminalBackgroundFile(file: File) {
+  const lowerName = file.name.toLowerCase();
+  if (!TERMINAL_BACKGROUND_EXTENSIONS.some((extension) => lowerName.endsWith(extension))) {
+    throw new Error(tr("validation.backgroundExtension"));
+  }
+  if (file.type && !TERMINAL_BACKGROUND_MIME_TYPES.has(file.type)) {
+    throw new Error(tr("validation.backgroundMime", { mimeType: file.type }));
+  }
+  if (file.size <= 0 || file.size > MAX_TERMINAL_BACKGROUND_BYTES) {
+    throw new Error(tr("validation.backgroundSize"));
+  }
+}
+
+function mimeTypeForTerminalBackground(name: string): string {
+  const lowerName = name.toLowerCase();
+  if (lowerName.endsWith(".png")) return "image/png";
+  if (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) return "image/jpeg";
+  if (lowerName.endsWith(".webp")) return "image/webp";
+  return "application/octet-stream";
+}
+
+function terminalBackgroundIdFromUrl(value: string): string {
+  if (!value) return "";
+  try {
+    const url = new URL(value, window.location.href);
+    if (url.origin !== window.location.origin) return "";
+    const match = url.pathname.match(/^\/api\/terminal-backgrounds\/([0-9a-f-]+)\/file$/);
+    return match?.[1] ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function setFontStatus(message: string, tone: Tone = "neutral") {
   elements.fontStatus.textContent = message;
   elements.fontStatus.dataset.tone = tone;
+}
+
+function setTerminalBackgroundStatus(message: string, tone: Tone = "neutral") {
+  elements.terminalBackgroundStatus.textContent = message;
+  elements.terminalBackgroundStatus.dataset.tone = tone;
+}
+
+async function loadPlugins() {
+  if (pluginsLoading) return;
+  pluginsLoading = true;
+  renderPlugins();
+  setPluginStatus(tr("status.pluginsLoading"));
+  try {
+    const response = await capabilityClient.listPlugins({}, { timeoutMs: 10000 });
+    plugins = [...response.plugins].sort((left, right) => left.id.localeCompare(right.id));
+    pluginsLoaded = true;
+    renderPlugins();
+    setPluginStatus(tr("status.pluginsReady", { count: plugins.length }), "ok");
+  } catch (error) {
+    pluginsLoaded = false;
+    setPluginStatus(tr("status.pluginLoadFailed", { message: errorMessage(error) }), "error");
+  } finally {
+    pluginsLoading = false;
+    renderPlugins();
+  }
+}
+
+async function configurePlugin(pluginId: string, enabled: boolean) {
+  const plugin = plugins.find((item) => item.id === pluginId);
+  if (!plugin || pluginSaveInFlight.has(pluginId)) return;
+  pluginSaveInFlight.add(pluginId);
+  renderPlugins();
+  try {
+    const response = await capabilityClient.configurePlugin({
+      pluginId,
+      enabled,
+      metadata: {},
+    }, { timeoutMs: 10000 });
+    const updated = response.plugin ?? { ...plugin, enabled };
+    plugins = plugins.map((item) => item.id === pluginId ? updated : item);
+    setPluginStatus(
+      tr(enabled ? "status.pluginEnabled" : "status.pluginDisabled", { name: pluginDisplayName(updated) }),
+      "ok",
+    );
+  } catch (error) {
+    setPluginStatus(
+      tr(enabled ? "status.pluginEnableFailed" : "status.pluginDisableFailed", { message: errorMessage(error) }),
+      "error",
+    );
+  } finally {
+    pluginSaveInFlight.delete(pluginId);
+    renderPlugins();
+  }
+}
+
+function renderPlugins() {
+  if (!plugins.length) {
+    elements.pluginList.innerHTML = `<div class="empty">${escapeHtml(pluginsLoading ? tr("status.pluginsLoading") : tr("status.noPlugins"))}</div>`;
+    elements.refreshPlugins.disabled = pluginsLoading;
+    return;
+  }
+  elements.refreshPlugins.disabled = pluginsLoading;
+  elements.pluginList.innerHTML = plugins.map((plugin) => renderPlugin(plugin)).join("");
+  updateIcons();
+}
+
+function renderPlugin(plugin: PluginDescriptor): string {
+  const saving = pluginSaveInFlight.has(plugin.id);
+  const status = plugin.enabled ? tr("setting.pluginEnabled") : tr("setting.pluginDisabled");
+  const meta = Array.from(new Set([plugin.kind, ...plugin.scopes].filter(Boolean)))
+    .map((item) => pluginMetaLabel(item));
+  const tool = plugin.id === "file-transfer"
+    ? renderFileTransferTool(plugin)
+    : plugin.id === "ai-control"
+      ? renderAIControlTool(plugin)
+      : "";
+  return `
+    <div class="plugin-item" role="listitem">
+      <div class="plugin-content">
+        <div class="plugin-title-row">
+          <span class="plugin-icon"><i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i></span>
+          <span class="plugin-name">${escapeHtml(pluginDisplayName(plugin))}</span>
+          <code>${escapeHtml(plugin.id)}</code>
+        </div>
+        <p class="plugin-description">${escapeHtml(pluginDescription(plugin))}</p>
+        <div class="plugin-meta">
+          ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+        </div>
+      </div>
+      <label class="switch plugin-switch">
+        <input
+          type="checkbox"
+          data-plugin-toggle="${escapeAttr(plugin.id)}"
+          ${plugin.enabled ? "checked" : ""}
+          ${saving || pluginsLoading ? "disabled" : ""}
+        />
+        <span>${escapeHtml(status)}</span>
+      </label>
+      ${tool}
+    </div>
+  `;
+}
+
+function pluginControlsDisabled(plugin: PluginDescriptor): boolean {
+  return !plugin.enabled || pluginSaveInFlight.has(plugin.id) || pluginsLoading;
+}
+
+function renderFileTransferTool(plugin: PluginDescriptor): string {
+  const disabled = pluginControlsDisabled(plugin);
+  const disabledAttr = disabled ? "disabled" : "";
+  return `
+    <div class="plugin-tool file-transfer-tool">
+      <div class="settings-group-title">${escapeHtml(tr("section.fileTransfer"))}</div>
+      <p class="settings-help">${escapeHtml(tr("plugin.fileTransfer.help"))}</p>
+      <label class="field">
+        <span>${escapeHtml(tr("field.pluginPath"))}</span>
+        <input id="fileTransferPath" type="text" value="/" autocomplete="off" spellcheck="false" ${disabledAttr} />
+      </label>
+      <div class="plugin-action-row">
+        <button class="command-button" type="button" data-file-transfer-action="list" ${disabledAttr}>
+          <i data-lucide="list-tree"></i>
+          <span>${escapeHtml(tr("action.pluginFileList"))}</span>
+        </button>
+        <button class="command-button" type="button" data-file-transfer-action="read" ${disabledAttr}>
+          <i data-lucide="file-text"></i>
+          <span>${escapeHtml(tr("action.pluginFileRead"))}</span>
+        </button>
+        <button class="command-button" type="button" data-file-transfer-action="stat" ${disabledAttr}>
+          <i data-lucide="info"></i>
+          <span>${escapeHtml(tr("action.pluginFileStat"))}</span>
+        </button>
+        <button class="command-button" type="button" data-file-transfer-action="download" ${disabledAttr}>
+          <i data-lucide="download"></i>
+          <span>${escapeHtml(tr("action.pluginFileDownload"))}</span>
+        </button>
+        <label class="file-button ${disabled ? "is-disabled" : ""}">
+          <input id="fileTransferUpload" type="file" ${disabledAttr} />
+          <i data-lucide="upload"></i>
+          <span>${escapeHtml(tr("action.pluginFileUpload"))}</span>
+        </label>
+      </div>
+      <pre class="plugin-output" id="fileTransferOutput" aria-label="${escapeAttr(tr("plugin.fileTransfer.output"))}"></pre>
+    </div>
+  `;
+}
+
+function renderAIControlTool(plugin: PluginDescriptor): string {
+  const disabled = pluginControlsDisabled(plugin);
+  const disabledAttr = disabled ? "disabled" : "";
+  const modelOptions = aiModelOptions
+    .map((model) => `<option value="${escapeAttr(model)}"></option>`)
+    .join("");
+  return `
+    <div class="plugin-tool ai-control-tool">
+      <div class="settings-group-title">${escapeHtml(tr("section.aiAccess"))}</div>
+      <p class="settings-help">${escapeHtml(tr("ai.accessHelp"))}</p>
+      <div class="ai-config-grid">
+        <label class="field">
+          <span>${escapeHtml(tr("field.aiProvider"))}</span>
+          <select data-ai-setting="provider" ${disabledAttr}>
+            <option value="openai-compatible" ${settings.aiProvider === "openai-compatible" ? "selected" : ""}>${escapeHtml(tr("ai.providerOpenAICompatible"))}</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>${escapeHtml(tr("field.aiBaseUrl"))}</span>
+          <input data-ai-setting="baseUrl" type="url" value="${escapeAttr(settings.aiBaseUrl)}" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" ${disabledAttr} />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(tr("field.aiApiKey"))}</span>
+          <input data-ai-setting="apiKey" type="password" value="${escapeAttr(settings.aiApiKey)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(tr("field.aiModel"))}</span>
+          <input data-ai-setting="model" list="aiModelOptions" type="text" value="${escapeAttr(settings.aiModel)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
+          <datalist id="aiModelOptions">${modelOptions}</datalist>
+        </label>
+      </div>
+      <div class="plugin-action-row ai-action-row">
+        <button class="command-button" type="button" data-ai-action="models" ${disabledAttr}>
+          <i data-lucide="list-filter"></i>
+          <span>${escapeHtml(tr("action.aiFetchModels"))}</span>
+        </button>
+        <button class="command-button" type="button" data-ai-action="test" ${disabledAttr}>
+          <i data-lucide="activity"></i>
+          <span>${escapeHtml(tr("action.aiTest"))}</span>
+        </button>
+        <button class="command-button" type="button" data-ai-action="chat" ${disabledAttr}>
+          <i data-lucide="message-square"></i>
+          <span>${escapeHtml(tr("action.aiChat"))}</span>
+        </button>
+        <button class="command-button" type="button" data-ai-action="nl2cmd" ${disabledAttr}>
+          <i data-lucide="terminal"></i>
+          <span>${escapeHtml(tr("action.aiNl2cmd"))}</span>
+        </button>
+        <button class="command-button" type="button" data-ai-action="complete" ${disabledAttr}>
+          <i data-lucide="wand-sparkles"></i>
+          <span>${escapeHtml(tr("action.aiComplete"))}</span>
+        </button>
+        <button class="command-button" type="button" data-ai-action="explain" ${disabledAttr}>
+          <i data-lucide="circle-help"></i>
+          <span>${escapeHtml(tr("action.aiExplain"))}</span>
+        </button>
+        <button class="command-button" type="button" data-ai-action="insert-output" ${disabledAttr}>
+          <i data-lucide="corner-down-left"></i>
+          <span>${escapeHtml(tr("action.aiInsert"))}</span>
+        </button>
+      </div>
+      <label class="field ai-prompt-field">
+        <span>${escapeHtml(tr("field.aiPrompt"))}</span>
+        <textarea id="aiPrompt" rows="4" spellcheck="false" ${disabledAttr}></textarea>
+      </label>
+      <div class="ai-block">
+        <div class="ai-block-head">
+          <span><i data-lucide="bot"></i>${escapeHtml(tr("plugin.aiControl.block"))}</span>
+          <div class="ai-block-actions">
+            <button class="icon-button" type="button" data-ai-action="copy-output" aria-label="${escapeAttr(tr("action.aiCopy"))}" title="${escapeAttr(tr("action.aiCopy"))}" ${disabledAttr}>
+              <i data-lucide="copy"></i>
+            </button>
+            <button class="icon-button" type="button" data-ai-action="clear-output" aria-label="${escapeAttr(tr("action.aiClear"))}" title="${escapeAttr(tr("action.aiClear"))}" ${disabledAttr}>
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+        </div>
+        <pre class="plugin-output ai-output" id="aiOutput" aria-label="${escapeAttr(tr("plugin.aiControl.output"))}"></pre>
+      </div>
+    </div>
+  `;
+}
+
+async function runFileTransfer(action: string) {
+  if (action !== "list" && action !== "read" && action !== "stat" && action !== "download") return;
+  if (!pluginIsEnabled("file-transfer")) return;
+  const path = fileTransferPath();
+  if (!path) {
+    setFileTransferOutput(tr("validation.pluginPath"), "error");
+    return;
+  }
+  const pane = activePane();
+  if (!pane?.sessionId) {
+    setFileTransferOutput(tr("status.pluginFileNoSession"), "error");
+    return;
+  }
+  setFileTransferOutput("");
+  try {
+    let stream = "";
+    const done = await actionClient.send("transfer", action, {
+      sessionId: pane.sessionId,
+      path,
+    }, {
+      onStream: (chunk) => {
+        stream += chunk;
+        setFileTransferOutput(stream, "ok");
+      },
+      onProgress: (meta) => setFileTransferOutput(transferProgressText(meta), "neutral"),
+    });
+    if (action === "download") {
+      const data = metaString(done.meta, "data");
+      if (data) {
+        downloadPluginPayload(
+          base64ToBytes(data),
+          metaString(done.meta, "name") || fileNameFromPath(path),
+          metaString(done.meta, "contentType") || "application/octet-stream",
+        );
+      }
+    } else if (!stream) {
+      const content = metaString(done.meta, "content");
+      if (content) setFileTransferOutput(content, "ok");
+    }
+    setPluginStatus(tr("status.pluginFileDone", { operation: action }), "ok");
+  } catch (error) {
+    setFileTransferOutput(errorMessage(error), "error");
+    setPluginStatus(errorMessage(error), "error");
+  }
+}
+
+async function uploadFileTransfer(file: File) {
+  if (!pluginIsEnabled("file-transfer")) return;
+  const pane = activePane();
+  if (!pane?.sessionId) {
+    setFileTransferOutput(tr("status.pluginFileNoSession"), "error");
+    return;
+  }
+  const targetPath = uploadTargetPath(fileTransferPath(), file.name);
+  if (!targetPath) {
+    setFileTransferOutput(tr("validation.pluginPath"), "error");
+    return;
+  }
+  setFileTransferOutput("");
+  try {
+    const done = await actionClient.uploadFile(file, pane.sessionId, targetPath, {
+      onProgress: (meta) => setFileTransferOutput(transferProgressText(meta), "neutral"),
+    });
+    setFileTransferOutput(metaString(done.meta, "content") || transferProgressText(done.meta), "ok");
+    setPluginStatus(tr("status.pluginFileUploadDone", { name: file.name }), "ok");
+  } catch (error) {
+    setFileTransferOutput(errorMessage(error), "error");
+    setPluginStatus(errorMessage(error), "error");
+  }
+}
+
+function updateAISetting(field: string, value: string) {
+  if (field === "provider") {
+    settings.aiProvider = value || DEFAULT_SETTINGS.aiProvider;
+  } else if (field === "baseUrl") {
+    settings.aiBaseUrl = value.trim();
+    aiModelOptions = [];
+  } else if (field === "apiKey") {
+    settings.aiApiKey = value;
+    aiModelOptions = [];
+  } else if (field === "model") {
+    settings.aiModel = value.trim();
+  }
+  saveSettings();
+}
+
+async function fetchAIModels() {
+  if (!pluginIsEnabled("ai-control")) return;
+  if (!aiAccessConfigured()) {
+    setAIOutput(tr("validation.aiAccess"), "error");
+    return;
+  }
+  setAIOutput(tr("status.aiWorking"));
+  try {
+    const done = await actionClient.send("ai", "models", {});
+    const models = metaStringArray(done.meta, "models");
+    aiModelOptions = models;
+    if (!settings.aiModel && models[0]) {
+      settings.aiModel = models[0];
+      saveSettings();
+    }
+    renderPlugins();
+    setAIOutput(models.join("\n") || tr("status.noSessions"), "ok");
+    setPluginStatus(tr("status.aiModelsReady", { count: models.length }), "ok");
+  } catch (error) {
+    setAIOutput(errorMessage(error), "error");
+    setPluginStatus(errorMessage(error), "error");
+  }
+}
+
+async function testAIAccess() {
+  if (!pluginIsEnabled("ai-control")) return;
+  if (!aiAccessConfigured()) {
+    setAIOutput(tr("validation.aiAccess"), "error");
+    return;
+  }
+  setAIOutput(tr("status.aiWorking"));
+  try {
+    const done = await actionClient.send("ai", "test", {});
+    const models = metaStringArray(done.meta, "models");
+    if (models.length) {
+      aiModelOptions = models;
+      if (!settings.aiModel && models[0]) {
+        settings.aiModel = models[0];
+        saveSettings();
+      }
+      renderPlugins();
+    }
+    const message = metaString(done.meta, "message") || tr("status.aiTestOk");
+    const content = metaString(done.meta, "content");
+    setAIOutput([message, content].filter(Boolean).join("\n"), "ok");
+    setPluginStatus(tr("status.aiTestOk"), "ok");
+  } catch (error) {
+    setAIOutput(errorMessage(error), "error");
+    setPluginStatus(errorMessage(error), "error");
+  }
+}
+
+async function runAIAction(action: string) {
+  if (action !== "chat" && action !== "nl2cmd" && action !== "complete" && action !== "explain") return;
+  if (!pluginIsEnabled("ai-control")) return;
+  if (!aiAccessConfigured()) {
+    setAIOutput(tr("validation.aiAccess"), "error");
+    return;
+  }
+  const prompt = aiPromptValue();
+  if (!prompt) {
+    setAIOutput(tr("validation.aiPrompt"), "error");
+    return;
+  }
+  setAIOutput(tr("status.aiWorking"));
+  let output = "";
+  try {
+    await actionClient.send("ai", action, aiActionPayload(action, prompt), {
+      onStream: (chunk) => {
+        output += chunk;
+        setAIOutput(output, "ok");
+      },
+    });
+    setPluginStatus(tr("status.aiTestOk"), "ok");
+  } catch (error) {
+    setAIOutput(errorMessage(error), "error");
+    setPluginStatus(errorMessage(error), "error");
+  }
+}
+
+function insertAIOutputIntoTerminal() {
+  const output = aiOutputText();
+  const command = commandFromAIOutput(output);
+  if (!command) {
+    setAIOutput(tr("status.aiNoOutput"), "error");
+    return;
+  }
+  if (!sendActivePaneKeyInput(command)) {
+    setAIOutput(tr("status.pluginFileNoSession"), "error");
+    return;
+  }
+  setPluginStatus(tr("status.aiInserted"), "ok");
+}
+
+async function copyAIOutput() {
+  const output = aiOutputText();
+  if (!output) {
+    setAIOutput(tr("status.aiNoOutput"), "error");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(output);
+    setPluginStatus(tr("status.selectionCopied"), "ok");
+  } catch (error) {
+    setPluginStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+function clearAIOutput() {
+  setAIOutput("");
+}
+
+function pluginIsEnabled(pluginId: string): boolean {
+  return plugins.find((plugin) => plugin.id === pluginId)?.enabled ?? false;
+}
+
+function aiAccessConfigured(): boolean {
+  return Boolean(settings.aiBaseUrl.trim() && settings.aiApiKey.trim());
+}
+
+function aiPromptValue(): string {
+  return document.querySelector<HTMLTextAreaElement>("#aiPrompt")?.value.trim() ?? "";
+}
+
+function aiOutputText(): string {
+  return document.querySelector<HTMLElement>("#aiOutput")?.textContent?.trim() ?? "";
+}
+
+function aiActionPayload(action: string, prompt: string): Record<string, unknown> {
+  const ctx = terminalAIContext();
+  if (action === "complete") return { partial: prompt, ctx };
+  if (action === "explain") return { command: prompt, stdout: "", stderr: "", ctx };
+  return { input: prompt, ctx };
+}
+
+function terminalAIContext(): Record<string, unknown> {
+  const pane = activePane();
+  return {
+    cwd: "~",
+    shell: "sh",
+    os: "LightOS",
+    selector: selectedSelector,
+    sessionId: pane?.sessionId ?? "",
+    history: [],
+    last_command: "",
+  };
+}
+
+function setAIOutput(message: string, tone: Tone = "neutral") {
+  const output = document.querySelector<HTMLElement>("#aiOutput");
+  if (!output) return;
+  output.textContent = message;
+  output.dataset.tone = tone;
+}
+
+function commandFromAIOutput(output: string): string {
+  const commandLine = output.match(/(?:命令|Command)\s*[:：]\s*`?([^\n`]+)/i)?.[1]
+    ?? output.match(/`([^`\n]+)`/)?.[1]
+    ?? output.split("\n").find((line) => line.trim()) ?? "";
+  return commandLine.replace(/^\$\s*/, "").trim();
+}
+
+function fileTransferPath(): string {
+  return document.querySelector<HTMLInputElement>("#fileTransferPath")?.value.trim() ?? "";
+}
+
+function uploadTargetPath(path: string, fileName: string): string {
+  if (!path) return "";
+  if (path === "." || path.endsWith("/")) return `${path}${fileName}`;
+  return path;
+}
+
+function fileNameFromPath(path: string): string {
+  return path.split("/").filter(Boolean).pop() || "download";
+}
+
+function setFileTransferOutput(message: string, tone: Tone = "neutral") {
+  const output = document.querySelector<HTMLElement>("#fileTransferOutput");
+  if (!output) return;
+  output.textContent = message;
+  output.dataset.tone = tone;
+}
+
+function downloadPluginPayload(payload: Uint8Array, name: string, contentType: string) {
+  const bytes = new Uint8Array(payload);
+  const blob = new Blob([bytes.buffer], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.rel = "noreferrer";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function transferProgressText(meta: ActionResponseMeta | undefined): string {
+  const name = metaString(meta, "name");
+  const percent = metaNumber(meta, "percent");
+  const done = metaBoolean(meta, "done");
+  const status = `${Number.isFinite(percent) ? `${percent}%` : "..."}`;
+  return [name, done ? `${status} complete` : status].filter(Boolean).join(": ");
+}
+
+function metaString(meta: ActionResponseMeta | undefined, key: string): string {
+  const value = meta?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+function metaNumber(meta: ActionResponseMeta | undefined, key: string): number {
+  const value = meta?.[key];
+  return typeof value === "number" ? value : Number.NaN;
+}
+
+function metaBoolean(meta: ActionResponseMeta | undefined, key: string): boolean {
+  return meta?.[key] === true;
+}
+
+function metaStringArray(meta: ActionResponseMeta | undefined, key: string): string[] {
+  const value = meta?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function pluginDisplayName(plugin: PluginDescriptor): string {
+  if (plugin.id === "ai-control") return tr("plugin.aiControl.name");
+  if (plugin.id === "file-transfer") return tr("plugin.fileTransfer.name");
+  return plugin.displayName || plugin.id;
+}
+
+function pluginIcon(pluginId: string): string {
+  if (pluginId === "ai-control") return "bot";
+  if (pluginId === "file-transfer") return "folder-up";
+  return "plug";
+}
+
+function pluginDescription(plugin: PluginDescriptor): string {
+  if (plugin.id === "ai-control") return tr("plugin.aiControl.description");
+  if (plugin.id === "file-transfer") return tr("plugin.fileTransfer.description");
+  return plugin.description || plugin.kind || plugin.id;
+}
+
+function pluginMetaLabel(value: string): string {
+  if (value === "control") return tr("plugin.meta.control");
+  if (value === "filesystem") return tr("plugin.meta.filesystem");
+  if (value === "session") return tr("plugin.meta.session");
+  if (value === "transfer") return tr("plugin.meta.transfer");
+  return value;
+}
+
+function setPluginStatus(message: string, tone: Tone = "neutral") {
+  elements.pluginStatus.textContent = message;
+  elements.pluginStatus.dataset.tone = tone;
 }
 
 async function loadInstances() {
@@ -1206,13 +2177,19 @@ function renderInstances() {
 async function loadWorkspace(selector: string, options: { allowReconcileRetry?: boolean } = {}) {
   const requestSelector = normalizeSelector(selector);
   const generation = selectedSelectorGeneration;
+  clearSessionBackendsState();
+  clearHerdrState();
   try {
     const workspace = await fetchWorkspace(requestSelector);
-    await applyWorkspaceState(workspace, {
+    const applied = await applyWorkspaceState(workspace, {
       generation,
       replayFromStart: true,
       selector: requestSelector,
     });
+    if (applied) {
+      void refreshSessionBackends(requestSelector, generation);
+      void refreshHerdrState(requestSelector, generation);
+    }
   } catch (error) {
     if (
       options.allowReconcileRetry !== false
@@ -1225,6 +2202,7 @@ async function loadWorkspace(selector: string, options: { allowReconcileRetry?: 
       return;
     }
     if (!isCurrentSelectorRequest(requestSelector, generation)) return;
+    clearHerdrState();
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
 }
@@ -1256,6 +2234,7 @@ async function runWorkspaceAction(
     label?: string;
     layout?: SplitNode;
     activePaneId?: string;
+    sessionBackend?: SessionBackendId;
     apply?: boolean;
   } = {},
 ): Promise<WorkspaceState | undefined> {
@@ -1278,6 +2257,7 @@ async function runWorkspaceAction(
       rows: INITIAL_ROWS,
       output_limit: settings.outputBufferLimit,
       auto_restart: settings.autoRestartSessions,
+      session_backend: options.sessionBackend,
     }),
   });
   if (!response.ok) {
@@ -1292,6 +2272,241 @@ async function runWorkspaceAction(
     });
   }
   return workspace;
+}
+
+async function refreshSessionBackends(
+  selector: string,
+  generation = selectedSelectorGeneration,
+): Promise<boolean> {
+  const requestSelector = normalizeSelector(selector);
+  if (!requestSelector) {
+    clearSessionBackendsState();
+    return false;
+  }
+  const requestId = ++sessionBackendsGeneration;
+  try {
+    const state = await fetchSessionBackends(requestSelector);
+    if (requestId !== sessionBackendsGeneration || !isCurrentSelectorRequest(requestSelector, generation)) {
+      return false;
+    }
+    sessionBackendsState = state;
+    renderHerdrDock();
+    return true;
+  } catch (error) {
+    if (requestId === sessionBackendsGeneration && isCurrentSelectorRequest(requestSelector, generation)) {
+      clearSessionBackendsState();
+      if (settings.debugMode) {
+        setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+      }
+    }
+    return false;
+  }
+}
+
+async function fetchSessionBackends(selector: string): Promise<SessionBackendsState> {
+  const url = new URL("./api/session-backends", window.location.href);
+  url.searchParams.set("name", selector);
+  const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  return response.json() as Promise<SessionBackendsState>;
+}
+
+function clearSessionBackendsState() {
+  sessionBackendsGeneration += 1;
+  sessionBackendsState = undefined;
+  renderHerdrDock();
+}
+
+async function refreshHerdrState(
+  selector: string,
+  generation = selectedSelectorGeneration,
+): Promise<boolean> {
+  const requestSelector = normalizeSelector(selector);
+  if (!requestSelector) {
+    clearHerdrState();
+    return false;
+  }
+  const requestId = ++herdrStateGeneration;
+  try {
+    const state = await fetchHerdrState(requestSelector);
+    if (requestId !== herdrStateGeneration || !isCurrentSelectorRequest(requestSelector, generation)) {
+      return false;
+    }
+    if (!state.available) {
+      clearHerdrState();
+      return false;
+    }
+    herdrState = state;
+    renderHerdrDock();
+    return true;
+  } catch (error) {
+    if (requestId === herdrStateGeneration && isCurrentSelectorRequest(requestSelector, generation)) {
+      clearHerdrState();
+      if (settings.debugMode) {
+        setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
+      }
+    }
+    return false;
+  }
+}
+
+async function fetchHerdrState(selector: string): Promise<HerdrBridgeState> {
+  const url = new URL("./api/herdr", window.location.href);
+  url.searchParams.set("name", selector);
+  const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+  if (!response.ok) {
+    throw new Error(await response.text() || response.statusText);
+  }
+  return response.json() as Promise<HerdrBridgeState>;
+}
+
+async function runHerdrAction(
+  action: HerdrAction,
+  options: {
+    workspaceId?: string;
+    tabId?: string;
+  } = {},
+) {
+  const selector = selectedSelector;
+  if (!selector || !herdrState?.available) return;
+  elements.herdrStatus.textContent = "";
+  try {
+    const response = await fetch(new URL("./api/herdr", window.location.href), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: selector,
+        action,
+        workspace_id: options.workspaceId,
+        tab_id: options.tabId,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(await response.text() || response.statusText);
+    }
+    const state = await response.json() as HerdrBridgeState;
+    if (!isCurrentSelectorRequest(selector, selectedSelectorGeneration) || !state.available) {
+      clearHerdrState();
+      return;
+    }
+    herdrState = state;
+    renderHerdrDock();
+    activePane()?.term?.focus();
+  } catch (error) {
+    elements.herdrStatus.textContent = tr("status.herdrActionFailed", { message: errorMessage(error) });
+  }
+}
+
+function clearHerdrState() {
+  herdrStateGeneration += 1;
+  herdrState = undefined;
+  renderHerdrDock();
+}
+
+function renderHerdrDock() {
+  const backends = sessionBackendsState?.backends ?? [{ id: "webshell" as const, label: "WebShell native", available: true }];
+  const hasOptionalBackend = backends.some((backend) => backend.id !== "webshell");
+  const hasHerdrControls = Boolean(herdrState?.available);
+  if (!hasOptionalBackend && !hasHerdrControls) {
+    elements.webshell.classList.remove("has-herdr");
+    elements.herdrDock.hidden = true;
+    elements.herdrDock.classList.remove("webshell-mode");
+    elements.herdrMode.hidden = true;
+    elements.herdrWorkspaceList.hidden = false;
+    elements.herdrTabList.parentElement?.removeAttribute("hidden");
+    elements.herdrNewTab.hidden = false;
+    elements.herdrWorkspaceList.replaceChildren();
+    elements.herdrTabList.replaceChildren();
+    elements.herdrStatus.textContent = "";
+    return;
+  }
+
+  const mode = currentSessionMode();
+  const showHerdrControls = hasHerdrControls && mode === "herdr";
+  elements.webshell.classList.add("has-herdr");
+  elements.herdrDock.hidden = false;
+  elements.herdrDock.classList.toggle("webshell-mode", !showHerdrControls);
+  elements.herdrMode.hidden = !hasOptionalBackend;
+  elements.herdrMode.innerHTML = backends
+    .map((backend) => `<option value="${escapeAttr(backend.id)}">${escapeHtml(sessionBackendLabel(backend.id, backend.label))}</option>`)
+    .join("");
+  elements.herdrMode.value = mode;
+  elements.herdrWorkspaceList.hidden = !showHerdrControls;
+  elements.herdrTabList.parentElement?.toggleAttribute("hidden", !showHerdrControls);
+  elements.herdrNewTab.hidden = !showHerdrControls;
+  elements.herdrWorkspaceList.innerHTML = showHerdrControls && herdrState?.workspaces.length
+    ? herdrState.workspaces.map(renderHerdrWorkspaceButton).join("")
+    : "";
+  elements.herdrTabList.innerHTML = showHerdrControls && herdrState?.tabs.length
+    ? herdrState.tabs.map(renderHerdrTabButton).join("")
+    : "";
+  elements.herdrStatus.textContent = showHerdrControls ? herdrState?.message ?? "" : "";
+  updateIcons();
+}
+
+function normalizeSessionMode(value: unknown): SessionMode {
+  return value === "herdr" || value === "zellij" ? value : "webshell";
+}
+
+function currentSessionMode(): SessionMode {
+  if (!selectedSelector) return "webshell";
+  const backends = sessionBackendsState?.backends ?? [{ id: "webshell" as const }];
+  try {
+    const stored = normalizeSessionMode(window.localStorage.getItem(sessionModeStorageKey(selectedSelector)));
+    return backends.some((backend) => backend.id === stored) ? stored : "webshell";
+  } catch {
+    return "webshell";
+  }
+}
+
+function setSessionMode(mode: SessionMode) {
+  if (!selectedSelector) return;
+  const backends = sessionBackendsState?.backends ?? [];
+  if (!backends.some((backend) => backend.id === mode)) return;
+  try {
+    window.localStorage.setItem(sessionModeStorageKey(selectedSelector), mode);
+  } catch {
+    // This preference is non-critical.
+  }
+  renderHerdrDock();
+}
+
+function sessionModeStorageKey(selector: string): string {
+  return `${SESSION_MODE_STORAGE_PREFIX}.${selector}`;
+}
+
+function sessionBackendLabel(id: SessionBackendId, fallback: string): string {
+  if (id === "webshell") return "WebShell native";
+  if (id === "herdr") return "Herdr";
+  if (id === "zellij") return "zellij";
+  return fallback;
+}
+
+function renderHerdrWorkspaceButton(workspace: HerdrWorkspaceInfo): string {
+  const label = workspace.label.trim() || `Workspace ${workspace.number || ""}`.trim();
+  const details = `${workspace.tab_count} tabs, ${workspace.pane_count} panes`;
+  return `
+    <button class="herdr-chip" type="button" role="option" data-herdr-workspace="${escapeAttr(workspace.workspace_id)}" aria-selected="${workspace.focused}" title="${escapeAttr(details)}">
+      <span>${escapeHtml(label)}</span>
+    </button>
+  `;
+}
+
+function renderHerdrTabButton(tab: HerdrTabInfo): string {
+  const label = tab.label.trim() || `Tab ${tab.number || ""}`.trim();
+  return `
+    <button class="herdr-tab" type="button" role="tab" data-herdr-tab="${escapeAttr(tab.tab_id)}" aria-selected="${tab.focused}" title="${escapeAttr(tab.tab_id)}">
+      <small>${escapeHtml(String(tab.number || ""))}</small>
+      <span>${escapeHtml(label)}</span>
+    </button>
+  `;
+}
+
+function focusedHerdrWorkspace(): HerdrWorkspaceInfo | undefined {
+  return herdrState?.workspaces.find((workspace) => workspace.focused) ?? herdrState?.workspaces[0];
 }
 
 type ApplyWorkspaceOptions = {
@@ -1413,6 +2628,7 @@ function preparePaneForFullReplay(pane: TerminalPane) {
 function shouldConnectRestoredPane(pane: TerminalPane): boolean {
   if (!pane.sessionId || pane.sessionStatus === "exited") return false;
   if (pane.sessionStatus === "running" || pane.sessionStatus === "starting") return true;
+  if (pane.sessionStatus === "stopped") return true;
   return settings.autoRestartSessions;
 }
 
@@ -1464,7 +2680,7 @@ async function createSelectedTab() {
 
 async function createTerminalTab(selector: string) {
   try {
-    await runWorkspaceAction("create_tab", { selector });
+    await runWorkspaceAction("create_tab", { selector, sessionBackend: currentSessionMode() });
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
@@ -1495,10 +2711,30 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
   mount.tabIndex = 0;
   mount.setAttribute("role", "group");
   mount.setAttribute("aria-label", `${tab.label} pane`);
-  mount.addEventListener("pointerdown", () => {
+  mount.addEventListener("pointerdown", (event) => {
     const current = findPaneById(id);
     if (current) {
-      activatePane(current.tabId, id);
+      trackMobileTerminalSwipeStart(current, event);
+      activatePane(current.tabId, id, { focus: shouldFocusTerminalFromPointer(event) });
+    }
+  });
+  mount.addEventListener("pointerup", (event) => {
+    if (event.pointerType !== "touch") return;
+    const current = findPaneById(id);
+    if (current && runMobileTerminalSwipe(current, event)) {
+      event.preventDefault();
+      return;
+    }
+    if (current && isDoubleTerminalTap(current, event)) {
+      event.preventDefault();
+      focusPaneSystemKeyboard(current);
+    }
+  });
+  mount.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    const current = findPaneById(id);
+    if (current) {
+      focusPaneSystemKeyboard(current);
     }
   });
   mount.addEventListener("contextmenu", (event) => {
@@ -1606,6 +2842,7 @@ async function createPane(tab: TerminalTab, placement: SplitPlacement) {
       tabId: tab.id,
       paneId: activePane(tab)?.id,
       direction: placement,
+      sessionBackend: currentSessionMode(),
     });
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
@@ -1894,6 +3131,11 @@ function handleServerText(pane: TerminalPane, text: string) {
     pane.sessionStatus = "exited";
     pane.transport?.notifyExit(event.exit_code ?? -1);
     setPaneStatus(pane, tr("status.processExited", { code: event.exit_code ?? -1 }), "error");
+  } else if (event.type === "session-stopped") {
+    clearReplayInputLock(pane);
+    clearPendingInput(pane);
+    pane.sessionStatus = "stopped";
+    setPaneStatus(pane, event.message || tr("status.sessionStopped"), "neutral");
   } else if (event.type === "output-sequence") {
     pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, event.sequence);
   } else if (event.type === "replay-complete") {
@@ -2046,6 +3288,15 @@ function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: 
   }
 }
 
+function activateAdjacentTab(direction: -1 | 1) {
+  if (!tabs.length || !activeTabId) return;
+  const index = Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId));
+  const next = tabs[(index + direction + tabs.length) % tabs.length];
+  if (next) {
+    activateTab(next.id);
+  }
+}
+
 function activatePane(tabId: string, paneId: string, options: { focus?: boolean; sync?: boolean } = {}) {
   const tab = tabs.find((item) => item.id === tabId);
   if (!tab) return;
@@ -2059,6 +3310,19 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   }
   if (options.sync !== false) {
     void runWorkspaceAction("activate_pane", { selector: tab.selector, tabId, paneId, apply: false }).catch(() => undefined);
+  }
+}
+
+function activateAdjacentPane(direction: -1 | 1) {
+  const tab = activeTab();
+  if (!tab) return;
+  const panes = visiblePanes(tab);
+  if (!panes.length) return;
+  const pane = activePane(tab);
+  const index = Math.max(0, panes.findIndex((item) => item.id === pane?.id));
+  const next = panes[(index + direction + panes.length) % panes.length];
+  if (next) {
+    activatePane(tab.id, next.id);
   }
 }
 
@@ -2298,6 +3562,77 @@ function sendActivePaneKeyInput(data: string): boolean {
   return true;
 }
 
+function isCoarseTouchPointer(event?: PointerEvent): boolean {
+  return event?.pointerType === "touch"
+    || window.matchMedia("(hover: none) and (pointer: coarse)").matches;
+}
+
+function shouldFocusTerminalFromPointer(event: PointerEvent): boolean {
+  return !isCoarseTouchPointer(event);
+}
+
+function focusActivePaneCanvas() {
+  focusPaneCanvas(activePane());
+}
+
+function focusPaneCanvas(pane: TerminalPane | undefined) {
+  if (!pane) return;
+  if (isCoarseTouchPointer()) {
+    const canvas = pane.term?.restty?.activePane()?.getRawPane().canvas;
+    if (canvas instanceof HTMLElement) {
+      canvas.focus({ preventScroll: true });
+      return;
+    }
+  }
+  pane.term?.focus();
+}
+
+function focusPaneSystemKeyboard(pane: TerminalPane) {
+  activatePane(pane.tabId, pane.id, { focus: false });
+  const input = paneImeInput(pane);
+  if (input) {
+    input.focus({ preventScroll: true });
+  } else {
+    pane.term?.focus();
+  }
+  handleViewportChange();
+}
+
+function isDoubleTerminalTap(pane: TerminalPane, event: PointerEvent): boolean {
+  const now = performance.now();
+  const dx = event.clientX - lastMobileTerminalTap.x;
+  const dy = event.clientY - lastMobileTerminalTap.y;
+  const samePane = lastMobileTerminalTap.paneId === pane.id;
+  const close = dx * dx + dy * dy <= 32 * 32;
+  const fast = now - lastMobileTerminalTap.time <= 420;
+  lastMobileTerminalTap.paneId = pane.id;
+  lastMobileTerminalTap.time = now;
+  lastMobileTerminalTap.x = event.clientX;
+  lastMobileTerminalTap.y = event.clientY;
+  return samePane && close && fast;
+}
+
+function trackMobileTerminalSwipeStart(pane: TerminalPane, event: PointerEvent) {
+  if (event.pointerType !== "touch") return;
+  mobileTerminalSwipe.paneId = pane.id;
+  mobileTerminalSwipe.x = event.clientX;
+  mobileTerminalSwipe.y = event.clientY;
+  mobileTerminalSwipe.time = performance.now();
+}
+
+function runMobileTerminalSwipe(pane: TerminalPane, event: PointerEvent): boolean {
+  if (event.pointerType !== "touch" || mobileTerminalSwipe.paneId !== pane.id) return false;
+  const dx = event.clientX - mobileTerminalSwipe.x;
+  const dy = event.clientY - mobileTerminalSwipe.y;
+  const elapsed = performance.now() - mobileTerminalSwipe.time;
+  mobileTerminalSwipe.paneId = "";
+  if (elapsed > 700 || Math.abs(dx) < 72 || Math.abs(dx) < Math.abs(dy) * 1.6) {
+    return false;
+  }
+  activateAdjacentTab(dx < 0 ? 1 : -1);
+  return true;
+}
+
 function handleTerminalInterruptCapture(event: KeyboardEvent) {
   if (!isCtrlCKeyEvent(event)) return;
   const pane = paneForEventTarget(event.target);
@@ -2329,6 +3664,11 @@ function handleTerminalPasteEvent(event: ClipboardEvent) {
   const pane = paneForShortcutTarget(event.target);
   if (!pane || event.target === paneImeInput(pane)) return;
   event.preventDefault();
+  const imageFile = clipboardImageFile(event.clipboardData);
+  if (imageFile) {
+    void pasteImageFileIntoPane(pane, imageFile, false);
+    return;
+  }
   const text = event.clipboardData?.getData("text/plain") ?? "";
   if (text) {
     pasteTextIntoPane(pane, text);
@@ -2524,6 +3864,11 @@ async function copySelection(report: boolean, pane = activePane()): Promise<bool
 
 async function pasteIntoPane(pane: TerminalPane | undefined, report: boolean): Promise<boolean> {
   if (!pane?.term?.restty) return false;
+  const imagePayload = await readClipboardImagePayload();
+  if (imagePayload) {
+    return sendClipboardImageIntoPane(pane, imagePayload, report);
+  }
+
   if (settings.useResttyClipboard) {
     try {
       if (await pane.term.restty.pasteFromClipboard()) {
@@ -2542,6 +3887,91 @@ async function pasteIntoPane(pane: TerminalPane | undefined, report: boolean): P
     return pasteTextIntoPane(pane, text);
   } catch (error) {
     if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+    return false;
+  }
+}
+
+function clipboardImageFile(data: DataTransfer | null | undefined): File | undefined {
+  if (!data?.items) return undefined;
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (file) return file;
+  }
+  return undefined;
+}
+
+async function readClipboardImagePayload(): Promise<ClipboardImagePayload | undefined> {
+  if (!navigator.clipboard?.read) return undefined;
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find((candidate) => candidate.startsWith("image/"));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      return imageBlobPayload(blob, type);
+    }
+  } catch {
+  }
+  return undefined;
+}
+
+async function pasteImageFileIntoPane(pane: TerminalPane, file: File, report: boolean): Promise<boolean> {
+  try {
+    const payload = await imageBlobPayload(file, file.type);
+    return sendClipboardImageIntoPane(pane, payload, report);
+  } catch (error) {
+    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+    return false;
+  }
+}
+
+async function imageBlobPayload(blob: Blob, contentType: string): Promise<ClipboardImagePayload> {
+  if (blob.size <= 0) {
+    throw new Error("clipboard image is empty");
+  }
+  if (blob.size > MAX_CLIPBOARD_IMAGE_BYTES) {
+    throw new Error(`clipboard image exceeds ${Math.floor(MAX_CLIPBOARD_IMAGE_BYTES / (1024 * 1024))} MiB`);
+  }
+  return {
+    extension: imageExtension(contentType),
+    data: await blob.arrayBuffer(),
+  };
+}
+
+function imageExtension(contentType: string): string {
+  const type = contentType.toLowerCase();
+  if (type === "image/jpeg" || type === "image/jpg") return "jpg";
+  if (type === "image/gif") return "gif";
+  if (type === "image/webp") return "webp";
+  if (type === "image/bmp") return "bmp";
+  return "png";
+}
+
+function sendClipboardImageIntoPane(
+  pane: TerminalPane | undefined,
+  payload: ClipboardImagePayload,
+  report: boolean,
+): boolean {
+  if (!pane || pane.closing || pane.exited || !pane.sessionId) return false;
+  if (payload.data.byteLength <= 0 || payload.data.byteLength > MAX_CLIPBOARD_IMAGE_BYTES) return false;
+  if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying) {
+    connectPanePty(pane);
+    if (report) setGlobalStatus(tr("status.pasteFailed", { message: "terminal is reconnecting" }), "error");
+    return false;
+  }
+  try {
+    pane.socket.send(JSON.stringify({
+      type: "clipboard-image",
+      extension: payload.extension,
+      size: payload.data.byteLength,
+    }));
+    pane.socket.send(payload.data);
+    pane.term?.focus();
+    return true;
+  } catch (error) {
+    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+    scheduleReconnect(pane);
     return false;
   }
 }

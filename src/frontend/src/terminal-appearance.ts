@@ -30,6 +30,23 @@ export function terminalThemeCssVars(theme: GhosttyTheme | null): Record<string,
   return vars;
 }
 
+export function withTransparentBackground(theme: GhosttyTheme | null): GhosttyTheme | null {
+  if (!theme) return theme;
+  const background = theme.colors.background;
+  if (!background) return theme;
+  return {
+    ...theme,
+    colors: {
+      ...theme.colors,
+      background: {
+        ...background,
+        a: 0,
+      },
+      palette: [...theme.colors.palette],
+    },
+  };
+}
+
 function colorToCss(color: ThemeColor | undefined, fallback: string): string {
   if (!color) return fallback;
   const r = clampColorByte(color.r);

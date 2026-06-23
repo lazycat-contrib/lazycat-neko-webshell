@@ -8,6 +8,7 @@ export type SplitPlacement = "up" | "down" | "left" | "right";
 export type SplitAxis = "rows" | "columns";
 export type LocaleSetting = "auto" | "en" | "zh-CN";
 export type TouchSelectionMode = "long-press" | "drag" | "off";
+export type InterfaceStyleId = "steel" | "glass" | "brass" | "spectrum" | "geek";
 
 export type SplitPaneNode = {
   type: "pane";
@@ -56,6 +57,48 @@ export type WorkspaceAction =
   | "promote_pane_to_tab"
   | "update_layout";
 
+export type HerdrWorkspaceInfo = {
+  workspace_id: string;
+  number: number;
+  label: string;
+  focused: boolean;
+  active_tab_id: string;
+  tab_count: number;
+  pane_count: number;
+};
+
+export type HerdrTabInfo = {
+  tab_id: string;
+  workspace_id: string;
+  number: number;
+  label: string;
+  focused: boolean;
+  pane_count: number;
+};
+
+export type HerdrBridgeState = {
+  selector: string;
+  available: boolean;
+  message?: string;
+  workspaces: HerdrWorkspaceInfo[];
+  tabs: HerdrTabInfo[];
+};
+
+export type HerdrAction = "focus_workspace" | "focus_tab" | "create_tab";
+
+export type SessionBackendId = "webshell" | "herdr" | "zellij";
+
+export type SessionBackendInfo = {
+  id: SessionBackendId;
+  label: string;
+  available: boolean;
+};
+
+export type SessionBackendsState = {
+  selector: string;
+  backends: SessionBackendInfo[];
+};
+
 export type TerminalTheme = {
   id: string;
   label: string;
@@ -84,6 +127,13 @@ export type StoredFont = {
   label: string;
   family: string;
   mimeType?: string;
+  size: number;
+  url: string;
+};
+
+export type TerminalBackground = {
+  id: string;
+  mimeType: string;
   size: number;
   url: string;
 };
@@ -120,6 +170,7 @@ export type PaneTerminalTransport = TerminalTransport & {
 export type Settings = {
   locale: LocaleSetting;
   themeId: string;
+  interfaceStyleId: InterfaceStyleId;
   customThemes: CustomTerminalTheme[];
   fontFamilyId: string;
   tabLayout: TabLayout;
@@ -130,6 +181,10 @@ export type Settings = {
   copyOnSelect: boolean;
   useResttyClipboard: boolean;
   touchSelectionMode: TouchSelectionMode;
+  terminalBackgroundEnabled: boolean;
+  terminalBackgroundUrl: string;
+  terminalBackgroundOpacity: number;
+  terminalBackgroundBlur: number;
   scrollbackLimit: number;
   outputBufferLimit: number;
   autoRestartSessions: boolean;

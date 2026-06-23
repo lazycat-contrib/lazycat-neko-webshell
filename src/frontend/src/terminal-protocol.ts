@@ -4,6 +4,7 @@ export type TerminalServerEvent =
   | { type: "ready" }
   | { type: "error"; message?: string; fatal?: boolean }
   | { type: "process-exit"; exit_code?: number; message?: string }
+  | { type: "session-stopped"; message?: string }
   | { type: "output-sequence"; sequence?: number }
   | { type: "replay-start"; session_id?: string; pane_id?: string; replay_after?: number }
   | { type: "replay-complete"; session_id?: string; pane_id?: string; last_sequence?: number };

@@ -1,5 +1,5 @@
-import { DEFAULT_SETTINGS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "./config";
-import type { CustomTerminalTheme, Settings } from "./types";
+import { DEFAULT_SETTINGS, INTERFACE_STYLE_IDS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "./config";
+import type { CustomTerminalTheme, InterfaceStyleId, Settings } from "./types";
 import { clampNumber } from "./utils";
 
 const SETTINGS_KEY = "lazycat-neko-webshell.settings";
@@ -33,9 +33,11 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 export function normalizeSettings(value: Partial<Settings>): Settings {
+  const terminalBackgroundUrl = normalizeTerminalBackgroundUrl(value.terminalBackgroundUrl);
   return {
     locale: value.locale === "en" || value.locale === "zh-CN" ? value.locale : DEFAULT_SETTINGS.locale,
     themeId: typeof value.themeId === "string" ? value.themeId : DEFAULT_SETTINGS.themeId,
+    interfaceStyleId: normalizeInterfaceStyleId(value.interfaceStyleId),
     customThemes: normalizeCustomThemes(value.customThemes),
     fontFamilyId: typeof value.fontFamilyId === "string" ? value.fontFamilyId : DEFAULT_SETTINGS.fontFamilyId,
     fontSize: clampNumber(value.fontSize, 11, 22, DEFAULT_SETTINGS.fontSize),
@@ -45,6 +47,19 @@ export function normalizeSettings(value: Partial<Settings>): Settings {
     copyOnSelect: value.copyOnSelect ?? DEFAULT_SETTINGS.copyOnSelect,
     useResttyClipboard: value.useResttyClipboard ?? DEFAULT_SETTINGS.useResttyClipboard,
     touchSelectionMode: normalizeTouchSelectionMode(value.touchSelectionMode),
+    terminalBackgroundEnabled: terminalBackgroundUrl
+      ? value.terminalBackgroundEnabled ?? DEFAULT_SETTINGS.terminalBackgroundEnabled
+      : false,
+    terminalBackgroundUrl,
+    terminalBackgroundOpacity: clampNumber(
+      value.terminalBackgroundOpacity,
+      0.05,
+      0.8,
+      DEFAULT_SETTINGS.terminalBackgroundOpacity,
+    ),
+    terminalBackgroundBlur: Math.round(
+      clampNumber(value.terminalBackgroundBlur, 0, 24, DEFAULT_SETTINGS.terminalBackgroundBlur),
+    ),
     scrollbackLimit: Math.round(
       clampNumber(value.scrollbackLimit, 1000, 100000, DEFAULT_SETTINGS.scrollbackLimit),
     ),
@@ -59,6 +74,26 @@ export function normalizeSettings(value: Partial<Settings>): Settings {
     aiApiKey: typeof value.aiApiKey === "string" ? value.aiApiKey : DEFAULT_SETTINGS.aiApiKey,
     aiModel: typeof value.aiModel === "string" ? value.aiModel : DEFAULT_SETTINGS.aiModel,
   };
+}
+
+function normalizeInterfaceStyleId(value: unknown): InterfaceStyleId {
+  return INTERFACE_STYLE_IDS.includes(value as InterfaceStyleId)
+    ? value as InterfaceStyleId
+    : DEFAULT_SETTINGS.interfaceStyleId;
+}
+
+function normalizeTerminalBackgroundUrl(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 256 || /[\r\n"'\\]/.test(trimmed)) return "";
+  try {
+    const url = new URL(trimmed, window.location.href);
+    if (url.origin !== window.location.origin) return "";
+    if (!/^\/api\/terminal-backgrounds\/[0-9a-f-]+\/file$/.test(url.pathname)) return "";
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return "";
+  }
 }
 
 export function saveSettings(settings: Settings) {

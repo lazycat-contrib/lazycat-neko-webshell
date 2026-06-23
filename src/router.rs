@@ -8,13 +8,17 @@ use axum::routing::{delete, get};
 use connectrpc::Router as ConnectRouter;
 use tower_http::trace::TraceLayer;
 
+use crate::action_ws::action_ws;
 use crate::assets::{frontend_asset, frontend_font, index, security_header};
-use crate::config::MAX_FONT_BYTES;
+use crate::backgrounds::{background_file, delete_background, upload_background};
+use crate::config::{MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES};
 use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
+use crate::herdr::{get_herdr_state, post_herdr_action};
 use crate::lightos::{self, AdminInfo};
 use crate::preferences::{get_settings, put_settings};
 use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
 use crate::service::CapabilityServiceImpl;
+use crate::session_backend::get_session_backends;
 use crate::state::AppState;
 use crate::terminal::terminal_ws;
 use crate::workspace::{get_workspace, put_workspace_action};
@@ -28,18 +32,27 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/index.html", get(index))
         .route("/healthz", get(|| async { "ok" }))
         .route("/ws/terminal", get(terminal_ws))
+        .route("/ws/action", get(action_ws))
         .route("/assets/{*path}", get(frontend_asset))
         .route("/fonts/{*path}", get(frontend_font))
         .route("/api/instances", get(list_instances))
         .route("/api/lightos-admin-info", get(lightos_admin_info))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/session-backends", get(get_session_backends))
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
+        .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
         .route("/api/fonts", get(list_fonts).post(upload_font))
         .route("/api/fonts/{id}", delete(delete_font))
         .route("/api/fonts/{id}/file", get(font_file))
+        .route("/api/terminal-backgrounds", get(|| async { StatusCode::NO_CONTENT }).post(upload_background))
+        .route("/api/terminal-backgrounds/{id}", delete(delete_background))
+        .route("/api/terminal-backgrounds/{id}/file", get(background_file))
         .with_state(state)
         .merge(connect)
-        .layer(axum::extract::DefaultBodyLimit::max(MAX_FONT_BYTES))
+        .layer(axum::extract::DefaultBodyLimit::max(usize::max(
+            MAX_FONT_BYTES,
+            MAX_TERMINAL_BACKGROUND_BYTES,
+        )))
         .layer(TraceLayer::new_for_http())
         .layer(security_header(
             HeaderName::from_static("x-content-type-options"),

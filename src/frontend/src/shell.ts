@@ -14,6 +14,13 @@ export type ShellElements = {
   statusLine: HTMLParagraphElement;
   targetLabel: HTMLElement;
   tabList: HTMLDivElement;
+  herdrDock: HTMLElement;
+  herdrMode: HTMLSelectElement;
+  herdrWorkspaceList: HTMLDivElement;
+  herdrTabList: HTMLDivElement;
+  herdrStatus: HTMLParagraphElement;
+  herdrRefresh: HTMLButtonElement;
+  herdrNewTab: HTMLButtonElement;
   terminalStage: HTMLDivElement;
   mobileShortcuts: HTMLDivElement;
   emptyState: HTMLDivElement;
@@ -25,7 +32,11 @@ export type ShellElements = {
   settingsPage: HTMLElement;
   settingsTabs: HTMLDivElement;
   fontTabs: HTMLDivElement;
+  pluginList: HTMLDivElement;
+  pluginStatus: HTMLElement;
+  refreshPlugins: HTMLButtonElement;
   localeSelect: HTMLSelectElement;
+  interfaceStyleSelect: HTMLSelectElement;
   themeSelect: HTMLSelectElement;
   customThemeName: HTMLInputElement;
   customThemeSource: HTMLTextAreaElement;
@@ -44,6 +55,14 @@ export type ShellElements = {
   lineHeightValue: HTMLOutputElement;
   scrollbackLimit: HTMLInputElement;
   outputBufferLimit: HTMLInputElement;
+  terminalBackgroundEnabled: HTMLInputElement;
+  terminalBackgroundUpload: HTMLInputElement;
+  removeTerminalBackground: HTMLButtonElement;
+  terminalBackgroundOpacity: HTMLInputElement;
+  terminalBackgroundOpacityValue: HTMLOutputElement;
+  terminalBackgroundBlur: HTMLInputElement;
+  terminalBackgroundBlurValue: HTMLOutputElement;
+  terminalBackgroundStatus: HTMLElement;
   cursorBlink: HTMLInputElement;
   cursorShape: HTMLSelectElement;
   copyOnSelect: HTMLInputElement;
@@ -57,7 +76,7 @@ export type ShellElements = {
 
 export function renderShell(app: HTMLElement): ShellElements {
   app.innerHTML = `
-    <main class="webshell" id="webshell" aria-label="LazyCat Neko WebShell workspace" data-i18n-aria="app.title">
+    <main class="webshell" id="webshell" aria-label="Neko Webshell workspace" data-i18n-aria="app.title">
       <header class="topbar" aria-label="Terminal controls" data-i18n-aria="app.title">
         <div class="tabs-shell">
           <div id="tabList" class="tab-list" role="tablist" aria-label="Terminal tabs" data-i18n-aria="action.newTab"></div>
@@ -103,6 +122,23 @@ export function renderShell(app: HTMLElement): ShellElements {
         </div>
       </header>
 
+      <section class="herdr-dock" id="herdrDock" aria-label="Herdr controls" data-i18n-aria="section.herdr" hidden>
+        <select class="herdr-mode" id="herdrMode" aria-label="Session backend">
+          <option value="webshell">WebShell native</option>
+        </select>
+        <div class="herdr-workspaces" id="herdrWorkspaceList" role="listbox" aria-label="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces"></div>
+        <div class="herdr-tabs-shell">
+          <div class="herdr-tabs" id="herdrTabList" role="tablist" aria-label="Herdr tabs" data-i18n-aria="section.herdrTabs"></div>
+          <button class="herdr-icon-button" id="herdrNewTab" type="button" aria-label="New Herdr tab" title="New Herdr tab" data-i18n-aria="action.newHerdrTab" data-i18n-title="action.newHerdrTab">
+            <i data-lucide="plus"></i>
+          </button>
+          <button class="herdr-icon-button" id="herdrRefresh" type="button" aria-label="Refresh Herdr" title="Refresh Herdr" data-i18n-aria="action.refreshHerdr" data-i18n-title="action.refreshHerdr">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+        </div>
+        <p class="herdr-status" id="herdrStatus" aria-live="polite"></p>
+      </section>
+
       <section id="terminalStage" class="terminal-stage" aria-label="Terminal" data-i18n-aria="app.title">
         <div class="empty-state" id="emptyState">
           <button class="command-button primary icon-only-large" id="emptyNewTab" type="button" aria-label="New terminal tab" title="New terminal tab" data-i18n-aria="action.newTab" data-i18n-title="action.newTab">
@@ -113,24 +149,45 @@ export function renderShell(app: HTMLElement): ShellElements {
         <div class="mobile-shortcuts" id="mobileShortcuts" aria-label="Terminal shortcuts" data-i18n-aria="menu.mobileShortcuts">
           <div class="mobile-keyboard-pages" role="tablist" aria-label="Terminal shortcut pages" data-i18n-aria="menu.mobileShortcuts">
             <button type="button" class="active" data-mobile-page="main" aria-pressed="true">Main</button>
+            <button type="button" data-mobile-page="ops" aria-pressed="false">Ops</button>
             <button type="button" data-mobile-page="nav" aria-pressed="false">Nav</button>
             <button type="button" data-mobile-page="fn" aria-pressed="false">Fn</button>
             <button type="button" data-mobile-page="sym" aria-pressed="false">Sym</button>
           </div>
           <div class="mobile-keyboard-panel" data-mobile-panel="main">
-            <button type="button" data-mobile-shortcut="escape" aria-label="Escape">Esc</button>
-            <button type="button" data-mobile-shortcut="tab" aria-label="Tab">Tab</button>
             <button type="button" data-mobile-shortcut="ctrl" data-mobile-modifier="ctrl" aria-label="Control">Ctrl</button>
             <button type="button" data-mobile-shortcut="alt" data-mobile-modifier="alt" aria-label="Alt">Alt</button>
             <button type="button" data-mobile-shortcut="shift" data-mobile-modifier="shift" aria-label="Shift">Shift</button>
-            <button type="button" data-mobile-shortcut="-" aria-label="Hyphen">-</button>
-            <button type="button" data-mobile-shortcut="/" aria-label="Slash">/</button>
+            <button type="button" data-mobile-shortcut="tab" aria-label="Tab">Tab</button>
+            <button type="button" data-mobile-shortcut="enter" data-mobile-repeat="true" aria-label="Return">Return</button>
             <button type="button" data-mobile-shortcut="left" data-mobile-repeat="true" aria-label="Left"><i data-lucide="arrow-left"></i></button>
             <button type="button" data-mobile-shortcut="down" data-mobile-repeat="true" aria-label="Down"><i data-lucide="arrow-down"></i></button>
             <button type="button" data-mobile-shortcut="up" data-mobile-repeat="true" aria-label="Up"><i data-lucide="arrow-up"></i></button>
             <button type="button" data-mobile-shortcut="right" data-mobile-repeat="true" aria-label="Right"><i data-lucide="arrow-right"></i></button>
-            <button type="button" data-mobile-shortcut="enter" data-mobile-repeat="true" aria-label="Enter"><i data-lucide="corner-down-left"></i></button>
+            <button type="button" data-mobile-action="copy-selection" aria-label="Copy selection">Copy</button>
             <button type="button" data-mobile-shortcut="paste" aria-label="Paste"><i data-lucide="clipboard-paste"></i></button>
+            <button type="button" data-mobile-action="pane-menu" aria-label="Pane menu">Menu</button>
+            <button type="button" data-mobile-chord="ctrl-e" aria-label="Control E">Ctrl+E</button>
+            <button type="button" data-mobile-chord="ctrl-c" aria-label="Control C">Ctrl+C</button>
+            <button type="button" data-mobile-action="swap-pane" aria-label="Swap active pane">Swap</button>
+            <button type="button" data-mobile-chord="shift-tab" aria-label="Shift Tab">Shift+Tab</button>
+            <button type="button" data-mobile-shortcut="~" aria-label="Tilde">~</button>
+            <button type="button" data-mobile-shortcut="/" aria-label="Slash">/</button>
+            <button type="button" data-mobile-shortcut="-" aria-label="Hyphen">-</button>
+            <button type="button" data-mobile-shortcut="$" aria-label="Dollar">$</button>
+            <button type="button" data-mobile-shortcut="escape" aria-label="Escape">Esc</button>
+          </div>
+          <div class="mobile-keyboard-panel" data-mobile-panel="ops" hidden>
+            <button type="button" data-mobile-action="previous-tab" aria-label="Previous terminal tab"><i data-lucide="chevron-left"></i><span>Tab</span></button>
+            <button type="button" data-mobile-action="next-tab" aria-label="Next terminal tab"><span>Tab</span><i data-lucide="chevron-right"></i></button>
+            <button type="button" data-mobile-action="new-tab" aria-label="New terminal tab"><i data-lucide="square-plus"></i></button>
+            <button type="button" data-mobile-action="close-tab" aria-label="Close tab"><i data-lucide="square-x"></i></button>
+            <button type="button" data-mobile-action="previous-pane" aria-label="Previous pane"><i data-lucide="chevron-left"></i><span>Pane</span></button>
+            <button type="button" data-mobile-action="next-pane" aria-label="Next pane"><span>Pane</span><i data-lucide="chevron-right"></i></button>
+            <button type="button" data-mobile-action="split-right" aria-label="Split right"><i data-lucide="panel-right"></i></button>
+            <button type="button" data-mobile-action="split-down" aria-label="Split down"><i data-lucide="panel-bottom"></i></button>
+            <button type="button" data-mobile-action="copy-selection" aria-label="Copy selection"><i data-lucide="copy"></i></button>
+            <button type="button" data-mobile-action="paste-clipboard" aria-label="Paste"><i data-lucide="clipboard-paste"></i></button>
           </div>
           <div class="mobile-keyboard-panel" data-mobile-panel="nav" hidden>
             <button type="button" data-mobile-shortcut="home" data-mobile-repeat="true" aria-label="Home">Home</button>
@@ -204,6 +261,10 @@ export function renderShell(app: HTMLElement): ShellElements {
               <i data-lucide="palette"></i>
               <span data-i18n="tab.themes">Themes</span>
             </button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="pluginSettingsPanel" data-settings-tab="plugins">
+              <i data-lucide="plug"></i>
+              <span data-i18n="tab.plugins">Plugins</span>
+            </button>
           </div>
 
           <div class="settings-panels">
@@ -214,6 +275,16 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <option value="auto" data-i18n="locale.auto">Auto</option>
                   <option value="en" data-i18n="locale.en">English</option>
                   <option value="zh-CN" data-i18n="locale.zhCN">Chinese</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="field.interfaceStyle">Interface style</span>
+                <select id="interfaceStyleSelect">
+                  <option value="steel" data-i18n="interfaceStyle.steel">Steel</option>
+                  <option value="glass" data-i18n="interfaceStyle.glass">Glass</option>
+                  <option value="brass" data-i18n="interfaceStyle.brass">Brass</option>
+                  <option value="spectrum" data-i18n="interfaceStyle.spectrum">Spectrum</option>
+                  <option value="geek" data-i18n="interfaceStyle.geek">Geek</option>
                 </select>
               </label>
               <label class="field">
@@ -239,6 +310,33 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <span data-i18n="field.outputBuffer">Output buffer</span>
                 <input id="outputBufferLimit" type="number" min="128" max="20000" step="128" />
               </label>
+              <div class="settings-group terminal-background-settings">
+                <div class="settings-group-title" data-i18n="section.terminalBackground">Terminal background</div>
+                <label class="switch">
+                  <input id="terminalBackgroundEnabled" type="checkbox" />
+                  <span data-i18n="setting.terminalBackground">Use background image</span>
+                </label>
+                <div class="background-actions">
+                  <label class="file-button" aria-label="Upload terminal background" title="Upload terminal background" data-i18n-aria="action.uploadTerminalBackground" data-i18n-title="action.uploadTerminalBackground">
+                    <input id="terminalBackgroundUpload" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" />
+                    <i data-lucide="image-plus"></i>
+                    <span data-i18n="action.uploadTerminalBackground">Upload terminal background</span>
+                  </label>
+                  <button class="command-button" id="removeTerminalBackground" type="button" aria-label="Remove terminal background" title="Remove terminal background" data-i18n-aria="action.removeTerminalBackground" data-i18n-title="action.removeTerminalBackground">
+                    <i data-lucide="trash-2"></i>
+                    <span data-i18n="action.removeTerminalBackground">Remove terminal background</span>
+                  </button>
+                </div>
+                <label class="field">
+                  <span><span data-i18n="field.terminalBackgroundOpacity">Background opacity</span> <output id="terminalBackgroundOpacityValue"></output></span>
+                  <input id="terminalBackgroundOpacity" type="range" min="0.05" max="0.8" step="0.01" />
+                </label>
+                <label class="field">
+                  <span><span data-i18n="field.terminalBackgroundBlur">Background blur</span> <output id="terminalBackgroundBlurValue"></output></span>
+                  <input id="terminalBackgroundBlur" type="range" min="0" max="24" step="1" />
+                </label>
+                <p id="terminalBackgroundStatus" class="field-status"></p>
+              </div>
               <label class="switch">
                 <input id="cursorBlink" type="checkbox" />
                 <span data-i18n="setting.cursorBlink">Cursor blink</span>
@@ -280,7 +378,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <select id="fontFamily"></select>
                 </label>
                 <div class="font-preview" id="fontPreview" aria-label="Font preview" data-i18n-aria="field.fontPreview">
-                  <span>LazyCat Neko WebShell</span>
+                  <span data-i18n="app.title">Neko Webshell</span>
                   <code>λ ~/app $ ls -la --color=auto 0123456789</code>
                 </div>
                 <label class="field">
@@ -308,7 +406,7 @@ export function renderShell(app: HTMLElement): ShellElements {
 
             <section class="settings-section" id="themeSettingsPanel" data-settings-panel="themes" role="tabpanel" hidden>
               <label class="field">
-                <span data-i18n="field.theme">Theme</span>
+                <span data-i18n="field.theme">Terminal theme</span>
                 <select id="themeSelect"></select>
               </label>
               <a class="settings-link" href="https://ghostty-style.vercel.app" target="_blank" rel="noreferrer">
@@ -334,6 +432,17 @@ export function renderShell(app: HTMLElement): ShellElements {
                 </button>
               </div>
               <p id="themeStatus" class="field-status"></p>
+            </section>
+
+            <section class="settings-section" id="pluginSettingsPanel" data-settings-panel="plugins" role="tabpanel" hidden>
+              <div class="settings-section-head">
+                <div class="settings-group-title" data-i18n="section.plugins">Plugins</div>
+                <button class="icon-button" id="refreshPlugins" type="button" aria-label="Refresh plugins" title="Refresh plugins" data-i18n-aria="action.refreshPlugins" data-i18n-title="action.refreshPlugins">
+                  <i data-lucide="refresh-cw"></i>
+                </button>
+              </div>
+              <div class="plugin-list" id="pluginList" role="list" aria-live="polite"></div>
+              <p id="pluginStatus" class="field-status"></p>
             </section>
           </div>
         </div>
@@ -390,6 +499,13 @@ export function renderShell(app: HTMLElement): ShellElements {
     statusLine: qs<HTMLParagraphElement>("#statusLine"),
     targetLabel: qs<HTMLElement>("#targetLabel"),
     tabList: qs<HTMLDivElement>("#tabList"),
+    herdrDock: qs<HTMLElement>("#herdrDock"),
+    herdrMode: qs<HTMLSelectElement>("#herdrMode"),
+    herdrWorkspaceList: qs<HTMLDivElement>("#herdrWorkspaceList"),
+    herdrTabList: qs<HTMLDivElement>("#herdrTabList"),
+    herdrStatus: qs<HTMLParagraphElement>("#herdrStatus"),
+    herdrRefresh: qs<HTMLButtonElement>("#herdrRefresh"),
+    herdrNewTab: qs<HTMLButtonElement>("#herdrNewTab"),
     terminalStage: qs<HTMLDivElement>("#terminalStage"),
     mobileShortcuts: qs<HTMLDivElement>("#mobileShortcuts"),
     emptyState: qs<HTMLDivElement>("#emptyState"),
@@ -401,7 +517,11 @@ export function renderShell(app: HTMLElement): ShellElements {
     settingsPage: qs<HTMLElement>("#settingsPage"),
     settingsTabs: qs<HTMLDivElement>("#settingsTabs"),
     fontTabs: qs<HTMLDivElement>("#fontTabs"),
+    pluginList: qs<HTMLDivElement>("#pluginList"),
+    pluginStatus: qs<HTMLElement>("#pluginStatus"),
+    refreshPlugins: qs<HTMLButtonElement>("#refreshPlugins"),
     localeSelect: qs<HTMLSelectElement>("#localeSelect"),
+    interfaceStyleSelect: qs<HTMLSelectElement>("#interfaceStyleSelect"),
     themeSelect: qs<HTMLSelectElement>("#themeSelect"),
     customThemeName: qs<HTMLInputElement>("#customThemeName"),
     customThemeSource: qs<HTMLTextAreaElement>("#customThemeSource"),
@@ -420,6 +540,14 @@ export function renderShell(app: HTMLElement): ShellElements {
     lineHeightValue: qs<HTMLOutputElement>("#lineHeightValue"),
     scrollbackLimit: qs<HTMLInputElement>("#scrollbackLimit"),
     outputBufferLimit: qs<HTMLInputElement>("#outputBufferLimit"),
+    terminalBackgroundEnabled: qs<HTMLInputElement>("#terminalBackgroundEnabled"),
+    terminalBackgroundUpload: qs<HTMLInputElement>("#terminalBackgroundUpload"),
+    removeTerminalBackground: qs<HTMLButtonElement>("#removeTerminalBackground"),
+    terminalBackgroundOpacity: qs<HTMLInputElement>("#terminalBackgroundOpacity"),
+    terminalBackgroundOpacityValue: qs<HTMLOutputElement>("#terminalBackgroundOpacityValue"),
+    terminalBackgroundBlur: qs<HTMLInputElement>("#terminalBackgroundBlur"),
+    terminalBackgroundBlurValue: qs<HTMLOutputElement>("#terminalBackgroundBlurValue"),
+    terminalBackgroundStatus: qs<HTMLElement>("#terminalBackgroundStatus"),
     cursorBlink: qs<HTMLInputElement>("#cursorBlink"),
     cursorShape: qs<HTMLSelectElement>("#cursorShape"),
     copyOnSelect: qs<HTMLInputElement>("#copyOnSelect"),

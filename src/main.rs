@@ -5,15 +5,20 @@ use std::sync::Arc;
 
 use tracing::info;
 
+mod action_ws;
 mod assets;
+mod backgrounds;
 mod config;
+mod database;
 mod embedded_frontend;
 mod fonts;
+mod herdr;
 mod lightos;
 mod preferences;
 mod proto;
 mod router;
 mod service;
+mod session_backend;
 mod session_manager;
 mod state;
 mod terminal;
@@ -33,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::new()?);
     let app = build_app(state);
 
     let addr: SocketAddr = "127.0.0.1:8080".parse()?;

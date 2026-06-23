@@ -1,4 +1,6 @@
+use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -6,13 +8,17 @@ use axum::extract::{Query, State};
 use axum::http::header::{HOST, ORIGIN};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
 use tokio::sync::broadcast;
+use tokio::time::timeout;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::config::{DEFAULT_COLS, DEFAULT_ROWS};
+use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
 use crate::lightos;
 use crate::state::{
     AppState, bool_flag, default_session_command_for_user, host_from_selector, mark_session_status,
@@ -22,6 +28,11 @@ use crate::terminal_manager::{
     ManagedTerminal, OutputBuffer, OutputFrame, TerminalEvent, TerminalSpec,
 };
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
+
+type TerminalSender = SplitSink<WebSocket, Message>;
+type TerminalReceiver = SplitStream<WebSocket>;
+
+const CLIPBOARD_IMAGE_STAGE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Deserialize)]
 pub struct TerminalQuery {
@@ -41,9 +52,16 @@ pub struct TerminalQuery {
 enum TerminalClientMessage {
     Input { data: String },
     Resize { cols: u16, rows: u16 },
+    ClipboardImage { extension: String, size: usize },
     RestartPolicy { enabled: bool },
     OutputBuffer { limit: usize },
     Close,
+}
+
+#[derive(Debug)]
+struct PendingClipboardImage {
+    extension: String,
+    size: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +80,9 @@ enum TerminalServerMessage<'a> {
     ProcessExit {
         exit_code: i32,
         message: Option<String>,
+    },
+    SessionStopped {
+        message: String,
     },
     OutputSequence {
         sequence: u64,
@@ -91,6 +112,17 @@ struct TerminalAttachTarget {
     output: Arc<OutputBuffer>,
 }
 
+struct TerminalReplayContext<'a> {
+    session_id: &'a str,
+    selector: &'a str,
+    cols: u16,
+    rows: u16,
+    replay: bool,
+    replay_after: u64,
+    pane_id: Option<&'a str>,
+    output: &'a OutputBuffer,
+}
+
 pub async fn terminal_ws(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -113,7 +145,7 @@ async fn handle_terminal_socket(
     state: Arc<AppState>,
     query: TerminalQuery,
 ) -> anyhow::Result<()> {
-    let (mut sender, mut receiver) = socket.split();
+    let (mut sender, receiver) = socket.split();
     let target = match resolve_terminal_target(&state, &query).await {
         Ok(target) => target,
         Err(err) => {
@@ -130,9 +162,24 @@ async fn handle_terminal_socket(
     let pane_id = target.pane_id.clone();
     let allow_spawn = target.allow_spawn;
     let session_id = target.spec.session_id.clone();
+    let target_selector = target.spec.selector.clone();
+    let replay_context = TerminalReplayContext {
+        session_id: &session_id,
+        selector: &target_selector,
+        cols: ready_cols,
+        rows: ready_rows,
+        replay,
+        replay_after,
+        pane_id: pane_id.as_deref(),
+        output: replay_output.as_ref(),
+    };
     let terminal = match state.sessions.open_terminal(target.spec, allow_spawn) {
         Ok(terminal) => terminal,
         Err(err) => {
+            if !allow_spawn && replay {
+                replay_stopped_terminal(&mut sender, &replay_context).await?;
+                return Ok(());
+            }
             if allow_spawn {
                 state.sessions.mark_status(&session_id, "stopped");
             }
@@ -141,28 +188,37 @@ async fn handle_terminal_socket(
             return Err(err);
         }
     };
-    mark_session_status(&state, terminal.session_id(), "running");
+    serve_open_terminal(sender, receiver, state, terminal, &replay_context).await
+}
 
+async fn serve_open_terminal(
+    mut sender: TerminalSender,
+    mut receiver: TerminalReceiver,
+    state: Arc<AppState>,
+    terminal: Arc<ManagedTerminal>,
+    replay_context: &TerminalReplayContext<'_>,
+) -> anyhow::Result<()> {
+    mark_session_status(&state, terminal.session_id(), "running");
     let mut event_rx = terminal.subscribe();
     send_control(
         &mut sender,
         &TerminalServerMessage::Ready {
             session_id: terminal.session_id(),
             selector: terminal.selector(),
-            cols: ready_cols,
-            rows: ready_rows,
+            cols: replay_context.cols,
+            rows: replay_context.rows,
         },
     )
     .await?;
 
-    let mut last_sent_sequence = replay_after;
-    if replay {
+    let mut last_sent_sequence = replay_context.replay_after;
+    if replay_context.replay {
         let Some(sequence) = send_replay_snapshot(
             &mut sender,
             &terminal,
-            pane_id.as_deref(),
-            &replay_output,
-            replay_after,
+            replay_context.pane_id,
+            replay_context.output,
+            replay_context.replay_after,
         )
         .await?
         else {
@@ -171,6 +227,7 @@ async fn handle_terminal_socket(
         last_sent_sequence = sequence;
     }
 
+    let mut pending_clipboard_image = None;
     loop {
         tokio::select! {
             event = event_rx.recv() => {
@@ -185,20 +242,14 @@ async fn handle_terminal_socket(
                 }
             }
             Some(message) = receiver.next() => {
-                match message? {
-                    Message::Binary(data) => {
-                        terminal.write_input(data.to_vec())?;
-                    }
-                    Message::Text(text) => {
-                        if !handle_terminal_control_message(&state, &text, &terminal)? {
-                            break;
-                        }
-                    }
-                    Message::Close(_) => break,
-                    Message::Ping(payload) => {
-                        let _ = sender.send(Message::Pong(payload)).await;
-                    }
-                    Message::Pong(_) => {}
+                if !handle_terminal_client_message(
+                    &mut sender,
+                    &state,
+                    &terminal,
+                    &mut pending_clipboard_image,
+                    message?,
+                ).await? {
+                    break;
                 }
             }
             else => break,
@@ -208,8 +259,78 @@ async fn handle_terminal_socket(
     Ok(())
 }
 
+async fn replay_stopped_terminal(
+    sender: &mut TerminalSender,
+    replay_context: &TerminalReplayContext<'_>,
+) -> anyhow::Result<()> {
+    send_control(
+        sender,
+        &TerminalServerMessage::Ready {
+            session_id: replay_context.session_id,
+            selector: replay_context.selector,
+            cols: replay_context.cols,
+            rows: replay_context.rows,
+        },
+    )
+    .await?;
+    let _ = send_replay_snapshot_for_target(
+        sender,
+        replay_context.session_id,
+        replay_context.selector,
+        replay_context.pane_id,
+        replay_context.output,
+        replay_context.replay_after,
+    )
+    .await?;
+    send_control(
+        sender,
+        &TerminalServerMessage::SessionStopped {
+            message: "terminal session is stopped".to_owned(),
+        },
+    )
+    .await
+}
+
+async fn handle_terminal_client_message(
+    sender: &mut TerminalSender,
+    state: &AppState,
+    terminal: &ManagedTerminal,
+    pending_clipboard_image: &mut Option<PendingClipboardImage>,
+    message: Message,
+) -> anyhow::Result<bool> {
+    match message {
+        Message::Binary(data) => {
+            if let Some(pending) = pending_clipboard_image.take() {
+                if let Err(err) = paste_clipboard_image_path(
+                    terminal,
+                    &pending.extension,
+                    pending.size,
+                    data.as_ref(),
+                )
+                .await
+                {
+                    warn!(error = %err, "failed to paste clipboard image");
+                    send_terminal_error(sender, err.to_string(), false).await?;
+                }
+                return Ok(true);
+            }
+            terminal.write_input(data.to_vec())?;
+            Ok(true)
+        }
+        Message::Text(text) => {
+            handle_terminal_control_message(state, &text, terminal, pending_clipboard_image)
+        }
+        Message::Close(_) => Ok(false),
+        Message::Ping(payload) => {
+            let _ = sender.send(Message::Pong(payload)).await;
+            Ok(true)
+        }
+        Message::Pong(_) => Ok(true),
+    }
+}
+
 async fn handle_terminal_event(
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    sender: &mut TerminalSender,
     state: &AppState,
     terminal: &ManagedTerminal,
     event: Result<TerminalEvent, broadcast::error::RecvError>,
@@ -257,7 +378,7 @@ async fn handle_terminal_event(
 }
 
 async fn send_replay_snapshot(
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    sender: &mut TerminalSender,
     terminal: &ManagedTerminal,
     pane_id: Option<&str>,
     output: &OutputBuffer,
@@ -305,11 +426,67 @@ async fn send_replay_snapshot(
     Ok(Some(last_sent_sequence))
 }
 
+async fn send_replay_snapshot_for_target(
+    sender: &mut TerminalSender,
+    session_id: &str,
+    selector: &str,
+    pane_id: Option<&str>,
+    output: &OutputBuffer,
+    replay_after: u64,
+) -> anyhow::Result<Option<u64>> {
+    send_control(
+        sender,
+        &TerminalServerMessage::ReplayStart {
+            session_id,
+            selector,
+            pane_id,
+            replay_after,
+        },
+    )
+    .await?;
+
+    let (frames, last_sequence) = output.snapshot_after(replay_after);
+    info!(
+        session_id = session_id,
+        selector = selector,
+        pane_id = pane_id.unwrap_or(""),
+        replay_after,
+        last_sequence,
+        frame_count = frames.len(),
+        "replaying stopped terminal output history"
+    );
+    let mut last_sent_sequence = replay_after.max(last_sequence);
+    for frame in frames {
+        if !send_output_frame(sender, &frame).await? {
+            return Ok(None);
+        }
+        last_sent_sequence = last_sent_sequence.max(frame.sequence);
+    }
+
+    send_control(
+        sender,
+        &TerminalServerMessage::ReplayComplete {
+            session_id,
+            selector,
+            pane_id,
+            last_sequence,
+        },
+    )
+    .await?;
+    Ok(Some(last_sent_sequence))
+}
+
 fn handle_terminal_control_message(
     state: &AppState,
     text: &str,
     terminal: &ManagedTerminal,
+    pending_clipboard_image: &mut Option<PendingClipboardImage>,
 ) -> anyhow::Result<bool> {
+    if pending_clipboard_image.is_some() {
+        pending_clipboard_image.take();
+        return Err(anyhow!("clipboard image binary frame expected"));
+    }
+
     if let Some(rest) = text.strip_prefix("input:") {
         terminal.write_input(rest.as_bytes().to_vec())?;
         return Ok(true);
@@ -333,6 +510,18 @@ fn handle_terminal_control_message(
                 .persist_resize(terminal.session_id(), cols, rows)?;
             Ok(true)
         }
+        Ok(TerminalClientMessage::ClipboardImage { extension, size }) => {
+            if size == 0 {
+                return Err(anyhow!("clipboard image payload is empty"));
+            }
+            if size > MAX_CLIPBOARD_IMAGE_BYTES {
+                return Err(anyhow!(
+                    "clipboard image exceeds {MAX_CLIPBOARD_IMAGE_BYTES} bytes"
+                ));
+            }
+            *pending_clipboard_image = Some(PendingClipboardImage { extension, size });
+            Ok(true)
+        }
         Ok(TerminalClientMessage::RestartPolicy { enabled }) => {
             state
                 .sessions
@@ -354,6 +543,131 @@ fn handle_terminal_control_message(
     }
 }
 
+async fn paste_clipboard_image_path(
+    terminal: &ManagedTerminal,
+    extension: &str,
+    expected_size: usize,
+    data: &[u8],
+) -> anyhow::Result<()> {
+    if data.is_empty() {
+        return Err(anyhow!("clipboard image payload is empty"));
+    }
+    if data.len() != expected_size {
+        return Err(anyhow!(
+            "clipboard image size mismatch: expected {} bytes, got {} bytes",
+            expected_size,
+            data.len()
+        ));
+    }
+    if data.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+        return Err(anyhow!(
+            "clipboard image exceeds {MAX_CLIPBOARD_IMAGE_BYTES} bytes"
+        ));
+    }
+
+    let remote_path = remote_clipboard_image_path(extension);
+    stage_clipboard_image(terminal.selector(), &remote_path, data).await?;
+    info!(
+        session_id = %terminal.session_id(),
+        selector = %terminal.selector(),
+        bytes = data.len(),
+        path = %remote_path,
+        "staged clipboard image in target instance"
+    );
+    terminal.write_input(remote_path.into_bytes())?;
+    Ok(())
+}
+
+async fn stage_clipboard_image(
+    selector: &str,
+    remote_path: &str,
+    data: &[u8],
+) -> anyhow::Result<()> {
+    let script = clipboard_image_stage_script(remote_path);
+    let mut child = Command::new(LIGHTOSCTL)
+        .args(["exec", "-i", selector, "/bin/sh", "-lc", script.as_str()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| anyhow!("failed to enter target instance: {err}"))?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("failed to open clipboard image upload stream"))?;
+    stdin
+        .write_all(data)
+        .await
+        .map_err(|err| anyhow!("failed to upload clipboard image: {err}"))?;
+    drop(stdin);
+
+    let output = timeout(CLIPBOARD_IMAGE_STAGE_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| anyhow!("clipboard image upload timed out"))?
+        .map_err(|err| anyhow!("clipboard image upload failed: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(anyhow!("clipboard image upload command failed: {detail}"));
+    }
+    Ok(())
+}
+
+fn clipboard_image_stage_script(remote_path: &str) -> String {
+    let remote_path = shell_quote(remote_path);
+    format!(
+        r#"set -eu
+path={remote_path}
+dir="${{path%/*}}"
+mkdir -p "$dir"
+chmod 1777 "$dir" 2>/dev/null || true
+umask 022
+cat > "$path"
+chmod 0644 "$path" 2>/dev/null || true
+printf '%s' "$path"
+"#
+    )
+}
+
+fn remote_clipboard_image_path(extension: &str) -> String {
+    format!(
+        "/tmp/lazycat-webshell-clipboard-images/paste-{}.{}",
+        Uuid::new_v4().simple(),
+        sanitize_clipboard_image_extension(extension)
+    )
+}
+
+fn sanitize_clipboard_image_extension(extension: &str) -> &'static str {
+    match extension
+        .trim()
+        .trim_start_matches('.')
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "jpg" | "jpeg" => "jpg",
+        "gif" => "gif",
+        "webp" => "webp",
+        "bmp" => "bmp",
+        _ => "png",
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\"'\"'");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
+}
+
 fn parse_resize_payload(rest: &str) -> anyhow::Result<(u16, u16)> {
     let (cols, rows) = rest
         .split_once(',')
@@ -365,7 +679,7 @@ fn parse_resize_payload(rest: &str) -> anyhow::Result<(u16, u16)> {
 }
 
 async fn send_control(
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    sender: &mut TerminalSender,
     message: &TerminalServerMessage<'_>,
 ) -> anyhow::Result<()> {
     let text = serde_json::to_string(message)?;
@@ -374,7 +688,7 @@ async fn send_control(
 }
 
 async fn send_terminal_error(
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    sender: &mut TerminalSender,
     message: String,
     fatal: bool,
 ) -> anyhow::Result<()> {
@@ -382,7 +696,7 @@ async fn send_terminal_error(
 }
 
 async fn send_output_frame(
-    sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    sender: &mut TerminalSender,
     frame: &OutputFrame,
 ) -> anyhow::Result<bool> {
     if sender
@@ -588,7 +902,7 @@ mod tests {
     use axum::http::header::{HOST, ORIGIN};
     use axum::http::{HeaderMap, HeaderValue};
 
-    use super::origin_allowed;
+    use super::{clipboard_image_stage_script, origin_allowed, sanitize_clipboard_image_extension};
 
     #[test]
     fn validates_origin_host_match() {
@@ -599,5 +913,22 @@ mod tests {
 
         headers.insert(ORIGIN, HeaderValue::from_static("https://other.test"));
         assert!(!origin_allowed(&headers));
+    }
+
+    #[test]
+    fn sanitizes_clipboard_image_extensions() {
+        assert_eq!(sanitize_clipboard_image_extension("PNG"), "png");
+        assert_eq!(sanitize_clipboard_image_extension(".jpeg"), "jpg");
+        assert_eq!(sanitize_clipboard_image_extension("webp"), "webp");
+        assert_eq!(sanitize_clipboard_image_extension("sh"), "png");
+    }
+
+    #[test]
+    fn clipboard_image_stage_script_quotes_remote_path() {
+        let script = clipboard_image_stage_script("/tmp/a'b.png");
+        assert!(script.contains("path='/tmp/a'\"'\"'b.png'"));
+        assert!(script.contains("chmod 1777 \"$dir\""));
+        assert!(script.contains("cat > \"$path\""));
+        assert!(script.contains("chmod 0644 \"$path\""));
     }
 }
