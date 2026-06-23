@@ -78,6 +78,7 @@ import {
   transformMobileStickyInput as encodeMobileStickyTextInput,
 } from "./mobile-shortcuts";
 import { renderNewTabMenuView, renderTabsView, type TabViewItem } from "./navigation-views";
+import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
 import { createPaneTransport } from "./pane-transport";
 import {
   AI_CHAT_PLUGIN_ID,
@@ -3333,55 +3334,61 @@ function makeTab(selector: string, restoredId?: string): TerminalTab {
 
 function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
   const id = restoredId || newId();
-  const mount = document.createElement("div");
-  mount.className = "terminal-mount";
-  mount.dataset.paneId = id;
-  mount.tabIndex = 0;
-  mount.setAttribute("role", "group");
-  mount.setAttribute("aria-label", `${tab.label} pane`);
-  mount.addEventListener("pointerdown", (event) => {
-    const current = findPaneById(id);
-    if (current) {
-      trackMobileTerminalSwipeStart(current, event);
-      activatePane(current.tabId, id, { focus: false });
-      if (shouldFocusTerminalFromPointer(event)) {
-        requestAnimationFrame(() => focusPaneCanvas(current));
+  const mount = createTerminalPaneMount(id, `${tab.label} pane`, {
+    onPointerDown: (event) => {
+      const current = findPaneById(id);
+      if (current) {
+        trackMobileTerminalSwipeStart(current, event);
+        activatePane(current.tabId, id, { focus: false });
+        if (shouldFocusTerminalFromPointer(event)) {
+          requestAnimationFrame(() => focusPaneCanvas(current));
+        }
       }
-    }
-  });
-  mount.addEventListener("pointerup", (event) => {
-    if (event.pointerType !== "touch") return;
-    const current = findPaneById(id);
-    const gesture = current ? readMobileTerminalGesture(current, event) : undefined;
-    if (current && gesture && runMobileTerminalSwipe(gesture)) {
+    },
+    onPointerUp: (event) => {
+      if (event.pointerType !== "touch") return;
+      const current = findPaneById(id);
+      const gesture = current ? readMobileTerminalGesture(current, event) : undefined;
+      if (current && gesture && runMobileTerminalSwipe(gesture)) {
+        clearMobileTerminalGesture();
+        event.preventDefault();
+        return;
+      }
       clearMobileTerminalGesture();
+      if (current && gesture && isMobileTerminalTapGesture(gesture) && isDoubleTerminalTap(current, event)) {
+        event.preventDefault();
+        focusPaneSystemKeyboard(current);
+      }
+    },
+    onPointerCancel: (event) => {
+      if (event.pointerType === "touch" && mobileTerminalSwipe.paneId === id) {
+        clearMobileTerminalGesture();
+      }
+    },
+    onDoubleClick: (event) => {
       event.preventDefault();
-      return;
-    }
-    clearMobileTerminalGesture();
-    if (current && gesture && isMobileTerminalTapGesture(gesture) && isDoubleTerminalTap(current, event)) {
+      const current = findPaneById(id);
+      if (current) {
+        focusPaneSystemKeyboard(current);
+      }
+    },
+    onContextMenu: (event) => {
       event.preventDefault();
-      focusPaneSystemKeyboard(current);
-    }
-  });
-  mount.addEventListener("pointercancel", (event) => {
-    if (event.pointerType === "touch" && mobileTerminalSwipe.paneId === id) {
-      clearMobileTerminalGesture();
-    }
-  });
-  mount.addEventListener("dblclick", (event) => {
-    event.preventDefault();
-    const current = findPaneById(id);
-    if (current) {
-      focusPaneSystemKeyboard(current);
-    }
-  });
-  mount.addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-    const current = findPaneById(id);
-    if (!current) return;
-    activatePane(current.tabId, id);
-    openPaneMenu(event.clientX, event.clientY, id);
+      const current = findPaneById(id);
+      if (!current) return;
+      activatePane(current.tabId, id);
+      openPaneMenu(event.clientX, event.clientY, id);
+    },
+    onMouseUp: () => {
+      if (settings.copyOnSelect) {
+        scheduleCopySelection();
+      }
+    },
+    onTouchEnd: () => {
+      if (settings.copyOnSelect) {
+        scheduleCopySelection();
+      }
+    },
   });
   const pane: TerminalPane = {
     id,
@@ -3411,16 +3418,6 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     openSocket,
     sendInput: sendPaneInput,
     resize: sendPaneResize,
-  });
-  mount.addEventListener("mouseup", () => {
-    if (settings.copyOnSelect) {
-      scheduleCopySelection();
-    }
-  });
-  mount.addEventListener("touchend", () => {
-    if (settings.copyOnSelect) {
-      scheduleCopySelection();
-    }
   });
   applyThemeToMount(mount, currentAppearanceContext());
   return pane;
@@ -3469,38 +3466,16 @@ async function splitActivePane(placement: SplitPlacement) {
 function renderPaneLayout(tab: TerminalTab) {
   tab.mount.replaceChildren();
   if (tab.layout) {
-    tab.mount.appendChild(renderSplitNode(tab, tab.layout));
+    tab.mount.appendChild(renderPaneSplitNode(
+      tab.layout,
+      new Map(tab.panes.map((pane) => [pane.id, pane.mount])),
+    ));
   }
   updatePaneActiveState(tab);
 }
 
-function renderSplitNode(tab: TerminalTab, node: SplitNode): HTMLElement {
-  if (node.type === "pane") {
-    const pane = tab.panes.find((item) => item.id === node.paneId);
-    return pane?.mount ?? missingPaneElement(node.paneId);
-  }
-
-  const container = document.createElement("div");
-  container.className = "split-container";
-  container.dataset.splitAxis = node.axis;
-  container.style.setProperty("--split-count", String(Math.max(1, node.children.length)));
-  for (const child of node.children) {
-    container.appendChild(renderSplitNode(tab, child));
-  }
-  return container;
-}
-
-function missingPaneElement(paneId: string): HTMLElement {
-  const element = document.createElement("div");
-  element.className = "terminal-mount missing-pane";
-  element.dataset.paneId = paneId;
-  return element;
-}
-
 function updatePaneActiveState(tab: TerminalTab) {
-  for (const pane of tab.panes) {
-    pane.mount.classList.toggle("active-pane", pane.id === tab.activePaneId);
-  }
+  updatePaneMountActiveState(tab.panes, tab.activePaneId);
 }
 
 async function mountTerminal(pane: TerminalPane) {
