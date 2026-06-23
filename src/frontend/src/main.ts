@@ -62,10 +62,13 @@ import {
   stringField,
 } from "./json-meta";
 import { encodeMobileShortcutKeyInput, encodeModifiedTextInput } from "./keyboard";
+import { renderNewTabMenuView, renderTabsView, type TabViewItem } from "./navigation-views";
+import { createPaneTransport } from "./pane-transport";
 import { fileNameFromPath, normalizeRemotePath, parentRemotePath, parseFileBrowserEntries, uploadTargetPath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
+import { installPaneScrollbackFallback } from "./terminal-scrollback";
 import { cursorStyleSequence, terminalThemeCssVars, withTransparentBackground } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
 import { builtInGhosttyThemes, CUSTOM_THEME_PREFIX, parseCustomGhosttyTheme, resolveTheme, resttyThemeFor } from "./theme-registry";
@@ -82,7 +85,6 @@ import type {
   HerdrWorkspaceInfo,
   InterfaceStyleId,
   JsonRecord,
-  PaneTerminalTransport,
   SessionBackendId,
   SessionBackendInfo,
   SessionBackendsState,
@@ -3600,19 +3602,15 @@ function sessionBackendLabel(id: SessionBackendId, fallback: string): string {
 
 function renderNewTabMenu() {
   const selectable = selectableSessionBackends();
-  elements.newTabMenu.innerHTML = selectable.map((backend) => {
-    const id = backend.id;
-    const selected = id === preferredBackendForNewTab();
-    const label = sessionBackendLabel(id, backend.label);
-    const icon = id === "herdr" ? "panels-top-left" : id === "zellij" ? "layout-dashboard" : "terminal";
-    return `
-      <button type="button" role="menuitem" data-new-tab-backend="${escapeAttr(id)}" data-default-backend="${selected}">
-        <i data-lucide="${escapeAttr(icon)}"></i>
-        <span>${escapeHtml(label)}</span>
-        ${selected ? `<small>${escapeHtml(tr("status.defaultBackend"))}</small>` : ""}
-      </button>
-    `;
-  }).join("");
+  const preferred = preferredBackendForNewTab();
+  elements.newTabMenu.innerHTML = renderNewTabMenuView(
+    selectable.map((backend) => ({
+      id: backend.id,
+      label: sessionBackendLabel(backend.id, backend.label),
+      selected: backend.id === preferred,
+    })),
+    tr("status.defaultBackend"),
+  );
   updateIcons();
 }
 
@@ -4002,7 +4000,12 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     cols: INITIAL_COLS,
     rows: INITIAL_ROWS,
   };
-  pane.transport = createPaneTransport(pane);
+  pane.transport = createPaneTransport(pane, {
+    updateSize: updatePaneTerminalSize,
+    openSocket,
+    sendInput: sendPaneInput,
+    resize: sendPaneResize,
+  });
   mount.addEventListener("mouseup", () => {
     if (settings.copyOnSelect) {
       scheduleCopySelection();
@@ -4015,62 +4018,6 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
   });
   applyThemeToMount(mount);
   return pane;
-}
-
-function createPaneTransport(pane: TerminalPane): PaneTerminalTransport {
-  let callbacks: Parameters<PaneTerminalTransport["connect"]>[0]["callbacks"] | undefined;
-  let connected = false;
-
-  return {
-    connect: (options) => {
-      callbacks = options.callbacks;
-      if (pane.closing) return;
-      if (options.cols && options.rows) {
-        updatePaneTerminalSize(pane, options.cols, options.rows);
-      }
-      if (pane.socket?.readyState === WebSocket.OPEN) {
-        connected = true;
-        callbacks.onConnect?.();
-        return;
-      }
-      if (pane.socket?.readyState === WebSocket.CONNECTING) return;
-      openSocket(pane);
-    },
-    disconnect: () => {
-      connected = false;
-      pane.socket?.close();
-      pane.socket = undefined;
-    },
-    sendInput: (data) => sendPaneInput(pane, data),
-    resize: (cols, rows) => sendPaneResize(pane, cols, rows),
-    isConnected: () => connected && pane.socket?.readyState === WebSocket.OPEN && !pane.closing && !pane.exited,
-    destroy: () => {
-      connected = false;
-      callbacks = undefined;
-      pane.socket?.close();
-      pane.socket = undefined;
-    },
-    notifyConnect: () => {
-      connected = true;
-      callbacks?.onConnect?.();
-    },
-    notifyDisconnect: () => {
-      connected = false;
-      callbacks?.onDisconnect?.();
-    },
-    notifyData: (data) => {
-      if (!data) return false;
-      if (!callbacks?.onData) return false;
-      callbacks.onData(data);
-      return true;
-    },
-    notifyError: (message, errors) => {
-      callbacks?.onError?.(message, errors);
-    },
-    notifyExit: (code) => {
-      callbacks?.onExit?.(code);
-    },
-  };
 }
 
 async function createPane(tab: TerminalTab, placement: SplitPlacement) {
@@ -4199,7 +4146,9 @@ async function mountTerminal(pane: TerminalPane) {
   pane.term = term;
   term.open(pane.mount);
   term.restty?.setMouseMode("auto");
-  installPaneScrollbackFallback(pane);
+  installPaneScrollbackFallback(pane, {
+    touchSelectionMode: () => settings.touchSelectionMode,
+  });
   installPaneTouchKeyboardGuard(pane);
   installPaneViewportGuard(pane);
   schedulePaneViewportReset(pane);
@@ -4500,60 +4449,6 @@ function installPaneViewportGuard(pane: TerminalPane) {
   pane.viewportGuardInstalled = true;
 }
 
-function installPaneScrollbackFallback(pane: TerminalPane) {
-  if (pane.scrollbackFallbackInstalled) return;
-  let touchPointerId: number | undefined;
-  let lastTouchY = 0;
-  let touchScrollActive = false;
-
-  const stopTouchScroll = (pointerId: number) => {
-    if (touchPointerId !== pointerId) return;
-    touchPointerId = undefined;
-    touchScrollActive = false;
-  };
-
-  pane.mount.addEventListener("wheel", (event) => {
-    if (pane.sessionBackend === "herdr") return;
-    if (paneMouseReportingActive(pane, event)) return;
-    const host = paneScrollbackHost(pane);
-    if (!host || !hostCanScroll(host)) return;
-    if (scrollPaneHost(host, normalizedWheelDeltaPx(event, host))) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }, { capture: true, passive: false });
-
-  pane.mount.addEventListener("pointerdown", (event) => {
-    if (paneMouseReportingActive(pane, event) && !paneTouchBypassesMouseReporting(pane, event)) return;
-    if (event.pointerType !== "touch" || !paneTouchScrollbackFallbackEnabled(pane)) return;
-    const host = paneScrollbackHost(pane);
-    if (!host || !hostCanScroll(host)) return;
-    touchPointerId = event.pointerId;
-    lastTouchY = event.clientY;
-    touchScrollActive = false;
-  }, { capture: true, passive: false });
-
-  pane.mount.addEventListener("pointermove", (event) => {
-    if (paneMouseReportingActive(pane, event) && !paneTouchBypassesMouseReporting(pane, event)) return;
-    if (touchPointerId !== event.pointerId || !paneTouchScrollbackFallbackEnabled(pane)) return;
-    const host = paneScrollbackHost(pane);
-    if (!host || !hostCanScroll(host)) return;
-    const deltaPx = lastTouchY - event.clientY;
-    if (!touchScrollActive && Math.abs(deltaPx) < 6) return;
-    touchScrollActive = true;
-    lastTouchY = event.clientY;
-    if (scrollPaneHost(host, deltaPx)) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }, { capture: true, passive: false });
-
-  pane.mount.addEventListener("pointerup", (event) => stopTouchScroll(event.pointerId), true);
-  pane.mount.addEventListener("pointercancel", (event) => stopTouchScroll(event.pointerId), true);
-  pane.mount.addEventListener("lostpointercapture", (event) => stopTouchScroll(event.pointerId), true);
-  pane.scrollbackFallbackInstalled = true;
-}
-
 function installPaneTouchKeyboardGuard(pane: TerminalPane) {
   if (pane.touchKeyboardGuardInstalled) return;
   let touchPointerId: number | undefined;
@@ -4604,40 +4499,6 @@ function installPaneTouchKeyboardGuard(pane: TerminalPane) {
   pane.mount.addEventListener("pointercancel", (event) => stopTouch(event.pointerId), true);
   pane.mount.addEventListener("lostpointercapture", (event) => stopTouch(event.pointerId), true);
   pane.touchKeyboardGuardInstalled = true;
-}
-
-function paneScrollbackHost(pane: TerminalPane): HTMLElement | null {
-  return pane.mount.querySelector<HTMLElement>(".restty-native-scroll-host");
-}
-
-function paneTouchScrollbackFallbackEnabled(pane: TerminalPane): boolean {
-  return pane.sessionBackend === "herdr" || settings.touchSelectionMode !== "drag";
-}
-
-function paneTouchBypassesMouseReporting(pane: TerminalPane, event: MouseEvent | PointerEvent): boolean {
-  return pane.sessionBackend === "herdr" && "pointerType" in event && event.pointerType === "touch";
-}
-
-function paneMouseReportingActive(pane: TerminalPane, event: MouseEvent | PointerEvent): boolean {
-  if (event.shiftKey) return false;
-  return Boolean(pane.term?.restty?.getMouseStatus().active);
-}
-
-function hostCanScroll(host: HTMLElement): boolean {
-  return host.scrollHeight > host.clientHeight + 1;
-}
-
-function normalizedWheelDeltaPx(event: WheelEvent, host: HTMLElement): number {
-  if (event.deltaMode === 1) return event.deltaY * 40;
-  if (event.deltaMode === 2) return event.deltaY * Math.max(1, host.clientHeight);
-  return event.deltaY;
-}
-
-function scrollPaneHost(host: HTMLElement, deltaPx: number): boolean {
-  if (!Number.isFinite(deltaPx) || !deltaPx) return false;
-  const before = host.scrollTop;
-  host.scrollTop += deltaPx;
-  return Math.abs(host.scrollTop - before) > 0.5;
 }
 
 function schedulePaneViewportReset(pane: TerminalPane) {
@@ -4728,32 +4589,11 @@ function activateAdjacentPane(direction: -1 | 1) {
 
 function renderTabs() {
   updateTabChrome();
-  if (!tabs.length) {
-    elements.tabList.innerHTML = `<div class="empty-tab">${escapeHtml(tr("status.noSessions"))}</div>`;
-    updateIcons();
-    return;
-  }
-  elements.tabList.innerHTML = tabs.map((tab) => {
-    const active = tab.id === activeTabId;
-    const renaming = renamingTabId === tab.id;
-    const displayName = tabDisplayName(tab);
-    const named = tabHasTextTitle(tab, displayName);
-    const title = tabCurrentTitle(tab);
-    const label = renaming
-      ? `<input class="tab-rename" data-rename-tab="${escapeAttr(tab.id)}" value="${escapeAttr(displayName)}" aria-label="${escapeAttr(tr("action.renameTab"))}" spellcheck="false" />`
-      : `<span class="tab-title">${escapeHtml(displayName)}</span>`;
-    return `
-      <div class="tab ${active ? "active" : ""} ${named ? "named" : ""}">
-        <div class="tab-main" id="tab-${escapeAttr(tab.id)}" role="tab" tabindex="0" aria-selected="${active}" data-tab-id="${escapeAttr(tab.id)}" title="${escapeAttr(title)}">
-          <span class="tab-status" data-tone="${tabTone(tab)}"></span>
-          ${label}
-        </div>
-        <button class="tab-close" data-close-tab="${escapeAttr(tab.id)}" type="button" aria-label="${escapeAttr(tr("action.closeTab"))}" title="${escapeAttr(tr("action.closeTab"))}">
-          <i data-lucide="x"></i>
-        </button>
-      </div>
-    `;
-  }).join("");
+  elements.tabList.innerHTML = renderTabsView(tabViewItems(), {
+    empty: tr("status.noSessions"),
+    rename: tr("action.renameTab"),
+    close: tr("action.closeTab"),
+  });
   elements.tabList.querySelectorAll<HTMLElement>(".tab-main[data-tab-id]").forEach((button) => {
     button.addEventListener("click", (event) => {
       if (event.target instanceof HTMLInputElement) return;
@@ -4803,6 +4643,21 @@ function renderTabs() {
   });
   updateIcons();
   focusRenameInput();
+}
+
+function tabViewItems(): TabViewItem[] {
+  return tabs.map((tab) => {
+    const displayName = tabDisplayName(tab);
+    return {
+      id: tab.id,
+      active: tab.id === activeTabId,
+      renaming: renamingTabId === tab.id,
+      named: tabHasTextTitle(tab, displayName),
+      displayName,
+      title: tabCurrentTitle(tab),
+      tone: tabTone(tab),
+    };
+  });
 }
 
 function updateTabChrome() {
