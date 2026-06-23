@@ -107,6 +107,15 @@ import {
   webshellRestartPolicyMessage,
   webshellTerminalSocketUrl,
 } from "./webshell-backend";
+import {
+  fetchHerdrState,
+  fetchInstances,
+  fetchSessionBackends,
+  fetchWorkspace,
+  runHerdrActionRequest,
+  runHerdrSocketApiRequest,
+  runWorkspaceActionRequest,
+} from "./workspace-api";
 import { zellijPaneModeInput, zellijSplitKey } from "./zellij-backend";
 
 const terminalEncoder = new TextEncoder();
@@ -2968,21 +2977,6 @@ async function loadInstances() {
   }
 }
 
-async function fetchInstances(): Promise<Instance[]> {
-  const response = await fetch(new URL("./api/instances", window.location.href), {
-    cache: "no-store",
-    credentials: "same-origin",
-  });
-  if (!response.ok) {
-    throw new Error(await response.text() || response.statusText);
-  }
-  const payload = await response.json() as unknown;
-  if (!Array.isArray(payload)) {
-    throw new Error("invalid instances response");
-  }
-  return payload as Instance[];
-}
-
 function reconcileSelectedInstance(): { selected: boolean; explicitFallback: boolean } {
   const current = normalizeSelector(selectedSelector);
   const selected = current ? instances.find((instance) => instanceSelector(instance) === current) : undefined;
@@ -3059,7 +3053,13 @@ async function loadWorkspace(selector: string, options: { allowReconcileRetry?: 
   clearSessionBackendsState();
   clearHerdrState();
   try {
-    const workspace = await fetchWorkspace(requestSelector);
+    const workspace = await fetchWorkspace(requestSelector, {
+      cols: INITIAL_COLS,
+      rows: INITIAL_ROWS,
+      outputLimit: settings.outputBufferLimit,
+      autoRestart: settings.autoRestartSessions,
+      selectRunningInstanceMessage: tr("status.selectRunningInstance"),
+    });
     const applied = await applyWorkspaceState(workspace, {
       generation,
       replayFromStart: true,
@@ -3086,23 +3086,6 @@ async function loadWorkspace(selector: string, options: { allowReconcileRetry?: 
   }
 }
 
-async function fetchWorkspace(selector: string): Promise<WorkspaceState> {
-  if (!selector) {
-    throw new Error(tr("status.selectRunningInstance"));
-  }
-  const url = new URL("./api/workspace", window.location.href);
-  url.searchParams.set("name", selector);
-  url.searchParams.set("cols", String(INITIAL_COLS));
-  url.searchParams.set("rows", String(INITIAL_ROWS));
-  url.searchParams.set("output_limit", String(settings.outputBufferLimit));
-  url.searchParams.set("auto_restart", String(settings.autoRestartSessions));
-  const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
-  if (!response.ok) {
-    throw new Error(await response.text() || response.statusText);
-  }
-  return response.json() as Promise<WorkspaceState>;
-}
-
 async function runWorkspaceAction(
   action: WorkspaceAction,
   options: {
@@ -3119,30 +3102,20 @@ async function runWorkspaceAction(
 ): Promise<WorkspaceState | undefined> {
   const selector = options.selector ?? activeTab()?.selector ?? selectedSelector;
   if (!selector) return undefined;
-  const response = await fetch(new URL("./api/workspace", window.location.href), {
-    method: "PUT",
-    credentials: "same-origin",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      name: selector,
-      action,
-      tab_id: options.tabId,
-      pane_id: options.paneId,
-      direction: options.direction,
-      label: options.label,
-      layout: options.layout,
-      active_pane_id: options.activePaneId,
-      cols: INITIAL_COLS,
-      rows: INITIAL_ROWS,
-      output_limit: settings.outputBufferLimit,
-      auto_restart: settings.autoRestartSessions,
-      session_backend: options.sessionBackend,
-    }),
+  const workspace = await runWorkspaceActionRequest(action, {
+    selector,
+    cols: INITIAL_COLS,
+    rows: INITIAL_ROWS,
+    outputLimit: settings.outputBufferLimit,
+    autoRestart: settings.autoRestartSessions,
+    tabId: options.tabId,
+    paneId: options.paneId,
+    direction: options.direction,
+    label: options.label,
+    layout: options.layout,
+    activePaneId: options.activePaneId,
+    sessionBackend: options.sessionBackend,
   });
-  if (!response.ok) {
-    throw new Error(await response.text() || response.statusText);
-  }
-  const workspace = await response.json() as WorkspaceState;
   if (options.apply !== false) {
     await applyWorkspaceState(workspace, {
       generation: selectedSelectorGeneration,
@@ -3180,16 +3153,6 @@ async function refreshSessionBackends(
     }
     return false;
   }
-}
-
-async function fetchSessionBackends(selector: string): Promise<SessionBackendsState> {
-  const url = new URL("./api/session-backends", window.location.href);
-  url.searchParams.set("name", selector);
-  const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
-  if (!response.ok) {
-    throw new Error(await response.text() || response.statusText);
-  }
-  return response.json() as Promise<SessionBackendsState>;
 }
 
 function clearSessionBackendsState() {
@@ -3252,16 +3215,6 @@ async function maybeAutoRestoreHerdrEntry(selector: string) {
   }
 }
 
-async function fetchHerdrState(selector: string): Promise<HerdrBridgeState> {
-  const url = new URL("./api/herdr", window.location.href);
-  url.searchParams.set("name", selector);
-  const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
-  if (!response.ok) {
-    throw new Error(await response.text() || response.statusText);
-  }
-  return response.json() as Promise<HerdrBridgeState>;
-}
-
 async function runHerdrAction(
   action: HerdrAction,
   options: {
@@ -3273,21 +3226,7 @@ async function runHerdrAction(
   if (!selector || !herdrState?.available) return;
   elements.herdrStatus.textContent = "";
   try {
-    const response = await fetch(new URL("./api/herdr", window.location.href), {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: selector,
-        action,
-        workspace_id: options.workspaceId,
-        tab_id: options.tabId,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(await response.text() || response.statusText);
-    }
-    const state = await response.json() as HerdrBridgeState;
+    const state = await runHerdrActionRequest(selector, action, options);
     if (!isCurrentSelectorRequest(selector, selectedSelectorGeneration) || !state.available) {
       clearHerdrState();
       return;
@@ -3343,21 +3282,7 @@ async function runHerdrSocketRequest(
 ): Promise<HerdrSocketEnvelope> {
   const selector = normalizeSelector(options.selector ?? selectedSelector);
   if (!selector) throw new Error(tr("status.selectRunningInstance"));
-  const response = await fetch(new URL("./api/herdr/socket", window.location.href), {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      name: selector,
-      method,
-      params,
-      id: options.id,
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(await response.text() || response.statusText);
-  }
-  const envelope = await response.json() as HerdrSocketEnvelope;
+  const envelope = await runHerdrSocketApiRequest(selector, method, params, { id: options.id });
   if (method === "notification.show" && options.mirrorNotification !== false) {
     mirrorHerdrNotification(params, envelope);
   }
