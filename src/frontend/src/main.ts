@@ -61,7 +61,15 @@ import {
   metaStringArray,
   stringField,
 } from "./json-meta";
-import { encodeMobileShortcutKeyInput, encodeModifiedTextInput } from "./keyboard";
+import {
+  clearMobileSticky as resetMobileSticky,
+  createMobileStickyState,
+  encodeMobileShortcutInput,
+  isMobileModifierShortcut,
+  mobileChordInput,
+  toggleMobileModifier,
+  transformMobileStickyInput as encodeMobileStickyTextInput,
+} from "./mobile-shortcuts";
 import { renderNewTabMenuView, renderTabsView, type TabViewItem } from "./navigation-views";
 import { createPaneTransport } from "./pane-transport";
 import { fileNameFromPath, normalizeRemotePath, parentRemotePath, parseFileBrowserEntries, uploadTargetPath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
@@ -178,11 +186,7 @@ let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
 let contextPaneId: string | undefined;
 let customFonts: FontPreset[] = [];
-const mobileSticky = {
-  ctrl: false,
-  alt: false,
-  shift: false,
-};
+const mobileSticky = createMobileStickyState();
 const lastMobileTerminalTap = {
   paneId: "",
   time: 0,
@@ -1159,7 +1163,7 @@ function stopMobileShortcutRepeat() {
 
 async function runMobileShortcut(shortcut: string, options: { keepModifiers?: boolean } = {}) {
   if (isMobileModifierShortcut(shortcut)) {
-    mobileSticky[shortcut] = !mobileSticky[shortcut];
+    toggleMobileModifier(mobileSticky, shortcut);
     updateMobileShortcutState();
     focusActivePaneSystemKeyboard();
     return;
@@ -1172,7 +1176,7 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
     return;
   }
 
-  const data = encodeMobileShortcutKeyInput(shortcut, mobileSticky);
+  const data = encodeMobileShortcutInput(shortcut, mobileSticky);
   if (data) {
     sendActivePaneKeyInput(data);
   }
@@ -1180,10 +1184,6 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
     clearMobileSticky();
   }
   focusAfterMobileShortcut();
-}
-
-function isMobileModifierShortcut(shortcut: string): shortcut is keyof typeof mobileSticky {
-  return shortcut === "ctrl" || shortcut === "alt" || shortcut === "shift";
 }
 
 function runMobileChord(chord: string) {
@@ -1229,29 +1229,14 @@ async function runMobileAction(action: string) {
   }
 }
 
-function mobileChordInput(chord: string): string | undefined {
-  if (chord === "ctrl-c") return "\x03";
-  if (chord === "ctrl-e") return "\x05";
-  if (chord === "shift-tab") return "\x1b[Z";
-  return undefined;
-}
-
-function hasMobileStickyModifiers(): boolean {
-  return mobileSticky.ctrl || mobileSticky.alt || mobileSticky.shift;
-}
-
 function transformMobileStickyInput(text: string, source: string): string | undefined {
-  if (!hasMobileStickyModifiers() || source === "pty" || source === "program") return undefined;
-  const encoded = encodeModifiedTextInput(text, mobileSticky);
-  if (!encoded) return undefined;
-  clearMobileSticky();
+  const encoded = encodeMobileStickyTextInput(mobileSticky, text, source);
+  if (encoded) updateMobileShortcutState();
   return encoded;
 }
 
 function clearMobileSticky() {
-  mobileSticky.ctrl = false;
-  mobileSticky.alt = false;
-  mobileSticky.shift = false;
+  resetMobileSticky(mobileSticky);
   updateMobileShortcutState();
 }
 
