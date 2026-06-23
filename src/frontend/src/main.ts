@@ -7,8 +7,13 @@ import { Terminal } from "restty/xterm";
 
 import { AIChatStore } from "./ai-chat-store";
 import {
-  mimeTypeForFont,
-  mimeTypeForTerminalBackground,
+  deleteStoredFont,
+  deleteTerminalBackgroundFile,
+  fetchStoredFonts,
+  uploadFontFile,
+  uploadTerminalBackgroundFile,
+} from "./appearance-api";
+import {
   normalizeHexColorInput,
   normalizeInterfaceStyleId,
   terminalBackgroundIdFromUrl,
@@ -116,8 +121,6 @@ import type {
   SessionBackendsState,
   SplitNode,
   SplitPlacement,
-  StoredFont,
-  TerminalBackground,
   TerminalPane,
   TerminalTab,
   TerminalTheme,
@@ -1832,13 +1835,7 @@ function setThemeStatus(message: string, tone: Tone = "neutral") {
 
 async function loadUploadedFonts() {
   try {
-    const response = await fetch(new URL("./api/fonts", window.location.href), {
-      credentials: "same-origin",
-    });
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    const fonts = await response.json() as StoredFont[];
+    const fonts = await fetchStoredFonts();
     customFonts = fonts.map(storedFontToResttyPreset).filter((font): font is FontPreset => Boolean(font));
     setFontStatus(customFonts.length ? tr("status.fontsReady", { count: customFonts.length }) : "");
   } catch (error) {
@@ -1853,18 +1850,7 @@ async function uploadFont() {
 
   try {
     validateFontFile(file, tr);
-    const url = new URL("./api/fonts", window.location.href);
-    url.searchParams.set("filename", file.name);
-    const response = await fetch(url, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": file.type || mimeTypeForFont(file.name) },
-      body: file,
-    });
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    const stored = await response.json() as StoredFont;
+    const stored = await uploadFontFile(file);
     const preset = storedFontToResttyPreset(stored);
     if (!preset) throw new Error(tr("status.fontRegistrationFailed"));
     customFonts = [...customFonts.filter((font) => font.id !== preset.id), preset];
@@ -1882,12 +1868,10 @@ async function removeSelectedFont() {
   const font = currentFont();
   if (!font.custom) return;
   const id = font.id.replace(/^custom:/, "");
-  const response = await fetch(new URL(`./api/fonts/${encodeURIComponent(id)}`, window.location.href), {
-    method: "DELETE",
-    credentials: "same-origin",
-  });
-  if (!response.ok && response.status !== 404) {
-    setFontStatus(tr("status.fontDeleteFailed", { message: await response.text() }), "error");
+  try {
+    await deleteStoredFont(id);
+  } catch (error) {
+    setFontStatus(tr("status.fontDeleteFailed", { message: errorMessage(error) }), "error");
     return;
   }
   customFonts = customFonts.filter((item) => item.id !== font.id);
@@ -1905,18 +1889,7 @@ async function uploadTerminalBackground() {
 
   try {
     validateTerminalBackgroundFile(file, tr);
-    const url = new URL("./api/terminal-backgrounds", window.location.href);
-    url.searchParams.set("filename", file.name);
-    const response = await fetch(url, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": file.type || mimeTypeForTerminalBackground(file.name) },
-      body: file,
-    });
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    const background = await response.json() as TerminalBackground;
+    const background = await uploadTerminalBackgroundFile(file);
     if (!background.url) throw new Error("invalid background upload response");
     settings.terminalBackgroundUrl = background.url;
     settings.terminalBackgroundEnabled = true;
@@ -1939,12 +1912,10 @@ async function removeTerminalBackground() {
     return;
   }
 
-  const response = await fetch(new URL(`./api/terminal-backgrounds/${encodeURIComponent(id)}`, window.location.href), {
-    method: "DELETE",
-    credentials: "same-origin",
-  });
-  if (!response.ok && response.status !== 404) {
-    setTerminalBackgroundStatus(tr("status.backgroundDeleteFailed", { message: await response.text() }), "error");
+  try {
+    await deleteTerminalBackgroundFile(id);
+  } catch (error) {
+    setTerminalBackgroundStatus(tr("status.backgroundDeleteFailed", { message: errorMessage(error) }), "error");
     return;
   }
   settings.terminalBackgroundUrl = "";
