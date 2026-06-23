@@ -135,6 +135,17 @@ import {
   runHerdrSocketApiRequest,
   runWorkspaceActionRequest,
 } from "./workspace-api";
+import {
+  instanceSelector,
+  isRunningInstance,
+  lastTabStorageKey,
+  normalizeSelector,
+  readRememberedSelector,
+  readRememberedTabId,
+  rememberSelector,
+  requestedTabIdFromLocation,
+  updateWorkspaceLocation,
+} from "./workspace-selection";
 import { zellijPaneModeInput, zellijSplitKey } from "./zellij-backend";
 
 const terminalEncoder = new TextEncoder();
@@ -149,8 +160,6 @@ const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
 const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
-const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
-const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
 const FILE_TRANSFER_PLUGIN_ID = "file-transfer";
 const AI_CHAT_PLUGIN_ID = "ai-chat";
 const capabilityClient = createClient(
@@ -245,26 +254,6 @@ function tr(key: MessageKey, values?: Record<string, string | number>): string {
   return translate(settings.locale, key, values);
 }
 
-function normalizeSelector(value: unknown): string {
-  return String(value ?? "").trim();
-}
-
-function instanceSelector(instance: Instance | undefined): string {
-  const explicit = normalizeSelector(instance?.selector);
-  if (explicit) return explicit;
-  const name = normalizeSelector(instance?.name);
-  const ownerDeployId = normalizeSelector(instance?.ownerDeployId);
-  return name && ownerDeployId ? `${name}@${ownerDeployId}` : "";
-}
-
-function isRunningInstance(instance: Instance | undefined): boolean {
-  return Boolean(
-    instance
-      && normalizeSelector(instance.status) === "running"
-      && instanceSelector(instance),
-  );
-}
-
 function setSelectedSelector(
   selector: string,
   options: {
@@ -280,6 +269,7 @@ function setSelectedSelector(
   }
   if (options.updateLocation !== false && selectedSelector) {
     updateWorkspaceLocation(selectedSelector, {
+      activeTabId,
       replace: options.replaceLocation ?? true,
       tabId: options.tabId,
     });
@@ -291,71 +281,6 @@ function isCurrentSelectorRequest(selector: string, generation: number): boolean
   return normalizeSelector(selector) === selectedSelector && generation === selectedSelectorGeneration;
 }
 
-function updateWorkspaceLocation(
-  selector: string,
-  options: {
-    replace?: boolean;
-    tabId?: string;
-  } = {},
-) {
-  const normalized = normalizeSelector(selector);
-  if (!normalized) return;
-  const url = new URL(window.location.href);
-  url.searchParams.set("name", normalized);
-  const tabId = normalizeSelector(options.tabId ?? activeTabId ?? "");
-  if (tabId) {
-    url.searchParams.set("tab", tabId);
-  } else {
-    url.searchParams.delete("tab");
-  }
-  const state = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
-  const nextState: Record<string, unknown> = { ...state, name: normalized };
-  if (tabId) {
-    nextState.tab = tabId;
-  } else {
-    delete nextState.tab;
-  }
-  if (options.replace === false) {
-    window.history.pushState(nextState, "", url);
-    return;
-  }
-  window.history.replaceState(nextState, "", url);
-}
-
-function requestedTabIdFromLocation(): string {
-  return normalizeSelector(new URLSearchParams(window.location.search).get("tab") ?? "");
-}
-
-function lastTabStorageKey(selector: string): string {
-  return `${LAST_TAB_STORAGE_PREFIX}.${selector}`;
-}
-
-function readRememberedTabId(selector: string): string {
-  try {
-    return normalizeSelector(window.localStorage.getItem(lastTabStorageKey(selector)) ?? "");
-  } catch {
-    return "";
-  }
-}
-
-function readRememberedSelector(): string {
-  try {
-    return normalizeSelector(window.localStorage.getItem(LAST_SELECTOR_STORAGE_KEY) ?? "");
-  } catch {
-    return "";
-  }
-}
-
-function rememberSelector(selector: string) {
-  const normalized = normalizeSelector(selector);
-  if (!normalized) return;
-  try {
-    window.localStorage.setItem(LAST_SELECTOR_STORAGE_KEY, normalized);
-  } catch {
-    // localStorage is best-effort; URL and server workspace state remain authoritative.
-  }
-}
-
 function rememberActiveTab() {
   if (!selectedSelector || !activeTabId) return;
   try {
@@ -363,7 +288,7 @@ function rememberActiveTab() {
   } catch {
     // localStorage is best-effort; workspace persistence remains server-owned.
   }
-  updateWorkspaceLocation(selectedSelector, { replace: true, tabId: activeTabId });
+  updateWorkspaceLocation(selectedSelector, { activeTabId, replace: true, tabId: activeTabId });
 }
 
 function firstExistingTabId(candidates: Array<string | undefined>): string | undefined {
