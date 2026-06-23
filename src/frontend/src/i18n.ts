@@ -60,6 +60,7 @@ export type MessageKey =
   | "backend.herdr"
   | "backend.webshell"
   | "backend.zellij"
+  | "confirm.closeTab"
   | "cursor.bar"
   | "cursor.block"
   | "cursor.underline"
@@ -321,6 +322,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "backend.herdr": "Herdr",
     "backend.webshell": "WebShell native",
     "backend.zellij": "zellij",
+    "confirm.closeTab": "Close terminal tab \"{name}\"?",
     "cursor.bar": "Bar",
     "cursor.block": "Block",
     "cursor.underline": "Underline",
@@ -583,6 +585,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "backend.herdr": "Herdr",
     "backend.webshell": "WebShell 原生",
     "backend.zellij": "zellij",
+    "confirm.closeTab": "关闭终端标签“{name}”？",
     "cursor.bar": "竖线",
     "cursor.block": "块",
     "cursor.underline": "下划线",

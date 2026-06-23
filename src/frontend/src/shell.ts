@@ -36,6 +36,9 @@ export type ShellElements = {
   settingsButton: HTMLButtonElement;
   settingsMenu: HTMLDivElement;
   openSettingsItem: HTMLButtonElement;
+  openPluginsItem: HTMLButtonElement;
+  openShortcutHelpItem: HTMLButtonElement;
+  fitTerminalItem: HTMLButtonElement;
   pluginsButton: HTMLButtonElement;
   pluginSidebar: HTMLElement;
   closePluginSidebar: HTMLButtonElement;
@@ -190,6 +193,18 @@ export function renderShell(app: HTMLElement): ShellElements {
               <i data-lucide="menu"></i>
             </button>
             <div class="settings-menu" id="settingsMenu" role="menu" aria-label="Settings menu" data-i18n-aria="action.settingsMenu" hidden>
+              <button id="openPluginsItem" type="button" role="menuitem">
+                <i data-lucide="plug"></i>
+                <span data-i18n="section.plugins">Plugins</span>
+              </button>
+              <button id="openShortcutHelpItem" type="button" role="menuitem">
+                <i data-lucide="circle-help"></i>
+                <span data-i18n="action.shortcutHelp">Keyboard shortcuts</span>
+              </button>
+              <button id="fitTerminalItem" type="button" role="menuitem">
+                <i data-lucide="maximize"></i>
+                <span data-i18n="action.fullscreen">Full screen</span>
+              </button>
               <button id="openSettingsItem" type="button" role="menuitem">
                 <i data-lucide="settings"></i>
                 <span data-i18n="action.settings">Settings</span>
@@ -643,6 +658,9 @@ export function renderShell(app: HTMLElement): ShellElements {
     settingsButton: qs<HTMLButtonElement>("#settingsButton"),
     settingsMenu: qs<HTMLDivElement>("#settingsMenu"),
     openSettingsItem: qs<HTMLButtonElement>("#openSettingsItem"),
+    openPluginsItem: qs<HTMLButtonElement>("#openPluginsItem"),
+    openShortcutHelpItem: qs<HTMLButtonElement>("#openShortcutHelpItem"),
+    fitTerminalItem: qs<HTMLButtonElement>("#fitTerminalItem"),
     pluginsButton: qs<HTMLButtonElement>("#pluginsButton"),
     pluginSidebar: qs<HTMLElement>("#pluginSidebar"),
     closePluginSidebar: qs<HTMLButtonElement>("#closePluginSidebar"),

@@ -809,6 +809,23 @@ function bindActions() {
     event.stopPropagation();
     togglePluginSidebar();
   });
+  elements.openPluginsItem.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeSettingsMenu();
+    openPluginSidebar();
+  });
+  elements.openShortcutHelpItem.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeSettingsMenu();
+    if (elements.shortcutHelp.hidden) {
+      toggleShortcutHelp();
+    }
+  });
+  elements.fitTerminalItem.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeSettingsMenu();
+    void toggleFullscreen();
+  });
   elements.closePluginSidebar.addEventListener("click", () => closePluginSidebar());
   elements.homeButton.addEventListener("click", () => void navigateLightOSHome());
   elements.settingsButton.addEventListener("click", (event) => {
@@ -2797,21 +2814,20 @@ function renderAIChatPicker(
 ): string {
   const selected = field === "model" ? currentAIModel() : activeAIChatSessionId;
   const items = options.map((option) => `
-    <button type="button" data-ai-chat-setting="${escapeAttr(field)}" data-ai-chat-value="${escapeAttr(option.value)}" aria-current="${option.value === selected ? "true" : "false"}" ${disabled ? "disabled" : ""}>
-      <span>${escapeHtml(option.label)}</span>
-      ${option.value === selected ? `<i data-lucide="check"></i>` : ""}
-    </button>
+    <option value="${escapeAttr(option.value)}" ${option.value === selected ? "selected" : ""} ${option.value ? "" : "disabled"}>
+      ${escapeHtml(option.label)}
+    </option>
   `).join("");
   return `
-    <details class="ai-chat-picker">
-      <summary aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}" ${disabled ? "aria-disabled=\"true\"" : ""}>
-        <span>${escapeHtml(current || label)}</span>
+    <label class="ai-chat-picker" title="${escapeAttr(label)}">
+      <span class="ai-chat-picker-label">${escapeHtml(label)}</span>
+      <span class="ai-chat-select-shell">
+        <select data-ai-chat-setting="${escapeAttr(field)}" aria-label="${escapeAttr(label)}" ${disabled ? "disabled" : ""}>
+          ${items}
+        </select>
         <i data-lucide="chevron-down"></i>
-      </summary>
-      <div class="ai-chat-picker-menu">
-        ${items}
-      </div>
-    </details>
+      </span>
+    </label>
   `;
 }
 
@@ -5101,7 +5117,7 @@ function renderTabs() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      void closeTab(button.dataset.closeTab ?? "");
+      void requestCloseTab(button.dataset.closeTab ?? "");
     });
     button.addEventListener("auxclick", (event) => event.stopPropagation());
   });
@@ -5109,7 +5125,7 @@ function renderTabs() {
     tabElement.addEventListener("auxclick", (event) => {
       if (event.button !== 1) return;
       const tabId = tabElement.querySelector<HTMLElement>("[data-tab-id]")?.dataset.tabId;
-      if (tabId) void closeTab(tabId);
+      if (tabId) void requestCloseTab(tabId);
     });
   });
   updateIcons();
@@ -5259,7 +5275,14 @@ function cancelTabRename() {
 function closeActiveTab() {
   const tab = activeTab();
   if (!tab) return;
-  void closeTab(tab.id);
+  void requestCloseTab(tab.id);
+}
+
+async function requestCloseTab(tabId: string) {
+  const tab = tabs.find((item) => item.id === tabId);
+  if (!tab) return;
+  if (!window.confirm(tr("confirm.closeTab", { name: tabDisplayName(tab) }))) return;
+  await closeTab(tabId);
 }
 
 async function closeTab(tabId: string) {
@@ -5286,7 +5309,7 @@ async function closeActiveSession(tab: TerminalTab, pane: TerminalPane) {
     return;
   }
   if (visiblePanes(tab).length <= 1) {
-    await closeTab(tab.id);
+    await requestCloseTab(tab.id);
     return;
   }
   try {

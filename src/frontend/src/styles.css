@@ -2828,108 +2828,55 @@ kbd {
 }
 
 .ai-chat-picker {
-  position: relative;
+  display: grid;
+  gap: 3px;
   min-width: 0;
 }
 
-.ai-chat-picker summary {
+.ai-chat-picker-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.ai-chat-select-shell {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
+  min-width: 0;
+}
+
+.ai-chat-select-shell select {
   min-height: 32px;
   border: 1px solid var(--input-border);
   border-radius: 7px;
+  appearance: none;
   background:
     var(--input-wash),
     var(--input-bg);
   color: var(--text);
-  padding: 0 8px;
+  padding: 0 30px 0 8px;
   cursor: pointer;
-  list-style: none;
-}
-
-.ai-chat-picker summary::-webkit-details-marker {
-  display: none;
-}
-
-.ai-chat-picker summary[aria-disabled="true"] {
-  cursor: not-allowed;
-  opacity: 0.55;
-  pointer-events: none;
-}
-
-.ai-chat-picker summary span {
-  min-width: 0;
-  overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 12px;
   font-weight: 700;
 }
 
-.ai-chat-picker summary svg {
+.ai-chat-select-shell select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ai-chat-select-shell svg {
+  position: absolute;
+  top: 50%;
+  right: 9px;
   width: 14px;
   height: 14px;
   color: var(--muted);
-}
-
-.ai-chat-picker[open] summary {
-  border-color: var(--line-strong);
-}
-
-.ai-chat-picker-menu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
-  z-index: 30;
-  display: grid;
-  gap: 3px;
-  width: max(100%, min(260px, 72vw));
-  max-height: 220px;
-  overflow: auto;
-  border: 1px solid var(--menu-border);
-  border-radius: 8px;
-  background:
-    var(--menu-wash),
-    var(--menu-bg);
-  box-shadow: var(--shadow-raised);
-  padding: 6px;
-}
-
-.ai-chat-picker-menu button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 16px;
-  align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--menu-text);
-  padding: 0 8px;
-  text-align: left;
-}
-
-.ai-chat-picker-menu button:hover,
-.ai-chat-picker-menu button:focus-visible {
-  background: var(--menu-hover-bg);
-}
-
-.ai-chat-picker-menu button span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ai-chat-picker-menu button[aria-current="true"] {
-  color: var(--accent-fg);
-}
-
-.ai-chat-picker-menu svg {
-  width: 14px;
-  height: 14px;
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .ai-config-grid {
@@ -3419,7 +3366,7 @@ output {
   color: var(--danger);
 }
 
-@media (hover: none) and (pointer: coarse) {
+@media (hover: none) and (pointer: coarse), (max-width: 760px) {
   :root {
     --mobile-touch: 40px;
   }
@@ -3427,32 +3374,72 @@ output {
   .topbar {
     height: calc(46px + var(--lzc-safe-area-inset-top));
     min-height: calc(46px + var(--lzc-safe-area-inset-top));
-    gap: 6px;
+    gap: 4px;
     padding: var(--lzc-safe-area-inset-top) max(8px, var(--lzc-safe-area-inset-right)) 0 max(8px, var(--lzc-safe-area-inset-left));
   }
 
+  #fitTerminal,
+  #shortcutHelpButton,
+  #pluginsButton {
+    display: none;
+  }
+
+  .tabs-shell {
+    flex: 1 1 0;
+  }
+
+  .tab-list {
+    flex: 1 1 auto;
+  }
+
   .tab {
-    width: auto;
-    min-width: 48px;
-    max-width: 52vw;
+    flex: 0 0 auto;
+    min-width: 38px;
+    max-width: 44px;
   }
 
   .tab-main {
     min-height: var(--mobile-touch);
+    justify-content: center;
+    padding: 0 9px;
+  }
+
+  .tab.active {
+    min-width: 76px;
+    max-width: min(168px, 46vw);
   }
 
   .tab.named {
-    width: auto;
-    min-width: 56px;
-    max-width: min(172px, 46vw);
+    min-width: 38px;
+    max-width: 44px;
+  }
+
+  .tab.named.active {
+    min-width: 88px;
+    max-width: min(172px, 48vw);
   }
 
   .tab.named .tab-main {
     max-width: 100%;
   }
 
+  .tab.active .tab-main {
+    justify-content: flex-start;
+    padding: 0 24px 0 10px;
+  }
+
+  .tab:not(.active) .tab-title {
+    max-width: 1.4ch;
+    opacity: 0.78;
+  }
+
+  .tab.named:not(.active) .tab-title {
+    max-width: 0;
+    opacity: 0;
+  }
+
   .tab-title {
-    max-width: min(124px, 34vw);
+    max-width: min(120px, 32vw);
   }
 
   .tab-add,
@@ -3468,6 +3455,10 @@ output {
     height: 22px;
   }
 
+  .tab:not(.active) .tab-close {
+    display: none;
+  }
+
   .topbar-actions {
     gap: 1px;
   }
@@ -3475,17 +3466,18 @@ output {
   .herdr-dock {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 5px;
-    min-height: 46px;
-    padding: 5px max(8px, var(--lzc-safe-area-inset-right)) 5px max(8px, var(--lzc-safe-area-inset-left));
+    min-height: 40px;
+    padding: 4px max(8px, var(--lzc-safe-area-inset-right)) 4px max(8px, var(--lzc-safe-area-inset-left));
   }
 
   .herdr-workspaces {
-    grid-column: 1 / -1;
-    min-height: 36px;
+    grid-column: 1 / 2;
+    min-height: 34px;
   }
 
   .herdr-tabs-shell {
     grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
   }
 
   .herdr-status {
@@ -3495,27 +3487,77 @@ output {
   .herdr-chip,
   .herdr-tab,
   .herdr-icon-button {
-    min-height: 38px;
+    min-height: 34px;
     border-radius: 6px;
     font-size: 12px;
   }
 
   .herdr-space-close {
-    width: 22px;
-    height: 22px;
-    margin-left: -4px;
-    margin-right: 1px;
-    opacity: 0.72;
-    pointer-events: auto;
+    display: none;
+  }
+
+  .herdr-space[aria-selected="true"] {
+    max-width: min(164px, 48vw);
+  }
+
+  .herdr-space:not([aria-selected="true"]),
+  .herdr-space:not([aria-selected="true"]):hover,
+  .herdr-space:not([aria-selected="true"]):focus-within {
+    max-width: 34px;
+  }
+
+  .herdr-space:not([aria-selected="true"]) .herdr-chip,
+  .herdr-space:not([aria-selected="true"]):hover .herdr-chip,
+  .herdr-space:not([aria-selected="true"]):focus-within .herdr-chip {
+    width: 34px;
+    min-width: 34px;
+    max-width: 34px;
+    border-radius: 999px;
+    padding: 0;
+  }
+
+  .herdr-space:not([aria-selected="true"]) .herdr-chip small,
+  .herdr-space:not([aria-selected="true"]):hover .herdr-chip small,
+  .herdr-space:not([aria-selected="true"]):focus-within .herdr-chip small {
+    width: 18px;
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .herdr-space:not([aria-selected="true"]) .herdr-chip span,
+  .herdr-space:not([aria-selected="true"]):hover .herdr-chip span,
+  .herdr-space:not([aria-selected="true"]):focus-within .herdr-chip span {
+    max-width: 0;
+    opacity: 0;
   }
 
   .herdr-tab {
-    max-width: 58vw;
+    max-width: min(136px, 42vw);
+  }
+
+  .herdr-tab:not([aria-selected="true"]) {
+    width: 34px;
+    min-width: 34px;
+    max-width: 34px;
+    border-radius: 999px;
+    padding: 0;
+  }
+
+  .herdr-tab:not([aria-selected="true"]) span {
+    display: none;
+  }
+
+  .herdr-tab:not([aria-selected="true"]) small {
+    color: currentColor;
   }
 
   .herdr-icon-button {
-    width: 40px;
-    min-width: 40px;
+    width: 36px;
+    min-width: 36px;
+  }
+
+  #herdrRefresh {
+    display: none;
   }
 
   .webshell[data-tab-layout="vertical"] .herdr-dock {
@@ -3609,14 +3651,48 @@ output {
   .plugin-sidebar {
     top: calc(var(--app-viewport-offset-top) + 8px);
     right: max(8px, var(--lzc-safe-area-inset-right));
-    bottom: max(8px, calc(var(--lzc-safe-area-inset-bottom) + var(--app-keyboard-inset-bottom)));
+    bottom: max(8px, var(--lzc-safe-area-inset-bottom));
     left: max(8px, var(--lzc-safe-area-inset-left));
+    grid-template-rows: 48px minmax(0, 1fr) auto;
     grid-template-columns: 44px minmax(0, 1fr);
     width: auto;
   }
 
+  .plugin-sidebar-header {
+    position: relative;
+    z-index: 4;
+    min-height: 48px;
+    padding: 0 6px 0 12px;
+    background:
+      linear-gradient(180deg, var(--dialog-wash-a), transparent 90%),
+      var(--dialog-bg);
+  }
+
+  .plugin-sidebar-header .icon-button {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+  }
+
+  .plugin-tool-tabs {
+    padding: 8px 5px;
+  }
+
+  .plugin-tool-tabs button {
+    width: 34px;
+    height: 42px;
+  }
+
+  .plugin-tool-tabs .tool-tip {
+    display: none;
+  }
+
   .plugin-tool-body {
+    display: flex;
+    flex-direction: column;
     padding: 10px;
+    overflow-x: hidden;
+    overflow-y: auto;
   }
 
   .file-browser-shell {
@@ -3628,7 +3704,43 @@ output {
   }
 
   .ai-chat-tool {
+    flex: 1 1 auto;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
     min-height: 0;
+  }
+
+  .ai-chat-tool .plugin-tool-head {
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ai-chat-tool .plugin-tool-head .settings-help {
+    display: none;
+  }
+
+  .ai-chat-box {
+    min-height: 0;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+
+  .ai-chat-history {
+    min-height: 0;
+    padding: 10px;
+  }
+
+  .ai-chat-message {
+    max-width: 100%;
+  }
+
+  .ai-message-copy {
+    opacity: 1;
+  }
+
+  .ai-chat-composer {
+    gap: 8px;
+    padding: 8px;
   }
 
   .ai-chat-model-row,
@@ -3636,8 +3748,29 @@ output {
     grid-template-columns: 1fr;
   }
 
+  .ai-chat-input-row textarea {
+    min-height: 42px;
+    max-height: 96px;
+  }
+
+  .ai-chat-input-row .command-button {
+    min-height: 44px;
+  }
+
   .ai-chat-actions {
     flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .ai-chat-actions .icon-button {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+  }
+
+  .ai-chat-select-shell select {
+    min-height: 38px;
   }
 
   .settings-panels {
@@ -3711,14 +3844,22 @@ output {
 
   .mobile-shortcuts {
     position: fixed;
-    right: 0;
-    bottom: var(--app-keyboard-inset-bottom);
-    left: 0;
+    top: calc(
+      var(--app-viewport-offset-top)
+      + var(--app-viewport-height)
+      - var(--mobile-shortcuts-height)
+      - var(--lzc-safe-area-inset-bottom)
+    );
+    right: auto;
+    bottom: auto;
+    left: var(--app-viewport-offset-left);
     z-index: 18;
     display: grid;
     grid-template-rows: 32px minmax(0, auto);
     gap: 5px;
-    min-height: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
+    width: var(--app-viewport-width);
+    height: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
+    min-height: 0;
     padding:
       5px
       max(6px, var(--lzc-safe-area-inset-right))
