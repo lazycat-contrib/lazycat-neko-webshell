@@ -991,9 +991,10 @@ function updateViewportMetrics() {
   style.setProperty("--app-viewport-offset-top", `${offsetTop}px`);
   style.setProperty("--app-viewport-offset-left", `${offsetLeft}px`);
   style.setProperty("--app-keyboard-inset-bottom", `${keyboardInset}px`);
+  const mobileControls = shouldUseMobileControls(width);
   document.body.classList.toggle("mobile-keyboard-visible", keyboardInset > MOBILE_KEYBOARD_INSET_THRESHOLD_PX);
-  document.body.classList.toggle("mobile-controls-enabled", shouldUseMobileControls(width));
-  document.body.classList.toggle("desktop-controls-enabled", shouldUseDesktopControls(width));
+  document.body.classList.toggle("mobile-controls-enabled", mobileControls);
+  document.body.classList.toggle("desktop-controls-enabled", !mobileControls && shouldUseDesktopControls(width));
 }
 
 function handleViewportChange() {
@@ -1004,14 +1005,20 @@ function handleViewportChange() {
 function shouldUseMobileControls(viewportWidth = Math.max(1, window.innerWidth || 0)): boolean {
   const mobileUA = /Android|iPhone|iPad|iPod|Mobile|Harmony|HUAWEI|Miui/i.test(navigator.userAgent);
   const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  const screenWidth = Math.max(0, Math.floor(window.screen?.width || 0));
+  const screenHeight = Math.max(0, Math.floor(window.screen?.height || 0));
+  const compactScreen = screenWidth > 0
+    && screenHeight > 0
+    && Math.min(screenWidth, screenHeight) <= 820;
   return viewportWidth <= 760
+    || compactScreen
     || mobileUA
     || coarsePointer
     || (navigator.maxTouchPoints > 0 && viewportWidth <= 1180);
 }
 
 function shouldUseDesktopControls(viewportWidth = Math.max(1, window.innerWidth || 0)): boolean {
-  return viewportWidth > 760
+  return viewportWidth > 1180
     && navigator.maxTouchPoints === 0
     && window.matchMedia("(hover: hover) and (pointer: fine)").matches
     && !/Android|iPhone|iPad|iPod|Mobile|Harmony|HUAWEI|Miui/i.test(navigator.userAgent);

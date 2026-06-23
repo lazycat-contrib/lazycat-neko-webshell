@@ -3852,7 +3852,8 @@ output {
   .mobile-shortcuts {
     position: fixed;
     right: 0;
-    bottom: var(--mobile-shortcuts-bottom-offset);
+    top: calc(var(--app-viewport-offset-top) + var(--app-viewport-height) - var(--mobile-shortcuts-height) - var(--lzc-safe-area-inset-bottom));
+    bottom: auto;
     left: var(--app-viewport-offset-left);
     z-index: 80;
     display: grid;
@@ -3953,7 +3954,8 @@ output {
 .mobile-shortcuts {
   position: fixed;
   right: 0;
-  bottom: var(--mobile-shortcuts-bottom-offset);
+  top: calc(var(--app-viewport-offset-top) + var(--app-viewport-height) - var(--mobile-shortcuts-height) - var(--lzc-safe-area-inset-bottom));
+  bottom: auto;
   left: var(--app-viewport-offset-left);
   z-index: 80;
   display: grid;
@@ -3973,15 +3975,15 @@ output {
   scrollbar-width: none;
 }
 
-.desktop-controls-enabled .tab-mount {
+body.desktop-controls-enabled:not(.mobile-controls-enabled) .tab-mount {
   bottom: var(--lzc-safe-area-inset-bottom);
 }
 
-.desktop-controls-enabled .empty-state {
+body.desktop-controls-enabled:not(.mobile-controls-enabled) .empty-state {
   bottom: 0;
 }
 
-.desktop-controls-enabled .mobile-shortcuts {
+body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   display: none;
 }
 
