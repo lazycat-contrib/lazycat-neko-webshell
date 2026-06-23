@@ -5092,17 +5092,23 @@ function installPaneScrollbackFallback(pane: TerminalPane) {
 
   pane.mount.addEventListener("pointerdown", (event) => {
     if (paneMouseReportingActive(pane, event)) return;
-    if (event.pointerType !== "touch" || event.button !== 0 || settings.touchSelectionMode === "drag") return;
+    if (event.pointerType !== "touch" || !paneTouchScrollbackFallbackEnabled(pane)) return;
     const host = paneScrollbackHost(pane);
     if (!host || !hostCanScroll(host)) return;
     touchPointerId = event.pointerId;
     lastTouchY = event.clientY;
     touchScrollActive = false;
+    if (pane.sessionBackend === "herdr") {
+      trackMobileTerminalSwipeStart(pane, event);
+      activatePane(pane.tabId, pane.id, { focus: false });
+      event.preventDefault();
+      event.stopPropagation();
+    }
   }, { capture: true, passive: false });
 
   pane.mount.addEventListener("pointermove", (event) => {
     if (paneMouseReportingActive(pane, event)) return;
-    if (touchPointerId !== event.pointerId || settings.touchSelectionMode === "drag") return;
+    if (touchPointerId !== event.pointerId || !paneTouchScrollbackFallbackEnabled(pane)) return;
     const host = paneScrollbackHost(pane);
     if (!host || !hostCanScroll(host)) return;
     const deltaPx = lastTouchY - event.clientY;
@@ -5123,6 +5129,10 @@ function installPaneScrollbackFallback(pane: TerminalPane) {
 
 function paneScrollbackHost(pane: TerminalPane): HTMLElement | null {
   return pane.mount.querySelector<HTMLElement>(".restty-native-scroll-host");
+}
+
+function paneTouchScrollbackFallbackEnabled(pane: TerminalPane): boolean {
+  return pane.sessionBackend === "herdr" || settings.touchSelectionMode !== "drag";
 }
 
 function paneMouseReportingActive(pane: TerminalPane, event: MouseEvent | PointerEvent): boolean {
