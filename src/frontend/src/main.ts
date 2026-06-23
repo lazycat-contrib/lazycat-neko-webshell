@@ -4030,14 +4030,43 @@ function toggleNewTabMenu() {
   if (elements.newTabMenu.hidden) {
     renderNewTabMenu();
     elements.newTabMenu.hidden = false;
+    positionNewTabMenu();
     elements.newTabButton.setAttribute("aria-expanded", "true");
     return;
   }
   closeNewTabMenu();
 }
 
+function positionNewTabMenu() {
+  elements.newTabMenu.style.left = "";
+  elements.newTabMenu.style.top = "";
+  elements.newTabMenu.style.right = "auto";
+  elements.newTabMenu.style.bottom = "auto";
+  requestAnimationFrame(() => {
+    if (elements.newTabMenu.hidden) return;
+    const margin = 8;
+    const buttonRect = elements.newTabButton.getBoundingClientRect();
+    const menuRect = elements.newTabMenu.getBoundingClientRect();
+    const vertical = elements.webshell.dataset.tabLayout === "vertical";
+    const preferredLeft = vertical
+      ? buttonRect.right + 8
+      : buttonRect.right - menuRect.width;
+    const fallbackLeft = buttonRect.left - menuRect.width - 8;
+    const maxLeft = Math.max(margin, window.innerWidth - menuRect.width - margin);
+    const maxTop = Math.max(margin, window.innerHeight - menuRect.height - margin);
+    const unclampedLeft = vertical && preferredLeft > maxLeft ? fallbackLeft : preferredLeft;
+    const top = vertical ? buttonRect.top : buttonRect.bottom + 8;
+    elements.newTabMenu.style.left = `${Math.min(Math.max(margin, unclampedLeft), maxLeft)}px`;
+    elements.newTabMenu.style.top = `${Math.min(Math.max(margin, top), maxTop)}px`;
+  });
+}
+
 function closeNewTabMenu() {
   elements.newTabMenu.hidden = true;
+  elements.newTabMenu.style.left = "";
+  elements.newTabMenu.style.top = "";
+  elements.newTabMenu.style.right = "";
+  elements.newTabMenu.style.bottom = "";
   elements.newTabButton.setAttribute("aria-expanded", "false");
 }
 

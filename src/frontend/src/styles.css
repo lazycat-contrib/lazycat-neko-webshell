@@ -807,10 +807,8 @@ textarea:focus-visible {
 }
 
 .new-tab-menu {
-  position: absolute;
+  position: fixed;
   z-index: 82;
-  top: calc(100% + 8px);
-  right: 0;
   width: min(232px, calc(100vw - 20px));
   padding: 6px;
   border: 1px solid var(--menu-border);
@@ -870,12 +868,6 @@ textarea:focus-visible {
   font-size: 10px;
   font-weight: 700;
   white-space: nowrap;
-}
-
-.webshell[data-tab-layout="vertical"] .new-tab-menu {
-  top: 0;
-  right: auto;
-  left: calc(100% + 8px);
 }
 
 .tab-add:hover,
@@ -3571,18 +3563,19 @@ output {
     max-height: min(420px, calc(var(--app-viewport-height) - 64px));
   }
 
-  .new-tab-menu,
+  .new-tab-menu {
+    max-height: min(420px, calc(var(--app-viewport-height) - 64px));
+    overflow: auto;
+  }
+
   .herdr-workspace-menu {
     position: fixed;
-    top: calc(var(--app-viewport-offset-top) + 52px);
-    right: max(8px, var(--lzc-safe-area-inset-right));
-    left: max(8px, var(--lzc-safe-area-inset-left));
     width: auto;
     max-height: min(420px, calc(var(--app-viewport-height) - 64px));
     overflow: auto;
   }
 
-  .webshell[data-tab-layout="vertical"] .new-tab-menu {
+  .herdr-workspace-menu {
     top: calc(var(--app-viewport-offset-top) + 52px);
     right: max(8px, var(--lzc-safe-area-inset-right));
     left: max(8px, var(--lzc-safe-area-inset-left));
