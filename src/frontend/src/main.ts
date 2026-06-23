@@ -1,4 +1,5 @@
 import "./styles.css";
+import "./terminal-themes.css";
 
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
