@@ -1289,6 +1289,31 @@
   text-transform: uppercase;
 }
 
+.tunnel-token-input-shell {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+
+.tunnel-token-input-shell input {
+  padding-right: 42px;
+}
+
+.tunnel-token-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  transform: translateY(-50%);
+}
+
+.tunnel-token-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
 .ai-config-modal-backdrop {
   position: fixed;
   z-index: 90;

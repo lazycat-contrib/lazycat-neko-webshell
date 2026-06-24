@@ -488,6 +488,13 @@ function bindSettings() {
   });
   elements.pluginList.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
+    const tokenToggleButton = target?.closest<HTMLButtonElement>("[data-tunnel-token-toggle]");
+    if (tokenToggleButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleTunnelTokenVisibility(tokenToggleButton);
+      return;
+    }
     const openTunnelProfileButton = target?.closest<HTMLButtonElement>("[data-tunnel-profile-open]");
     if (openTunnelProfileButton) {
       const profileId = openTunnelProfileButton.dataset.tunnelProfileOpen ?? "";
@@ -2410,6 +2417,21 @@ function tunnelProfileSaveInputFromSummary(profile: TunnelProviderProfileSummary
 
 function tunnelProfileField<T extends HTMLInputElement>(field: string): T | null {
   return elements.pluginList.querySelector<T>(`[data-tunnel-profile-field="${field}"]`);
+}
+
+function toggleTunnelTokenVisibility(button: HTMLButtonElement) {
+  const shell = button.closest<HTMLElement>(".tunnel-token-input-shell");
+  const input = shell?.querySelector<HTMLInputElement>("[data-tunnel-profile-field=\"authtoken\"]");
+  if (!input) return;
+  const nextVisible = input.type === "password";
+  input.type = nextVisible ? "text" : "password";
+  const label = tr(nextVisible ? "action.hideToken" : "action.showToken");
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  const icon = button.querySelector<HTMLElement>("[data-lucide]");
+  icon?.setAttribute("data-lucide", nextVisible ? "eye-off" : "eye");
+  updateIcons();
+  input.focus();
 }
 
 async function configurePlugin(pluginId: string, enabled: boolean) {

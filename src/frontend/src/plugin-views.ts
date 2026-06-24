@@ -567,7 +567,7 @@ export function renderPublicTunnelToolView(state: PublicTunnelViewState): string
             ${configuredNgrokProfiles.map((profile) => `
               <option value="ngrok:${escapeAttr(profile.id)}" ${state.provider === `ngrok:${profile.id}` ? "selected" : ""}>ngrok · ${escapeHtml(profile.name)}</option>
             `).join("")}
-            ${configuredNgrokProfiles.length ? "" : `<option value="" disabled>ngrok · ${escapeHtml(state.tr("status.noTunnelProfiles"))}</option>`}
+            ${configuredNgrokProfiles.length ? "" : `<option value="" disabled>${escapeHtml(state.tr("status.noTunnelProfiles"))}</option>`}
           </select>
         </label>
         <label class="field network-field-wide">
@@ -863,7 +863,14 @@ function renderTunnelProfileDialog(
             </label>
             <label class="field ai-config-full">
               <span>${escapeHtml(state.tr("field.ngrokAuthtoken"))}</span>
-              <input data-tunnel-profile-field="authtoken" type="password" value="" autocomplete="off" spellcheck="false" placeholder="${escapeAttr(dialog.isNew ? "" : state.tr("field.secretKeepBlank"))}" />
+              <span class="tunnel-token-input-shell">
+                <input data-tunnel-profile-field="authtoken" type="password" value="" autocomplete="off" spellcheck="false" placeholder="${escapeAttr(dialog.isNew ? "" : state.tr("field.secretKeepBlank"))}" />
+                ${dialog.isNew ? `
+                  <button class="icon-button tunnel-token-toggle" type="button" data-tunnel-token-toggle aria-label="${escapeAttr(state.tr("action.showToken"))}" title="${escapeAttr(state.tr("action.showToken"))}">
+                    <i data-lucide="eye"></i>
+                  </button>
+                ` : ""}
+              </span>
             </label>
             <label class="switch ai-config-full">
               <input data-tunnel-profile-field="enabled" type="checkbox" ${dialog.profile.enabled ? "checked" : ""} />

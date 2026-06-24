@@ -42,6 +42,7 @@ export type MessageKey =
   | "action.copyUrl"
   | "action.focusTerminal"
   | "action.fullscreen"
+  | "action.hideToken"
   | "action.lightosHome"
   | "action.mcpAdd"
   | "action.mcpEdit"
@@ -90,6 +91,7 @@ export type MessageKey =
   | "action.uploadFont"
   | "action.uploadTerminalBackground"
   | "action.useForTunnel"
+  | "action.showToken"
   | "app.title"
   | "backend.herdr"
   | "backend.webshell"
@@ -392,6 +394,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.copyUrl": "Copy URL",
     "action.focusTerminal": "Focus terminal",
     "action.fullscreen": "Full screen",
+    "action.hideToken": "Hide token",
     "action.lightosHome": "LightOS home",
     "action.mcpAdd": "Add MCP server",
     "action.mcpEdit": "Edit MCP server",
@@ -434,12 +437,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.switchInstance": "Switch instance",
     "action.tunnelStart": "Start tunnel",
     "action.tunnelStop": "Stop tunnel",
-    "action.tunnelProfileAdd": "Add ngrok profile",
-    "action.tunnelProfileEdit": "Edit ngrok profile",
-    "action.tunnelProfileRemove": "Remove profile",
+    "action.tunnelProfileAdd": "Add configuration",
+    "action.tunnelProfileEdit": "Edit configuration",
+    "action.tunnelProfileRemove": "Remove configuration",
     "action.uploadFont": "Upload font",
     "action.uploadTerminalBackground": "Upload terminal background",
     "action.useForTunnel": "Use for tunnel",
+    "action.showToken": "Show token",
     "app.title": "Neko Webshell",
     "backend.herdr": "Herdr",
     "backend.webshell": "WebShell native",
@@ -489,7 +493,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.tunnelProfileName": "Profile name",
     "field.tunnelProvider": "Tunnel provider",
     "field.upstreamUrl": "Upstream URL",
-    "field.ngrokAuthtoken": "ngrok token",
+    "field.ngrokAuthtoken": "Authentication token",
     "fileKind.directory": "Directory",
     "fileKind.file": "File",
     "fileKind.hardlink": "Hard link",
@@ -549,7 +553,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.publicTunnel.description": "Publish a local HTTP URL through Cloudflare Quick Tunnel or ngrok.",
     "plugin.publicTunnel.help": "Tunnel sessions stay alive while the WebShell backend is running. Use a LightOS forward URL for services inside the selected instance.",
     "plugin.publicTunnel.name": "Public tunnel",
-    "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel works without setup. Add ngrok profiles here before using ngrok in the tunnel panel.",
+    "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel works without authentication. Add tunnel authentication configs here for providers that need tokens.",
     "section.appearance": "Appearance",
     "section.aiAccess": "AI access",
     "section.fileTransfer": "File transfer",
@@ -650,7 +654,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noPlugins": "No plugins returned",
     "status.noPortForwards": "No active port forwards",
     "status.noPublicTunnels": "No active public tunnels",
-    "status.noTunnelProfiles": "No ngrok profiles",
+    "status.noTunnelProfiles": "No tunnel authentication configs",
     "status.noSelection": "No selection to copy",
     "status.noSessions": "No sessions",
     "status.noTarget": "No instance selected",
@@ -705,7 +709,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.backgroundSize": "background image must be between 1 byte and 10 MB",
     "validation.aiAccess": "enter Base URL and API key",
     "validation.aiPrompt": "enter a prompt",
-    "validation.ngrokAuthtoken": "enter an ngrok token",
+    "validation.ngrokAuthtoken": "enter an authentication token",
     "validation.mcpUrl": "enter an MCP server URL",
     "validation.pluginPath": "enter a target path",
     "validation.port": "enter a port from 1 to 65535",
@@ -748,6 +752,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.copyUrl": "复制 URL",
     "action.focusTerminal": "聚焦终端",
     "action.fullscreen": "全屏",
+    "action.hideToken": "隐藏 token",
     "action.lightosHome": "LightOS 首页",
     "action.mcpAdd": "添加 MCP 服务",
     "action.mcpEdit": "编辑 MCP 服务",
@@ -790,12 +795,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.switchInstance": "切换实例",
     "action.tunnelStart": "启动 Tunnel",
     "action.tunnelStop": "停止 Tunnel",
-    "action.tunnelProfileAdd": "添加 ngrok 配置",
-    "action.tunnelProfileEdit": "编辑 ngrok 配置",
+    "action.tunnelProfileAdd": "添加配置",
+    "action.tunnelProfileEdit": "编辑配置",
     "action.tunnelProfileRemove": "移除配置",
     "action.uploadFont": "上传字体",
     "action.uploadTerminalBackground": "上传终端背景",
     "action.useForTunnel": "用于 Tunnel",
+    "action.showToken": "显示 token",
     "app.title": "小橘Web Shell",
     "backend.herdr": "Herdr",
     "backend.webshell": "WebShell 原生",
@@ -845,7 +851,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.tunnelProfileName": "配置名称",
     "field.tunnelProvider": "Tunnel 服务",
     "field.upstreamUrl": "上游 URL",
-    "field.ngrokAuthtoken": "ngrok token",
+    "field.ngrokAuthtoken": "认证 token",
     "fileKind.directory": "目录",
     "fileKind.file": "文件",
     "fileKind.hardlink": "硬链接",
@@ -905,7 +911,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.publicTunnel.description": "通过 Cloudflare Quick Tunnel 或 ngrok 发布本地 HTTP URL。",
     "plugin.publicTunnel.help": "Tunnel 租约会在 WebShell 后端运行期间保持。要发布实例内服务，请先选择 LightOS 转发得到的本地 URL。",
     "plugin.publicTunnel.name": "Public Tunnel",
-    "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel 无需配置。使用 ngrok 前，请先在这里添加 ngrok 配置。",
+    "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel 无需认证配置。需要 token 的 Tunnel 服务商，请先在这里添加认证配置。",
     "section.appearance": "外观",
     "section.aiAccess": "AI 接入",
     "section.fileTransfer": "文件传输",
@@ -1006,7 +1012,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noPlugins": "没有返回插件",
     "status.noPortForwards": "暂无活动端口转发",
     "status.noPublicTunnels": "暂无活动 Public Tunnel",
-    "status.noTunnelProfiles": "暂无 ngrok 配置",
+    "status.noTunnelProfiles": "暂无 Tunnel 认证配置",
     "status.noSelection": "没有可复制的选区",
     "status.noSessions": "没有会话",
     "status.noTarget": "未选择实例",
@@ -1061,7 +1067,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.backgroundSize": "背景图片大小必须在 1 字节到 10 MB 之间",
     "validation.aiAccess": "请输入 Base URL 和 API Key",
     "validation.aiPrompt": "请输入内容",
-    "validation.ngrokAuthtoken": "请输入 ngrok token",
+    "validation.ngrokAuthtoken": "请输入认证 token",
     "validation.mcpUrl": "请输入 MCP 服务 URL",
     "validation.pluginPath": "请输入目标路径",
     "validation.port": "请输入 1 到 65535 之间的端口",
