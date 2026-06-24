@@ -10,6 +10,15 @@ export type MessageKey =
   | "ai.providerAnthropic"
   | "ai.providerOpenAICompatible"
   | "ai.providerOpenAIResponses"
+  | "about.description"
+  | "about.note"
+  | "about.session"
+  | "about.sessionValue"
+  | "about.title"
+  | "about.tools"
+  | "about.toolsValue"
+  | "about.version"
+  | "action.about"
   | "action.aiChat"
   | "action.aiClear"
   | "action.aiConfigure"
@@ -294,6 +303,15 @@ export type MessageKey =
 
 const messages: Record<Language, Record<MessageKey, string>> = {
   en: {
+    "about.description": "Browser terminal for LightOS devices.",
+    "about.note": "Built for fast terminal access from desktop and mobile browsers.",
+    "about.session": "Sessions",
+    "about.sessionValue": "Native WebShell and Herdr spaces",
+    "about.title": "About Neko Webshell",
+    "about.tools": "Tools",
+    "about.toolsValue": "Files, themes, fonts, and chat",
+    "about.version": "Version",
+    "action.about": "About",
     "action.aiChat": "Chat",
     "action.aiClear": "Clear",
     "action.aiConfigure": "Configure",
@@ -584,6 +602,15 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.themeSource": "paste a Ghostty theme with background, foreground, or palette entries",
   },
   "zh-CN": {
+    "about.description": "面向 LightOS 设备的浏览器终端。",
+    "about.note": "为桌面和移动浏览器上的快速终端访问而构建。",
+    "about.session": "会话",
+    "about.sessionValue": "原生 WebShell 和 Herdr Spaces",
+    "about.title": "关于小橘Web Shell",
+    "about.tools": "工具",
+    "about.toolsValue": "文件、主题、字体和 Chat",
+    "about.version": "版本",
+    "action.about": "关于",
     "action.aiChat": "对话",
     "action.aiClear": "清空",
     "action.aiConfigure": "配置",

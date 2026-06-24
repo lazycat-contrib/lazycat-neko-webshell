@@ -26,6 +26,7 @@ import {
 } from "./appearance-settings";
 import { updateViewportMetrics as applyViewportMetrics } from "./app-viewport";
 import { TerminalActionWSClient } from "./action-ws-client";
+import { appTitleWithVersion } from "./about-view";
 import { appendAIContextText, recentAIContextText } from "./ai-context";
 import {
   emptyAiMcpServer,
@@ -358,6 +359,9 @@ function applyI18n() {
   document.querySelectorAll<HTMLElement>("[data-i18n-aria]").forEach((element) => {
     const key = element.dataset.i18nAria as MessageKey | undefined;
     if (key) element.setAttribute("aria-label", tr(key));
+  });
+  document.querySelectorAll<HTMLElement>("[data-app-title-tip]").forEach((element) => {
+    element.title = appTitleWithVersion(tr("app.title"));
   });
 }
 
@@ -813,8 +817,20 @@ function bindActions() {
   elements.openShortcutHelpItem.addEventListener("click", (event) => {
     event.stopPropagation();
     closeSettingsMenu();
+    closeAboutDialog();
     if (elements.shortcutHelp.hidden) {
       toggleShortcutHelp();
+    }
+  });
+  elements.openAboutItem.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeSettingsMenu();
+    openAboutDialog();
+  });
+  elements.aboutClose.addEventListener("click", () => closeAboutDialog());
+  elements.aboutDialog.addEventListener("click", (event) => {
+    if (event.target === elements.aboutDialog) {
+      closeAboutDialog();
     }
   });
   elements.fitTerminalItem.addEventListener("click", (event) => {
@@ -890,6 +906,7 @@ function bindActions() {
       closeNewTabMenu();
       closeHerdrWorkspaceMenu();
       closeShortcutHelp();
+      closeAboutDialog();
       closePaneMenu();
       fileBrowser.clearContextMenu();
       closeSettings();
@@ -1266,6 +1283,7 @@ function toggleShortcutHelp() {
   closeSettingsMenu();
   closeInstanceMenu();
   closePaneMenu();
+  closeAboutDialog();
   elements.shortcutHelp.hidden = !open;
   elements.shortcutHelpButton.setAttribute("aria-expanded", String(open));
   if (open) {
@@ -1276,6 +1294,18 @@ function toggleShortcutHelp() {
 function closeShortcutHelp() {
   elements.shortcutHelp.hidden = true;
   elements.shortcutHelpButton.setAttribute("aria-expanded", "false");
+}
+
+function openAboutDialog() {
+  closeShortcutHelp();
+  closeInstanceMenu();
+  closePaneMenu();
+  elements.aboutDialog.hidden = false;
+  requestAnimationFrame(() => elements.aboutClose.focus());
+}
+
+function closeAboutDialog() {
+  elements.aboutDialog.hidden = true;
 }
 
 async function toggleFullscreen() {

@@ -323,6 +323,10 @@
     grid-template-columns: 1fr;
   }
 
+  .about-facts {
+    grid-template-columns: 1fr;
+  }
+
   .shortcut-help-grid dl > div {
     grid-template-columns: 1fr;
     align-items: start;

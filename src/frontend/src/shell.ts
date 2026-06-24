@@ -1,4 +1,5 @@
 import { qs } from "./utils";
+import { appTitleWithVersion, renderAboutDialog } from "./about-view";
 
 export type ShellElements = {
   webshell: HTMLElement;
@@ -35,6 +36,7 @@ export type ShellElements = {
   homeButton: HTMLButtonElement;
   settingsButton: HTMLButtonElement;
   settingsMenu: HTMLDivElement;
+  openAboutItem: HTMLButtonElement;
   openSettingsItem: HTMLButtonElement;
   openPluginsItem: HTMLButtonElement;
   openShortcutHelpItem: HTMLButtonElement;
@@ -96,13 +98,15 @@ export type ShellElements = {
   shortcutHelpButton: HTMLButtonElement;
   shortcutHelp: HTMLDivElement;
   shortcutHelpClose: HTMLButtonElement;
+  aboutDialog: HTMLDivElement;
+  aboutClose: HTMLButtonElement;
   paneMenu: HTMLDivElement;
   fitTerminal: HTMLButtonElement;
 };
 
 export function renderShell(app: HTMLElement): ShellElements {
   app.innerHTML = `
-    <main class="webshell" id="webshell" aria-label="Neko Webshell workspace" data-i18n-aria="app.title">
+    <main class="webshell" id="webshell" aria-label="Neko Webshell workspace" title="${appTitleWithVersion("Neko Webshell")}" data-i18n-aria="app.title" data-app-title-tip>
       <header class="topbar" aria-label="Terminal controls" data-i18n-aria="app.title">
         <div class="tabs-shell">
           <div id="tabList" class="tab-list" role="tablist" aria-label="Terminal tabs" data-i18n-aria="action.newTab"></div>
@@ -201,6 +205,10 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <i data-lucide="circle-help"></i>
                 <span data-i18n="action.shortcutHelp">Keyboard shortcuts</span>
               </button>
+              <button id="openAboutItem" type="button" role="menuitem">
+                <i data-lucide="info"></i>
+                <span data-i18n="action.about">About</span>
+              </button>
               <button id="fitTerminalItem" type="button" role="menuitem">
                 <i data-lucide="maximize"></i>
                 <span data-i18n="action.fullscreen">Full screen</span>
@@ -217,6 +225,8 @@ export function renderShell(app: HTMLElement): ShellElements {
           </div>
         </div>
       </header>
+
+      ${renderAboutDialog()}
 
       <section class="herdr-dock" id="herdrDock" aria-label="Herdr controls" data-i18n-aria="section.herdr" hidden>
         <div class="herdr-workspaces" id="herdrWorkspaceList" role="listbox" aria-label="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces"></div>
@@ -658,6 +668,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     homeButton: qs<HTMLButtonElement>("#homeButton"),
     settingsButton: qs<HTMLButtonElement>("#settingsButton"),
     settingsMenu: qs<HTMLDivElement>("#settingsMenu"),
+    openAboutItem: qs<HTMLButtonElement>("#openAboutItem"),
     openSettingsItem: qs<HTMLButtonElement>("#openSettingsItem"),
     openPluginsItem: qs<HTMLButtonElement>("#openPluginsItem"),
     openShortcutHelpItem: qs<HTMLButtonElement>("#openShortcutHelpItem"),
@@ -719,6 +730,8 @@ export function renderShell(app: HTMLElement): ShellElements {
     shortcutHelpButton: qs<HTMLButtonElement>("#shortcutHelpButton"),
     shortcutHelp: qs<HTMLDivElement>("#shortcutHelp"),
     shortcutHelpClose: qs<HTMLButtonElement>("#shortcutHelpClose"),
+    aboutDialog: qs<HTMLDivElement>("#aboutDialog"),
+    aboutClose: qs<HTMLButtonElement>("#aboutClose"),
     paneMenu: qs<HTMLDivElement>("#paneMenu"),
     fitTerminal: qs<HTMLButtonElement>("#fitTerminal"),
   };

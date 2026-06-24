@@ -1755,6 +1755,159 @@ textarea:focus-visible {
   display: none;
 }
 
+.about-dialog-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 86;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(8px);
+  animation: about-backdrop-in 140ms ease-out both;
+}
+
+.about-dialog-shell[hidden] {
+  display: none;
+}
+
+.about-dialog {
+  position: relative;
+  width: min(480px, calc(100vw - 28px));
+  max-height: calc(var(--app-viewport-height) - 28px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-deep);
+  padding: 16px;
+  animation: about-card-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.about-dialog::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: 0 50%;
+  animation: about-rule-in 680ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.about-dialog-head {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 12px;
+}
+
+.about-mark {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--accent-border);
+  border-radius: 10px;
+  background: var(--accent-softer);
+  color: var(--accent-fg);
+  animation: about-mark-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.about-mark svg {
+  width: 21px;
+  height: 21px;
+}
+
+.about-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.about-heading strong {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.about-heading small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.about-version-card {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  border: 1px solid var(--accent-border);
+  border-radius: 8px;
+  background: var(--accent-softer);
+  padding: 12px;
+  animation: about-item-in 240ms ease-out 80ms both;
+}
+
+.about-version-card span,
+.about-facts dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.about-version-card strong {
+  color: var(--accent-fg);
+  font-family: var(--font-mono);
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+.about-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 0;
+}
+
+.about-facts > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--component-border);
+  border-radius: 8px;
+  background:
+    var(--component-wash),
+    var(--surface);
+  padding: 10px;
+  animation: about-item-in 240ms ease-out 120ms both;
+}
+
+.about-facts > div:nth-child(2) {
+  animation-delay: 160ms;
+}
+
+.about-facts dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.about-note {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  animation: about-item-in 240ms ease-out 200ms both;
+}
+
 .shortcut-help-dialog {
   width: min(620px, calc(100vw - 28px));
   max-height: calc(var(--app-viewport-height) - 28px);
@@ -2041,4 +2194,67 @@ output {
 
 .empty.error {
   color: var(--danger);
+}
+
+@keyframes about-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes about-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes about-rule-in {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes about-mark-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes about-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .about-dialog-shell,
+  .about-dialog,
+  .about-dialog::before,
+  .about-mark,
+  .about-version-card,
+  .about-facts > div,
+  .about-note {
+    animation: none;
+  }
 }
