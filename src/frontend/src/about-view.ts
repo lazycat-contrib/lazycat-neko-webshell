@@ -1,6 +1,7 @@
 import { escapeAttr, escapeHtml } from "./utils";
 
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || "0.0.0";
+const APP_ICON_URL = "./icon.png";
 
 export function appVersion(): string {
   return APP_VERSION;
@@ -17,7 +18,7 @@ export function renderAboutDialog(version = APP_VERSION): string {
       <section class="about-dialog" role="dialog" aria-modal="true" aria-label="About Neko Webshell" data-i18n-aria="about.title">
         <header class="about-dialog-head">
           <span class="about-mark" aria-hidden="true">
-            <i data-lucide="square-terminal"></i>
+            <img src="${escapeAttr(APP_ICON_URL)}" alt="" decoding="async" />
           </span>
           <span class="about-heading">
             <strong data-i18n="app.title">Neko Webshell</strong>

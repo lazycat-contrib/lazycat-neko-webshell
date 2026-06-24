@@ -1809,6 +1809,7 @@ textarea:focus-visible {
   place-items: center;
   width: 42px;
   height: 42px;
+  overflow: hidden;
   border: 1px solid var(--accent-border);
   border-radius: 10px;
   background: var(--accent-softer);
@@ -1816,9 +1817,10 @@ textarea:focus-visible {
   animation: about-mark-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.about-mark svg {
-  width: 21px;
-  height: 21px;
+.about-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .about-heading {

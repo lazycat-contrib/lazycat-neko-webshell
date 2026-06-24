@@ -9,7 +9,7 @@ use connectrpc::Router as ConnectRouter;
 use tower_http::trace::TraceLayer;
 
 use crate::action_ws::action_ws;
-use crate::assets::{frontend_asset, frontend_font, index, security_header};
+use crate::assets::{frontend_asset, frontend_font, frontend_icon, index, security_header};
 use crate::backgrounds::{background_file, delete_background, upload_background};
 use crate::config::{MAX_CLIPBOARD_IMAGE_BYTES, MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES};
 use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
@@ -30,6 +30,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/index.html", get(index))
+        .route("/icon.png", get(frontend_icon))
         .route("/healthz", get(|| async { "ok" }))
         .route("/ws/terminal", get(terminal_ws))
         .route("/ws/action", get(action_ws))
