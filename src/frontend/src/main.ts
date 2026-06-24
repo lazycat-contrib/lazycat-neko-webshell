@@ -1,4 +1,5 @@
 import "./styles.css";
+import "./webshell-themes.css";
 import "./terminal-themes.css";
 
 import { createClient } from "@connectrpc/connect";

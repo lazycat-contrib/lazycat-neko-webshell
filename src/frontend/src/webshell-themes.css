@@ -1,0 +1,294 @@
+.webshell[data-interface-style="glass"] {
+  --bg: #05080c;
+  --chrome: rgba(12, 19, 28, 0.66);
+  --surface: rgba(17, 27, 36, 0.68);
+  --surface-2: rgba(27, 42, 54, 0.72);
+  --surface-raised: rgba(19, 30, 39, 0.78);
+  --line: rgba(176, 203, 219, 0.24);
+  --line-strong: rgba(212, 232, 242, 0.44);
+  --line-soft: rgba(176, 203, 219, 0.15);
+  --text: #f2f7f8;
+  --muted: #9eb2bf;
+  --accent: #a7d8ff;
+  --accent-strong: #d9f0ff;
+  --accent-cool: #b8f3e7;
+  --app-wash-a: rgba(167, 216, 255, 0.08);
+  --app-wash-b: rgba(184, 243, 231, 0.055);
+  --app-wash-c: rgba(217, 240, 255, 0.05);
+  --topbar-wash-a: rgba(255, 255, 255, 0.09);
+  --topbar-wash-b: rgba(167, 216, 255, 0.11);
+  --topbar-wash-c: rgba(184, 243, 231, 0.08);
+  --topbar-border: rgba(167, 216, 255, 0.24);
+  --dialog-wash-a: rgba(255, 255, 255, 0.08);
+  --dialog-wash-b: rgba(167, 216, 255, 0.08);
+  --dialog-wash-c: rgba(184, 243, 231, 0.06);
+  --dialog-rule: linear-gradient(90deg, transparent, rgba(167, 216, 255, 0.78), rgba(184, 243, 231, 0.62), transparent);
+}
+
+.webshell[data-interface-style="brass"] {
+  --bg: #0d0905;
+  --chrome: #17100a;
+  --surface: #1d140c;
+  --surface-2: #2a1d10;
+  --surface-raised: #24170d;
+  --line: #4a3520;
+  --line-strong: #7f5b31;
+  --line-soft: rgba(212, 151, 69, 0.16);
+  --text: #f5ead8;
+  --muted: #b9a58a;
+  --accent: #d49745;
+  --accent-strong: #f2d27d;
+  --accent-cool: #7cb7a5;
+  --app-wash-a: rgba(242, 210, 125, 0.08);
+  --app-wash-b: rgba(124, 183, 165, 0.035);
+  --app-wash-c: rgba(212, 151, 69, 0.07);
+  --topbar-wash-a: rgba(255, 244, 220, 0.07);
+  --topbar-wash-b: rgba(242, 210, 125, 0.08);
+  --topbar-wash-c: rgba(212, 151, 69, 0.1);
+  --topbar-border: rgba(212, 151, 69, 0.26);
+  --dialog-wash-a: rgba(255, 244, 220, 0.06);
+  --dialog-wash-b: rgba(242, 210, 125, 0.06);
+  --dialog-wash-c: rgba(212, 151, 69, 0.08);
+  --dialog-rule: linear-gradient(90deg, transparent, rgba(242, 210, 125, 0.72), rgba(124, 183, 165, 0.5), transparent);
+}
+
+.webshell[data-interface-style="spectrum"] {
+  --bg: #090814;
+  --chrome: #111126;
+  --surface: #16162f;
+  --surface-2: #202042;
+  --surface-raised: #191935;
+  --line: #393756;
+  --line-strong: #6a65a0;
+  --line-soft: rgba(188, 180, 255, 0.15);
+  --text: #f6f4ff;
+  --muted: #aaa5c8;
+  --accent: #84f0c4;
+  --accent-strong: #ffd166;
+  --accent-cool: #7cc7ff;
+  --app-wash-a: rgba(255, 107, 214, 0.07);
+  --app-wash-b: rgba(124, 199, 255, 0.07);
+  --app-wash-c: rgba(132, 240, 196, 0.06);
+  --topbar-wash-a: rgba(255, 255, 255, 0.065);
+  --topbar-wash-b: rgba(124, 199, 255, 0.09);
+  --topbar-wash-c: rgba(255, 107, 214, 0.075);
+  --topbar-border: rgba(132, 240, 196, 0.22);
+  --dialog-wash-a: rgba(255, 255, 255, 0.055);
+  --dialog-wash-b: rgba(124, 199, 255, 0.065);
+  --dialog-wash-c: rgba(255, 107, 214, 0.06);
+  --dialog-rule: linear-gradient(90deg, #84f0c400, #84f0c4, #7cc7ff, #ff6bd6, #ffd16600);
+}
+
+.webshell[data-interface-style="geek"] {
+  --bg: #020403;
+  --chrome: #050906;
+  --surface: #08110b;
+  --surface-2: #0d1d12;
+  --surface-raised: #0a150e;
+  --line: #18331f;
+  --line-strong: #2f7c46;
+  --line-soft: rgba(75, 255, 125, 0.14);
+  --text: #eaffef;
+  --muted: #8cb89a;
+  --accent: #4bff7d;
+  --accent-strong: #f8ff7a;
+  --accent-cool: #49f1ff;
+  --app-wash-a: rgba(75, 255, 125, 0.055);
+  --app-wash-b: rgba(73, 241, 255, 0.045);
+  --app-wash-c: rgba(248, 255, 122, 0.035);
+  --topbar-wash-a: rgba(75, 255, 125, 0.055);
+  --topbar-wash-b: rgba(73, 241, 255, 0.045);
+  --topbar-wash-c: rgba(248, 255, 122, 0.035);
+  --topbar-border: rgba(75, 255, 125, 0.24);
+  --dialog-wash-a: rgba(75, 255, 125, 0.052);
+  --dialog-wash-b: rgba(73, 241, 255, 0.042);
+  --dialog-wash-c: rgba(248, 255, 122, 0.035);
+  --dialog-rule: linear-gradient(90deg, transparent, rgba(75, 255, 125, 0.82), rgba(73, 241, 255, 0.56), transparent);
+}
+
+.webshell[data-interface-tone="light"] {
+  color-scheme: light;
+  --danger: #b4232f;
+  --ok: #2f7d32;
+  --shadow-deep: 0 24px 80px rgba(40, 52, 66, 0.18);
+  --shadow-raised: 0 12px 30px rgba(40, 52, 66, 0.12);
+  --shadow-inset-soft: inset 0 1px 0 rgba(255, 255, 255, 0.62);
+  --shadow-inset-strong: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  --body-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 180px);
+  --body-grid-x: repeating-linear-gradient(90deg, rgba(72, 89, 104, 0.04) 0 1px, transparent 1px 96px);
+  --body-grid-y: repeating-linear-gradient(0deg, rgba(72, 89, 104, 0.028) 0 1px, transparent 1px 72px);
+  --topbar-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.82), 0 8px 22px rgba(55, 69, 82, 0.09);
+  --dialog-bg: color-mix(in srgb, var(--surface-raised) 96%, white);
+  --dialog-border: color-mix(in srgb, var(--line-strong) 42%, transparent);
+  --overlay-scrim: rgba(222, 229, 236, 0.58);
+  --overlay-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(222, 229, 236, 0.64));
+  --menu-bg: color-mix(in srgb, var(--chrome) 94%, white);
+  --menu-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.66), transparent 64px);
+  --menu-border: color-mix(in srgb, var(--line-strong) 38%, transparent);
+  --menu-hover-bg: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --menu-text: var(--text);
+  --menu-muted: color-mix(in srgb, var(--muted) 88%, var(--text));
+  --menu-badge-bg: color-mix(in srgb, var(--accent) 13%, white);
+  --menu-badge-text: var(--accent-strong);
+  --menu-badge-border: color-mix(in srgb, var(--accent) 25%, transparent);
+  --control-fg: color-mix(in srgb, var(--text) 82%, transparent);
+  --control-fg-hover: var(--text);
+  --control-hover-bg: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --control-hover-border: color-mix(in srgb, var(--accent) 28%, transparent);
+  --tab-fg: var(--muted);
+  --tab-active-fg: var(--text);
+  --tab-divider: color-mix(in srgb, var(--line-strong) 24%, transparent);
+  --tab-hover-bg: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  --tab-active-bg: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --tab-active-border: color-mix(in srgb, var(--accent) 22%, transparent);
+  --tab-active-glow: color-mix(in srgb, var(--accent) 18%, transparent);
+  --component-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.58), transparent);
+  --component-wash-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.72), transparent);
+  --component-side-wash: linear-gradient(90deg, color-mix(in srgb, var(--accent-cool) 7%, transparent), transparent 36%);
+  --component-side-wash-hover: linear-gradient(90deg, color-mix(in srgb, var(--accent-cool) 10%, transparent), transparent 36%);
+  --accent-fg: var(--accent-strong);
+  --primary-fg: #ffffff;
+  --danger-fg: var(--danger);
+  --code-bg: color-mix(in srgb, var(--surface-2) 72%, white);
+  --input-bg: var(--surface);
+  --input-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.5), transparent);
+  --input-shadow: inset 0 1px 2px rgba(40, 52, 66, 0.08);
+  --mobile-shortcuts-bg: color-mix(in srgb, var(--chrome) 96%, white);
+  --scrollbar-thumb: color-mix(in srgb, var(--line-strong) 36%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 54%, transparent);
+}
+
+.webshell[data-interface-style="porcelain"] {
+  --bg: #f5f7f5;
+  --chrome: rgba(247, 250, 248, 0.92);
+  --surface: #ffffff;
+  --surface-2: #eef3f1;
+  --surface-raised: #ffffff;
+  --line: #cfd8d3;
+  --line-strong: #8ea39a;
+  --line-soft: rgba(82, 99, 91, 0.13);
+  --text: #17211d;
+  --muted: #66766f;
+  --accent: #3f927b;
+  --accent-strong: #245d51;
+  --accent-cool: #477da9;
+  --app-wash-a: rgba(63, 146, 123, 0.08);
+  --app-wash-b: rgba(71, 125, 169, 0.06);
+  --app-wash-c: rgba(255, 255, 255, 0.56);
+  --topbar-wash-a: rgba(255, 255, 255, 0.78);
+  --topbar-wash-b: rgba(63, 146, 123, 0.08);
+  --topbar-wash-c: rgba(71, 125, 169, 0.06);
+  --topbar-border: rgba(95, 117, 107, 0.24);
+  --dialog-wash-a: rgba(255, 255, 255, 0.74);
+  --dialog-wash-b: rgba(63, 146, 123, 0.075);
+  --dialog-wash-c: rgba(71, 125, 169, 0.045);
+  --dialog-rule: linear-gradient(90deg, transparent, rgba(63, 146, 123, 0.64), rgba(71, 125, 169, 0.42), transparent);
+}
+
+.webshell[data-interface-style="frost"] {
+  --bg: #eff7fb;
+  --chrome: rgba(250, 253, 255, 0.72);
+  --surface: rgba(255, 255, 255, 0.74);
+  --surface-2: rgba(235, 246, 251, 0.86);
+  --surface-raised: rgba(255, 255, 255, 0.9);
+  --line: rgba(91, 127, 145, 0.27);
+  --line-strong: rgba(56, 97, 119, 0.48);
+  --line-soft: rgba(91, 127, 145, 0.15);
+  --text: #14242c;
+  --muted: #607480;
+  --accent: #2f93bd;
+  --accent-strong: #16627f;
+  --accent-cool: #4aa890;
+  --app-wash-a: rgba(47, 147, 189, 0.12);
+  --app-wash-b: rgba(74, 168, 144, 0.08);
+  --app-wash-c: rgba(255, 255, 255, 0.44);
+  --topbar-wash-a: rgba(255, 255, 255, 0.78);
+  --topbar-wash-b: rgba(47, 147, 189, 0.09);
+  --topbar-wash-c: rgba(74, 168, 144, 0.065);
+  --topbar-border: rgba(47, 147, 189, 0.28);
+  --dialog-wash-a: rgba(255, 255, 255, 0.68);
+  --dialog-wash-b: rgba(47, 147, 189, 0.085);
+  --dialog-wash-c: rgba(74, 168, 144, 0.06);
+  --dialog-rule: linear-gradient(90deg, transparent, rgba(47, 147, 189, 0.6), rgba(74, 168, 144, 0.46), transparent);
+}
+
+.webshell[data-interface-style="champagne"] {
+  --bg: #f7f1e4;
+  --chrome: rgba(255, 250, 239, 0.92);
+  --surface: #fffaf0;
+  --surface-2: #f3e8d3;
+  --surface-raised: #fffdf6;
+  --line: #d8c7a7;
+  --line-strong: #a88750;
+  --line-soft: rgba(126, 92, 43, 0.15);
+  --text: #2d2519;
+  --muted: #7d6b50;
+  --accent: #a6772e;
+  --accent-strong: #6b4618;
+  --accent-cool: #4d8a82;
+  --app-wash-a: rgba(166, 119, 46, 0.1);
+  --app-wash-b: rgba(77, 138, 130, 0.065);
+  --app-wash-c: rgba(255, 255, 255, 0.42);
+  --topbar-wash-a: rgba(255, 255, 255, 0.66);
+  --topbar-wash-b: rgba(166, 119, 46, 0.09);
+  --topbar-wash-c: rgba(77, 138, 130, 0.055);
+  --topbar-border: rgba(166, 119, 46, 0.28);
+  --dialog-wash-a: rgba(255, 255, 255, 0.58);
+  --dialog-wash-b: rgba(166, 119, 46, 0.085);
+  --dialog-wash-c: rgba(77, 138, 130, 0.045);
+  --dialog-rule: linear-gradient(90deg, transparent, rgba(166, 119, 46, 0.62), rgba(77, 138, 130, 0.38), transparent);
+}
+
+.webshell[data-interface-style="candy"] {
+  --bg: #fbf5fb;
+  --chrome: rgba(255, 251, 255, 0.9);
+  --surface: #ffffff;
+  --surface-2: #f5edf8;
+  --surface-raised: #fff9ff;
+  --line: #dacde0;
+  --line-strong: #a98ab4;
+  --line-soft: rgba(139, 88, 154, 0.14);
+  --text: #2b2130;
+  --muted: #75647c;
+  --accent: #b25386;
+  --accent-strong: #7a355e;
+  --accent-cool: #3889bf;
+  --app-wash-a: rgba(178, 83, 134, 0.09);
+  --app-wash-b: rgba(56, 137, 191, 0.075);
+  --app-wash-c: rgba(240, 178, 89, 0.08);
+  --topbar-wash-a: rgba(255, 255, 255, 0.68);
+  --topbar-wash-b: rgba(178, 83, 134, 0.085);
+  --topbar-wash-c: rgba(56, 137, 191, 0.065);
+  --topbar-border: rgba(178, 83, 134, 0.24);
+  --dialog-wash-a: rgba(255, 255, 255, 0.62);
+  --dialog-wash-b: rgba(178, 83, 134, 0.075);
+  --dialog-wash-c: rgba(56, 137, 191, 0.055);
+  --dialog-rule: linear-gradient(90deg, transparent, rgba(178, 83, 134, 0.56), rgba(56, 137, 191, 0.45), rgba(240, 178, 89, 0.42), transparent);
+}
+
+.webshell[data-interface-style="lab"] {
+  --bg: #f3f5f8;
+  --chrome: rgba(249, 251, 253, 0.95);
+  --surface: #ffffff;
+  --surface-2: #eceff4;
+  --surface-raised: #ffffff;
+  --line: #cfd6df;
+  --line-strong: #8c99aa;
+  --line-soft: rgba(74, 88, 106, 0.14);
+  --text: #1a2430;
+  --muted: #657386;
+  --accent: #4969d8;
+  --accent-strong: #2645a4;
+  --accent-cool: #18a085;
+  --app-wash-a: rgba(73, 105, 216, 0.075);
+  --app-wash-b: rgba(24, 160, 133, 0.06);
+  --app-wash-c: rgba(255, 255, 255, 0.5);
+  --topbar-wash-a: rgba(255, 255, 255, 0.72);
+  --topbar-wash-b: rgba(73, 105, 216, 0.075);
+  --topbar-wash-c: rgba(24, 160, 133, 0.055);
+  --topbar-border: rgba(73, 105, 216, 0.2);
+  --dialog-wash-a: rgba(255, 255, 255, 0.66);
+  --dialog-wash-b: rgba(73, 105, 216, 0.065);
+  --dialog-wash-c: rgba(24, 160, 133, 0.045);
+  --dialog-rule: linear-gradient(90deg, transparent, rgba(73, 105, 216, 0.52), rgba(24, 160, 133, 0.42), transparent);
+}
