@@ -260,8 +260,10 @@ export type MessageKey =
   | "tab.fontUpload"
   | "tab.aiProvider"
   | "tab.mcp"
+  | "tab.mobile"
   | "tab.plugins"
   | "tab.quickPhrases"
+  | "tab.terminal"
   | "tab.themes"
   | "status.closed"
   | "status.connected"
@@ -639,9 +641,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.fontUpload": "Font upload",
     "tab.aiProvider": "AI provider",
     "tab.mcp": "MCP",
+    "tab.mobile": "Mobile",
     "tab.plugins": "Plugins",
     "tab.quickPhrases": "Phrases",
-    "tab.themes": "Terminal",
+    "tab.terminal": "Terminal",
+    "tab.themes": "Themes",
     "status.closed": "Closed",
     "status.connected": "Connected",
     "status.connectFailed": "Connect failed: {message}",
@@ -1017,9 +1021,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.fontUpload": "字体上传",
     "tab.aiProvider": "AI 服务",
     "tab.mcp": "MCP",
+    "tab.mobile": "移动端",
     "tab.plugins": "插件",
     "tab.quickPhrases": "短语",
-    "tab.themes": "终端",
+    "tab.terminal": "终端",
+    "tab.themes": "主题",
     "status.closed": "已关闭",
     "status.connected": "已连接",
     "status.connectFailed": "连接失败：{message}",

@@ -1717,7 +1717,7 @@ textarea:focus-visible {
 }
 
 .settings-main-tabs {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   margin-top: 0;
   margin-bottom: 12px;
 }

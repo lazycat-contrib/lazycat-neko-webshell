@@ -373,6 +373,10 @@ export function renderShell(app: HTMLElement): ShellElements {
               <i data-lucide="monitor-cog"></i>
               <span data-i18n="tab.appearance">Appearance</span>
             </button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanel" data-settings-tab="terminal">
+              <i data-lucide="terminal"></i>
+              <span data-i18n="tab.terminal">Terminal</span>
+            </button>
             <button type="button" role="tab" aria-selected="false" aria-controls="fontSettingsRootPanel" data-settings-tab="fonts">
               <i data-lucide="type"></i>
               <span data-i18n="tab.fonts">Fonts</span>
@@ -380,6 +384,10 @@ export function renderShell(app: HTMLElement): ShellElements {
             <button type="button" role="tab" aria-selected="false" aria-controls="themeSettingsPanel" data-settings-tab="themes">
               <i data-lucide="palette"></i>
               <span data-i18n="tab.themes">Themes</span>
+            </button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="mobileSettingsPanel" data-settings-tab="mobile">
+              <i data-lucide="smartphone"></i>
+              <span data-i18n="tab.mobile">Mobile</span>
             </button>
             <button type="button" role="tab" aria-selected="false" aria-controls="pluginSettingsPanel" data-settings-tab="plugins">
               <i data-lucide="plug"></i>
@@ -419,16 +427,6 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <option value="vertical" data-i18n="layout.vertical">Vertical</option>
                 </select>
               </label>
-              <div class="settings-group" id="sessionBackendSettings" hidden>
-                <div class="settings-group-title" data-i18n="section.sessionBackend">Session backend</div>
-                <label class="field">
-                  <span data-i18n="field.defaultSessionBackend">New tab backend</span>
-                  <select id="defaultSessionBackend">
-                    <option value="webshell" data-i18n="backend.webshell">WebShell native</option>
-                  </select>
-                </label>
-                <p id="sessionBackendHelp" class="settings-help" data-i18n="setting.defaultSessionBackendHelp">The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.</p>
-              </div>
               <div class="settings-group" id="herdrHighlightSettings" hidden>
                 <div class="settings-group-title" data-i18n="section.herdrHighlight">Herdr selection</div>
                 <p class="settings-help" data-i18n="setting.herdrHighlightHelp">Customize the active Herdr workspace and tab background for dark and light interface styles.</p>
@@ -440,6 +438,19 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <span data-i18n="field.herdrActiveBackgroundLight">Light highlight</span>
                   <input id="herdrActiveBackgroundLight" type="color" />
                 </label>
+              </div>
+            </section>
+
+            <section class="settings-section" id="terminalSettingsPanel" data-settings-panel="terminal" role="tabpanel" hidden>
+              <div class="settings-group" id="sessionBackendSettings" hidden>
+                <div class="settings-group-title" data-i18n="section.sessionBackend">Session backend</div>
+                <label class="field">
+                  <span data-i18n="field.defaultSessionBackend">New tab backend</span>
+                  <select id="defaultSessionBackend">
+                    <option value="webshell" data-i18n="backend.webshell">WebShell native</option>
+                  </select>
+                </label>
+                <p id="sessionBackendHelp" class="settings-help" data-i18n="setting.defaultSessionBackendHelp">The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.</p>
               </div>
               <label class="field">
                 <span data-i18n="field.cursor">Cursor</span>
@@ -497,6 +508,17 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <input id="useResttyClipboard" type="checkbox" />
                 <span data-i18n="setting.useResttyClipboard">Use restty clipboard</span>
               </label>
+              <label class="switch">
+                <input id="autoRestartSessions" type="checkbox" />
+                <span data-i18n="setting.autoRestartSessions">Restart sessions after provider restart</span>
+              </label>
+              <label class="switch">
+                <input id="debugMode" type="checkbox" />
+                <span data-i18n="setting.debugAdapter">Debug adapter</span>
+              </label>
+            </section>
+
+            <section class="settings-section" id="mobileSettingsPanel" data-settings-panel="mobile" role="tabpanel" hidden>
               <label class="field mobile-only-setting">
                 <span data-i18n="field.touchBehavior">Touch behavior</span>
                 <select id="touchSelectionMode">
@@ -525,14 +547,6 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <p id="mobileQuickPhraseStatus" class="field-status"></p>
                 </div>
               </div>
-              <label class="switch">
-                <input id="autoRestartSessions" type="checkbox" />
-                <span data-i18n="setting.autoRestartSessions">Restart sessions after provider restart</span>
-              </label>
-              <label class="switch">
-                <input id="debugMode" type="checkbox" />
-                <span data-i18n="setting.debugAdapter">Debug adapter</span>
-              </label>
             </section>
 
             <section class="settings-section" id="fontSettingsRootPanel" data-settings-panel="fonts" role="tabpanel" hidden>
