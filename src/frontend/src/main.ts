@@ -4682,7 +4682,7 @@ function handleTerminalClipboardCapture(event: KeyboardEvent) {
 
 function handleTerminalPasteEvent(event: ClipboardEvent) {
   const pane = paneForShortcutTarget(event.target);
-  if (!pane || event.target === paneImeInput(pane)) return;
+  if (!pane) return;
   event.preventDefault();
   const imageFile = clipboardImageFile(event.clipboardData);
   if (imageFile) {
@@ -4704,11 +4704,12 @@ function handleTerminalPasteEvent(event: ClipboardEvent) {
 function terminalClipboardShortcut(event: KeyboardEvent): "copy" | "paste" | undefined {
   if (event.altKey || event.repeat) return undefined;
   const key = event.key.toLowerCase();
+  const code = event.code;
   const superShortcut = event.metaKey && !isApplePlatform() && !event.ctrlKey && !event.shiftKey;
   const ctrlShiftShortcut = event.ctrlKey && event.shiftKey && !event.metaKey;
   if (!superShortcut && !ctrlShiftShortcut) return undefined;
-  if (key === "c") return "copy";
-  if (key === "v") return "paste";
+  if (key === "c" || code === "KeyC") return "copy";
+  if (key === "v" || code === "KeyV") return "paste";
   return undefined;
 }
 
