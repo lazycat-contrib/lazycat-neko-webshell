@@ -12,7 +12,7 @@ export function applyWebshellStyle(target: HTMLElement, settings: WebshellStyleS
   target.dataset.interfaceStyle = settings.interfaceStyleId;
   target.dataset.interfaceTone = light ? "light" : "dark";
   target.style.setProperty("--herdr-active-bg", herdrActiveBackground(settings));
-  target.style.setProperty("--herdr-active-fg", light ? "#17231d" : "#f4fff8");
+  target.style.setProperty("--herdr-active-fg", light ? "#171717" : "#eaf6ff");
 }
 
 export function herdrActiveBackground(

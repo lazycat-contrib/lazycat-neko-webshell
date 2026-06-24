@@ -1,97 +1,100 @@
 :root {
   color-scheme: dark;
-  --bg: #06080a;
-  --chrome: #0c1115;
-  --surface: #10171c;
-  --surface-2: #172128;
-  --surface-raised: #121a20;
-  --line: #27343e;
-  --line-strong: #526371;
-  --line-soft: rgba(148, 163, 184, 0.14);
-  --split-line: rgba(139, 158, 170, 0.46);
-  --split-line-glow: rgba(125, 211, 191, 0.18);
-  --text: #f0f4f3;
-  --muted: #93a4ad;
-  --accent: #7dd3bf;
-  --accent-strong: #d7a758;
-  --accent-cool: #8ab4d3;
-  --danger: #ff6b6b;
-  --ok: #9be278;
-  --radius: 8px;
-  --shadow-deep: 0 22px 70px rgba(0, 0, 0, 0.52);
-  --shadow-raised: 0 12px 30px rgba(0, 0, 0, 0.28);
-  --shadow-inset-soft: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  --shadow-inset-strong: inset 0 1px 0 rgba(255, 255, 255, 0.055);
-  --focus-ring: color-mix(in srgb, var(--accent) 82%, white);
-  --body-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 180px);
-  --body-grid-x: repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.032) 0 1px, transparent 1px 96px);
-  --body-grid-y: repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.022) 0 1px, transparent 1px 72px);
-  --app-wash-a: rgba(215, 167, 88, 0.035);
-  --app-wash-b: rgba(138, 180, 211, 0.04);
-  --app-wash-c: rgba(125, 211, 191, 0.035);
-  --topbar-wash-a: rgba(255, 255, 255, 0.055);
-  --topbar-wash-b: rgba(138, 180, 211, 0.075);
-  --topbar-wash-c: rgba(215, 167, 88, 0.055);
-  --topbar-border: rgba(125, 211, 191, 0.18);
-  --topbar-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.64), 0 6px 18px rgba(0, 0, 0, 0.24);
-  --dialog-wash-a: rgba(255, 255, 255, 0.055);
-  --dialog-wash-b: rgba(138, 180, 211, 0.05);
-  --dialog-wash-c: rgba(215, 167, 88, 0.04);
-  --dialog-rule: linear-gradient(90deg, transparent, rgba(125, 211, 191, 0.72), rgba(215, 167, 88, 0.56), transparent);
-  --dialog-bg: color-mix(in srgb, var(--surface-raised) 96%, black);
-  --dialog-border: color-mix(in srgb, var(--line-strong) 36%, transparent);
-  --overlay-scrim: rgba(3, 6, 10, 0.62);
-  --overlay-wash: linear-gradient(180deg, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.5));
-  --menu-bg: color-mix(in srgb, var(--chrome) 94%, black);
-  --menu-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 64px);
-  --menu-border: color-mix(in srgb, var(--line-strong) 34%, transparent);
-  --menu-hover-bg: color-mix(in srgb, var(--line-strong) 18%, transparent);
+  --font-sans: "Geist Sans", "Inter", "Aptos", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "IBM Plex Mono", "SFMono-Regular", "Cascadia Mono", "Consolas", monospace;
+  --bg: #000000;
+  --chrome: #0a0a0a;
+  --surface: #111111;
+  --surface-2: #1a1a1a;
+  --surface-raised: #1f1f1f;
+  --line: #2e2e2e;
+  --line-strong: #454545;
+  --line-soft: #ffffff17;
+  --split-line: #ffffff24;
+  --split-line-glow: transparent;
+  --text: #ededed;
+  --muted: #a0a0a0;
+  --accent: #006efe;
+  --accent-strong: #47a8ff;
+  --accent-cool: #00aa95;
+  --danger: #f13242;
+  --ok: #00ac3a;
+  --radius: 6px;
+  --shadow-deep: 0 1px 1px rgba(0, 0, 0, 0.02), 0 8px 16px -4px rgba(0, 0, 0, 0.04), 0 24px 32px -8px rgba(0, 0, 0, 0.06);
+  --shadow-raised: 0 1px 1px rgba(0, 0, 0, 0.02), 0 4px 8px -4px rgba(0, 0, 0, 0.04), 0 16px 24px -8px rgba(0, 0, 0, 0.06);
+  --shadow-inset-soft: none;
+  --shadow-inset-strong: inset 0 0 0 1px #ffffff12;
+  --focus-gap: var(--bg);
+  --focus-ring: #47a8ff;
+  --body-wash: linear-gradient(transparent, transparent);
+  --body-grid-x: linear-gradient(transparent, transparent);
+  --body-grid-y: linear-gradient(transparent, transparent);
+  --app-wash-a: transparent;
+  --app-wash-b: transparent;
+  --app-wash-c: transparent;
+  --topbar-wash-a: transparent;
+  --topbar-wash-b: transparent;
+  --topbar-wash-c: transparent;
+  --topbar-border: var(--line);
+  --topbar-shadow: none;
+  --dialog-wash-a: transparent;
+  --dialog-wash-b: transparent;
+  --dialog-wash-c: transparent;
+  --dialog-rule: linear-gradient(90deg, var(--line-soft), var(--line-soft));
+  --dialog-bg: var(--surface);
+  --dialog-border: var(--line);
+  --overlay-scrim: rgba(0, 0, 0, 0.64);
+  --overlay-wash: linear-gradient(transparent, transparent);
+  --menu-bg: var(--surface-raised);
+  --menu-wash: linear-gradient(transparent, transparent);
+  --menu-border: var(--line);
+  --menu-hover-bg: #ffffff12;
   --menu-text: var(--text);
   --menu-muted: var(--muted);
-  --menu-badge-bg: color-mix(in srgb, var(--accent) 16%, transparent);
-  --menu-badge-text: color-mix(in srgb, var(--accent) 78%, white);
-  --menu-badge-border: color-mix(in srgb, var(--accent) 28%, transparent);
-  --control-fg: color-mix(in srgb, var(--text) 78%, transparent);
+  --menu-badge-bg: #ffffff12;
+  --menu-badge-text: var(--muted);
+  --menu-badge-border: var(--line);
+  --control-fg: var(--muted);
   --control-fg-hover: var(--text);
-  --control-hover-bg: color-mix(in srgb, var(--line-strong) 22%, transparent);
-  --control-hover-border: color-mix(in srgb, var(--line-strong) 40%, transparent);
-  --tab-fg: color-mix(in srgb, var(--text) 62%, transparent);
+  --control-hover-bg: #ffffff12;
+  --control-hover-border: #ffffff24;
+  --tab-fg: var(--muted);
   --tab-active-fg: var(--text);
-  --tab-divider: color-mix(in srgb, var(--line-strong) 26%, transparent);
-  --tab-hover-bg: color-mix(in srgb, var(--line-strong) 18%, transparent);
-  --tab-active-bg: color-mix(in srgb, var(--accent) 14%, transparent);
-  --tab-active-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent);
-  --tab-active-border: color-mix(in srgb, var(--accent) 20%, transparent);
-  --tab-active-glow: color-mix(in srgb, var(--accent) 28%, transparent);
-  --component-border: color-mix(in srgb, var(--line-strong) 30%, transparent);
-  --component-border-hover: color-mix(in srgb, var(--line-strong) 48%, transparent);
-  --component-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent);
-  --component-wash-hover: linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent);
-  --component-side-wash: linear-gradient(90deg, color-mix(in srgb, var(--accent-cool) 5%, transparent), transparent 36%);
-  --component-side-wash-hover: linear-gradient(90deg, color-mix(in srgb, var(--accent-cool) 7%, transparent), transparent 36%);
-  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
-  --accent-softer: color-mix(in srgb, var(--accent) 6%, transparent);
-  --accent-border: color-mix(in srgb, var(--accent) 28%, transparent);
-  --accent-fg: color-mix(in srgb, var(--accent) 78%, white);
-  --primary-fg: #081313;
-  --primary-shadow: 0 10px 26px color-mix(in srgb, var(--accent) 18%, transparent);
-  --danger-fg: color-mix(in srgb, var(--danger) 72%, white);
-  --danger-soft: color-mix(in srgb, var(--danger) 16%, transparent);
-  --ok-soft: color-mix(in srgb, var(--ok) 14%, transparent);
-  --status-idle: #94a3b8;
-  --status-running: #22c55e;
-  --status-stopped: #ef4444;
-  --code-bg: color-mix(in srgb, black 18%, transparent);
-  --input-bg: color-mix(in srgb, var(--chrome) 82%, black);
-  --input-wash: linear-gradient(180deg, rgba(255, 255, 255, 0.028), transparent);
-  --input-border: color-mix(in srgb, var(--line-strong) 32%, transparent);
-  --input-border-hover: color-mix(in srgb, var(--line-strong) 50%, transparent);
-  --input-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.24);
-  --empty-bg: color-mix(in srgb, var(--line-strong) 7%, transparent);
-  --empty-border: color-mix(in srgb, var(--line-strong) 30%, transparent);
-  --mobile-shortcuts-bg: color-mix(in srgb, var(--chrome) 96%, black);
-  --scrollbar-thumb: color-mix(in srgb, var(--line-strong) 48%, transparent);
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--accent) 64%, transparent);
+  --tab-divider: var(--line-soft);
+  --tab-hover-bg: #ffffff12;
+  --tab-active-bg: #ffffff12;
+  --tab-active-wash: linear-gradient(transparent, transparent);
+  --tab-active-border: #ffffff24;
+  --tab-active-glow: transparent;
+  --component-border: var(--line);
+  --component-border-hover: var(--line-strong);
+  --component-wash: linear-gradient(transparent, transparent);
+  --component-wash-hover: linear-gradient(transparent, transparent);
+  --component-side-wash: linear-gradient(transparent, transparent);
+  --component-side-wash-hover: linear-gradient(transparent, transparent);
+  --accent-soft: #06193a;
+  --accent-softer: #022248;
+  --accent-border: #003674;
+  --accent-fg: #eaf6ff;
+  --primary-fg: #ffffff;
+  --primary-shadow: none;
+  --danger-fg: #ffe9ed;
+  --danger-soft: #330a11;
+  --ok-soft: #002608;
+  --status-idle: #878787;
+  --status-running: var(--ok);
+  --status-stopped: var(--danger);
+  --code-bg: #000000;
+  --input-bg: var(--bg);
+  --input-wash: linear-gradient(transparent, transparent);
+  --input-border: var(--line);
+  --input-border-hover: var(--line-strong);
+  --input-shadow: none;
+  --empty-bg: #ffffff12;
+  --empty-border: var(--line);
+  --mobile-shortcuts-bg: var(--chrome);
+  --scrollbar-thumb: #ffffff24;
+  --scrollbar-thumb-hover: #ffffff3d;
   --lzc-safe-area-inset-top: var(--lzc-safe-area-top, env(safe-area-inset-top, 0px));
   --lzc-safe-area-inset-right: var(--lzc-safe-area-right, env(safe-area-inset-right, 0px));
   --lzc-safe-area-inset-bottom: var(--lzc-safe-area-bottom, env(safe-area-inset-bottom, 0px));
@@ -103,12 +106,7 @@
   --app-keyboard-inset-bottom: 0px;
   --mobile-shortcuts-height: 104px;
   --mobile-shortcuts-bottom-offset: var(--lzc-safe-area-inset-bottom);
-  font-family:
-    "IBM Plex Sans",
-    "Aptos",
-    "Segoe UI",
-    system-ui,
-    sans-serif;
+  font-family: var(--font-sans);
 }
 
 @supports (height: 100dvh) {
@@ -163,8 +161,10 @@ button:focus-visible,
 select:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow:
+    0 0 0 2px var(--focus-gap),
+    0 0 0 4px var(--focus-ring);
 }
 
 .webshell {
@@ -177,10 +177,7 @@ textarea:focus-visible {
   height: var(--app-viewport-height);
   min-width: 0;
   min-height: 0;
-  background:
-    linear-gradient(180deg, var(--app-wash-a), transparent 160px),
-    linear-gradient(90deg, var(--app-wash-b), transparent 30%, var(--app-wash-c)),
-    var(--bg);
+  background: var(--bg);
 }
 
 .sr-only {
@@ -204,10 +201,7 @@ textarea:focus-visible {
   min-height: calc(38px + var(--lzc-safe-area-inset-top));
   padding: var(--lzc-safe-area-inset-top) max(10px, var(--lzc-safe-area-inset-right)) 0 max(10px, var(--lzc-safe-area-inset-left));
   border-bottom: 1px solid var(--topbar-border);
-  background:
-    linear-gradient(180deg, var(--topbar-wash-a), transparent 58%),
-    linear-gradient(90deg, var(--topbar-wash-b), transparent 44%, var(--topbar-wash-c)),
-    var(--chrome);
+  background: var(--chrome);
   box-shadow: var(--topbar-shadow);
 }
 
@@ -327,10 +321,10 @@ textarea:focus-visible {
   right: 8px;
   bottom: 0;
   left: 8px;
-  height: 3px;
+  height: 2px;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
-  box-shadow: 0 0 14px var(--tab-active-glow);
+  background: var(--accent);
+  box-shadow: none;
 }
 
 .webshell[data-tab-layout="vertical"] .tab.active::before {
@@ -398,12 +392,12 @@ textarea:focus-visible {
 
 .tab-status[data-tone="ok"] {
   background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-soft), 0 0 12px color-mix(in srgb, var(--ok) 32%, transparent);
+  box-shadow: 0 0 0 3px var(--ok-soft);
 }
 
 .tab-status[data-tone="error"] {
   background: var(--danger);
-  box-shadow: 0 0 0 3px var(--danger-soft), 0 0 12px color-mix(in srgb, var(--danger) 30%, transparent);
+  box-shadow: 0 0 0 3px var(--danger-soft);
 }
 
 .tab-title {
@@ -412,9 +406,9 @@ textarea:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
 }
 
@@ -435,9 +429,9 @@ textarea:focus-visible {
   border-radius: 5px;
   background: var(--input-bg);
   color: var(--text);
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   text-align: center;
 }
 
@@ -522,7 +516,7 @@ textarea:focus-visible {
   width: min(232px, calc(100vw - 20px));
   padding: 6px;
   border: 1px solid var(--menu-border);
-  border-radius: 8px;
+  border-radius: 12px;
   background:
     var(--menu-wash),
     var(--menu-bg);
@@ -576,7 +570,7 @@ textarea:focus-visible {
   color: var(--menu-badge-text);
   padding: 0 6px;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -677,7 +671,7 @@ textarea:focus-visible {
   color: var(--control-fg);
   padding: 0 9px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: 0;
 }
 
@@ -705,7 +699,7 @@ textarea:focus-visible {
   background: var(--accent-soft);
   color: var(--accent-fg);
   font-size: 11px;
-  font-weight: 850;
+  font-weight: 600;
   line-height: 1;
 }
 
@@ -848,7 +842,7 @@ textarea:focus-visible {
 .herdr-tab small {
   color: var(--muted);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 500;
 }
 
 .herdr-tab.number-only small {
@@ -971,17 +965,17 @@ textarea:focus-visible {
   border-radius: 999px;
   flex: 0 0 auto;
   background: var(--status-idle);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-idle) 16%, transparent);
+  box-shadow: 0 0 0 4px var(--line-soft);
 }
 
 .status-dot[data-status="running"] {
   background: var(--status-running);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-running) 16%, transparent);
+  box-shadow: 0 0 0 4px var(--ok-soft);
 }
 
 .status-dot[data-status="stopped"] {
   background: var(--status-stopped);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-stopped) 16%, transparent);
+  box-shadow: 0 0 0 4px var(--danger-soft);
 }
 
 .switcher-menu {
@@ -993,7 +987,7 @@ textarea:focus-visible {
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--menu-border);
-  border-radius: 8px;
+  border-radius: 12px;
   background:
     var(--menu-wash),
     var(--menu-bg);
@@ -1017,7 +1011,7 @@ textarea:focus-visible {
   min-width: 158px;
   padding: 6px;
   border: 1px solid var(--menu-border);
-  border-radius: 8px;
+  border-radius: 12px;
   background:
     var(--menu-wash),
     var(--menu-bg);
@@ -1082,7 +1076,7 @@ textarea:focus-visible {
   padding: 0 2px 6px 8px;
   color: var(--menu-muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .herdr-workspace-switcher {
@@ -1103,7 +1097,7 @@ textarea:focus-visible {
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--menu-border);
-  border-radius: 8px;
+  border-radius: 12px;
   background:
     var(--menu-wash),
     var(--menu-bg);
@@ -1304,11 +1298,9 @@ textarea:focus-visible {
   position: relative;
   min-height: 0;
   min-width: 0;
-  background:
-    linear-gradient(180deg, rgba(0, 0, 0, 0.22), transparent 42px),
-    var(--term-bg, #050a12);
+  background: var(--term-bg, #050a12);
   overflow: hidden;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  box-shadow: inset 0 1px 0 var(--line-soft);
 }
 
 .tab-mount {
@@ -1339,9 +1331,7 @@ textarea:focus-visible {
     8px
     max(10px, var(--lzc-safe-area-inset-left));
   border: 0;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 120px),
-    var(--term-bg, #050a12);
+  background: var(--term-bg, #050a12);
   overflow: hidden;
 }
 
@@ -1396,7 +1386,7 @@ textarea:focus-visible {
   right: 0;
   left: 0;
   height: 2px;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.34), 0 0 10px var(--split-line-glow);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.34);
 }
 
 .split-container[data-split-axis="columns"] > :where(.terminal-mount, .split-container):not(:first-child)::before {
@@ -1404,7 +1394,7 @@ textarea:focus-visible {
   bottom: 0;
   left: 0;
   width: 2px;
-  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.34), 0 0 10px var(--split-line-glow);
+  box-shadow: 1px 0 0 rgba(0, 0, 0, 0.34);
 }
 
 .terminal-mount {
@@ -1416,9 +1406,7 @@ textarea:focus-visible {
 }
 
 .terminal-mount.active-pane {
-  box-shadow:
-    inset 0 0 0 1px rgba(125, 211, 191, 0.24),
-    inset 0 0 28px rgba(125, 211, 191, 0.035);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 .terminal-mount .restty-pane-root {
@@ -1508,11 +1496,8 @@ textarea:focus-visible {
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--dialog-border);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, var(--dialog-wash-a), transparent 92px),
-    linear-gradient(90deg, var(--dialog-wash-b), transparent 42%, var(--dialog-wash-c)),
-    var(--dialog-bg);
+  border-radius: 12px;
+  background: var(--dialog-bg);
   box-shadow: var(--shadow-deep);
   padding: 18px;
 }
@@ -1543,7 +1528,7 @@ textarea:focus-visible {
   margin: 0;
   color: var(--text);
   font-size: 20px;
-  font-weight: 760;
+  font-weight: 600;
   letter-spacing: 0;
 }
 
@@ -1572,7 +1557,7 @@ textarea:focus-visible {
 .settings-group-title {
   color: var(--text);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .settings-panels {
@@ -1648,7 +1633,7 @@ textarea:focus-visible {
   background: transparent;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .settings-tabs button > svg {
@@ -1662,9 +1647,7 @@ textarea:focus-visible {
     var(--component-wash-hover),
     var(--accent-soft);
   color: var(--accent-fg);
-  box-shadow:
-    inset 0 0 0 1px var(--accent-border),
-    var(--shadow-raised);
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 .settings-tab-panel[hidden] {
@@ -1727,10 +1710,8 @@ textarea:focus-visible {
   max-height: calc(var(--app-viewport-height) - 28px);
   overflow: auto;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, var(--dialog-wash-a), transparent 80px),
-    var(--surface-raised);
+  border-radius: 12px;
+  background: var(--surface-raised);
   color: var(--text);
   box-shadow: var(--shadow-deep);
   padding: 16px;
@@ -1792,7 +1773,7 @@ kbd {
   background: var(--surface-2);
   color: var(--text);
   padding: 2px 5px;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   text-align: center;
 }
@@ -1837,12 +1818,12 @@ kbd {
 
 .font-preview span {
   color: var(--text);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .font-preview code {
   color: var(--accent);
-  font-family: inherit;
+  font-family: var(--font-mono);
 }
 
 .field.mobile-only-setting {
@@ -1971,7 +1952,7 @@ textarea {
   min-height: 180px;
   padding: 10px;
   resize: vertical;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   line-height: 1.45;
 }
 
@@ -1981,7 +1962,7 @@ input[type="range"] {
 
 output {
   color: var(--accent-strong);
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 

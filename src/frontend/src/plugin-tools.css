@@ -9,10 +9,8 @@
   grid-template-columns: 50px minmax(0, 420px);
   width: min(500px, calc(100vw - 20px));
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, var(--dialog-wash-a), transparent 92px),
-    var(--dialog-bg);
+  border-radius: 12px;
+  background: var(--dialog-bg);
   color: var(--text);
   box-shadow: var(--shadow-deep);
   overflow: hidden;
@@ -49,15 +47,15 @@
   width: 34px;
   height: 34px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--muted);
 }
 
 .plugin-tool-tabs button[aria-selected="true"] {
-  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--text);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-fg);
 }
 
 .plugin-tool-tabs svg {
@@ -169,7 +167,7 @@
   overflow: hidden;
   color: var(--text);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -181,7 +179,7 @@
   border: 1px solid var(--component-border);
   border-radius: 4px;
   color: var(--muted);
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   background: var(--code-bg);
   padding: 2px 5px;
@@ -277,7 +275,7 @@
   color: var(--text);
   background: var(--surface-2);
   padding: 7px 9px;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -383,7 +381,7 @@
   color: var(--muted);
   background: color-mix(in srgb, var(--surface) 72%, transparent);
   padding: 0 9px;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -591,7 +589,7 @@
 .ai-chat-message-role {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 500;
 }
 
 .ai-message-copy {
@@ -660,8 +658,8 @@
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--ok) 40%, var(--surface-2));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 18%, transparent);
+  background: var(--muted);
+  box-shadow: none;
   opacity: 0.34;
   animation: ai-led-chase 1.05s infinite ease-in-out;
 }
@@ -683,15 +681,13 @@
   70%,
   100% {
     opacity: 0.28;
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 18%, transparent);
+    box-shadow: none;
     transform: scale(0.86);
   }
 
   28% {
     opacity: 1;
-    box-shadow:
-      0 0 0 1px color-mix(in srgb, var(--ok) 52%, transparent),
-      0 0 10px color-mix(in srgb, var(--ok) 78%, transparent);
+    box-shadow: none;
     transform: scale(1.08);
   }
 }
@@ -747,7 +743,7 @@
 .ai-chat-picker-label {
   color: var(--muted);
   font-size: 10px;
-  font-weight: 800;
+  font-weight: 600;
   line-height: 1;
   text-transform: uppercase;
 }
@@ -771,7 +767,7 @@
   cursor: pointer;
   text-overflow: ellipsis;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .ai-chat-select-shell select:disabled {
@@ -830,7 +826,7 @@
   padding: 0 8px 0 10px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .ai-block-head > span,
@@ -864,7 +860,7 @@
     var(--code-bg);
   color: var(--text);
   padding: 10px;
-  font-family: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.45;
   white-space: pre-wrap;

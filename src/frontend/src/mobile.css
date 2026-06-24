@@ -310,9 +310,7 @@
     z-index: 4;
     min-height: 48px;
     padding: 0 6px 0 12px;
-    background:
-      linear-gradient(180deg, var(--dialog-wash-a), transparent 90%),
-      var(--dialog-bg);
+    background: var(--dialog-bg);
   }
 
   .plugin-sidebar-header .icon-button {
@@ -550,9 +548,9 @@
       var(--surface);
     color: var(--text);
     padding: 0 9px;
-    font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 500;
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
@@ -661,9 +659,9 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
     var(--surface);
   color: var(--text);
   padding: 0 9px;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
