@@ -1,4 +1,5 @@
 import "./styles.css";
+import "./plugin-tools.css";
 import "./webshell-themes.css";
 import "./terminal-themes.css";
 
