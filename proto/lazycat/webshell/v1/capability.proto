@@ -166,3 +166,148 @@ message ControlLease {
   string actor_kind = 3;
   string status = 4;
 }
+
+// AgentProtocol is used only between the provider process and the
+// instance-local persistent WebShell agent. The browser-facing WebSocket keeps
+// its existing binary-output/text-control protocol.
+
+message AgentRequest {
+  AgentRequestType type = 1;
+  string selector = 2;
+  string username = 3;
+  string pane_id = 4;
+  int32 cols = 5;
+  int32 rows = 6;
+  int32 output_limit = 7;
+  AgentWorkspaceAction action = 8;
+  int64 replay_after = 9;
+}
+
+enum AgentRequestType {
+  AGENT_REQUEST_TYPE_UNSPECIFIED = 0;
+  AGENT_REQUEST_TYPE_PING = 1;
+  AGENT_REQUEST_TYPE_STATE = 2;
+  AGENT_REQUEST_TYPE_ACTION = 3;
+  AGENT_REQUEST_TYPE_ATTACH = 4;
+}
+
+message AgentResponse {
+  bool ok = 1;
+  string version = 2;
+  string error = 3;
+  AgentWorkspaceState state = 4;
+}
+
+message AgentWorkspaceState {
+  string selector = 1;
+  string active_tab_id = 2;
+  repeated AgentTabState tabs = 3;
+}
+
+message AgentTabState {
+  string id = 1;
+  string label = 2;
+  string custom_label = 3;
+  string active_pane_id = 4;
+  AgentLayoutNode layout = 5;
+  repeated AgentPaneState panes = 6;
+}
+
+message AgentPaneState {
+  string id = 1;
+  string session_id = 2;
+  string status = 3;
+  string session_backend = 4;
+  int32 cols = 5;
+  int32 rows = 6;
+}
+
+message AgentLayoutNode {
+  AgentLayoutNodeType type = 1;
+  string pane_id = 2;
+  AgentSplitAxis axis = 3;
+  repeated AgentLayoutNode children = 4;
+}
+
+enum AgentLayoutNodeType {
+  AGENT_LAYOUT_NODE_TYPE_UNSPECIFIED = 0;
+  AGENT_LAYOUT_NODE_TYPE_PANE = 1;
+  AGENT_LAYOUT_NODE_TYPE_SPLIT = 2;
+}
+
+enum AgentSplitAxis {
+  AGENT_SPLIT_AXIS_UNSPECIFIED = 0;
+  AGENT_SPLIT_AXIS_ROWS = 1;
+  AGENT_SPLIT_AXIS_COLUMNS = 2;
+}
+
+message AgentWorkspaceAction {
+  AgentWorkspaceActionType action = 1;
+  string tab_id = 2;
+  string pane_id = 3;
+  AgentSplitDirection direction = 4;
+  string label = 5;
+  AgentLayoutNode layout = 6;
+  string active_pane_id = 7;
+}
+
+enum AgentWorkspaceActionType {
+  AGENT_WORKSPACE_ACTION_TYPE_UNSPECIFIED = 0;
+  AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB = 1;
+  AGENT_WORKSPACE_ACTION_TYPE_CLOSE_TAB = 2;
+  AGENT_WORKSPACE_ACTION_TYPE_RENAME_TAB = 3;
+  AGENT_WORKSPACE_ACTION_TYPE_ACTIVATE_TAB = 4;
+  AGENT_WORKSPACE_ACTION_TYPE_SPLIT_PANE = 5;
+  AGENT_WORKSPACE_ACTION_TYPE_CLOSE_PANE = 6;
+  AGENT_WORKSPACE_ACTION_TYPE_ACTIVATE_PANE = 7;
+  AGENT_WORKSPACE_ACTION_TYPE_PROMOTE_PANE_TO_TAB = 8;
+  AGENT_WORKSPACE_ACTION_TYPE_UPDATE_LAYOUT = 9;
+}
+
+enum AgentSplitDirection {
+  AGENT_SPLIT_DIRECTION_UNSPECIFIED = 0;
+  AGENT_SPLIT_DIRECTION_UP = 1;
+  AGENT_SPLIT_DIRECTION_DOWN = 2;
+  AGENT_SPLIT_DIRECTION_LEFT = 3;
+  AGENT_SPLIT_DIRECTION_RIGHT = 4;
+}
+
+message AgentFrame {
+  AgentFrameType type = 1;
+  bytes payload = 2;
+  AgentControl control = 3;
+  AgentResize resize = 4;
+  int64 sequence = 5;
+}
+
+enum AgentFrameType {
+  AGENT_FRAME_TYPE_UNSPECIFIED = 0;
+  AGENT_FRAME_TYPE_BINARY = 1;
+  AGENT_FRAME_TYPE_TEXT = 2;
+  AGENT_FRAME_TYPE_INPUT = 3;
+  AGENT_FRAME_TYPE_RESIZE = 4;
+  AGENT_FRAME_TYPE_DETACH = 5;
+}
+
+message AgentControl {
+  AgentControlType type = 1;
+  string session_id = 2;
+  string selector = 3;
+  string pane_id = 4;
+  int64 replay_after = 5;
+  int64 last_sequence = 6;
+  int32 exit_code = 7;
+  string message = 8;
+}
+
+enum AgentControlType {
+  AGENT_CONTROL_TYPE_UNSPECIFIED = 0;
+  AGENT_CONTROL_TYPE_REPLAY_START = 1;
+  AGENT_CONTROL_TYPE_REPLAY_COMPLETE = 2;
+  AGENT_CONTROL_TYPE_PROCESS_EXIT = 3;
+}
+
+message AgentResize {
+  int32 cols = 1;
+  int32 rows = 2;
+}

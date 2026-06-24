@@ -1,6 +1,8 @@
 export type WebshellSocketUrlOptions = {
+  selector: string;
   sessionId: string;
   paneId: string;
+  sessionBackend: string;
   cols: number;
   rows: number;
   restart: boolean;
@@ -11,7 +13,12 @@ export type WebshellSocketUrlOptions = {
 export function webshellTerminalSocketUrl(options: WebshellSocketUrlOptions): URL {
   const url = new URL("./ws/terminal", window.location.href);
   url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("session_id", options.sessionId);
+  url.searchParams.set("backend", options.sessionBackend || "webshell");
+  if ((options.sessionBackend || "webshell") === "webshell") {
+    url.searchParams.set("name", options.selector);
+  } else {
+    url.searchParams.set("session_id", options.sessionId);
+  }
   url.searchParams.set("pane_id", options.paneId);
   url.searchParams.set("cols", String(options.cols));
   url.searchParams.set("rows", String(options.rows));

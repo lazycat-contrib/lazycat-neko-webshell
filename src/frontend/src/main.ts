@@ -4088,8 +4088,10 @@ function openSocket(pane: TerminalPane) {
   if (!pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
   const url = webshellTerminalSocketUrl({
+    selector: pane.selector,
     sessionId: pane.sessionId,
     paneId: pane.id,
+    sessionBackend: pane.sessionBackend,
     cols: pane.cols || pane.term?.cols || INITIAL_COLS,
     rows: pane.rows || pane.term?.rows || INITIAL_ROWS,
     restart: settings.autoRestartSessions,

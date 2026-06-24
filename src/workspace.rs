@@ -6,13 +6,19 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use buffa::MessageField;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::agent_client::ensure_agent;
 use crate::config::{DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, MAX_COLS, MAX_ROWS};
 use crate::database::{AppDatabase, KV_KEY_WORKSPACES, KV_NAMESPACE_STATE};
 use crate::lightos;
+use crate::proto::lazycat::webshell::v1::{
+    AgentLayoutNode, AgentLayoutNodeType, AgentSplitAxis, AgentSplitDirection,
+    AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
+};
 use crate::state::{
     AppState, METADATA_LOGIN_USER, SessionRecord, default_session_command_for_user,
     host_from_selector, output_frame_limit_from_metadata, session_command_for_backend_id,
@@ -107,7 +113,6 @@ pub struct WorkspaceQuery {
     cols: Option<u16>,
     rows: Option<u16>,
     output_limit: Option<usize>,
-    auto_restart: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,6 +170,7 @@ impl WorkspaceTerminalDefaults {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub struct CreatedWorkspaceSession {
     pub session: SessionRecord,
@@ -279,20 +285,20 @@ pub async fn get_workspace(
         Err(response) => return response.into_response(),
     };
     let output_limit = normalize_output_frame_limit(query.output_limit);
-    let auto_restart = query.auto_restart.unwrap_or(false);
 
-    let defaults = WorkspaceTerminalDefaults::new(
+    match standard_agent_workspace(
+        &state,
+        selector,
+        &login_user,
         cols,
         rows,
         output_limit,
-        auto_restart,
-        &login_user,
-        SessionBackend::Webshell,
-    );
-
-    match ensure_workspace_state(&state, selector, &defaults) {
+        false,
+    )
+    .await
+    {
         Ok(workspace) => Json(workspace).into_response(),
-        Err(message) => internal_error(message),
+        Err(message) => bad_gateway(message),
     }
 }
 
@@ -312,6 +318,27 @@ pub async fn put_workspace_action(
     let output_limit = normalize_output_frame_limit(request.output_limit);
     let auto_restart = request.auto_restart.unwrap_or(false);
 
+    if !workspace_action_uses_legacy_store(&state, &selector, &request) {
+        let action = match agent_action_from_workspace_request(&request) {
+            Ok(action) => action,
+            Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
+        };
+        return match standard_agent_workspace_action(
+            &state,
+            &selector,
+            &login_user,
+            cols,
+            rows,
+            output_limit,
+            action,
+        )
+        .await
+        {
+            Ok(workspace) => Json(workspace).into_response(),
+            Err(message) => bad_gateway(message),
+        };
+    }
+
     let defaults = WorkspaceTerminalDefaults::new(
         cols,
         rows,
@@ -322,11 +349,24 @@ pub async fn put_workspace_action(
     );
 
     match apply_workspace_action(&state, &selector, &defaults, &request) {
-        Ok((workspace, closed_sessions)) => {
+        Ok((_workspace, closed_sessions)) => {
             state
                 .sessions
                 .close_sessions(closed_sessions.iter().map(String::as_str));
-            Json(workspace).into_response()
+            match standard_agent_workspace(
+                &state,
+                &selector,
+                &login_user,
+                cols,
+                rows,
+                output_limit,
+                true,
+            )
+            .await
+            {
+                Ok(workspace) => Json(workspace).into_response(),
+                Err(message) => bad_gateway(message),
+            }
         }
         Err(WorkspaceActionError::BadRequest(message)) => {
             (StatusCode::BAD_REQUEST, message).into_response()
@@ -335,37 +375,308 @@ pub async fn put_workspace_action(
     }
 }
 
-fn ensure_workspace_state(
+async fn standard_agent_workspace(
     state: &AppState,
     selector: &str,
-    defaults: &WorkspaceTerminalDefaults,
+    login_user: &str,
+    cols: u16,
+    rows: u16,
+    output_limit: usize,
+    prefer_optional_active: bool,
 ) -> Result<WorkspaceState, String> {
-    let mut persist_workspaces = None;
-    let mut persist_sessions = None;
-    let workspace = {
-        let mut workspaces = state
-            .workspaces
-            .write()
-            .map_err(|_| "workspace store lock poisoned".to_owned())?;
-        let mut sessions = state
-            .sessions
-            .write()
-            .map_err(|_| "session store lock poisoned".to_owned())?;
-        let workspace = workspaces
-            .entry(selector.to_owned())
-            .or_insert_with(|| WorkspaceRecord::new(selector));
-        let changed = workspace.ensure_ready(&mut sessions, defaults);
-        let snapshot = workspace.snapshot(&sessions);
-        if changed {
-            persist_workspaces = Some(workspaces.clone());
-            persist_sessions = Some(sessions.clone());
-        }
-        snapshot
-    };
-    persist_snapshots(state, persist_workspaces, persist_sessions)?;
-    Ok(workspace)
+    let agent = ensure_agent(selector, login_user)
+        .await
+        .map_err(|err| format!("failed to start webshell agent: {err}"))?;
+    let agent_state = agent
+        .state(cols, rows, output_limit)
+        .await
+        .map_err(|err| format!("failed to load webshell workspace: {err}"))?;
+    Ok(merge_optional_backend_tabs(
+        state,
+        workspace_state_from_agent(agent_state),
+        prefer_optional_active,
+    ))
 }
 
+async fn standard_agent_workspace_action(
+    state: &AppState,
+    selector: &str,
+    login_user: &str,
+    cols: u16,
+    rows: u16,
+    output_limit: usize,
+    action: AgentWorkspaceAction,
+) -> Result<WorkspaceState, String> {
+    let agent = ensure_agent(selector, login_user)
+        .await
+        .map_err(|err| format!("failed to start webshell agent: {err}"))?;
+    let agent_state = agent
+        .action(cols, rows, output_limit, action)
+        .await
+        .map_err(|err| format!("failed to update webshell workspace: {err}"))?;
+    Ok(merge_optional_backend_tabs(
+        state,
+        workspace_state_from_agent(agent_state),
+        false,
+    ))
+}
+
+fn workspace_action_uses_legacy_store(
+    state: &AppState,
+    selector: &str,
+    request: &WorkspaceActionRequest,
+) -> bool {
+    match request.session_backend {
+        Some(SessionBackend::Herdr | SessionBackend::Zellij) => return true,
+        Some(SessionBackend::Webshell) => return false,
+        None => {}
+    }
+    request_targets_optional_backend(state, selector, request)
+}
+
+fn request_targets_optional_backend(
+    state: &AppState,
+    selector: &str,
+    request: &WorkspaceActionRequest,
+) -> bool {
+    let Ok(workspaces) = state.workspaces.read() else {
+        return false;
+    };
+    let Some(workspace) = workspaces.get(selector) else {
+        return false;
+    };
+    let Ok(sessions) = state.sessions.read() else {
+        return false;
+    };
+    let tab_id = request
+        .tab_id
+        .as_deref()
+        .or(workspace.active_tab_id.as_deref());
+    let pane_id = request.pane_id.as_deref();
+    workspace.tabs.iter().any(|tab| {
+        if tab_id.is_some_and(|id| id != tab.id) {
+            return false;
+        }
+        tab.panes.iter().any(|pane| {
+            if pane_id.is_some_and(|id| id != pane.id) {
+                return false;
+            }
+            let session = sessions.get(&pane.session_id);
+            session_backend_from_session(session) != "webshell"
+        })
+    })
+}
+
+fn merge_optional_backend_tabs(
+    state: &AppState,
+    mut workspace: WorkspaceState,
+    prefer_optional_active: bool,
+) -> WorkspaceState {
+    let optional = optional_backend_workspace_state(state, &workspace.selector);
+    let optional_tab_ids = optional
+        .tabs
+        .iter()
+        .map(|tab| tab.id.clone())
+        .collect::<HashSet<_>>();
+    workspace.tabs.extend(optional.tabs);
+    if prefer_optional_active
+        && optional
+            .active_tab_id
+            .as_ref()
+            .is_some_and(|tab_id| optional_tab_ids.contains(tab_id))
+    {
+        workspace.active_tab_id = optional.active_tab_id;
+    }
+    workspace
+}
+
+fn optional_backend_workspace_state(state: &AppState, selector: &str) -> WorkspaceState {
+    let snapshot = {
+        let Ok(workspaces) = state.workspaces.read() else {
+            return empty_workspace_state(selector);
+        };
+        let Some(workspace) = workspaces.get(selector) else {
+            return empty_workspace_state(selector);
+        };
+        let Ok(sessions) = state.sessions.read() else {
+            return empty_workspace_state(selector);
+        };
+        workspace.snapshot(&sessions)
+    };
+    let mut filtered = snapshot;
+    filtered.tabs.retain(|tab| {
+        tab.panes
+            .iter()
+            .any(|pane| pane.session_backend != "webshell")
+    });
+    if !filtered
+        .active_tab_id
+        .as_deref()
+        .is_some_and(|active| filtered.tabs.iter().any(|tab| tab.id == active))
+    {
+        filtered.active_tab_id = None;
+    }
+    filtered
+}
+
+fn empty_workspace_state(selector: &str) -> WorkspaceState {
+    WorkspaceState {
+        selector: selector.to_owned(),
+        active_tab_id: None,
+        tabs: Vec::new(),
+    }
+}
+
+fn workspace_state_from_agent(state: AgentWorkspaceState) -> WorkspaceState {
+    WorkspaceState {
+        selector: state.selector.unwrap_or_default(),
+        active_tab_id: state.active_tab_id,
+        tabs: state
+            .tabs
+            .into_iter()
+            .map(|tab| WorkspaceTabState {
+                id: tab.id.unwrap_or_default(),
+                label: tab.label.unwrap_or_default(),
+                custom_label: tab.custom_label,
+                active_pane_id: tab.active_pane_id,
+                layout: tab
+                    .layout
+                    .into_option()
+                    .and_then(workspace_layout_from_agent),
+                panes: tab
+                    .panes
+                    .into_iter()
+                    .map(|pane| WorkspacePaneState {
+                        id: pane.id.unwrap_or_default(),
+                        session_id: pane.session_id.unwrap_or_default(),
+                        status: pane.status.unwrap_or_else(|| "stopped".to_owned()),
+                        session_backend: pane
+                            .session_backend
+                            .unwrap_or_else(|| "webshell".to_owned()),
+                        cols: i32_to_u16(pane.cols, DEFAULT_COLS),
+                        rows: i32_to_u16(pane.rows, DEFAULT_ROWS),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+fn workspace_layout_from_agent(node: AgentLayoutNode) -> Option<WorkspaceLayoutNode> {
+    match node.r#type.as_ref().and_then(|kind| kind.as_known()) {
+        Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_PANE) => node
+            .pane_id
+            .map(|pane_id| WorkspaceLayoutNode::Pane { pane_id }),
+        Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_SPLIT) => {
+            Some(WorkspaceLayoutNode::Split {
+                axis: match node.axis.as_ref().and_then(|axis| axis.as_known()) {
+                    Some(AgentSplitAxis::AGENT_SPLIT_AXIS_COLUMNS) => SplitAxis::Columns,
+                    _ => SplitAxis::Rows,
+                },
+                children: node
+                    .children
+                    .into_iter()
+                    .filter_map(workspace_layout_from_agent)
+                    .collect(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn agent_action_from_workspace_request(
+    request: &WorkspaceActionRequest,
+) -> Result<AgentWorkspaceAction, String> {
+    Ok(AgentWorkspaceAction {
+        action: Some(agent_action_type(request.action).into()),
+        tab_id: request.tab_id.clone(),
+        pane_id: request.pane_id.clone(),
+        direction: request.direction.map(agent_split_direction).map(Into::into),
+        label: request.label.clone(),
+        layout: request
+            .layout
+            .clone()
+            .and_then(agent_layout_from_workspace)
+            .map_or_else(MessageField::none, MessageField::some),
+        active_pane_id: request.active_pane_id.clone(),
+        ..Default::default()
+    })
+}
+
+fn agent_action_type(action: WorkspaceAction) -> AgentWorkspaceActionType {
+    match action {
+        WorkspaceAction::CreateTab => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB
+        }
+        WorkspaceAction::CloseTab => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CLOSE_TAB
+        }
+        WorkspaceAction::RenameTab => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_RENAME_TAB
+        }
+        WorkspaceAction::ActivateTab => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_ACTIVATE_TAB
+        }
+        WorkspaceAction::SplitPane => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_SPLIT_PANE
+        }
+        WorkspaceAction::ClosePane => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CLOSE_PANE
+        }
+        WorkspaceAction::ActivatePane => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_ACTIVATE_PANE
+        }
+        WorkspaceAction::PromotePaneToTab => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_PROMOTE_PANE_TO_TAB
+        }
+        WorkspaceAction::UpdateLayout => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_UPDATE_LAYOUT
+        }
+    }
+}
+
+fn agent_split_direction(direction: SplitDirection) -> AgentSplitDirection {
+    match direction {
+        SplitDirection::Up => AgentSplitDirection::AGENT_SPLIT_DIRECTION_UP,
+        SplitDirection::Down => AgentSplitDirection::AGENT_SPLIT_DIRECTION_DOWN,
+        SplitDirection::Left => AgentSplitDirection::AGENT_SPLIT_DIRECTION_LEFT,
+        SplitDirection::Right => AgentSplitDirection::AGENT_SPLIT_DIRECTION_RIGHT,
+    }
+}
+
+fn agent_layout_from_workspace(node: WorkspaceLayoutNode) -> Option<AgentLayoutNode> {
+    match node {
+        WorkspaceLayoutNode::Pane { pane_id } => Some(AgentLayoutNode {
+            r#type: Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_PANE.into()),
+            pane_id: Some(pane_id),
+            ..Default::default()
+        }),
+        WorkspaceLayoutNode::Split { axis, children } => Some(AgentLayoutNode {
+            r#type: Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_SPLIT.into()),
+            axis: Some(
+                match axis {
+                    SplitAxis::Rows => AgentSplitAxis::AGENT_SPLIT_AXIS_ROWS,
+                    SplitAxis::Columns => AgentSplitAxis::AGENT_SPLIT_AXIS_COLUMNS,
+                }
+                .into(),
+            ),
+            children: children
+                .into_iter()
+                .filter_map(agent_layout_from_workspace)
+                .collect(),
+            ..Default::default()
+        }),
+    }
+}
+
+fn i32_to_u16(value: Option<i32>, default_value: u16) -> u16 {
+    value
+        .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default_value)
+}
+
+#[cfg(test)]
 pub(crate) fn create_workspace_session(
     state: &AppState,
     selector: &str,
@@ -1360,6 +1671,10 @@ pub fn default_workspace_store(database: Arc<AppDatabase>) -> WorkspaceStore {
 
 fn internal_error(message: String) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, message).into_response()
+}
+
+fn bad_gateway(message: String) -> Response {
+    (StatusCode::BAD_GATEWAY, message).into_response()
 }
 
 #[derive(Debug)]

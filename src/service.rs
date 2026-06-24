@@ -8,25 +8,22 @@ use connectrpc::{ConnectError, RequestContext, Response as ConnectResponse, Serv
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
+use crate::agent_client::ensure_agent;
 use crate::config::{APP_ID, APP_NAME, DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_COLS, MAX_ROWS};
 use crate::lightos;
 use crate::proto::lazycat::webshell::v1::{
+    AgentPaneState, AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
     Capability, CapabilityService, CloseSessionResponse, ConfigurePluginResponse, ControlLease,
     CreateSessionResponse, GetProviderResponse, InvokePluginResponse, ListInstancesResponse,
     ListPluginsResponse, ListSessionsResponse, OwnedCloseSessionRequestView,
     OwnedConfigurePluginRequestView, OwnedCreateSessionRequestView, OwnedGetProviderRequestView,
     OwnedInvokePluginRequestView, OwnedListInstancesRequestView, OwnedListPluginsRequestView,
     OwnedListSessionsRequestView, OwnedReleaseControlRequestView, OwnedRequestControlRequestView,
-    ProviderDescriptor, ReleaseControlResponse, RequestControlResponse,
+    ProviderDescriptor, ReleaseControlResponse, RequestControlResponse, Session,
 };
-use crate::state::{
-    AppState, PluginRecord, SessionRecord, bool_flag, output_frame_limit_from_metadata,
-};
+use crate::state::{AppState, PluginRecord, SessionRecord, output_frame_limit_from_metadata};
 use crate::validation::{normalize_dimension, required_field, validate_selector};
-use crate::workspace::{
-    SessionBackend, WorkspaceSessionError, WorkspaceTerminalDefaults, close_workspace_session,
-    create_workspace_session,
-};
+use crate::workspace::{WorkspaceSessionError, close_workspace_session};
 
 const PLUGIN_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -129,6 +126,50 @@ impl CapabilityServiceImpl {
     }
 }
 
+fn agent_workspace_active_session(
+    workspace: &AgentWorkspaceState,
+    metadata: HashMap<String, String>,
+) -> Option<Session> {
+    let active_tab = workspace.active_tab_id.as_deref();
+    let tab = active_tab
+        .and_then(|tab_id| {
+            workspace
+                .tabs
+                .iter()
+                .find(|tab| tab.id.as_deref() == Some(tab_id))
+        })
+        .or_else(|| workspace.tabs.last())?;
+    let active_pane = tab.active_pane_id.as_deref();
+    let pane = active_pane
+        .and_then(|pane_id| {
+            tab.panes
+                .iter()
+                .find(|pane| pane.id.as_deref() == Some(pane_id))
+        })
+        .or_else(|| tab.panes.last())?;
+    Some(session_from_agent_pane(
+        workspace.selector.as_deref().unwrap_or_default(),
+        pane,
+        metadata,
+    ))
+}
+
+fn session_from_agent_pane(
+    selector: &str,
+    pane: &AgentPaneState,
+    metadata: HashMap<String, String>,
+) -> Session {
+    Session {
+        id: pane.session_id.clone(),
+        selector: Some(selector.to_owned()),
+        status: pane.status.clone().or_else(|| Some("running".to_owned())),
+        cols: pane.cols,
+        rows: pane.rows,
+        metadata,
+        ..Default::default()
+    }
+}
+
 impl CapabilityService for CapabilityServiceImpl {
     async fn list_instances(
         &self,
@@ -172,38 +213,26 @@ impl CapabilityService for CapabilityServiceImpl {
             .iter()
             .map(|entry| (entry.0.to_owned(), entry.1.to_owned()))
             .collect();
-        let restartable = metadata
-            .get("autoRestart")
-            .or_else(|| metadata.get("restartable"))
-            .and_then(|value| bool_flag(value))
-            .unwrap_or(false);
         let output_limit = output_frame_limit_from_metadata(&metadata);
-        let defaults = WorkspaceTerminalDefaults::new(
-            cols,
-            rows,
-            output_limit,
-            restartable,
-            &login_user,
-            SessionBackend::Webshell,
-        );
-        let created = create_workspace_session(&self.state, selector, &defaults, metadata)
-            .map_err(connect_workspace_error)?;
-        let mut record = created.session;
-        if let Err(err) = self
-            .state
-            .sessions
-            .open_terminal(record.terminal_spec(cols, rows), true)
-        {
-            if let Ok(closed) = close_workspace_session(&self.state, &record.id) {
-                self.state
-                    .sessions
-                    .close_sessions(closed.closed_session_ids.iter().map(String::as_str));
-            }
-            return Err(ConnectError::internal(err.to_string()));
-        }
-        self.state.sessions.mark_status(&record.id, "running");
-        "running".clone_into(&mut record.status);
-        let session = record.to_proto();
+        let agent = ensure_agent(selector, &login_user)
+            .await
+            .map_err(|err| ConnectError::unavailable(err.to_string()))?;
+        let workspace = agent
+            .action(
+                cols,
+                rows,
+                output_limit,
+                AgentWorkspaceAction {
+                    action: Some(
+                        AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB.into(),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|err| ConnectError::internal(err.to_string()))?;
+        let session = agent_workspace_active_session(&workspace, metadata)
+            .ok_or_else(|| ConnectError::internal("agent did not create a session"))?;
         ConnectResponse::ok(CreateSessionResponse {
             session: MessageField::some(session),
             ..Default::default()

@@ -13,19 +13,21 @@ use axum::response::{IntoResponse, Response};
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::agent_client::ensure_agent;
+use crate::agent_protocol::{
+    detach_frame, input_frame, read_agent_frame_async, resize_frame, write_agent_frame_async,
+};
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
 use crate::lightos;
-use crate::state::{
-    AppState, bool_flag, default_session_command_for_user, host_from_selector, mark_session_status,
-    sync_session_login_user,
-};
+use crate::proto::lazycat::webshell::v1::{AgentControlType, AgentFrame, AgentFrameType};
+use crate::state::{AppState, bool_flag, mark_session_status, sync_session_login_user};
 use crate::terminal_manager::{
     ManagedTerminal, OutputBuffer, OutputFrame, TerminalEvent, TerminalSpec,
 };
@@ -47,6 +49,7 @@ pub struct TerminalQuery {
     after: Option<u64>,
     output_limit: Option<usize>,
     pane_id: Option<String>,
+    backend: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,13 +121,28 @@ enum TerminalServerMessage<'a> {
     },
 }
 
-struct TerminalAttachTarget {
+enum TerminalAttachTarget {
+    Agent(AgentTerminalAttachTarget),
+    Managed(ManagedTerminalAttachTarget),
+}
+
+struct ManagedTerminalAttachTarget {
     spec: TerminalSpec,
     allow_spawn: bool,
     replay: bool,
     replay_after: u64,
     pane_id: Option<String>,
     output: Arc<OutputBuffer>,
+}
+
+struct AgentTerminalAttachTarget {
+    selector: String,
+    username: String,
+    pane_id: Option<String>,
+    cols: u16,
+    rows: u16,
+    replay_after: u64,
+    output_limit: usize,
 }
 
 struct TerminalReplayContext<'a> {
@@ -217,6 +235,12 @@ async fn handle_terminal_socket(
             let _ = send_terminal_error(&mut sender, message, true).await;
             return Err(err);
         }
+    };
+    let target = match target {
+        TerminalAttachTarget::Agent(target) => {
+            return serve_agent_terminal(sender, receiver, target).await;
+        }
+        TerminalAttachTarget::Managed(target) => target,
     };
     let ready_cols = target.spec.cols;
     let ready_rows = target.spec.rows;
@@ -321,6 +345,335 @@ async fn serve_open_terminal(
     }
 
     Ok(())
+}
+
+async fn serve_agent_terminal(
+    mut sender: TerminalSender,
+    mut receiver: TerminalReceiver,
+    target: AgentTerminalAttachTarget,
+) -> anyhow::Result<()> {
+    let agent = match ensure_agent(&target.selector, &target.username).await {
+        Ok(agent) => agent,
+        Err(err) => {
+            send_terminal_error(
+                &mut sender,
+                format!("failed to start webshell agent: {err}"),
+                true,
+            )
+            .await?;
+            return Err(err);
+        }
+    };
+    let pane_id = target.pane_id.as_deref().unwrap_or_default();
+    let mut command = agent.attach_command(
+        pane_id,
+        target.cols,
+        target.rows,
+        target.output_limit,
+        target.replay_after,
+    );
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|err| anyhow!("failed to start webshell agent attach: {err}"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("failed to open agent attach stdin"))?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("failed to open agent attach stdout"))?;
+    let mut stderr = child.stderr.take();
+    let stderr_task = tokio::spawn(async move {
+        let mut text = String::new();
+        if let Some(stderr) = stderr.as_mut() {
+            let _ = stderr.read_to_string(&mut text).await;
+        }
+        text
+    });
+    let mut wait_task = tokio::spawn(async move { child.wait().await });
+    let mut pending_clipboard_image = None;
+
+    loop {
+        tokio::select! {
+            frame = read_agent_frame_async(&mut stdout) => {
+                match frame {
+                    Ok(frame) => {
+                        if !handle_agent_frame(&mut sender, &target, frame).await? {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        if err.kind() != std::io::ErrorKind::UnexpectedEof {
+                            send_terminal_error(&mut sender, format!("agent attach stream failed: {err}"), true).await?;
+                        }
+                        break;
+                    }
+                }
+            }
+            Some(message) = receiver.next() => {
+                if !handle_agent_client_message(
+                    &mut sender,
+                    &target,
+                    &mut stdin,
+                    &mut pending_clipboard_image,
+                    message?,
+                ).await? {
+                    break;
+                }
+            }
+            result = &mut wait_task => {
+                match result {
+                    Ok(Ok(status)) => {
+                        if !status.success() {
+                            let stderr = stderr_task.await.unwrap_or_default();
+                            send_terminal_error(&mut sender, stderr.trim().to_owned(), true).await?;
+                        }
+                    }
+                    Ok(Err(err)) => {
+                        send_terminal_error(&mut sender, format!("agent attach exited: {err}"), true).await?;
+                    }
+                    Err(err) => {
+                        send_terminal_error(&mut sender, format!("agent attach wait failed: {err}"), true).await?;
+                    }
+                }
+                break;
+            }
+            else => break,
+        }
+    }
+
+    let _ = write_agent_frame_async(&mut stdin, &detach_frame()).await;
+    Ok(())
+}
+
+async fn handle_agent_frame(
+    sender: &mut TerminalSender,
+    target: &AgentTerminalAttachTarget,
+    frame: AgentFrame,
+) -> anyhow::Result<bool> {
+    match frame.r#type.as_ref().and_then(|kind| kind.as_known()) {
+        Some(AgentFrameType::AGENT_FRAME_TYPE_BINARY) => {
+            if sender
+                .send(Message::Binary(frame.payload.unwrap_or_default().into()))
+                .await
+                .is_err()
+            {
+                return Ok(false);
+            }
+            if let Some(sequence) = frame.sequence.and_then(|value| u64::try_from(value).ok()) {
+                send_control(sender, &TerminalServerMessage::OutputSequence { sequence }).await?;
+            }
+        }
+        Some(AgentFrameType::AGENT_FRAME_TYPE_TEXT) if frame.control.is_set() => {
+            return handle_agent_control_frame(sender, target, frame).await;
+        }
+        Some(AgentFrameType::AGENT_FRAME_TYPE_TEXT) => {
+            let payload = frame.payload.unwrap_or_default();
+            let text = String::from_utf8_lossy(&payload).into_owned();
+            if sender.send(Message::Text(text.into())).await.is_err() {
+                return Ok(false);
+            }
+        }
+        _ => {}
+    }
+    Ok(true)
+}
+
+async fn handle_agent_control_frame(
+    sender: &mut TerminalSender,
+    target: &AgentTerminalAttachTarget,
+    frame: AgentFrame,
+) -> anyhow::Result<bool> {
+    let Some(control) = frame.control.into_option() else {
+        return Ok(true);
+    };
+    match control.r#type.as_ref().and_then(|kind| kind.as_known()) {
+        Some(AgentControlType::AGENT_CONTROL_TYPE_REPLAY_START) => {
+            let session_id = control.session_id.as_deref().unwrap_or_default();
+            let selector = control.selector.as_deref().unwrap_or(&target.selector);
+            send_control(
+                sender,
+                &TerminalServerMessage::Ready {
+                    session_id,
+                    selector,
+                    cols: target.cols,
+                    rows: target.rows,
+                },
+            )
+            .await?;
+            send_control(
+                sender,
+                &TerminalServerMessage::ReplayStart {
+                    session_id,
+                    selector,
+                    pane_id: control.pane_id.as_deref(),
+                    replay_after: control
+                        .replay_after
+                        .and_then(|value| u64::try_from(value).ok())
+                        .unwrap_or(0),
+                },
+            )
+            .await?;
+        }
+        Some(AgentControlType::AGENT_CONTROL_TYPE_REPLAY_COMPLETE) => {
+            send_control(
+                sender,
+                &TerminalServerMessage::ReplayComplete {
+                    session_id: control.session_id.as_deref().unwrap_or_default(),
+                    selector: control.selector.as_deref().unwrap_or(&target.selector),
+                    pane_id: control.pane_id.as_deref(),
+                    last_sequence: control
+                        .last_sequence
+                        .and_then(|value| u64::try_from(value).ok())
+                        .unwrap_or(0),
+                },
+            )
+            .await?;
+        }
+        Some(AgentControlType::AGENT_CONTROL_TYPE_PROCESS_EXIT) => {
+            send_control(
+                sender,
+                &TerminalServerMessage::ProcessExit {
+                    exit_code: control.exit_code.unwrap_or(-1),
+                    message: control.message,
+                },
+            )
+            .await?;
+            return Ok(false);
+        }
+        _ => {}
+    }
+    Ok(true)
+}
+
+async fn handle_agent_client_message<W>(
+    sender: &mut TerminalSender,
+    target: &AgentTerminalAttachTarget,
+    stdin: &mut W,
+    pending_clipboard_image: &mut Option<PendingClipboardImage>,
+    message: Message,
+) -> anyhow::Result<bool>
+where
+    W: AsyncWrite + Unpin,
+{
+    match message {
+        Message::Binary(data) => {
+            if let Some(pending) = pending_clipboard_image.take() {
+                match stage_clipboard_image_path_for_agent(target, &pending, data.as_ref()).await {
+                    Ok(path) => {
+                        write_agent_frame_async(stdin, &input_frame(path.into_bytes())).await?;
+                    }
+                    Err(err) => {
+                        warn!(error = %err, "failed to paste clipboard image through agent");
+                        send_terminal_error(sender, err.to_string(), false).await?;
+                    }
+                }
+                return Ok(true);
+            }
+            write_agent_frame_async(stdin, &input_frame(data.to_vec())).await?;
+            Ok(true)
+        }
+        Message::Text(text) => {
+            handle_agent_control_message(stdin, pending_clipboard_image, &text).await
+        }
+        Message::Close(_) => Ok(false),
+        Message::Ping(payload) => {
+            let _ = sender.send(Message::Pong(payload)).await;
+            Ok(true)
+        }
+        Message::Pong(_) => Ok(true),
+    }
+}
+
+async fn handle_agent_control_message<W>(
+    stdin: &mut W,
+    pending_clipboard_image: &mut Option<PendingClipboardImage>,
+    text: &str,
+) -> anyhow::Result<bool>
+where
+    W: AsyncWrite + Unpin,
+{
+    if pending_clipboard_image.is_some() {
+        pending_clipboard_image.take();
+        return Err(anyhow!("clipboard image binary frame expected"));
+    }
+
+    if let Some(rest) = text.strip_prefix("input:") {
+        write_agent_frame_async(stdin, &input_frame(rest.as_bytes().to_vec())).await?;
+        return Ok(true);
+    }
+
+    if let Some(rest) = text.strip_prefix("resize:") {
+        let (cols, rows) = parse_resize_payload(rest)?;
+        write_agent_frame_async(stdin, &resize_frame(cols, rows)).await?;
+        return Ok(true);
+    }
+
+    match serde_json::from_str::<TerminalClientMessage>(text) {
+        Ok(TerminalClientMessage::Input { data }) => {
+            write_agent_frame_async(stdin, &input_frame(data.into_bytes())).await?;
+            Ok(true)
+        }
+        Ok(TerminalClientMessage::Resize { cols, rows }) => {
+            write_agent_frame_async(stdin, &resize_frame(cols, rows)).await?;
+            Ok(true)
+        }
+        Ok(TerminalClientMessage::ClipboardImage { extension, size }) => {
+            if size == 0 {
+                return Err(anyhow!("clipboard image payload is empty"));
+            }
+            if size > MAX_CLIPBOARD_IMAGE_BYTES {
+                return Err(anyhow!(
+                    "clipboard image exceeds {MAX_CLIPBOARD_IMAGE_BYTES} bytes"
+                ));
+            }
+            *pending_clipboard_image = Some(PendingClipboardImage { extension, size });
+            Ok(true)
+        }
+        Ok(
+            TerminalClientMessage::RestartPolicy { .. }
+            | TerminalClientMessage::OutputBuffer { .. },
+        ) => Ok(true),
+        Ok(TerminalClientMessage::Close) => {
+            write_agent_frame_async(stdin, &detach_frame()).await?;
+            Ok(false)
+        }
+        Err(_) => {
+            warn!(message = ?text, "ignored non-control agent websocket text frame");
+            Ok(true)
+        }
+    }
+}
+
+async fn stage_clipboard_image_path_for_agent(
+    target: &AgentTerminalAttachTarget,
+    pending: &PendingClipboardImage,
+    data: &[u8],
+) -> anyhow::Result<String> {
+    if data.is_empty() {
+        return Err(anyhow!("clipboard image payload is empty"));
+    }
+    if data.len() != pending.size {
+        return Err(anyhow!(
+            "clipboard image size mismatch: expected {} bytes, got {} bytes",
+            pending.size,
+            data.len()
+        ));
+    }
+    if data.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+        return Err(anyhow!(
+            "clipboard image exceeds {MAX_CLIPBOARD_IMAGE_BYTES} bytes"
+        ));
+    }
+
+    let remote_path = remote_clipboard_image_path(&pending.extension);
+    stage_clipboard_image(&target.selector, &remote_path, data).await?;
+    Ok(remote_path)
 }
 
 async fn replay_stopped_terminal(
@@ -793,6 +1146,36 @@ async fn resolve_terminal_target(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
+    let backend = query
+        .backend
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("webshell");
+    if backend == "webshell" {
+        let selector = query
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("name is required for webshell agent attach"))?;
+        validate_selector(selector).map_err(|err| anyhow!(err.message.unwrap_or_default()))?;
+        let cols = query.cols.unwrap_or(DEFAULT_COLS);
+        let rows = query.rows.unwrap_or(DEFAULT_ROWS);
+        validate_size(cols, rows)?;
+        let username = authorize_terminal_selector(selector, true).await?;
+        let output_limit = normalize_output_frame_limit(query.output_limit);
+        return Ok(TerminalAttachTarget::Agent(AgentTerminalAttachTarget {
+            selector: selector.to_owned(),
+            username,
+            pane_id,
+            cols,
+            rows,
+            replay_after: if replay { replay_after } else { u64::MAX },
+            output_limit,
+        }));
+    }
+
     if let Some(session_id) = query
         .session_id
         .as_deref()
@@ -805,49 +1188,19 @@ async fn resolve_terminal_target(
         let login_user = authorize_terminal_selector(&spec.selector, allow_spawn).await?;
         let spec = refresh_persisted_terminal_login_user(state, session_id, spec, &login_user)?;
         let output = state.output_buffer(session_id, spec.output_frame_limit);
-        return Ok(TerminalAttachTarget {
+        return Ok(TerminalAttachTarget::Managed(ManagedTerminalAttachTarget {
             spec,
             allow_spawn,
             replay,
             replay_after,
             pane_id,
             output,
-        });
+        }));
     }
 
-    let selector = query
-        .name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("name or session_id is required"))?;
-    validate_selector(selector).map_err(|err| anyhow!(err.message.unwrap_or_default()))?;
-    let cols = query.cols.unwrap_or(DEFAULT_COLS);
-    let rows = query.rows.unwrap_or(DEFAULT_ROWS);
-    validate_size(cols, rows)?;
-    let host = host_from_selector(selector);
-    let login_user = authorize_terminal_selector(selector, true).await?;
-    let (command, args) = default_session_command_for_user(selector, &login_user);
-    let output_limit = normalize_output_frame_limit(query.output_limit);
-    let session_id = Uuid::new_v4().to_string();
-    let output = state.output_buffer(&session_id, output_limit);
-    Ok(TerminalAttachTarget {
-        spec: TerminalSpec {
-            session_id,
-            host,
-            selector: selector.to_owned(),
-            command,
-            args,
-            cols,
-            rows,
-            output_frame_limit: output_limit,
-        },
-        allow_spawn: true,
-        replay,
-        replay_after,
-        pane_id,
-        output,
-    })
+    Err(anyhow!(
+        "session_id is required for {backend} terminal attach"
+    ))
 }
 
 fn persisted_terminal_target(
