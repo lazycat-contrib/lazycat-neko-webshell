@@ -197,7 +197,7 @@ impl AgentDaemon {
         let (cols, rows) = request_size(request).map_err(|err| err.to_string())?;
         let output_limit = request_output_limit(request);
         workspace
-            .ensure_state(cols, rows, output_limit)
+            .snapshot_state(cols, rows, output_limit)
             .map(state_response)
             .map_err(|err| err.to_string())
     }

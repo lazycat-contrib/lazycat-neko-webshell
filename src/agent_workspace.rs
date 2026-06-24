@@ -217,6 +217,17 @@ impl AgentWorkspace {
         Ok(inner.snapshot())
     }
 
+    pub fn snapshot_state(
+        &self,
+        cols: u16,
+        rows: u16,
+        output_limit: usize,
+    ) -> anyhow::Result<AgentWorkspaceState> {
+        let mut inner = self.lock_inner()?;
+        inner.update_existing_panes(cols, rows, output_limit)?;
+        Ok(inner.snapshot())
+    }
+
     pub fn apply_action(
         &self,
         action: &AgentWorkspaceAction,
@@ -225,7 +236,15 @@ impl AgentWorkspace {
         output_limit: usize,
     ) -> anyhow::Result<AgentWorkspaceState> {
         let mut inner = self.lock_inner()?;
-        inner.ensure_ready(cols, rows, output_limit)?;
+        let action_kind = action_kind(action)?;
+        if matches!(
+            action_kind,
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB
+        ) {
+            inner.update_existing_panes(cols, rows, output_limit)?;
+        } else {
+            inner.ensure_ready(cols, rows, output_limit)?;
+        }
         inner.apply_action(action, cols, rows, output_limit)?;
         Ok(inner.snapshot())
     }
@@ -271,10 +290,20 @@ impl AgentWorkspace {
 
 impl AgentWorkspaceInner {
     fn ensure_ready(&mut self, cols: u16, rows: u16, output_limit: usize) -> anyhow::Result<()> {
-        validate_size(cols, rows)?;
+        self.update_existing_panes(cols, rows, output_limit)?;
         if self.tabs.is_empty() {
             self.create_tab(cols, rows, output_limit)?;
         }
+        Ok(())
+    }
+
+    fn update_existing_panes(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        output_limit: usize,
+    ) -> anyhow::Result<()> {
+        validate_size(cols, rows)?;
         let output_limit = normalize_output_frame_limit(Some(output_limit));
         for pane in self.panes.values() {
             pane.set_output_limit(output_limit);
@@ -977,5 +1006,46 @@ mod tests {
             Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_PANE)
         );
         assert_eq!(layout.pane_id.as_deref(), Some("pane-1"));
+    }
+
+    #[test]
+    fn create_tab_after_closing_last_tab_creates_one_tab() {
+        let workspace = AgentWorkspace::new("demo@owner", "");
+        let initial = workspace
+            .ensure_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+        let tab_id = initial.tabs[0].id.clone().unwrap();
+
+        let closed = workspace
+            .apply_action(
+                &AgentWorkspaceAction {
+                    action: Some(
+                        AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CLOSE_TAB.into(),
+                    ),
+                    tab_id: Some(tab_id),
+                    ..Default::default()
+                },
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                32,
+            )
+            .unwrap();
+        assert_eq!(closed.tabs.len(), 0);
+
+        let created = workspace
+            .apply_action(
+                &AgentWorkspaceAction {
+                    action: Some(
+                        AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB.into(),
+                    ),
+                    ..Default::default()
+                },
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                32,
+            )
+            .unwrap();
+
+        assert_eq!(created.tabs.len(), 1);
     }
 }
