@@ -26,7 +26,6 @@ import {
 } from "./appearance-settings";
 import { updateViewportMetrics as applyViewportMetrics } from "./app-viewport";
 import { TerminalActionWSClient } from "./action-ws-client";
-import { appTitleWithVersion } from "./about-view";
 import { appendAIContextText, recentAIContextText } from "./ai-context";
 import {
   emptyAiMcpServer,
@@ -147,6 +146,7 @@ import type {
   AIChatMessage,
   AIChatSession,
   AiMcpServerSettings,
+  AiProviderProfile,
   ClipboardImagePayload,
   FileBrowserEntry,
   FontPreset,
@@ -210,8 +210,9 @@ const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
 const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
+const MAX_AI_PROVIDER_PROFILES = 12;
 type AISettingsTab = "ai" | "mcp";
-type AIConfigDialogState = { type: "ai" } | { type: "mcp"; index: number };
+type AIConfigDialogState = { type: "ai"; profileId?: string; isNew?: boolean } | { type: "mcp"; index: number };
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -251,6 +252,7 @@ const aiChat = new AIChatStore();
 const fileBrowser = new FileBrowserStore();
 let activeAISettingsTab: AISettingsTab = "ai";
 let aiConfigDialog: AIConfigDialogState | undefined;
+let aiProviderPickerOpen = false;
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
@@ -280,6 +282,7 @@ init().catch((error) => setGlobalStatus(tr("status.startupFailed", { message: er
 async function init() {
   updateViewportMetrics();
   settings = await loadSettings();
+  syncActiveAiProviderProfile();
   await loadUploadedFonts();
   renderOptions();
   bindSettings();
@@ -298,7 +301,13 @@ async function init() {
 }
 
 function saveSettings() {
-  persistSettings(settings);
+  syncActiveAiProviderProfile();
+  void persistSettings(settings);
+}
+
+function flushSettings(): Promise<void> {
+  syncActiveAiProviderProfile();
+  return persistSettings(settings);
 }
 
 function tr(key: MessageKey, values?: Record<string, string | number>): string {
@@ -359,9 +368,6 @@ function applyI18n() {
   document.querySelectorAll<HTMLElement>("[data-i18n-aria]").forEach((element) => {
     const key = element.dataset.i18nAria as MessageKey | undefined;
     if (key) element.setAttribute("aria-label", tr(key));
-  });
-  document.querySelectorAll<HTMLElement>("[data-app-title-tip]").forEach((element) => {
-    element.title = appTitleWithVersion(tr("app.title"));
   });
 }
 
@@ -450,9 +456,14 @@ function bindSettings() {
     if (openConfigButton) {
       const type = openConfigButton.dataset.aiConfigOpen === "mcp" ? "mcp" : "ai";
       activeAISettingsTab = type === "mcp" ? "mcp" : "ai";
+      const isNewAiProfile = openConfigButton.dataset.aiProfileNew === "true" || !activeAiProviderProfile();
       aiConfigDialog = type === "mcp"
         ? { type, index: Number(openConfigButton.dataset.aiMcpIndex ?? "-1") }
-        : { type };
+        : {
+          type,
+          profileId: isNewAiProfile ? newId() : openConfigButton.dataset.aiProfileId || activeAiProviderProfile()?.id,
+          isNew: isNewAiProfile,
+        };
       renderPluginSettings();
       return;
     }
@@ -464,6 +475,11 @@ function bindSettings() {
     const removeMcpButton = target?.closest<HTMLButtonElement>("[data-ai-mcp-remove]");
     if (removeMcpButton) {
       removeAiMcpServer(Number(removeMcpButton.dataset.aiMcpRemove));
+      return;
+    }
+    const removeProfileButton = target?.closest<HTMLButtonElement>("[data-ai-profile-remove]");
+    if (removeProfileButton) {
+      removeAiProviderProfile(removeProfileButton.dataset.aiProfileRemove ?? "");
       return;
     }
     const closeConfigTarget = target?.closest<HTMLElement>("[data-ai-config-close]");
@@ -557,10 +573,23 @@ function bindSettings() {
       updateAISetting(aiSettingButton.dataset.aiChatSetting ?? "", aiSettingButton.dataset.aiChatValue ?? "");
       return;
     }
+    const providerSelectButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-ai-profile-select]")
+      : null;
+    if (providerSelectButton) {
+      selectAiProviderProfile(providerSelectButton.dataset.aiProfileSelect ?? "");
+      return;
+    }
     const aiButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-ai-action]")
       : null;
-    if (!aiButton) return;
+    if (!aiButton) {
+      if (aiProviderPickerOpen && !(event.target instanceof Element && event.target.closest(".ai-provider-picker-shell"))) {
+        aiProviderPickerOpen = false;
+        renderPluginTools();
+      }
+      return;
+    }
     const action = aiButton.dataset.aiAction ?? "";
     if (action === "send-chat") {
       void runAIChat();
@@ -568,6 +597,8 @@ function bindSettings() {
       void copyAIOutput();
     } else if (action === "copy-message") {
       void copyAIMessage(Number(aiButton.dataset.aiMessageIndex));
+    } else if (action === "copy-code") {
+      void copyAICodeBlock(aiButton);
     } else if (action === "clear-output") {
       clearAIOutput();
     } else if (action === "new-chat") {
@@ -578,6 +609,9 @@ function bindSettings() {
       void fetchAIModels();
     } else if (action === "test") {
       void testAIAccess();
+    } else if (action === "toggle-provider-menu") {
+      aiProviderPickerOpen = !aiProviderPickerOpen;
+      renderPluginTools();
     }
   });
   elements.pluginToolBody.addEventListener("contextmenu", (event) => {
@@ -2024,6 +2058,8 @@ function renderPluginSettings() {
       apiKey: settings.aiApiKey,
       model: settings.aiModel,
       modelOptions: aiChat.modelOptions,
+      profiles: settings.aiProviderProfiles,
+      activeProfileId: settings.aiActiveProviderProfileId,
       mcpServers,
       activeTab: activeAISettingsTab,
       dialog: aiConfigDialog
@@ -2033,10 +2069,14 @@ function renderPluginSettings() {
             server: aiConfigDialog.index >= 0 ? mcpServers[aiConfigDialog.index] ?? emptyAiMcpServer() : emptyAiMcpServer(),
             headersText: headersToText(aiConfigDialog.index >= 0 ? mcpServers[aiConfigDialog.index]?.headers ?? {} : {}),
           }
-          : aiConfigDialog
+          : {
+            type: "ai",
+            profile: aiConfigDialog.isNew
+              ? newAiProviderProfile(aiConfigDialog.profileId)
+              : aiProviderProfileById(aiConfigDialog.profileId) ?? activeAiProviderProfile() ?? newAiProviderProfile(),
+            isNew: Boolean(aiConfigDialog.isNew),
+          }
         : undefined,
-      sendContext: settings.aiSendTerminalContext,
-      contextLines: settings.aiContextLines,
     },
     tr,
   });
@@ -2098,7 +2138,7 @@ function renderFileTransferTool(plugin: PluginDescriptor): string {
 
 function renderAIChatTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
-  const session = ensureAIChatSession(currentAIModel());
+  const session = ensureAIChatSession(currentAIChatModelKey());
   return renderAIChatToolView({
     disabled,
     title: tr("plugin.aiChat.name"),
@@ -2110,6 +2150,9 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
     selectedModel: currentAIModel(),
     sessionOptions: aiChatSessionsForModel(session.model).map((item) => ({ value: item.id, label: item.title })),
     selectedSessionId: aiChat.activeSessionId,
+    providerProfiles: settings.aiProviderProfiles,
+    activeProviderProfileId: settings.aiActiveProviderProfileId,
+    providerPickerOpen: aiProviderPickerOpen,
     tr,
   });
 }
@@ -2215,24 +2258,165 @@ async function uploadFileTransfer(files: File[]) {
   }
 }
 
+function normalizeAiProviderValue(value: string): string {
+  return value === "openai-responses" || value === "anthropic"
+    ? value
+    : DEFAULT_SETTINGS.aiProvider;
+}
+
+function aiProviderProfileById(profileId: string | undefined): AiProviderProfile | undefined {
+  if (!profileId) return undefined;
+  return settings.aiProviderProfiles.find((profile) => profile.id === profileId);
+}
+
+function activeAiProviderProfile(): AiProviderProfile | undefined {
+  return aiProviderProfileById(settings.aiActiveProviderProfileId) ?? settings.aiProviderProfiles[0];
+}
+
+function newAiProviderProfile(profileId = newId()): AiProviderProfile {
+  return {
+    id: profileId,
+    name: `Provider ${settings.aiProviderProfiles.length + 1}`,
+    provider: DEFAULT_SETTINGS.aiProvider,
+    baseUrl: "",
+    apiKey: "",
+    model: "",
+  };
+}
+
+function syncActiveAiProviderProfile() {
+  settings.aiProviderProfiles = settings.aiProviderProfiles
+    .slice(0, MAX_AI_PROVIDER_PROFILES)
+    .map((profile, index) => sanitizeAiProviderProfile(profile, index));
+  const activeProfile = activeAiProviderProfile();
+  settings.aiActiveProviderProfileId = activeProfile?.id ?? "";
+  settings.aiProvider = activeProfile?.provider ?? DEFAULT_SETTINGS.aiProvider;
+  settings.aiBaseUrl = activeProfile?.baseUrl ?? "";
+  settings.aiApiKey = activeProfile?.apiKey ?? "";
+  settings.aiModel = activeProfile?.model ?? "";
+}
+
+function sanitizeAiProviderProfile(profile: AiProviderProfile, index: number): AiProviderProfile {
+  return {
+    id: profile.id.trim() || (index === 0 ? "default" : `provider-${index + 1}`),
+    name: profile.name.trim().slice(0, 48) || `Provider ${index + 1}`,
+    provider: normalizeAiProviderValue(profile.provider),
+    baseUrl: profile.baseUrl.trim(),
+    apiKey: profile.apiKey,
+    model: profile.model.trim(),
+  };
+}
+
+function updateActiveAiProviderProfile(patch: Partial<Omit<AiProviderProfile, "id">>) {
+  const activeProfile = activeAiProviderProfile() ?? {
+    id: settings.aiActiveProviderProfileId || "default",
+    name: "Default",
+    provider: settings.aiProvider,
+    baseUrl: settings.aiBaseUrl,
+    apiKey: settings.aiApiKey,
+    model: settings.aiModel,
+  };
+  const nextProfile = sanitizeAiProviderProfile({ ...activeProfile, ...patch }, 0);
+  const profiles = settings.aiProviderProfiles.length ? [...settings.aiProviderProfiles] : [activeProfile];
+  const existingIndex = profiles.findIndex((profile) => profile.id === activeProfile.id);
+  if (existingIndex >= 0) {
+    profiles[existingIndex] = nextProfile;
+  } else {
+    profiles.unshift(nextProfile);
+  }
+  settings.aiProviderProfiles = profiles;
+  settings.aiActiveProviderProfileId = nextProfile.id;
+  syncActiveAiProviderProfile();
+}
+
+function upsertAiProviderProfile(profile: AiProviderProfile) {
+  const existingIndex = settings.aiProviderProfiles.findIndex((item) => item.id === profile.id);
+  const sanitized = sanitizeAiProviderProfile(profile, existingIndex >= 0 ? existingIndex : settings.aiProviderProfiles.length);
+  const profiles = [...settings.aiProviderProfiles];
+  if (existingIndex >= 0) {
+    profiles[existingIndex] = sanitized;
+  } else {
+    profiles.push(sanitized);
+  }
+  settings.aiProviderProfiles = profiles.slice(0, MAX_AI_PROVIDER_PROFILES);
+  settings.aiActiveProviderProfileId = sanitized.id;
+  syncActiveAiProviderProfile();
+}
+
+function readAiProviderProfileFromDialog(existing: AiProviderProfile | undefined, isNew: boolean): AiProviderProfile {
+  const profileId = existing?.id
+    ?? (aiConfigDialog?.type === "ai" ? aiConfigDialog.profileId : undefined)
+    ?? newId();
+  const fallbackName = existing?.name || (isNew ? `Provider ${settings.aiProviderProfiles.length + 1}` : "Default");
+  return {
+    id: profileId,
+    name: aiDialogStringField("profileName").trim() || fallbackName,
+    provider: normalizeAiProviderValue(aiDialogStringField("provider")),
+    baseUrl: aiDialogStringField("baseUrl").trim(),
+    apiKey: aiDialogStringField("apiKey"),
+    model: aiDialogStringField("model").trim(),
+  };
+}
+
+function aiProviderConnectionChanged(previous: AiProviderProfile, next: AiProviderProfile): boolean {
+  return previous.provider !== next.provider
+    || previous.baseUrl !== next.baseUrl
+    || previous.apiKey !== next.apiKey;
+}
+
+function selectAiProviderProfile(profileId: string) {
+  if (aiChat.streaming) return;
+  if (!aiProviderProfileById(profileId)) return;
+  settings.aiActiveProviderProfileId = profileId;
+  syncActiveAiProviderProfile();
+  aiProviderPickerOpen = false;
+  aiChat.modelOptions = [];
+  aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
+  saveSettings();
+  renderPlugins();
+}
+
+function removeAiProviderProfile(profileId: string) {
+  if (aiChat.streaming || settings.aiProviderProfiles.length <= 1) return;
+  const nextProfiles = settings.aiProviderProfiles.filter((profile) => profile.id !== profileId);
+  if (nextProfiles.length === settings.aiProviderProfiles.length) return;
+  settings.aiProviderProfiles = nextProfiles;
+  if (settings.aiActiveProviderProfileId === profileId) {
+    settings.aiActiveProviderProfileId = nextProfiles[0]?.id ?? "";
+  }
+  syncActiveAiProviderProfile();
+  aiConfigDialog = undefined;
+  aiProviderPickerOpen = false;
+  aiChat.modelOptions = [];
+  aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
+  saveSettings();
+  setPluginStatus(tr("status.aiConfigSaved"), "ok");
+  renderPlugins();
+}
+
 function updateAISetting(field: string, value: string) {
   if (field === "provider") {
-    settings.aiProvider = value || DEFAULT_SETTINGS.aiProvider;
+    updateActiveAiProviderProfile({
+      provider: normalizeAiProviderValue(value),
+    });
+    aiChat.modelOptions = [];
   } else if (field === "baseUrl") {
-    settings.aiBaseUrl = value.trim();
+    updateActiveAiProviderProfile({
+      baseUrl: value.trim(),
+    });
     aiChat.modelOptions = [];
   } else if (field === "apiKey") {
-    settings.aiApiKey = value;
+    updateActiveAiProviderProfile({
+      apiKey: value,
+    });
     aiChat.modelOptions = [];
   } else if (field === "model") {
-    settings.aiModel = value.trim();
-    aiChat.activeSessionId = ensureAIChatSession(currentAIModel()).id;
+    updateActiveAiProviderProfile({
+      model: value.trim(),
+    });
+    aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
   } else if (field === "session") {
     aiChat.activeSessionId = value;
-  } else if (field === "sendContext") {
-    settings.aiSendTerminalContext = value === "true";
-  } else if (field === "contextLines") {
-    settings.aiContextLines = Math.round(clampNumber(value, 0, 200, DEFAULT_SETTINGS.aiContextLines));
   }
   saveSettings();
   renderPlugins();
@@ -2240,25 +2424,17 @@ function updateAISetting(field: string, value: string) {
 
 function saveAIConfigDialog(type: string) {
   if (!aiConfigDialog || aiConfigDialog.type !== type) return;
-  if (type === "ai") {
-    const previousProvider = settings.aiProvider;
-    const previousBaseUrl = settings.aiBaseUrl;
-    const previousApiKey = settings.aiApiKey;
-    const provider = aiDialogStringField("provider") || DEFAULT_SETTINGS.aiProvider;
-    settings.aiProvider = provider === "openai-responses" || provider === "anthropic" ? provider : "openai-compatible";
-    settings.aiBaseUrl = aiDialogStringField("baseUrl").trim();
-    settings.aiApiKey = aiDialogStringField("apiKey");
-    settings.aiModel = aiDialogStringField("model").trim();
-    settings.aiSendTerminalContext = aiDialogCheckboxField("sendContext");
-    settings.aiContextLines = Math.round(clampNumber(aiDialogStringField("contextLines"), 0, 200, DEFAULT_SETTINGS.aiContextLines));
-    if (
-      previousProvider !== settings.aiProvider
-      || previousBaseUrl !== settings.aiBaseUrl
-      || previousApiKey !== settings.aiApiKey
-    ) {
+  const dialog = aiConfigDialog;
+  if (dialog.type === "ai") {
+    const existing = !dialog.isNew
+      ? aiProviderProfileById(dialog.profileId)
+      : undefined;
+    const profile = readAiProviderProfileFromDialog(existing, Boolean(dialog.isNew));
+    upsertAiProviderProfile(profile);
+    if (!existing || aiProviderConnectionChanged(existing, profile)) {
       aiChat.modelOptions = [];
     }
-    aiChat.activeSessionId = ensureAIChatSession(currentAIModel()).id;
+    aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
     setPluginStatus(tr("status.aiConfigSaved"), "ok");
   } else {
     const url = aiDialogStringField("mcpUrl").trim();
@@ -2275,8 +2451,8 @@ function saveAIConfigDialog(type: string) {
       headers: headersFromText(aiDialogStringField("mcpHeaders")),
     };
     const servers = parseAiMcpServers(settings.aiMcpServers);
-    if (aiConfigDialog.type === "mcp" && aiConfigDialog.index >= 0) {
-      servers[aiConfigDialog.index] = server;
+    if (dialog.index >= 0) {
+      servers[dialog.index] = server;
     } else {
       servers.push(server);
     }
@@ -2306,10 +2482,6 @@ function aiDialogStringField(field: string): string {
   return input?.value ?? "";
 }
 
-function aiDialogCheckboxField(field: string): boolean {
-  return Boolean(elements.pluginList.querySelector<HTMLInputElement>(`[data-ai-dialog-field="${field}"]`)?.checked);
-}
-
 async function fetchAIModels() {
   if (!pluginIsEnabled(AI_CHAT_PLUGIN_ID)) return;
   if (!aiAccessConfigured()) {
@@ -2317,12 +2489,13 @@ async function fetchAIModels() {
     return;
   }
   try {
+    await flushSettings();
     const done = await actionClient.send("ai", "models", {});
     const models = metaStringArray(done.meta, "models");
     aiChat.modelOptions = models;
     if (!settings.aiModel && models[0]) {
-      settings.aiModel = models[0];
-      aiChat.activeSessionId = ensureAIChatSession(models[0]).id;
+      updateActiveAiProviderProfile({ model: models[0] });
+      aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
       saveSettings();
     }
     removeAIModelListMessages(models);
@@ -2341,13 +2514,14 @@ async function testAIAccess() {
     return;
   }
   try {
+    await flushSettings();
     const done = await actionClient.send("ai", "test", {});
     const models = metaStringArray(done.meta, "models");
     if (models.length) {
       aiChat.modelOptions = models;
       if (!settings.aiModel && models[0]) {
-        settings.aiModel = models[0];
-        aiChat.activeSessionId = ensureAIChatSession(models[0]).id;
+        updateActiveAiProviderProfile({ model: models[0] });
+        aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
         saveSettings();
       }
       renderPlugins();
@@ -2379,7 +2553,8 @@ async function runAIChat() {
     appendAIChatSystem(tr("action.aiFetchModels"), "error");
     return;
   }
-  const session = ensureAIChatSession(model);
+  await flushSettings();
+  const session = ensureAIChatSession(currentAIChatModelKey());
   input!.value = "";
   resizeAIChatInput(input!);
   session.messages.push({ role: "user", content: prompt });
@@ -2444,6 +2619,21 @@ async function copyAIMessage(index: number) {
   }
 }
 
+async function copyAICodeBlock(button: HTMLElement) {
+  const code = button.closest(".ai-code-block")?.querySelector<HTMLElement>("code");
+  const output = code?.textContent ?? "";
+  if (!output.trim()) {
+    appendAIChatSystem(tr("status.aiNoOutput"), "error");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(output);
+    setPluginStatus(tr("status.selectionCopied"), "ok");
+  } catch (error) {
+    setPluginStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
 function clearAIOutput() {
   const session = activeAIChatSession();
   if (!session) return;
@@ -2455,6 +2645,12 @@ function currentAIModel(): string {
   return aiChat.currentModel(settings.aiModel);
 }
 
+function currentAIChatModelKey(): string {
+  const profileId = settings.aiActiveProviderProfileId || activeAiProviderProfile()?.id || "default";
+  const model = currentAIModel() || "default";
+  return `${profileId}:${model}`;
+}
+
 function activeAIChatSession(): AIChatSession | undefined {
   return aiChat.activeSession();
 }
@@ -2464,13 +2660,13 @@ function ensureAIChatSession(model: string): AIChatSession {
 }
 
 function newAIChatSession() {
-  const model = currentAIModel() || "default";
+  const model = currentAIChatModelKey();
   aiChat.newSession(model, tr("plugin.aiChat.block"), newId);
   renderPluginTools();
 }
 
 function appendAIChatSystem(content: string, tone: Tone = "neutral") {
-  aiChat.appendSystem(content, tone, currentAIModel(), tr("plugin.aiChat.block"), newId);
+  aiChat.appendSystem(content, tone, currentAIChatModelKey(), tr("plugin.aiChat.block"), newId);
   renderPluginTools();
 }
 
@@ -2487,7 +2683,7 @@ function removeAIModelListMessages(models: string[]) {
 }
 
 function renderAIChatMessages(): string {
-  const session = ensureAIChatSession(currentAIModel());
+  const session = ensureAIChatSession(currentAIChatModelKey());
   return renderAIChatMessagesView({
     messages: session.messages,
     streaming: aiChat.streaming,

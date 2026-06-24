@@ -3,14 +3,6 @@ import { escapeAttr, escapeHtml } from "./utils";
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || "0.0.0";
 const APP_ICON_URL = "./icon.png";
 
-export function appVersion(): string {
-  return APP_VERSION;
-}
-
-export function appTitleWithVersion(title: string): string {
-  return `${title} ${APP_VERSION}`;
-}
-
 export function renderAboutDialog(version = APP_VERSION): string {
   const safeVersion = escapeHtml(version);
   return `

@@ -26,6 +26,10 @@ export type MessageKey =
   | "action.aiExport"
   | "action.aiFetchModels"
   | "action.aiNewChat"
+  | "action.aiProviderAdd"
+  | "action.aiProviderEdit"
+  | "action.aiProviderRemove"
+  | "action.aiProviderSelect"
   | "action.aiSend"
   | "action.aiTest"
   | "action.cancel"
@@ -91,7 +95,7 @@ export type MessageKey =
   | "field.aiApiKey"
   | "field.aiBaseUrl"
   | "field.aiModel"
-  | "field.aiContextLines"
+  | "field.aiProfileName"
   | "field.aiPrompt"
   | "field.aiProvider"
   | "field.aiSession"
@@ -178,8 +182,6 @@ export type MessageKey =
   | "setting.debugAdapter"
   | "setting.defaultSessionBackendHelp"
   | "setting.herdrHighlightHelp"
-  | "setting.aiSendTerminalContext"
-  | "setting.aiPrivacyHelp"
   | "setting.pluginDisabled"
   | "setting.pluginEnabled"
   | "setting.terminalBackground"
@@ -249,9 +251,6 @@ export type MessageKey =
   | "status.noSessions"
   | "status.noTarget"
   | "status.pasteFailed"
-  | "status.aiContextOff"
-  | "status.aiContextReady"
-  | "status.aiContextUnavailable"
   | "status.aiConfigSaved"
   | "status.aiModelsReady"
   | "status.aiNoOutput"
@@ -319,6 +318,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiExport": "Export chat",
     "action.aiFetchModels": "Fetch models",
     "action.aiNewChat": "New chat",
+    "action.aiProviderAdd": "Add provider",
+    "action.aiProviderEdit": "Edit provider",
+    "action.aiProviderRemove": "Remove provider",
+    "action.aiProviderSelect": "Switch provider",
     "action.aiSend": "Send",
     "action.aiTest": "Test",
     "action.cancel": "Cancel",
@@ -384,7 +387,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiApiKey": "API key",
     "field.aiBaseUrl": "Base URL",
     "field.aiModel": "Model",
-    "field.aiContextLines": "Context lines",
+    "field.aiProfileName": "Profile name",
     "field.aiPrompt": "Prompt",
     "field.aiProvider": "Provider",
     "field.aiSession": "Chat",
@@ -446,7 +449,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "ai.providerOpenAICompatible": "OpenAI-compatible",
     "ai.providerOpenAIResponses": "OpenAI Responses",
     "plugin.aiChat.block": "Chat",
-    "plugin.aiChat.description": "Chat tool inside WebShell with optional recent terminal context.",
+    "plugin.aiChat.description": "Chat tool inside WebShell for command help, troubleshooting, and notes.",
     "plugin.aiChat.name": "AI Chat",
     "plugin.aiChat.output": "AI chat output",
     "plugin.fileTransfer.description": "Browse device files, upload multiple local files, and download selected device paths.",
@@ -478,8 +481,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.debugAdapter": "Debug adapter",
     "setting.defaultSessionBackendHelp": "The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.",
     "setting.herdrHighlightHelp": "Customize the active Herdr workspace and tab background for dark and light interface styles.",
-    "setting.aiSendTerminalContext": "Send recent terminal context",
-    "setting.aiPrivacyHelp": "Off by default. When enabled, only the active pane's recent text is sent after local redaction of tokens, passwords, and private keys.",
     "setting.pluginDisabled": "Disabled",
     "setting.pluginEnabled": "Enabled",
     "setting.terminalBackground": "Use background image",
@@ -549,9 +550,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noSessions": "No sessions",
     "status.noTarget": "No instance selected",
     "status.pasteFailed": "Paste failed: {message}",
-    "status.aiContextOff": "Terminal context is off",
-    "status.aiContextReady": "Context: {lines} recent lines",
-    "status.aiContextUnavailable": "No native terminal output captured yet",
     "status.aiConfigSaved": "AI settings saved",
     "status.aiModelsReady": "{count} model(s) loaded",
     "status.aiNoOutput": "No AI output",
@@ -618,6 +616,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiExport": "导出聊天",
     "action.aiFetchModels": "获取模型",
     "action.aiNewChat": "新建聊天",
+    "action.aiProviderAdd": "添加服务",
+    "action.aiProviderEdit": "编辑服务",
+    "action.aiProviderRemove": "删除服务",
+    "action.aiProviderSelect": "切换服务",
     "action.aiSend": "发送",
     "action.aiTest": "测试",
     "action.cancel": "取消",
@@ -683,7 +685,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiApiKey": "API Key",
     "field.aiBaseUrl": "Base URL",
     "field.aiModel": "模型",
-    "field.aiContextLines": "上下文行数",
+    "field.aiProfileName": "配置名称",
     "field.aiPrompt": "输入",
     "field.aiProvider": "服务商",
     "field.aiSession": "聊天",
@@ -745,7 +747,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "ai.providerOpenAICompatible": "OpenAI-compatible",
     "ai.providerOpenAIResponses": "OpenAI Responses",
     "plugin.aiChat.block": "聊天",
-    "plugin.aiChat.description": "WebShell 内的 Chat 工具，可选携带最近终端上下文。",
+    "plugin.aiChat.description": "WebShell 内的 Chat 工具，可用于命令辅助、问题排查和记录整理。",
     "plugin.aiChat.name": "AI Chat",
     "plugin.aiChat.output": "AI 聊天输出",
     "plugin.fileTransfer.description": "浏览设备文件，上传多个本地文件，并下载选中的设备路径。",
@@ -777,8 +779,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.debugAdapter": "调试适配器",
     "setting.defaultSessionBackendHelp": "+ 按钮使用这个后端创建。Herdr 已有引擎入口时，再点 + 会在同一个 Herdr session 里新建 Workspace。",
     "setting.herdrHighlightHelp": "分别设置深色和浅色界面风格下，Herdr 当前工作区和标签的背景色。",
-    "setting.aiSendTerminalContext": "发送最近终端上下文",
-    "setting.aiPrivacyHelp": "默认关闭。开启后只发送当前面板最近文本，并在本地先隐藏 token、密码和私钥内容。",
     "setting.pluginDisabled": "已关闭",
     "setting.pluginEnabled": "已启用",
     "setting.terminalBackground": "使用背景图片",
@@ -848,9 +848,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noSessions": "没有会话",
     "status.noTarget": "未选择实例",
     "status.pasteFailed": "粘贴失败：{message}",
-    "status.aiContextOff": "终端上下文已关闭",
-    "status.aiContextReady": "上下文：最近 {lines} 行",
-    "status.aiContextUnavailable": "还没有捕获到原生终端输出",
     "status.aiConfigSaved": "AI 设置已保存",
     "status.aiModelsReady": "已加载 {count} 个模型",
     "status.aiNoOutput": "没有 AI 输出",

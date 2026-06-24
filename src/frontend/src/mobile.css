@@ -422,6 +422,10 @@
     opacity: 1;
   }
 
+  .ai-code-copy {
+    opacity: 1;
+  }
+
   .ai-chat-composer {
     gap: 8px;
     padding: 8px;
@@ -454,6 +458,10 @@
   }
 
   .ai-chat-select-shell select {
+    min-height: 38px;
+  }
+
+  .ai-provider-button {
     min-height: 38px;
   }
 
@@ -492,10 +500,20 @@
     grid-template-columns: 1fr;
   }
 
-  .ai-config-summary-grid,
   .ai-mcp-item,
   .ai-config-actions {
     grid-template-columns: 1fr;
+  }
+
+  .ai-config-summary-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .ai-config-summary-main,
+  .ai-config-summary-meta,
+  .ai-config-summary-actions {
+    justify-content: space-between;
   }
 
   .ai-mcp-actions {

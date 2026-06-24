@@ -1,5 +1,5 @@
 import { qs } from "./utils";
-import { appTitleWithVersion, renderAboutDialog } from "./about-view";
+import { renderAboutDialog } from "./about-view";
 
 export type ShellElements = {
   webshell: HTMLElement;
@@ -106,7 +106,7 @@ export type ShellElements = {
 
 export function renderShell(app: HTMLElement): ShellElements {
   app.innerHTML = `
-    <main class="webshell" id="webshell" aria-label="Neko Webshell workspace" title="${appTitleWithVersion("Neko Webshell")}" data-i18n-aria="app.title" data-app-title-tip>
+    <main class="webshell" id="webshell" aria-label="Neko Webshell workspace" data-i18n-aria="app.title">
       <header class="topbar" aria-label="Terminal controls" data-i18n-aria="app.title">
         <div class="tabs-shell">
           <div id="tabList" class="tab-list" role="tablist" aria-label="Terminal tabs" data-i18n-aria="action.newTab"></div>

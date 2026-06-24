@@ -145,6 +145,15 @@ export type AiMcpServerSettings = {
   headers: Record<string, string>;
 };
 
+export type AiProviderProfile = {
+  id: string;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+};
+
 export type ClipboardImagePayload = {
   extension: string;
   data: ArrayBuffer;
@@ -260,6 +269,8 @@ export type Settings = {
   aiBaseUrl: string;
   aiApiKey: string;
   aiModel: string;
+  aiProviderProfiles: AiProviderProfile[];
+  aiActiveProviderProfileId: string;
   aiMcpServers: string;
   aiSendTerminalContext: boolean;
   aiContextLines: number;
