@@ -4684,6 +4684,7 @@ function handleTerminalPasteEvent(event: ClipboardEvent) {
   const pane = paneForShortcutTarget(event.target);
   if (!pane) return;
   event.preventDefault();
+  event.stopImmediatePropagation();
   const imageFile = clipboardImageFile(event.clipboardData);
   if (imageFile) {
     void pasteImageFileIntoPane(pane, imageFile, false);
