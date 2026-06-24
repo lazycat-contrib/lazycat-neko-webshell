@@ -28,6 +28,13 @@ import { updateViewportMetrics as applyViewportMetrics } from "./app-viewport";
 import { TerminalActionWSClient } from "./action-ws-client";
 import { appendAIContextText, recentAIContextText } from "./ai-context";
 import {
+  emptyAiMcpServer,
+  headersFromText,
+  headersToText,
+  parseAiMcpServers,
+  serializeAiMcpServers,
+} from "./ai-mcp-settings";
+import {
   clipboardImageFile,
   clipboardImagePayloadIsValid,
   imageBlobPayload,
@@ -126,6 +133,7 @@ import {
   terminalAppearanceContext,
 } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
+import { createUploadProgressController } from "./upload-progress";
 import { CUSTOM_THEME_PREFIX } from "./theme-registry";
 import {
   aiChatTranscript,
@@ -137,6 +145,7 @@ import {
 import type {
   AIChatMessage,
   AIChatSession,
+  AiMcpServerSettings,
   ClipboardImagePayload,
   FileBrowserEntry,
   FontPreset,
@@ -200,6 +209,8 @@ const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
 const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
+type AISettingsTab = "ai" | "mcp";
+type AIConfigDialogState = { type: "ai" } | { type: "mcp"; index: number };
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -214,6 +225,7 @@ const initialSelector = normalizeSelector(params.get("name") ?? "");
 const initialSelectorExplicit = params.has("name") && Boolean(initialSelector);
 
 const elements = renderShell(qs<HTMLDivElement>("#app"));
+const imageUploadProgress = createUploadProgressController(elements.webshell);
 
 let settings = loadLocalSettings();
 let instances: Instance[] = [];
@@ -236,6 +248,8 @@ let pluginsLoading = false;
 let activePluginToolId = "";
 const aiChat = new AIChatStore();
 const fileBrowser = new FileBrowserStore();
+let activeAISettingsTab: AISettingsTab = "ai";
+let aiConfigDialog: AIConfigDialogState | undefined;
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
@@ -421,9 +435,40 @@ function bindSettings() {
     }
   });
   elements.pluginList.addEventListener("click", (event) => {
-    const aiButton = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-ai-action]")
-      : null;
+    const target = event.target instanceof Element ? event.target : null;
+    const tabButton = target?.closest<HTMLButtonElement>("[data-ai-settings-tab]");
+    if (tabButton) {
+      activeAISettingsTab = tabButton.dataset.aiSettingsTab === "mcp" ? "mcp" : "ai";
+      renderPluginSettings();
+      return;
+    }
+    const openConfigButton = target?.closest<HTMLButtonElement>("[data-ai-config-open]");
+    if (openConfigButton) {
+      const type = openConfigButton.dataset.aiConfigOpen === "mcp" ? "mcp" : "ai";
+      activeAISettingsTab = type === "mcp" ? "mcp" : "ai";
+      aiConfigDialog = type === "mcp"
+        ? { type, index: Number(openConfigButton.dataset.aiMcpIndex ?? "-1") }
+        : { type };
+      renderPluginSettings();
+      return;
+    }
+    const saveConfigButton = target?.closest<HTMLButtonElement>("[data-ai-config-save]");
+    if (saveConfigButton) {
+      saveAIConfigDialog(saveConfigButton.dataset.aiConfigSave ?? "");
+      return;
+    }
+    const removeMcpButton = target?.closest<HTMLButtonElement>("[data-ai-mcp-remove]");
+    if (removeMcpButton) {
+      removeAiMcpServer(Number(removeMcpButton.dataset.aiMcpRemove));
+      return;
+    }
+    const closeConfigTarget = target?.closest<HTMLElement>("[data-ai-config-close]");
+    if (closeConfigTarget && (closeConfigTarget === target || closeConfigTarget instanceof HTMLButtonElement)) {
+      aiConfigDialog = undefined;
+      renderPluginSettings();
+      return;
+    }
+    const aiButton = target?.closest<HTMLButtonElement>("[data-ai-action]") ?? null;
     if (!aiButton) return;
     const action = aiButton.dataset.aiAction ?? "";
     if (action === "models") {
@@ -1476,21 +1521,44 @@ async function pasteClipboardImageIntoHerdrPane(
   report: boolean,
 ): Promise<boolean> {
   if (!clipboardImagePayloadIsValid(payload)) return false;
+  imageUploadProgress.start();
+  if (report) setGlobalStatus(tr("status.imageUploadStarted"));
   try {
     const selector = await ensureHerdrSocketReady(pane);
     const paneId = await currentHerdrPaneId(selector);
-    const path = await stageClipboardImage(selector, payload);
+    void notifyHerdrImageUpload(selector, "status.imageUploadStarted");
+    const path = await stageClipboardImage(selector, payload, {
+      onProgress: (loaded, total) => {
+        if (total > 0) imageUploadProgress.set(0.12 + Math.min(loaded / total, 1) * 0.76);
+      },
+    });
     if (!path) return false;
+    imageUploadProgress.set(0.9);
     await runHerdrSocketRequest("pane.send_text", { pane_id: paneId, text: path }, {
       selector,
       id: "lazycat-webshell:pane-paste-image",
       mirrorNotification: false,
     });
+    imageUploadProgress.finish();
+    void notifyHerdrImageUpload(selector, "status.imageUploadDone");
+    if (report) setGlobalStatus(tr("status.imageUploadDone"), "ok");
     pane.term?.focus();
     return true;
   } catch (error) {
-    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+    imageUploadProgress.fail();
+    if (report) setGlobalStatus(tr("status.imageUploadFailed", { message: errorMessage(error) }), "error");
     return false;
+  }
+}
+
+async function notifyHerdrImageUpload(selector: string, key: MessageKey) {
+  try {
+    await runHerdrSocketRequest("notification.show", { title: tr(key) }, {
+      selector,
+      id: `lazycat-webshell:image-upload:${key}`,
+      mirrorNotification: false,
+    });
+  } catch {
   }
 }
 
@@ -1915,6 +1983,7 @@ function renderPlugins() {
 
 function renderPluginSettings() {
   elements.refreshPlugins.disabled = pluginsLoading;
+  const mcpServers = parseAiMcpServers(settings.aiMcpServers);
   elements.pluginList.innerHTML = renderPluginSettingsView({
     plugins,
     pluginsLoading,
@@ -1925,6 +1994,17 @@ function renderPluginSettings() {
       apiKey: settings.aiApiKey,
       model: settings.aiModel,
       modelOptions: aiChat.modelOptions,
+      mcpServers,
+      activeTab: activeAISettingsTab,
+      dialog: aiConfigDialog
+        ? aiConfigDialog.type === "mcp"
+          ? {
+            ...aiConfigDialog,
+            server: aiConfigDialog.index >= 0 ? mcpServers[aiConfigDialog.index] ?? emptyAiMcpServer() : emptyAiMcpServer(),
+            headersText: headersToText(aiConfigDialog.index >= 0 ? mcpServers[aiConfigDialog.index]?.headers ?? {} : {}),
+          }
+          : aiConfigDialog
+        : undefined,
       sendContext: settings.aiSendTerminalContext,
       contextLines: settings.aiContextLines,
     },
@@ -2126,6 +2206,78 @@ function updateAISetting(field: string, value: string) {
   }
   saveSettings();
   renderPlugins();
+}
+
+function saveAIConfigDialog(type: string) {
+  if (!aiConfigDialog || aiConfigDialog.type !== type) return;
+  if (type === "ai") {
+    const previousProvider = settings.aiProvider;
+    const previousBaseUrl = settings.aiBaseUrl;
+    const previousApiKey = settings.aiApiKey;
+    const provider = aiDialogStringField("provider") || DEFAULT_SETTINGS.aiProvider;
+    settings.aiProvider = provider === "openai-responses" || provider === "anthropic" ? provider : "openai-compatible";
+    settings.aiBaseUrl = aiDialogStringField("baseUrl").trim();
+    settings.aiApiKey = aiDialogStringField("apiKey");
+    settings.aiModel = aiDialogStringField("model").trim();
+    settings.aiSendTerminalContext = aiDialogCheckboxField("sendContext");
+    settings.aiContextLines = Math.round(clampNumber(aiDialogStringField("contextLines"), 0, 200, DEFAULT_SETTINGS.aiContextLines));
+    if (
+      previousProvider !== settings.aiProvider
+      || previousBaseUrl !== settings.aiBaseUrl
+      || previousApiKey !== settings.aiApiKey
+    ) {
+      aiChat.modelOptions = [];
+    }
+    aiChat.activeSessionId = ensureAIChatSession(currentAIModel()).id;
+    setPluginStatus(tr("status.aiConfigSaved"), "ok");
+  } else {
+    const url = aiDialogStringField("mcpUrl").trim();
+    if (!url) {
+      setPluginStatus(tr("validation.mcpUrl"), "error");
+      return;
+    }
+    const transport: AiMcpServerSettings["transport"] = aiDialogStringField("mcpTransport") === "sse" ? "sse" : "streamable-http";
+    const server: AiMcpServerSettings = {
+      name: aiDialogStringField("mcpName").trim(),
+      url,
+      transport,
+      authorization: aiDialogStringField("mcpAuthorization").trim(),
+      headers: headersFromText(aiDialogStringField("mcpHeaders")),
+    };
+    const servers = parseAiMcpServers(settings.aiMcpServers);
+    if (aiConfigDialog.type === "mcp" && aiConfigDialog.index >= 0) {
+      servers[aiConfigDialog.index] = server;
+    } else {
+      servers.push(server);
+    }
+    settings.aiMcpServers = serializeAiMcpServers(servers);
+    activeAISettingsTab = "mcp";
+    setPluginStatus(tr("status.mcpServerSaved"), "ok");
+  }
+  aiConfigDialog = undefined;
+  saveSettings();
+  renderPlugins();
+}
+
+function removeAiMcpServer(index: number) {
+  if (!Number.isInteger(index) || index < 0) return;
+  const servers = parseAiMcpServers(settings.aiMcpServers);
+  if (!servers[index]) return;
+  servers.splice(index, 1);
+  settings.aiMcpServers = serializeAiMcpServers(servers);
+  aiConfigDialog = undefined;
+  saveSettings();
+  setPluginStatus(tr("status.mcpServerRemoved"), "ok");
+  renderPlugins();
+}
+
+function aiDialogStringField(field: string): string {
+  const input = elements.pluginList.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-ai-dialog-field="${field}"]`);
+  return input?.value ?? "";
+}
+
+function aiDialogCheckboxField(field: string): boolean {
+  return Boolean(elements.pluginList.querySelector<HTMLInputElement>(`[data-ai-dialog-field="${field}"]`)?.checked);
 }
 
 async function fetchAIModels() {
@@ -4561,17 +4713,24 @@ function sendClipboardImageIntoPane(
     if (report) setGlobalStatus(tr("status.pasteFailed", { message: "terminal is reconnecting" }), "error");
     return false;
   }
+  imageUploadProgress.start();
+  if (report) setGlobalStatus(tr("status.imageUploadStarted"));
   try {
     pane.socket.send(JSON.stringify({
       type: "clipboard-image",
       extension: payload.extension,
       size: payload.data.byteLength,
     }));
+    imageUploadProgress.set(0.35);
     pane.socket.send(payload.data);
+    imageUploadProgress.set(0.9);
+    imageUploadProgress.finish();
+    if (report) setGlobalStatus(tr("status.imageUploadDone"), "ok");
     pane.term?.focus();
     return true;
   } catch (error) {
-    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+    imageUploadProgress.fail();
+    if (report) setGlobalStatus(tr("status.imageUploadFailed", { message: errorMessage(error) }), "error");
     scheduleReconnect(pane);
     return false;
   }

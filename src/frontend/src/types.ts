@@ -137,6 +137,14 @@ export type AIChatSession = {
   messages: AIChatMessage[];
 };
 
+export type AiMcpServerSettings = {
+  name: string;
+  url: string;
+  transport: "streamable-http" | "sse";
+  authorization: string;
+  headers: Record<string, string>;
+};
+
 export type ClipboardImagePayload = {
   extension: string;
   data: ArrayBuffer;
@@ -252,6 +260,7 @@ export type Settings = {
   aiBaseUrl: string;
   aiApiKey: string;
   aiModel: string;
+  aiMcpServers: string;
   aiSendTerminalContext: boolean;
   aiContextLines: number;
 };

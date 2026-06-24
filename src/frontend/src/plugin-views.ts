@@ -8,7 +8,7 @@ import {
   pluginMetaLabel,
 } from "./plugin-utils";
 import { fileEntryIcon, formatFileSize, normalizeRemotePath } from "./remote-files";
-import type { AIChatMessage, AIChatSession, FileBrowserContextMenu, FileBrowserEntry } from "./types";
+import type { AIChatMessage, AIChatSession, AiMcpServerSettings, FileBrowserContextMenu, FileBrowserEntry } from "./types";
 import { escapeAttr, escapeHtml } from "./utils";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
@@ -56,9 +56,16 @@ export type AIAccessSettingsViewState = {
   apiKey: string;
   model: string;
   modelOptions: string[];
+  mcpServers: AiMcpServerSettings[];
+  activeTab: "ai" | "mcp";
+  dialog: AIConfigDialogViewState | undefined;
   sendContext: boolean;
   contextLines: number;
 };
+
+export type AIConfigDialogViewState =
+  | { type: "ai" }
+  | { type: "mcp"; index: number; server: AiMcpServerSettings; headersText: string };
 
 export function renderPluginSettingsView(state: PluginSettingsViewState): string {
   if (!state.plugins.length) {
@@ -71,49 +78,22 @@ export function renderAIAccessSettingsView(
   state: AIAccessSettingsViewState & { disabled: boolean; tr: Translate },
 ): string {
   const disabledAttr = state.disabled ? "disabled" : "";
-  const modelValues = state.modelOptions.includes(state.model) || !state.model
-    ? state.modelOptions
-    : [state.model, ...state.modelOptions];
-  const modelOptions = modelValues.length
-    ? modelValues
-      .map((model) => `<option value="${escapeAttr(model)}" ${model === state.model ? "selected" : ""}>${escapeHtml(model)}</option>`)
-      .join("")
-    : `<option value="" selected disabled>${escapeHtml(state.tr("action.aiFetchModels"))}</option>`;
+  const activeTab = state.activeTab === "mcp" ? "mcp" : "ai";
   return `
     <div class="plugin-tool ai-access-settings">
       <div class="settings-group-title">${escapeHtml(state.tr("section.aiAccess"))}</div>
       <p class="settings-help">${escapeHtml(state.tr("ai.accessHelp"))}</p>
-      <div class="ai-config-grid">
-        <label class="field">
-          <span>${escapeHtml(state.tr("field.aiProvider"))}</span>
-          <select data-ai-setting="provider" ${disabledAttr}>
-            <option value="openai-compatible" ${state.provider === "openai-compatible" ? "selected" : ""}>${escapeHtml(state.tr("ai.providerOpenAICompatible"))}</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>${escapeHtml(state.tr("field.aiBaseUrl"))}</span>
-          <input data-ai-setting="baseUrl" type="url" value="${escapeAttr(state.baseUrl)}" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" ${disabledAttr} />
-        </label>
-        <label class="field">
-          <span>${escapeHtml(state.tr("field.aiApiKey"))}</span>
-          <input data-ai-setting="apiKey" type="password" value="${escapeAttr(state.apiKey)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
-        </label>
-        <label class="field">
-          <span>${escapeHtml(state.tr("field.aiModel"))}</span>
-          <select data-ai-setting="model" ${disabledAttr}>
-            ${modelOptions}
-          </select>
-        </label>
-        <label class="field checkbox-field">
-          <input data-ai-setting="sendContext" type="checkbox" ${state.sendContext ? "checked" : ""} ${disabledAttr} />
-          <span>${escapeHtml(state.tr("setting.aiSendTerminalContext"))}</span>
-        </label>
-        <label class="field">
-          <span>${escapeHtml(state.tr("field.aiContextLines"))}</span>
-          <input data-ai-setting="contextLines" type="number" min="0" max="200" step="1" value="${escapeAttr(String(state.contextLines))}" ${disabledAttr} />
-        </label>
+      <div class="settings-tabs ai-config-tabs" role="tablist" aria-label="${escapeAttr(state.tr("section.aiAccess"))}">
+        <button type="button" role="tab" aria-selected="${activeTab === "ai"}" data-ai-settings-tab="ai" ${disabledAttr}>
+          <i data-lucide="bot"></i>
+          <span>${escapeHtml(state.tr("tab.aiProvider"))}</span>
+        </button>
+        <button type="button" role="tab" aria-selected="${activeTab === "mcp"}" data-ai-settings-tab="mcp" ${disabledAttr}>
+          <i data-lucide="workflow"></i>
+          <span>${escapeHtml(state.tr("tab.mcp"))}</span>
+        </button>
       </div>
-      <p class="settings-help">${escapeHtml(state.tr("setting.aiPrivacyHelp"))}</p>
+      ${activeTab === "mcp" ? renderMcpSettingsPanel(state) : renderAISettingsPanel(state)}
       <div class="plugin-action-row ai-config-actions">
         <button class="command-button" type="button" data-ai-action="models" ${disabledAttr}>
           <i data-lucide="list-filter"></i>
@@ -124,7 +104,186 @@ export function renderAIAccessSettingsView(
           <span>${escapeHtml(state.tr("action.aiTest"))}</span>
         </button>
       </div>
+      ${state.dialog ? renderAIConfigDialog(state) : ""}
     </div>
+  `;
+}
+
+function renderAISettingsPanel(state: AIAccessSettingsViewState & { disabled: boolean; tr: Translate }): string {
+  const maskedKey = state.apiKey ? "••••••••" : state.tr("status.noTarget");
+  const provider = aiProviderLabel(state.provider, state.tr);
+  return `
+    <div class="ai-config-summary" role="tabpanel">
+      <div class="ai-config-summary-grid">
+        ${renderSummaryItem(state.tr("field.aiProvider"), provider)}
+        ${renderSummaryItem(state.tr("field.aiBaseUrl"), state.baseUrl || state.tr("status.noTarget"))}
+        ${renderSummaryItem(state.tr("field.aiApiKey"), maskedKey)}
+        ${renderSummaryItem(state.tr("field.aiModel"), state.model || state.tr("status.noTarget"))}
+        ${renderSummaryItem(state.tr("setting.aiSendTerminalContext"), state.sendContext ? state.tr("status.aiContextReady", { lines: state.contextLines }) : state.tr("status.aiContextOff"))}
+      </div>
+      <p class="settings-help">${escapeHtml(state.tr("setting.aiPrivacyHelp"))}</p>
+      <button class="command-button" type="button" data-ai-config-open="ai" ${state.disabled ? "disabled" : ""}>
+        <i data-lucide="settings-2"></i>
+        <span>${escapeHtml(state.tr("action.aiConfigure"))}</span>
+      </button>
+    </div>
+  `;
+}
+
+function renderMcpSettingsPanel(state: AIAccessSettingsViewState & { disabled: boolean; tr: Translate }): string {
+  return `
+    <div class="ai-mcp-panel" role="tabpanel">
+      <p class="settings-help">${escapeHtml(state.tr("ai.mcpHelp"))}</p>
+      <div class="ai-mcp-list" role="list">
+        ${state.mcpServers.length ? state.mcpServers.map((server, index) => renderMcpServerItem(server, index, state)).join("") : `<div class="empty">${escapeHtml(state.tr("ai.mcpEmpty"))}</div>`}
+      </div>
+      <button class="command-button" type="button" data-ai-config-open="mcp" data-ai-mcp-index="-1" ${state.disabled ? "disabled" : ""}>
+        <i data-lucide="plus"></i>
+        <span>${escapeHtml(state.tr("action.mcpAdd"))}</span>
+      </button>
+    </div>
+  `;
+}
+
+function renderMcpServerItem(
+  server: AiMcpServerSettings,
+  index: number,
+  state: AIAccessSettingsViewState & { disabled: boolean; tr: Translate },
+): string {
+  const title = server.name || server.url;
+  return `
+    <div class="ai-mcp-item" role="listitem">
+      <span class="ai-mcp-main">
+        <strong>${escapeHtml(title)}</strong>
+        <small>${escapeHtml(server.url)}</small>
+      </span>
+      <span class="ai-mcp-transport">${escapeHtml(mcpTransportLabel(server.transport, state.tr))}</span>
+      <span class="ai-mcp-actions">
+        <button class="icon-button" type="button" data-ai-config-open="mcp" data-ai-mcp-index="${escapeAttr(String(index))}" aria-label="${escapeAttr(state.tr("action.mcpEdit"))}" title="${escapeAttr(state.tr("action.mcpEdit"))}" ${state.disabled ? "disabled" : ""}>
+          <i data-lucide="square-pen"></i>
+        </button>
+        <button class="icon-button" type="button" data-ai-mcp-remove="${escapeAttr(String(index))}" aria-label="${escapeAttr(state.tr("action.mcpRemove"))}" title="${escapeAttr(state.tr("action.mcpRemove"))}" ${state.disabled ? "disabled" : ""}>
+          <i data-lucide="trash-2"></i>
+        </button>
+      </span>
+    </div>
+  `;
+}
+
+function renderAIConfigDialog(state: AIAccessSettingsViewState & { disabled: boolean; tr: Translate }): string {
+  const dialog = state.dialog;
+  if (!dialog) return "";
+  const title = dialog.type === "mcp"
+    ? dialog.index >= 0 ? state.tr("action.mcpEdit") : state.tr("action.mcpAdd")
+    : state.tr("action.aiConfigure");
+  return `
+    <div class="ai-config-modal-backdrop" data-ai-config-close>
+      <section class="ai-config-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}" data-ai-config-modal>
+        <header class="ai-config-modal-head">
+          <strong>${escapeHtml(title)}</strong>
+          <button class="icon-button" type="button" data-ai-config-close aria-label="${escapeAttr(state.tr("action.close"))}" title="${escapeAttr(state.tr("action.close"))}">
+            <i data-lucide="x"></i>
+          </button>
+        </header>
+        <div class="ai-config-modal-body">
+          ${dialog.type === "mcp" ? renderMcpConfigForm(dialog, state) : renderAIProviderConfigForm(state)}
+        </div>
+        <footer class="ai-config-modal-actions">
+          <button class="command-button" type="button" data-ai-config-close>
+            <span>${escapeHtml(state.tr("action.cancel"))}</span>
+          </button>
+          <button class="command-button primary" type="button" data-ai-config-save="${escapeAttr(dialog.type)}">
+            <i data-lucide="save"></i>
+            <span>${escapeHtml(state.tr("action.save"))}</span>
+          </button>
+        </footer>
+      </section>
+    </div>
+  `;
+}
+
+function renderAIProviderConfigForm(state: AIAccessSettingsViewState & { disabled: boolean; tr: Translate }): string {
+  const modelValues = state.modelOptions.includes(state.model) || !state.model
+    ? state.modelOptions
+    : [state.model, ...state.modelOptions];
+  const modelOptions = modelValues
+    .map((model) => `<option value="${escapeAttr(model)}">${escapeHtml(model)}</option>`)
+    .join("");
+  return `
+    <div class="ai-config-grid">
+      <label class="field">
+        <span>${escapeHtml(state.tr("field.aiProvider"))}</span>
+        <select data-ai-dialog-field="provider">
+          <option value="openai-compatible" ${state.provider === "openai-compatible" ? "selected" : ""}>${escapeHtml(state.tr("ai.providerOpenAICompatible"))}</option>
+          <option value="openai-responses" ${state.provider === "openai-responses" ? "selected" : ""}>${escapeHtml(state.tr("ai.providerOpenAIResponses"))}</option>
+          <option value="anthropic" ${state.provider === "anthropic" ? "selected" : ""}>${escapeHtml(state.tr("ai.providerAnthropic"))}</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>${escapeHtml(state.tr("field.aiBaseUrl"))}</span>
+        <input data-ai-dialog-field="baseUrl" type="url" value="${escapeAttr(state.baseUrl)}" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1" />
+      </label>
+      <label class="field">
+        <span>${escapeHtml(state.tr("field.aiApiKey"))}</span>
+        <input data-ai-dialog-field="apiKey" type="password" value="${escapeAttr(state.apiKey)}" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span>${escapeHtml(state.tr("field.aiModel"))}</span>
+        <input data-ai-dialog-field="model" type="text" list="aiModelOptions" value="${escapeAttr(state.model)}" autocomplete="off" spellcheck="false" />
+        <datalist id="aiModelOptions">${modelOptions}</datalist>
+      </label>
+      <label class="field checkbox-field">
+        <input data-ai-dialog-field="sendContext" type="checkbox" ${state.sendContext ? "checked" : ""} />
+        <span>${escapeHtml(state.tr("setting.aiSendTerminalContext"))}</span>
+      </label>
+      <label class="field">
+        <span>${escapeHtml(state.tr("field.aiContextLines"))}</span>
+        <input data-ai-dialog-field="contextLines" type="number" min="0" max="200" step="1" value="${escapeAttr(String(state.contextLines))}" />
+      </label>
+    </div>
+  `;
+}
+
+function renderMcpConfigForm(
+  dialog: Extract<AIConfigDialogViewState, { type: "mcp" }>,
+  state: AIAccessSettingsViewState & { disabled: boolean; tr: Translate },
+): string {
+  return `
+    <div class="ai-config-grid">
+      <label class="field">
+        <span>${escapeHtml(state.tr("field.mcpName"))}</span>
+        <input data-ai-dialog-field="mcpName" type="text" value="${escapeAttr(dialog.server.name)}" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="field">
+        <span>${escapeHtml(state.tr("field.mcpTransport"))}</span>
+        <select data-ai-dialog-field="mcpTransport">
+          <option value="streamable-http" ${dialog.server.transport === "streamable-http" ? "selected" : ""}>${escapeHtml(state.tr("mcp.transportHttp"))}</option>
+          <option value="sse" ${dialog.server.transport === "sse" ? "selected" : ""}>${escapeHtml(state.tr("mcp.transportSse"))}</option>
+        </select>
+      </label>
+      <label class="field ai-config-full">
+        <span>${escapeHtml(state.tr("field.mcpUrl"))}</span>
+        <input data-ai-dialog-field="mcpUrl" type="url" value="${escapeAttr(dialog.server.url)}" autocomplete="off" spellcheck="false" placeholder="https://example.com/mcp" />
+      </label>
+      <label class="field ai-config-full">
+        <span>${escapeHtml(state.tr("field.mcpAuthorization"))}</span>
+        <input data-ai-dialog-field="mcpAuthorization" type="password" value="${escapeAttr(dialog.server.authorization)}" autocomplete="off" spellcheck="false" placeholder="Bearer ..." />
+      </label>
+      <label class="field ai-config-full">
+        <span>${escapeHtml(state.tr("field.mcpHeaders"))}</span>
+        <textarea data-ai-dialog-field="mcpHeaders" rows="4" spellcheck="false" placeholder="X-Header: value">${escapeHtml(dialog.headersText)}</textarea>
+      </label>
+    </div>
+    <p class="settings-help">${escapeHtml(state.tr("ai.mcpHeadersHelp"))}</p>
+  `;
+}
+
+function renderSummaryItem(label: string, value: string): string {
+  return `
+    <span class="ai-summary-item">
+      <small>${escapeHtml(label)}</small>
+      <strong>${escapeHtml(value)}</strong>
+    </span>
   `;
 }
 
@@ -415,6 +574,16 @@ function aiChatRoleLabel(role: AIChatMessage["role"]): string {
   if (role === "user") return "You";
   if (role === "assistant") return "AI";
   return "WebShell";
+}
+
+function aiProviderLabel(provider: string, tr: Translate): string {
+  if (provider === "openai-responses") return tr("ai.providerOpenAIResponses");
+  if (provider === "anthropic") return tr("ai.providerAnthropic");
+  return tr("ai.providerOpenAICompatible");
+}
+
+function mcpTransportLabel(transport: AiMcpServerSettings["transport"], tr: Translate): string {
+  return transport === "sse" ? tr("mcp.transportSse") : tr("mcp.transportHttp");
 }
 
 function fileKindLabel(kind: FileBrowserEntry["kind"], tr: Translate): string {

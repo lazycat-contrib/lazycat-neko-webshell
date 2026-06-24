@@ -82,6 +82,7 @@ export function normalizeSettings(value: Partial<Settings>): Settings {
     aiBaseUrl: typeof value.aiBaseUrl === "string" ? value.aiBaseUrl : DEFAULT_SETTINGS.aiBaseUrl,
     aiApiKey: typeof value.aiApiKey === "string" ? value.aiApiKey : DEFAULT_SETTINGS.aiApiKey,
     aiModel: typeof value.aiModel === "string" ? value.aiModel : DEFAULT_SETTINGS.aiModel,
+    aiMcpServers: typeof value.aiMcpServers === "string" ? value.aiMcpServers : DEFAULT_SETTINGS.aiMcpServers,
     aiSendTerminalContext: value.aiSendTerminalContext ?? DEFAULT_SETTINGS.aiSendTerminalContext,
     aiContextLines: Math.round(clampNumber(value.aiContextLines, 0, 200, DEFAULT_SETTINGS.aiContextLines)),
   };

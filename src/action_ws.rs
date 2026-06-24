@@ -15,7 +15,10 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::database::{KV_KEY_SETTINGS, KV_NAMESPACE_PREFERENCES};
+use crate::ai_chat::{
+    ai_access_configured, ai_model_configured, fetch_ai_models, load_ai_settings, stream_ai_chat,
+    test_ai_access,
+};
 use crate::service::CapabilityServiceImpl;
 use crate::state::AppState;
 
@@ -53,16 +56,6 @@ struct UploadState {
     size: usize,
     received: usize,
     data: Vec<u8>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct AiSettings {
-    #[serde(rename = "aiBaseUrl", default)]
-    base_url: String,
-    #[serde(rename = "aiApiKey", default)]
-    api_key: String,
-    #[serde(rename = "aiModel", default)]
-    model: String,
 }
 
 pub async fn action_ws(
@@ -360,7 +353,7 @@ async fn handle_ai(
 ) -> anyhow::Result<()> {
     ensure_plugin_enabled(&state, "ai-chat")?;
     let settings = load_ai_settings(&state)?;
-    if settings.base_url.trim().is_empty() || settings.api_key.trim().is_empty() {
+    if !ai_access_configured(&settings) {
         send_error(
             sender,
             &message.id,
@@ -371,7 +364,7 @@ async fn handle_ai(
     }
     match message.action.as_str() {
         "models" | "list_models" => {
-            let models = fetch_openai_models(&settings).await?;
+            let models = fetch_ai_models(&settings).await?;
             let count = models.len();
             send_done(
                 sender,
@@ -382,12 +375,12 @@ async fn handle_ai(
             return Ok(());
         }
         "test" => {
-            test_openai_compatible(sender, &message.id, &settings).await?;
+            send_done(sender, &message.id, test_ai_access(&settings).await?).await?;
             return Ok(());
         }
         _ => {}
     }
-    if settings.model.trim().is_empty() {
+    if !ai_model_configured(&settings) {
         send_error(
             sender,
             &message.id,
@@ -396,292 +389,14 @@ async fn handle_ai(
         .await?;
         return Ok(());
     }
-    let prompt = build_prompt(&message.action, &message.payload);
-    stream_openai_compatible(sender, &message.id, &settings, &redact_sensitive(&prompt)).await
-}
-
-async fn fetch_openai_models(settings: &AiSettings) -> anyhow::Result<Vec<String>> {
-    let response = reqwest::Client::new()
-        .get(models_endpoint(&settings.base_url))
-        .bearer_auth(settings.api_key.trim())
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
-        return Err(anyhow::anyhow!(
-            "model list request failed ({status}): {}",
-            truncate_detail(&detail)
-        ));
-    }
-    let value = response.json::<Value>().await?;
-    let mut models = parse_openai_model_ids(&value);
-    models.sort();
-    models.dedup();
-    Ok(models)
-}
-
-async fn test_openai_compatible(
-    sender: &ActionSender,
-    id: &str,
-    settings: &AiSettings,
-) -> anyhow::Result<()> {
-    if settings.model.trim().is_empty() {
-        let models = fetch_openai_models(settings).await?;
-        let count = models.len();
-        send_done(
-            sender,
-            id,
-            json!({
-                "ok": true,
-                "mode": "models",
-                "message": format!("model endpoint ok, {count} model(s) returned"),
-                "models": models,
-                "count": count,
-            }),
-        )
-        .await?;
-        return Ok(());
-    }
-
-    let endpoint = chat_completions_endpoint(&settings.base_url);
-    let response = reqwest::Client::new()
-        .post(endpoint)
-        .bearer_auth(settings.api_key.trim())
-        .json(&json!({
-            "model": settings.model.trim(),
-            "stream": false,
-            "temperature": 0,
-            "max_tokens": 8,
-            "messages": [
-                { "role": "user", "content": "Reply with OK." }
-            ]
-        }))
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
-        send_error(
-            sender,
-            id,
-            &format!("AI test failed ({status}): {}", truncate_detail(&detail)),
-        )
-        .await?;
-        return Ok(());
-    }
-    let value = response.json::<Value>().await?;
-    send_done(
-        sender,
-        id,
-        json!({
-            "ok": true,
-            "mode": "chat",
-            "model": settings.model.trim(),
-            "content": parse_openai_message_content(&value),
-            "message": "AI test passed",
-        }),
-    )
+    let id = message.id.clone();
+    stream_ai_chat(&settings, &message.action, &message.payload, |chunk| {
+        let sender = Arc::clone(sender);
+        let id = id.clone();
+        async move { send_stream(&sender, &id, &chunk).await }
+    })
     .await?;
-    Ok(())
-}
-
-async fn stream_openai_compatible(
-    sender: &ActionSender,
-    id: &str,
-    settings: &AiSettings,
-    prompt: &str,
-) -> anyhow::Result<()> {
-    let endpoint = chat_completions_endpoint(&settings.base_url);
-    let client = reqwest::Client::new();
-    let response = client
-        .post(endpoint)
-        .bearer_auth(settings.api_key.trim())
-        .json(&json!({
-            "model": settings.model.trim(),
-            "stream": true,
-            "messages": [
-                { "role": "system", "content": core_ai_system_prompt() },
-                { "role": "user", "content": prompt }
-            ]
-        }))
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let detail = response.text().await.unwrap_or_default();
-        send_error(
-            sender,
-            id,
-            &format!("AI request failed ({status}): {detail}"),
-        )
-        .await?;
-        return Ok(());
-    }
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(index) = buffer.find('\n') {
-            let line = buffer[..index].trim().to_owned();
-            buffer = buffer[index + 1..].to_owned();
-            if let Some(data) = line.strip_prefix("data:") {
-                let data = data.trim();
-                if data == "[DONE]" {
-                    send_done(sender, id, json!({})).await?;
-                    return Ok(());
-                }
-                if let Some(delta) = parse_openai_delta(data) {
-                    send_stream(sender, id, &delta).await?;
-                }
-            }
-        }
-    }
-    send_done(sender, id, json!({})).await?;
-    Ok(())
-}
-
-fn parse_openai_delta(data: &str) -> Option<String> {
-    let value = serde_json::from_str::<Value>(data).ok()?;
-    value
-        .get("choices")?
-        .get(0)?
-        .get("delta")?
-        .get("content")?
-        .as_str()
-        .map(ToOwned::to_owned)
-}
-
-fn parse_openai_message_content(value: &Value) -> String {
-    value
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"))
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
-}
-
-fn parse_openai_model_ids(value: &Value) -> Vec<String> {
-    let mut models = Vec::new();
-    collect_model_ids(value, &mut models);
-    models
-}
-
-fn collect_model_ids(value: &Value, models: &mut Vec<String>) {
-    if let Some(model) = model_id_from_value(value) {
-        models.push(model.to_owned());
-    }
-    if let Some(items) = value.as_array() {
-        collect_model_array(items, models);
-        return;
-    }
-    let Some(object) = value.as_object() else {
-        return;
-    };
-    for key in ["data", "models", "available_models", "availableModels"] {
-        let Some(child) = object.get(key) else {
-            continue;
-        };
-        if let Some(items) = child.as_array() {
-            collect_model_array(items, models);
-        } else {
-            collect_model_ids(child, models);
-        }
-    }
-}
-
-fn collect_model_array(items: &[Value], models: &mut Vec<String>) {
-    for item in items {
-        if let Some(model) = model_id_from_value(item) {
-            models.push(model.to_owned());
-        } else {
-            collect_model_ids(item, models);
-        }
-    }
-}
-
-fn model_id_from_value(value: &Value) -> Option<&str> {
-    let raw = value.as_str().or_else(|| {
-        let object = value.as_object()?;
-        ["id", "name", "model"]
-            .iter()
-            .find_map(|key| object.get(*key).and_then(Value::as_str))
-    })?;
-    let trimmed = raw.trim();
-    (!trimmed.is_empty()).then_some(trimmed)
-}
-
-fn build_prompt(action: &str, payload: &Value) -> String {
-    let ctx = payload.get("ctx").unwrap_or(&Value::Null);
-    let cwd = json_string(ctx, "cwd", "~");
-    let shell = json_string(ctx, "shell", "sh");
-    let os = json_string(ctx, "os", "LightOS");
-    let recent_output = json_string(ctx, "recent_output", "");
-    let conversation = payload
-        .get("conversation")
-        .map_or_else(String::new, Value::to_string);
-    match action {
-        "chat" => format!(
-            "你是 WebShell 内的 Chat 工具，不控制终端，也不会替用户执行命令。\n当前上下文：{cwd} | {shell} | {os}\n最近终端输出（可能为空，已脱敏）：\n{recent_output}\n\n当前模型会话历史（JSON，可能为空）：\n{conversation}\n\n用户：{}\n\n要求：\n- 简洁回答，优先给可执行建议。\n- 需要命令时用 ```shell 代码块，但不要声称已经执行。\n- 对删除、覆盖、sudo、系统路径写入等风险操作明确提醒。\n- 不要把终端输出逐行复述。",
-            json_string(payload, "input", "")
-        ),
-        _ => format!("用户：{}", json_string(payload, "input", "")),
-    }
-}
-
-fn core_ai_system_prompt() -> &'static str {
-    "你是 WebShell 内的聊天助手。你可以利用用户显式允许的终端上下文回答问题，但你不能控制终端、不能执行命令、不能假装已经操作设备。"
-}
-
-fn redact_sensitive(input: &str) -> String {
-    input
-        .lines()
-        .map(redact_sensitive_line)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn redact_sensitive_line(line: &str) -> String {
-    if line.contains("-----BEGIN") || line.contains("PRIVATE KEY-----") {
-        return "[REDACTED private key material]".to_owned();
-    }
-    line.split_whitespace()
-        .map(|part| {
-            let lower = part.to_ascii_lowercase();
-            if part.starts_with("sk-")
-                || part.starts_with("ghp_")
-                || part.starts_with("github_pat_")
-                || part.starts_with("eyJ")
-                || lower.starts_with("passwd=")
-                || lower.starts_with("password=")
-                || lower.starts_with("token=")
-                || lower.starts_with("api_key=")
-                || lower.starts_with("--password=")
-                || lower == "-p"
-                || lower.starts_with("-p=")
-            {
-                "[REDACTED]".to_owned()
-            } else {
-                part.to_owned()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn load_ai_settings(state: &AppState) -> anyhow::Result<AiSettings> {
-    let Some(bytes) = state
-        .database()
-        .load_kv(KV_NAMESPACE_PREFERENCES, KV_KEY_SETTINGS)?
-    else {
-        return Ok(AiSettings::default());
-    };
-    Ok(serde_json::from_slice(&bytes)?)
+    send_done(sender, &message.id, json!({})).await
 }
 
 fn ensure_plugin_enabled(state: &AppState, plugin_id: &str) -> anyhow::Result<()> {
@@ -783,13 +498,6 @@ fn payload_bool(payload: &Value, key: &str) -> bool {
     payload.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
-fn json_string(payload: &Value, key: &str, fallback: &str) -> String {
-    payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map_or_else(|| fallback.to_owned(), ToOwned::to_owned)
-}
-
 fn transfer_percent(received: usize, total: usize) -> u8 {
     if total == 0 {
         return 0;
@@ -801,41 +509,6 @@ fn file_name_from_path(path: &str) -> &str {
     path.rsplit('/')
         .find(|part| !part.is_empty())
         .unwrap_or("download")
-}
-
-fn chat_completions_endpoint(base_url: &str) -> String {
-    let trimmed = base_url.trim().trim_end_matches('/');
-    if trimmed.ends_with("/chat/completions") {
-        trimmed.to_owned()
-    } else if let Some(prefix) = trimmed.strip_suffix("/models") {
-        format!("{prefix}/chat/completions")
-    } else {
-        format!("{trimmed}/chat/completions")
-    }
-}
-
-fn models_endpoint(base_url: &str) -> String {
-    let trimmed = base_url.trim().trim_end_matches('/');
-    if trimmed.ends_with("/models") {
-        return trimmed.to_owned();
-    }
-    if let Some(prefix) = trimmed.strip_suffix("/chat/completions") {
-        return format!("{prefix}/models");
-    }
-    format!("{trimmed}/models")
-}
-
-fn truncate_detail(detail: &str) -> String {
-    const MAX_DETAIL_CHARS: usize = 500;
-    let trimmed = detail.trim();
-    if trimmed.chars().count() <= MAX_DETAIL_CHARS {
-        trimmed.to_owned()
-    } else {
-        format!(
-            "{}...",
-            trimmed.chars().take(MAX_DETAIL_CHARS).collect::<String>()
-        )
-    }
 }
 
 fn origin_allowed(headers: &HeaderMap) -> bool {
@@ -850,45 +523,4 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
         .ok()
         .and_then(|uri| uri.authority().map(|authority| authority.as_str() == host))
         .unwrap_or(false)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_openai_model_ids;
-    use serde_json::json;
-
-    #[test]
-    fn parses_openai_and_anthropic_model_lists() {
-        assert_eq!(
-            parse_openai_model_ids(&json!({
-                "data": [
-                    { "id": "gpt-4.1" },
-                    { "id": " claude-3-5-sonnet-20241022 " }
-                ]
-            })),
-            vec!["gpt-4.1", "claude-3-5-sonnet-20241022"]
-        );
-
-        assert_eq!(
-            parse_openai_model_ids(&json!({
-                "models": [
-                    "claude-opus-4-20250514",
-                    { "name": "claude-sonnet-4-20250514" }
-                ]
-            })),
-            vec!["claude-opus-4-20250514", "claude-sonnet-4-20250514"]
-        );
-    }
-
-    #[test]
-    fn parses_string_and_model_object_arrays() {
-        assert_eq!(
-            parse_openai_model_ids(&json!([
-                "deepseek-chat",
-                { "model": "qwen-max" },
-                { "id": "" }
-            ])),
-            vec!["deepseek-chat", "qwen-max"]
-        );
-    }
 }

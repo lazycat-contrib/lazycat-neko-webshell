@@ -793,6 +793,176 @@
   margin-top: 12px;
 }
 
+.ai-config-full {
+  grid-column: 1 / -1;
+}
+
+.ai-config-tabs {
+  margin-top: 10px;
+}
+
+.ai-config-summary,
+.ai-mcp-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ai-config-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ai-summary-item {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--component-border);
+  border-radius: 6px;
+  background:
+    var(--component-wash),
+    var(--surface);
+  padding: 8px;
+}
+
+.ai-summary-item small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ai-summary-item strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-mcp-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-mcp-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--component-border);
+  border-radius: 6px;
+  background:
+    var(--component-wash),
+    var(--surface);
+  padding: 8px;
+}
+
+.ai-mcp-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ai-mcp-main strong,
+.ai-mcp-main small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-mcp-main strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-mcp-main small {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.ai-mcp-transport {
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  color: var(--accent-fg);
+  background: var(--accent-softer);
+  padding: 4px 7px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ai-mcp-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.ai-config-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ai-config-modal-backdrop {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--overlay-scrim);
+  padding:
+    max(12px, var(--lzc-safe-area-inset-top))
+    max(12px, var(--lzc-safe-area-inset-right))
+    max(12px, var(--lzc-safe-area-inset-bottom))
+    max(12px, var(--lzc-safe-area-inset-left));
+}
+
+.ai-config-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(560px, 100%);
+  max-height: min(680px, calc(var(--app-viewport-height) - 24px));
+  border: 1px solid var(--dialog-border);
+  border-radius: 8px;
+  background: var(--dialog-bg);
+  color: var(--text);
+  box-shadow: var(--shadow-deep);
+  overflow: hidden;
+}
+
+.ai-config-modal-head,
+.ai-config-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+}
+
+.ai-config-modal-head {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.ai-config-modal-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.ai-config-modal-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--line-soft);
+}
+
 .ai-action-row {
   grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
 }

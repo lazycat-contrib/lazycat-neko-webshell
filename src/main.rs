@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tracing::info;
 
 mod action_ws;
+mod ai_chat;
 mod assets;
 mod backgrounds;
 mod config;

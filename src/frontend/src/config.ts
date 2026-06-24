@@ -171,6 +171,7 @@ export const DEFAULT_SETTINGS: Settings = {
   aiBaseUrl: "",
   aiApiKey: "",
   aiModel: "",
+  aiMcpServers: "",
   aiSendTerminalContext: false,
   aiContextLines: 40,
 };

@@ -52,21 +52,45 @@ export function clipboardImagePayloadIsValid(payload: ClipboardImagePayload): bo
   return payload.data.byteLength > 0 && payload.data.byteLength <= MAX_CLIPBOARD_IMAGE_BYTES;
 }
 
-export async function stageClipboardImage(selector: string, payload: ClipboardImagePayload): Promise<string> {
+export type ClipboardImageStageOptions = {
+  onProgress?: (loaded: number, total: number) => void;
+};
+
+export async function stageClipboardImage(
+  selector: string,
+  payload: ClipboardImagePayload,
+  options: ClipboardImageStageOptions = {},
+): Promise<string> {
   const url = new URL("./api/clipboard-image", window.location.href);
   url.searchParams.set("name", selector);
   url.searchParams.set("extension", payload.extension);
-  const response = await fetch(url, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "content-type": "application/octet-stream" },
-    body: payload.data,
+
+  const result = await new Promise<{ status: number; statusText: string; text: string }>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url.toString(), true);
+    request.withCredentials = true;
+    request.setRequestHeader("content-type", "application/octet-stream");
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        options.onProgress?.(event.loaded, event.total);
+      }
+    };
+    request.onload = () => {
+      resolve({
+        status: request.status,
+        statusText: request.statusText,
+        text: request.responseText,
+      });
+    };
+    request.onerror = () => reject(new Error(request.statusText || "clipboard image upload failed"));
+    request.send(payload.data);
   });
-  if (!response.ok) {
-    throw new Error(await response.text() || response.statusText);
+
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(result.text || result.statusText);
   }
-  const result = await response.json() as { path?: unknown };
-  const path = typeof result.path === "string" ? result.path.trim() : "";
+  const json = JSON.parse(result.text || "{}") as { path?: unknown };
+  const path = typeof json.path === "string" ? json.path.trim() : "";
   if (!path) throw new Error("clipboard image path is missing");
   return path;
 }

@@ -4,15 +4,22 @@ type Language = "en" | "zh-CN";
 
 export type MessageKey =
   | "ai.accessHelp"
+  | "ai.mcpEmpty"
+  | "ai.mcpHeadersHelp"
+  | "ai.mcpHelp"
+  | "ai.providerAnthropic"
   | "ai.providerOpenAICompatible"
+  | "ai.providerOpenAIResponses"
   | "action.aiChat"
   | "action.aiClear"
+  | "action.aiConfigure"
   | "action.aiCopy"
   | "action.aiExport"
   | "action.aiFetchModels"
   | "action.aiNewChat"
   | "action.aiSend"
   | "action.aiTest"
+  | "action.cancel"
   | "action.close"
   | "action.closeActiveSession"
   | "action.closeHerdrSpace"
@@ -22,6 +29,9 @@ export type MessageKey =
   | "action.focusTerminal"
   | "action.fullscreen"
   | "action.lightosHome"
+  | "action.mcpAdd"
+  | "action.mcpEdit"
+  | "action.mcpRemove"
   | "action.newHerdrSpace"
   | "action.newHerdrTab"
   | "action.newTab"
@@ -44,6 +54,7 @@ export type MessageKey =
   | "action.removeTerminalBackground"
   | "action.removeTheme"
   | "action.saveTheme"
+  | "action.save"
   | "action.settings"
   | "action.settingsMenu"
   | "action.shortcutHelp"
@@ -81,6 +92,11 @@ export type MessageKey =
   | "field.interfaceStyle"
   | "field.language"
   | "field.lineHeight"
+  | "field.mcpAuthorization"
+  | "field.mcpHeaders"
+  | "field.mcpName"
+  | "field.mcpTransport"
+  | "field.mcpUrl"
   | "field.outputBuffer"
   | "field.panes"
   | "field.pluginPath"
@@ -118,6 +134,8 @@ export type MessageKey =
   | "menu.instances"
   | "menu.mobileShortcuts"
   | "menu.pane"
+  | "mcp.transportHttp"
+  | "mcp.transportSse"
   | "plugin.aiChat.description"
   | "plugin.aiChat.block"
   | "plugin.aiChat.name"
@@ -171,6 +189,8 @@ export type MessageKey =
   | "tab.fonts"
   | "tab.fontSettings"
   | "tab.fontUpload"
+  | "tab.aiProvider"
+  | "tab.mcp"
   | "tab.plugins"
   | "tab.themes"
   | "status.closed"
@@ -200,6 +220,9 @@ export type MessageKey =
   | "status.herdrUnavailable"
   | "status.herdrWorkspaceFocused"
   | "status.idle"
+  | "status.imageUploadDone"
+  | "status.imageUploadFailed"
+  | "status.imageUploadStarted"
   | "status.instance"
   | "status.instanceLoadFailed"
   | "status.instancesLoaded"
@@ -208,6 +231,8 @@ export type MessageKey =
   | "status.lightosHomeLoading"
   | "status.loadingGhostty"
   | "status.loadingInstances"
+  | "status.mcpServerRemoved"
+  | "status.mcpServerSaved"
   | "status.noInstances"
   | "status.noInstancesVisible"
   | "status.noPlugins"
@@ -218,6 +243,7 @@ export type MessageKey =
   | "status.aiContextOff"
   | "status.aiContextReady"
   | "status.aiContextUnavailable"
+  | "status.aiConfigSaved"
   | "status.aiModelsReady"
   | "status.aiNoOutput"
   | "status.aiTestOk"
@@ -261,6 +287,7 @@ export type MessageKey =
   | "validation.backgroundSize"
   | "validation.aiAccess"
   | "validation.aiPrompt"
+  | "validation.mcpUrl"
   | "validation.pluginPath"
   | "validation.themeName"
   | "validation.themeSource";
@@ -269,12 +296,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
   en: {
     "action.aiChat": "Chat",
     "action.aiClear": "Clear",
+    "action.aiConfigure": "Configure",
     "action.aiCopy": "Copy",
     "action.aiExport": "Export chat",
     "action.aiFetchModels": "Fetch models",
     "action.aiNewChat": "New chat",
     "action.aiSend": "Send",
     "action.aiTest": "Test",
+    "action.cancel": "Cancel",
     "action.close": "Close",
     "action.closeActiveSession": "Close active session",
     "action.closeHerdrSpace": "Close Herdr space",
@@ -284,6 +313,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.focusTerminal": "Focus terminal",
     "action.fullscreen": "Full screen",
     "action.lightosHome": "LightOS home",
+    "action.mcpAdd": "Add MCP server",
+    "action.mcpEdit": "Edit MCP server",
+    "action.mcpRemove": "Remove MCP server",
     "action.newHerdrSpace": "New Herdr space",
     "action.newHerdrTab": "New Herdr tab",
     "action.newTab": "New terminal tab",
@@ -305,6 +337,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.removeFont": "Remove selected font",
     "action.removeTerminalBackground": "Remove terminal background",
     "action.removeTheme": "Remove custom theme",
+    "action.save": "Save",
     "action.saveTheme": "Save custom theme",
     "action.settings": "Settings",
     "action.settingsMenu": "Settings menu",
@@ -343,6 +376,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.interfaceStyle": "Interface style",
     "field.language": "Language",
     "field.lineHeight": "Line height",
+    "field.mcpAuthorization": "Authorization",
+    "field.mcpHeaders": "Headers",
+    "field.mcpName": "Name",
+    "field.mcpTransport": "Transport",
+    "field.mcpUrl": "MCP URL",
     "field.outputBuffer": "History lines",
     "field.panes": "Panes",
     "field.pluginPath": "Path",
@@ -380,8 +418,15 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "menu.instances": "Instances",
     "menu.mobileShortcuts": "Terminal shortcuts",
     "menu.pane": "Pane menu",
+    "mcp.transportHttp": "Streamable HTTP",
+    "mcp.transportSse": "SSE",
     "ai.accessHelp": "Configure the OpenAI-compatible endpoint used by WebShell Chat. Chat does not control the terminal.",
+    "ai.mcpEmpty": "No MCP servers configured",
+    "ai.mcpHeadersHelp": "Add one header per line, for example: X-Header: value.",
+    "ai.mcpHelp": "Connect remote MCP servers so chat can use their tools. Local stdio servers are not supported in this version.",
+    "ai.providerAnthropic": "Anthropic Claude",
     "ai.providerOpenAICompatible": "OpenAI-compatible",
+    "ai.providerOpenAIResponses": "OpenAI Responses",
     "plugin.aiChat.block": "Chat",
     "plugin.aiChat.description": "Chat tool inside WebShell with optional recent terminal context.",
     "plugin.aiChat.name": "AI Chat",
@@ -435,6 +480,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.fonts": "Fonts",
     "tab.fontSettings": "Font settings",
     "tab.fontUpload": "Font upload",
+    "tab.aiProvider": "AI provider",
+    "tab.mcp": "MCP",
     "tab.plugins": "Plugins",
     "tab.themes": "Terminal",
     "status.closed": "Closed",
@@ -464,6 +511,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.herdrUnavailable": "Herdr socket unavailable",
     "status.herdrWorkspaceFocused": "Herdr workspace focused",
     "status.idle": "Idle",
+    "status.imageUploadDone": "Image uploaded",
+    "status.imageUploadFailed": "Image upload failed: {message}",
+    "status.imageUploadStarted": "Uploading image...",
     "status.instance": "Instance",
     "status.instanceLoadFailed": "Instance load failed: {message}",
     "status.instancesLoaded": "Instances loaded",
@@ -472,6 +522,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.lightosHomeLoading": "Opening LightOS home...",
     "status.loadingGhostty": "Loading terminal renderer...",
     "status.loadingInstances": "Loading instances...",
+    "status.mcpServerRemoved": "MCP server removed",
+    "status.mcpServerSaved": "MCP server saved",
     "status.noInstances": "No instances returned",
     "status.noInstancesVisible": "No LightOS instances visible.",
     "status.noPlugins": "No plugins returned",
@@ -482,6 +534,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.aiContextOff": "Terminal context is off",
     "status.aiContextReady": "Context: {lines} recent lines",
     "status.aiContextUnavailable": "No native terminal output captured yet",
+    "status.aiConfigSaved": "AI settings saved",
     "status.aiModelsReady": "{count} model(s) loaded",
     "status.aiNoOutput": "No AI output",
     "status.aiTestOk": "AI test passed",
@@ -525,6 +578,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.backgroundSize": "background image must be between 1 byte and 10 MB",
     "validation.aiAccess": "enter Base URL and API key",
     "validation.aiPrompt": "enter a prompt",
+    "validation.mcpUrl": "enter an MCP server URL",
     "validation.pluginPath": "enter a target path",
     "validation.themeName": "theme name is required",
     "validation.themeSource": "paste a Ghostty theme with background, foreground, or palette entries",
@@ -532,12 +586,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
   "zh-CN": {
     "action.aiChat": "对话",
     "action.aiClear": "清空",
+    "action.aiConfigure": "配置",
     "action.aiCopy": "复制",
     "action.aiExport": "导出聊天",
     "action.aiFetchModels": "获取模型",
     "action.aiNewChat": "新建聊天",
     "action.aiSend": "发送",
     "action.aiTest": "测试",
+    "action.cancel": "取消",
     "action.close": "关闭",
     "action.closeActiveSession": "关闭当前活动会话",
     "action.closeHerdrSpace": "关闭 Herdr Space",
@@ -547,6 +603,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.focusTerminal": "聚焦终端",
     "action.fullscreen": "全屏",
     "action.lightosHome": "LightOS 首页",
+    "action.mcpAdd": "添加 MCP 服务",
+    "action.mcpEdit": "编辑 MCP 服务",
+    "action.mcpRemove": "移除 MCP 服务",
     "action.newHerdrSpace": "新建 Herdr Space",
     "action.newHerdrTab": "新建 Herdr 标签",
     "action.newTab": "新建终端标签",
@@ -568,6 +627,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.removeFont": "移除当前字体",
     "action.removeTerminalBackground": "移除终端背景",
     "action.removeTheme": "删除自定义主题",
+    "action.save": "保存",
     "action.saveTheme": "保存自定义主题",
     "action.settings": "设置",
     "action.settingsMenu": "设置菜单",
@@ -606,6 +666,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.interfaceStyle": "界面风格",
     "field.language": "语言",
     "field.lineHeight": "行高",
+    "field.mcpAuthorization": "Authorization",
+    "field.mcpHeaders": "请求头",
+    "field.mcpName": "名称",
+    "field.mcpTransport": "传输方式",
+    "field.mcpUrl": "MCP URL",
     "field.outputBuffer": "历史行数",
     "field.panes": "面板",
     "field.pluginPath": "路径",
@@ -643,8 +708,15 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "menu.instances": "实例",
     "menu.mobileShortcuts": "终端快捷键",
     "menu.pane": "终端面板菜单",
+    "mcp.transportHttp": "Streamable HTTP",
+    "mcp.transportSse": "SSE",
     "ai.accessHelp": "配置 WebShell Chat 使用的 OpenAI-compatible 接口。聊天不会控制终端。",
+    "ai.mcpEmpty": "还没有配置 MCP 服务",
+    "ai.mcpHeadersHelp": "每行填写一个请求头，例如：X-Header: value。",
+    "ai.mcpHelp": "连接远程 MCP 服务，让 Chat 可以调用这些服务提供的工具。本版本暂不支持本地 stdio 服务。",
+    "ai.providerAnthropic": "Anthropic Claude",
     "ai.providerOpenAICompatible": "OpenAI-compatible",
+    "ai.providerOpenAIResponses": "OpenAI Responses",
     "plugin.aiChat.block": "聊天",
     "plugin.aiChat.description": "WebShell 内的 Chat 工具，可选携带最近终端上下文。",
     "plugin.aiChat.name": "AI Chat",
@@ -698,6 +770,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.fonts": "字体",
     "tab.fontSettings": "字体设置",
     "tab.fontUpload": "字体上传",
+    "tab.aiProvider": "AI 服务",
+    "tab.mcp": "MCP",
     "tab.plugins": "插件",
     "tab.themes": "终端",
     "status.closed": "已关闭",
@@ -727,6 +801,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.herdrUnavailable": "Herdr socket 不可用",
     "status.herdrWorkspaceFocused": "已切换 Herdr 工作区",
     "status.idle": "空闲",
+    "status.imageUploadDone": "图片上传完成",
+    "status.imageUploadFailed": "图片上传失败：{message}",
+    "status.imageUploadStarted": "正在上传图片...",
     "status.instance": "实例",
     "status.instanceLoadFailed": "实例加载失败：{message}",
     "status.instancesLoaded": "实例已加载",
@@ -735,6 +812,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.lightosHomeLoading": "正在打开 LightOS 首页...",
     "status.loadingGhostty": "正在加载终端渲染器...",
     "status.loadingInstances": "正在加载实例...",
+    "status.mcpServerRemoved": "MCP 服务已移除",
+    "status.mcpServerSaved": "MCP 服务已保存",
     "status.noInstances": "没有返回实例",
     "status.noInstancesVisible": "没有可见的 LightOS 实例。",
     "status.noPlugins": "没有返回插件",
@@ -745,6 +824,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.aiContextOff": "终端上下文已关闭",
     "status.aiContextReady": "上下文：最近 {lines} 行",
     "status.aiContextUnavailable": "还没有捕获到原生终端输出",
+    "status.aiConfigSaved": "AI 设置已保存",
     "status.aiModelsReady": "已加载 {count} 个模型",
     "status.aiNoOutput": "没有 AI 输出",
     "status.aiTestOk": "AI 测试通过",
@@ -788,6 +868,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.backgroundSize": "背景图片大小必须在 1 字节到 10 MB 之间",
     "validation.aiAccess": "请输入 Base URL 和 API Key",
     "validation.aiPrompt": "请输入内容",
+    "validation.mcpUrl": "请输入 MCP 服务 URL",
     "validation.pluginPath": "请输入目标路径",
     "validation.themeName": "请输入主题名称",
     "validation.themeSource": "请粘贴包含 background、foreground 或 palette 的 Ghostty 主题",

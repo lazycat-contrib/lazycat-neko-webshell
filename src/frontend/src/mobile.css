@@ -274,6 +274,41 @@
     right: 8px;
   }
 
+  .webshell[data-tab-layout="vertical"] .switcher-menu,
+  .webshell[data-tab-layout="vertical"] .herdr-workspace-menu,
+  .webshell[data-tab-layout="vertical"] .settings-menu {
+    position: fixed;
+    top: auto;
+    right: auto;
+    bottom: max(8px, var(--lzc-safe-area-inset-bottom));
+    left: calc(var(--app-viewport-offset-left) + 56px);
+    max-height: min(420px, calc(var(--app-viewport-height) - 16px));
+  }
+
+  .webshell[data-tab-layout="vertical"].has-named-tabs .switcher-menu,
+  .webshell[data-tab-layout="vertical"].has-named-tabs .herdr-workspace-menu,
+  .webshell[data-tab-layout="vertical"].has-named-tabs .settings-menu {
+    left: calc(var(--app-viewport-offset-left) + 164px);
+  }
+
+  .webshell[data-tab-layout="vertical"] .switcher-menu,
+  .webshell[data-tab-layout="vertical"] .herdr-workspace-menu {
+    width: min(340px, calc(var(--app-viewport-width) - 64px));
+  }
+
+  .webshell[data-tab-layout="vertical"].has-named-tabs .switcher-menu,
+  .webshell[data-tab-layout="vertical"].has-named-tabs .herdr-workspace-menu {
+    width: min(340px, calc(var(--app-viewport-width) - 178px));
+  }
+
+  .webshell[data-tab-layout="vertical"] .settings-menu {
+    max-width: calc(var(--app-viewport-width) - 64px);
+  }
+
+  .webshell[data-tab-layout="vertical"].has-named-tabs .settings-menu {
+    max-width: calc(var(--app-viewport-width) - 178px);
+  }
+
   .settings-page {
     padding: 10px;
   }
@@ -453,6 +488,21 @@
     grid-template-columns: 1fr;
   }
 
+  .ai-config-summary-grid,
+  .ai-mcp-item,
+  .ai-config-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-mcp-actions {
+    justify-content: flex-start;
+  }
+
+  .ai-config-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
   .pane-menu button {
     min-height: 44px;
   }
@@ -611,6 +661,16 @@
   border-top: 1px solid var(--line-soft);
   background: var(--mobile-shortcuts-bg);
   scrollbar-width: none;
+}
+
+.webshell[data-tab-layout="vertical"] .mobile-shortcuts {
+  left: calc(var(--app-viewport-offset-left) + 48px);
+  width: calc(var(--app-viewport-width) - 48px);
+}
+
+.webshell[data-tab-layout="vertical"].has-named-tabs .mobile-shortcuts {
+  left: calc(var(--app-viewport-offset-left) + 156px);
+  width: calc(var(--app-viewport-width) - 156px);
 }
 
 body.desktop-controls-enabled:not(.mobile-controls-enabled) .tab-mount {
