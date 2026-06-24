@@ -155,6 +155,8 @@ import {
   renderPublicTunnelToolView,
   type LightOsForwardInfo,
   type PublicTunnelInfo,
+  type TunnelProviderProfileEditor,
+  type TunnelProviderProfileSummary,
 } from "./plugin-views";
 import type {
   AIChatMessage,
@@ -230,8 +232,10 @@ const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
 const MAX_AI_PROVIDER_PROFILES = 12;
 const AI_TERMINAL_CONTEXT_LINES = 40;
 const NETWORK_PLUGIN_TIMEOUT_MS = 70000;
+const TUNNEL_PROVIDER_PROFILES_METADATA = "tunnelProviderProfiles";
 type AISettingsTab = "ai" | "mcp";
 type AIConfigDialogState = { type: "ai"; profileId?: string; isNew?: boolean } | { type: "mcp"; index: number };
+type TunnelProfileDialogState = { profileId: string; isNew: boolean };
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -282,7 +286,6 @@ const lightosPortForwardTool = {
 const publicTunnelTool = {
   provider: "cloudflare-quick",
   upstreamUrl: "",
-  ngrokAuthtoken: "",
   tunnels: [] as PublicTunnelInfo[],
   loading: false,
   loaded: false,
@@ -290,6 +293,7 @@ const publicTunnelTool = {
 };
 let activeAISettingsTab: AISettingsTab = "ai";
 let aiConfigDialog: AIConfigDialogState | undefined;
+let tunnelProfileDialog: TunnelProfileDialogState | undefined;
 let aiProviderPickerOpen = false;
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
@@ -484,6 +488,31 @@ function bindSettings() {
   });
   elements.pluginList.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
+    const openTunnelProfileButton = target?.closest<HTMLButtonElement>("[data-tunnel-profile-open]");
+    if (openTunnelProfileButton) {
+      const profileId = openTunnelProfileButton.dataset.tunnelProfileOpen ?? "";
+      tunnelProfileDialog = profileId === "new"
+        ? { profileId: newId(), isNew: true }
+        : { profileId, isNew: false };
+      renderPluginSettings();
+      return;
+    }
+    const saveTunnelProfileButton = target?.closest<HTMLButtonElement>("[data-tunnel-profile-save]");
+    if (saveTunnelProfileButton) {
+      void saveTunnelProfileDialog();
+      return;
+    }
+    const removeTunnelProfileButton = target?.closest<HTMLButtonElement>("[data-tunnel-profile-remove]");
+    if (removeTunnelProfileButton) {
+      void removeTunnelProfile(removeTunnelProfileButton.dataset.tunnelProfileRemove ?? "");
+      return;
+    }
+    const closeTunnelProfileTarget = target?.closest<HTMLElement>("[data-tunnel-profile-close]");
+    if (closeTunnelProfileTarget && (closeTunnelProfileTarget === target || closeTunnelProfileTarget instanceof HTMLButtonElement)) {
+      tunnelProfileDialog = undefined;
+      renderPluginSettings();
+      return;
+    }
     const tabButton = target?.closest<HTMLButtonElement>("[data-ai-settings-tab]");
     if (tabButton) {
       activeAISettingsTab = tabButton.dataset.aiSettingsTab === "mcp" ? "mcp" : "ai";
@@ -2201,6 +2230,7 @@ async function loadPlugins() {
   try {
     const response = await capabilityClient.listPlugins({}, { timeoutMs: 10000 });
     plugins = [...response.plugins].sort((left, right) => left.id.localeCompare(right.id));
+    syncPublicTunnelProviderSelection();
     pluginsLoaded = true;
     renderPlugins();
     setPluginStatus(tr("status.pluginsReady", { count: plugins.length }), "ok");
@@ -2211,6 +2241,175 @@ async function loadPlugins() {
     pluginsLoading = false;
     renderPlugins();
   }
+}
+
+function publicTunnelPlugin(): PluginDescriptor | undefined {
+  return plugins.find((plugin) => plugin.id === PUBLIC_TUNNEL_PLUGIN_ID);
+}
+
+function publicTunnelProfiles(): TunnelProviderProfileSummary[] {
+  const raw = publicTunnelPlugin()?.metadata[TUNNEL_PROVIDER_PROFILES_METADATA];
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item): TunnelProviderProfileSummary | undefined => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return undefined;
+      const record = item as JsonRecord;
+      const id = stringValue(record, "id");
+      const provider = stringValue(record, "provider");
+      const name = stringValue(record, "name");
+      if (!id || provider !== "ngrok" || !name) return undefined;
+      return {
+        id,
+        provider,
+        name,
+        enabled: boolValue(record, "enabled"),
+        configured: boolValue(record, "configured"),
+        createdAtMs: numberValue(record, "createdAtMs"),
+        updatedAtMs: numberValue(record, "updatedAtMs"),
+        lastUsedAtMs: numberValue(record, "lastUsedAtMs"),
+      };
+    }).filter((profile): profile is TunnelProviderProfileSummary => Boolean(profile));
+  } catch {
+    return [];
+  }
+}
+
+function tunnelProfileEditor(
+  dialog: TunnelProfileDialogState,
+  profiles: TunnelProviderProfileSummary[],
+): TunnelProviderProfileEditor {
+  if (dialog.isNew) {
+    return {
+      id: dialog.profileId,
+      provider: "ngrok",
+      name: "",
+      enabled: true,
+      configured: false,
+      authtoken: "",
+    };
+  }
+  const profile = profiles.find((item) => item.id === dialog.profileId);
+  return {
+    id: dialog.profileId,
+    provider: "ngrok",
+    name: profile?.name ?? "",
+    enabled: profile?.enabled ?? true,
+    configured: profile?.configured ?? false,
+    authtoken: "",
+  };
+}
+
+function syncPublicTunnelProviderSelection() {
+  if (!publicTunnelTool.provider.startsWith("ngrok:")) return;
+  const profileId = publicTunnelTool.provider.slice("ngrok:".length);
+  const available = publicTunnelProfiles().some((profile) => profile.id === profileId && profile.enabled && profile.configured);
+  if (!available) {
+    publicTunnelTool.provider = "cloudflare-quick";
+  }
+}
+
+function publicTunnelProviderMetadata(): Record<string, string> | undefined {
+  if (!publicTunnelTool.provider.startsWith("ngrok:")) {
+    return { provider: "cloudflare-quick" };
+  }
+  const profileId = publicTunnelTool.provider.slice("ngrok:".length);
+  const profile = publicTunnelProfiles().find((item) => item.id === profileId && item.enabled && item.configured);
+  if (!profile) return undefined;
+  return {
+    provider: "ngrok",
+    ngrokProfileId: profile.id,
+  };
+}
+
+type TunnelProviderProfileSaveInput = {
+  id: string;
+  provider: string;
+  name: string;
+  enabled: boolean;
+  authtoken: string;
+};
+
+async function saveTunnelProfileDialog() {
+  if (!tunnelProfileDialog) return;
+  const name = tunnelProfileField<HTMLInputElement>("name")?.value.trim() ?? "";
+  const authtoken = tunnelProfileField<HTMLInputElement>("authtoken")?.value.trim() ?? "";
+  const enabled = tunnelProfileField<HTMLInputElement>("enabled")?.checked ?? true;
+  if (!name) {
+    setPluginStatus(tr("validation.tunnelProfileName"), "error");
+    return;
+  }
+  if (tunnelProfileDialog.isNew && !authtoken) {
+    setPluginStatus(tr("validation.ngrokAuthtoken"), "error");
+    return;
+  }
+  const profiles = publicTunnelProfiles()
+    .filter((profile) => profile.id !== tunnelProfileDialog?.profileId)
+    .map(tunnelProfileSaveInputFromSummary);
+  profiles.push({
+    id: tunnelProfileDialog.profileId,
+    provider: "ngrok",
+    name,
+    enabled,
+    authtoken,
+  });
+  profiles.sort((left, right) => left.name.localeCompare(right.name));
+  await saveTunnelProviderProfiles(profiles, "status.tunnelProfileSaved");
+}
+
+async function removeTunnelProfile(profileId: string) {
+  if (!profileId) return;
+  const profiles = publicTunnelProfiles()
+    .filter((profile) => profile.id !== profileId)
+    .map(tunnelProfileSaveInputFromSummary);
+  if (publicTunnelTool.provider === `ngrok:${profileId}`) {
+    publicTunnelTool.provider = "cloudflare-quick";
+  }
+  await saveTunnelProviderProfiles(profiles, "status.tunnelProfileRemoved");
+}
+
+async function saveTunnelProviderProfiles(
+  profiles: TunnelProviderProfileSaveInput[],
+  successKey: MessageKey,
+) {
+  const plugin = publicTunnelPlugin();
+  if (!plugin || pluginSaveInFlight.has(PUBLIC_TUNNEL_PLUGIN_ID)) return;
+  pluginSaveInFlight.add(PUBLIC_TUNNEL_PLUGIN_ID);
+  renderPlugins();
+  try {
+    const response = await capabilityClient.configurePlugin({
+      pluginId: PUBLIC_TUNNEL_PLUGIN_ID,
+      enabled: plugin.enabled,
+      metadata: {
+        [TUNNEL_PROVIDER_PROFILES_METADATA]: JSON.stringify(profiles),
+      },
+    }, { timeoutMs: 10000 });
+    const updated = response.plugin ?? plugin;
+    plugins = plugins.map((item) => item.id === PUBLIC_TUNNEL_PLUGIN_ID ? updated : item);
+    tunnelProfileDialog = undefined;
+    syncPublicTunnelProviderSelection();
+    setPluginStatus(tr(successKey), "ok");
+  } catch (error) {
+    setPluginStatus(errorMessage(error), "error");
+  } finally {
+    pluginSaveInFlight.delete(PUBLIC_TUNNEL_PLUGIN_ID);
+    renderPlugins();
+  }
+}
+
+function tunnelProfileSaveInputFromSummary(profile: TunnelProviderProfileSummary): TunnelProviderProfileSaveInput {
+  return {
+    id: profile.id,
+    provider: profile.provider,
+    name: profile.name,
+    enabled: profile.enabled,
+    authtoken: "",
+  };
+}
+
+function tunnelProfileField<T extends HTMLInputElement>(field: string): T | null {
+  return elements.pluginList.querySelector<T>(`[data-tunnel-profile-field="${field}"]`);
 }
 
 async function configurePlugin(pluginId: string, enabled: boolean) {
@@ -2226,6 +2425,9 @@ async function configurePlugin(pluginId: string, enabled: boolean) {
     }, { timeoutMs: 10000 });
     const updated = response.plugin ?? { ...plugin, enabled };
     plugins = plugins.map((item) => item.id === pluginId ? updated : item);
+    if (pluginId === PUBLIC_TUNNEL_PLUGIN_ID) {
+      syncPublicTunnelProviderSelection();
+    }
     setPluginStatus(
       tr(enabled ? "status.pluginEnabled" : "status.pluginDisabled", { name: pluginDisplayName(updated, tr) }),
       "ok",
@@ -2249,6 +2451,7 @@ function renderPlugins() {
 function renderPluginSettings() {
   elements.refreshPlugins.disabled = pluginsLoading;
   const mcpServers = parseAiMcpServers(settings.aiMcpServers);
+  const tunnelProfiles = publicTunnelProfiles();
   elements.pluginList.innerHTML = renderPluginSettingsView({
     plugins,
     pluginsLoading,
@@ -2278,6 +2481,17 @@ function renderPluginSettings() {
             isNew: Boolean(aiConfigDialog.isNew),
           }
         : undefined,
+    },
+    publicTunnel: {
+      profiles: tunnelProfiles,
+      dialog: tunnelProfileDialog
+        ? {
+          profile: tunnelProfileEditor(tunnelProfileDialog, tunnelProfiles),
+          isNew: tunnelProfileDialog.isNew,
+        }
+        : undefined,
+      disabled: pluginsLoading || pluginSaveInFlight.has(PUBLIC_TUNNEL_PLUGIN_ID),
+      tr,
     },
     tr,
   });
@@ -2388,11 +2602,12 @@ function renderLightOsPortForwardTool(plugin: PluginDescriptor): string {
 }
 
 function renderPublicTunnelTool(plugin: PluginDescriptor): string {
+  syncPublicTunnelProviderSelection();
   return renderPublicTunnelToolView({
     disabled: pluginControlsDisabled(plugin),
     provider: publicTunnelTool.provider,
     upstreamUrl: publicTunnelTool.upstreamUrl,
-    ngrokAuthtoken: publicTunnelTool.ngrokAuthtoken,
+    ngrokProfiles: publicTunnelProfiles(),
     tunnels: publicTunnelTool.tunnels,
     forwards: lightosPortForwardTool.forwards,
     loading: publicTunnelTool.loading,
@@ -2411,11 +2626,9 @@ function updatePortForwardField(field: string, value: string) {
 
 function updatePublicTunnelField(field: string, value: string) {
   if (field === "provider") {
-    publicTunnelTool.provider = value === "ngrok" ? "ngrok" : "cloudflare-quick";
+    publicTunnelTool.provider = value.startsWith("ngrok:") ? value : "cloudflare-quick";
   } else if (field === "upstreamUrl") {
     publicTunnelTool.upstreamUrl = value;
-  } else if (field === "ngrokAuthtoken") {
-    publicTunnelTool.ngrokAuthtoken = value;
   }
 }
 
@@ -2496,13 +2709,12 @@ async function runPublicTunnel(action: string) {
     setPublicTunnelOutput(tr("validation.upstreamUrl"), "error");
     return;
   }
-  const metadata: Record<string, string> = {
-    provider: publicTunnelTool.provider,
-    upstreamUrl,
-  };
-  if (publicTunnelTool.provider === "ngrok") {
-    metadata.ngrokAuthtoken = publicTunnelTool.ngrokAuthtoken;
+  const provider = publicTunnelProviderMetadata();
+  if (!provider) {
+    setPublicTunnelOutput(tr("validation.tunnelProfile"), "error");
+    return;
   }
+  const metadata: Record<string, string> = { ...provider, upstreamUrl };
   await invokePublicTunnel("start", metadata);
 }
 
@@ -2608,6 +2820,13 @@ function stringValue(record: JsonRecord | undefined, key: string): string {
 function numberValue(record: JsonRecord | undefined, key: string): number {
   const value = record?.[key];
   return typeof value === "number" ? value : Number(value || 0);
+}
+
+function boolValue(record: JsonRecord | undefined, key: string): boolean {
+  const value = record?.[key];
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value === "true";
+  return Boolean(value);
 }
 
 function setPortForwardOutput(message: string, tone: Tone = "neutral") {

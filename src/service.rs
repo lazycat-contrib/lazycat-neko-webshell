@@ -5,11 +5,13 @@ use std::time::Duration;
 
 use buffa::MessageField;
 use connectrpc::{ConnectError, RequestContext, Response as ConnectResponse, ServiceResult};
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::agent_client::ensure_agent;
 use crate::config::{APP_ID, APP_NAME, DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_COLS, MAX_ROWS};
+use crate::database::{TunnelProviderProfile, TunnelProviderProfileUpsert};
 use crate::lightos;
 use crate::plugins::{lightos_port_forward, tunnel};
 use crate::proto::lazycat::webshell::v1::{
@@ -20,13 +22,18 @@ use crate::proto::lazycat::webshell::v1::{
     OwnedConfigurePluginRequestView, OwnedCreateSessionRequestView, OwnedGetProviderRequestView,
     OwnedInvokePluginRequestView, OwnedListInstancesRequestView, OwnedListPluginsRequestView,
     OwnedListSessionsRequestView, OwnedReleaseControlRequestView, OwnedRequestControlRequestView,
-    ProviderDescriptor, ReleaseControlResponse, RequestControlResponse, Session,
+    PluginDescriptor, ProviderDescriptor, ReleaseControlResponse, RequestControlResponse, Session,
 };
 use crate::state::{AppState, PluginRecord, SessionRecord, output_frame_limit_from_metadata};
 use crate::validation::{normalize_dimension, required_field, validate_selector};
 use crate::workspace::{WorkspaceSessionError, close_workspace_session};
 
 const PLUGIN_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+const TUNNEL_PROVIDER_PROFILES_METADATA: &str = "tunnelProviderProfiles";
+const TUNNEL_NGROK_PROFILE_ID_METADATA: &str = "ngrokProfileId";
+const TUNNEL_NGROK_AUTHTOKEN_METADATA: &str = "ngrokAuthtoken";
+const TUNNEL_PROVIDER_NGROK: &str = "ngrok";
+const MAX_TUNNEL_PROVIDER_PROFILES: usize = 16;
 
 pub struct CapabilityServiceImpl {
     state: Arc<AppState>,
@@ -151,21 +158,172 @@ impl CapabilityServiceImpl {
     async fn invoke_public_tunnel_plugin(
         &self,
         operation: &str,
-        metadata: HashMap<String, String>,
+        mut metadata: HashMap<String, String>,
     ) -> ServiceResult<InvokePluginResponse> {
+        let operation = operation.trim().to_owned();
+        let ngrok_profile_id = if operation == "start"
+            && metadata.get("provider").map(String::as_str).map(str::trim)
+                == Some(TUNNEL_PROVIDER_NGROK)
+        {
+            metadata.remove(TUNNEL_NGROK_AUTHTOKEN_METADATA);
+            let profile_id = metadata
+                .get(TUNNEL_NGROK_PROFILE_ID_METADATA)
+                .map(String::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    ConnectError::invalid_argument("metadata.ngrokProfileId is required")
+                })?
+                .to_owned();
+            let profile = self
+                .state
+                .database()
+                .load_tunnel_provider_profile(&profile_id)
+                .map_err(|err| ConnectError::internal(err.to_string()))?
+                .ok_or_else(|| ConnectError::not_found("ngrok profile not found"))?;
+            if profile.provider != TUNNEL_PROVIDER_NGROK {
+                return Err(ConnectError::invalid_argument(
+                    "tunnel provider profile is not ngrok",
+                ));
+            }
+            if !profile.enabled {
+                return Err(ConnectError::failed_precondition(
+                    "ngrok profile is disabled",
+                ));
+            }
+            let authtoken = ngrok_authtoken_from_secret(&profile.secret_json).ok_or_else(|| {
+                ConnectError::failed_precondition("ngrok profile is not configured")
+            })?;
+            metadata.insert(TUNNEL_NGROK_AUTHTOKEN_METADATA.to_owned(), authtoken);
+            Some(profile_id)
+        } else {
+            metadata.remove(TUNNEL_NGROK_AUTHTOKEN_METADATA);
+            None
+        };
         let manager = Arc::clone(&self.state.public_tunnels);
-        let operation = operation.to_owned();
-        let response =
-            tokio::task::spawn_blocking(move || manager.invoke_metadata(&operation, metadata))
-                .await
-                .map_err(|err| ConnectError::internal(format!("plugin task failed: {err}")))?
-                .map_err(|err| ConnectError::failed_precondition(err.to_string()))?;
+        let operation_for_task = operation.clone();
+        let response = tokio::task::spawn_blocking(move || {
+            manager.invoke_metadata(&operation_for_task, metadata)
+        })
+        .await
+        .map_err(|err| ConnectError::internal(format!("plugin task failed: {err}")))?
+        .map_err(|err| ConnectError::failed_precondition(err.to_string()))?;
+        if operation == "start" {
+            if let Some(profile_id) = ngrok_profile_id {
+                self.state
+                    .database()
+                    .mark_tunnel_provider_profile_used(&profile_id)
+                    .map_err(|err| ConnectError::internal(err.to_string()))?;
+            }
+        }
         plugin_response(
             &response.status,
             &response.content_type,
             response.payload,
             response.metadata,
         )
+    }
+
+    fn plugin_descriptor(&self, plugin: &PluginRecord) -> Result<PluginDescriptor, ConnectError> {
+        let mut descriptor = plugin.to_proto();
+        if plugin.id == tunnel::PLUGIN_ID {
+            descriptor.metadata.extend(self.public_tunnel_metadata()?);
+        }
+        Ok(descriptor)
+    }
+
+    fn public_tunnel_metadata(&self) -> Result<HashMap<String, String>, ConnectError> {
+        let profiles = self
+            .state
+            .database()
+            .list_tunnel_provider_profiles(Some(TUNNEL_PROVIDER_NGROK))
+            .map_err(|err| ConnectError::internal(err.to_string()))?;
+        let summaries = profiles
+            .iter()
+            .map(tunnel_provider_profile_summary)
+            .collect::<Vec<_>>();
+        let profiles_json = serde_json::to_string(&summaries)
+            .map_err(|err| ConnectError::internal(err.to_string()))?;
+        Ok(HashMap::from([
+            (TUNNEL_PROVIDER_PROFILES_METADATA.to_owned(), profiles_json),
+            ("ngrokProfileCount".to_owned(), summaries.len().to_string()),
+        ]))
+    }
+
+    fn replace_tunnel_provider_profiles(&self, profiles_json: &str) -> Result<(), ConnectError> {
+        let inputs = serde_json::from_str::<Vec<TunnelProviderProfileInput>>(profiles_json)
+            .map_err(|err| {
+                ConnectError::invalid_argument(format!("invalid tunnel provider profiles: {err}"))
+            })?;
+        if inputs.len() > MAX_TUNNEL_PROVIDER_PROFILES {
+            return Err(ConnectError::invalid_argument(format!(
+                "at most {MAX_TUNNEL_PROVIDER_PROFILES} tunnel provider profiles are supported"
+            )));
+        }
+        let existing = self
+            .state
+            .database()
+            .list_tunnel_provider_profiles(Some(TUNNEL_PROVIDER_NGROK))
+            .map_err(|err| ConnectError::internal(err.to_string()))?
+            .into_iter()
+            .map(|profile| (profile.id.clone(), profile))
+            .collect::<HashMap<_, _>>();
+        let mut seen = std::collections::HashSet::new();
+        let mut upserts = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let provider = input.provider.trim();
+            if provider != TUNNEL_PROVIDER_NGROK {
+                return Err(ConnectError::invalid_argument(
+                    "only ngrok tunnel provider profiles are supported",
+                ));
+            }
+            let id = input.id.trim();
+            if !valid_profile_id(id) {
+                return Err(ConnectError::invalid_argument(
+                    "invalid tunnel provider profile id",
+                ));
+            }
+            if !seen.insert(id.to_owned()) {
+                return Err(ConnectError::invalid_argument(
+                    "duplicate tunnel provider profile id",
+                ));
+            }
+            let name = input.name.trim();
+            if name.is_empty() || name.len() > 80 {
+                return Err(ConnectError::invalid_argument(
+                    "tunnel provider profile name must be 1-80 bytes",
+                ));
+            }
+            let authtoken = input
+                .authtoken
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if authtoken.is_none()
+                && existing
+                    .get(id)
+                    .and_then(|profile| ngrok_authtoken_from_secret(&profile.secret_json))
+                    .is_none()
+            {
+                return Err(ConnectError::invalid_argument(
+                    "ngrok authtoken is required for new profiles",
+                ));
+            }
+            let secret_json =
+                authtoken.map(|value| serde_json::json!({ "authtoken": value }).to_string());
+            upserts.push(TunnelProviderProfileUpsert {
+                id: id.to_owned(),
+                provider: provider.to_owned(),
+                name: name.to_owned(),
+                enabled: input.enabled.unwrap_or(true),
+                config_json: "{}".to_owned(),
+                secret_json,
+            });
+        }
+        self.state
+            .database()
+            .replace_tunnel_provider_profiles(TUNNEL_PROVIDER_NGROK, &upserts)
+            .map_err(|err| ConnectError::internal(err.to_string()))
     }
 }
 
@@ -211,6 +369,67 @@ fn session_from_agent_pane(
         metadata,
         ..Default::default()
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TunnelProviderProfileInput {
+    id: String,
+    provider: String,
+    name: String,
+    enabled: Option<bool>,
+    authtoken: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TunnelProviderProfileSummary {
+    id: String,
+    provider: String,
+    name: String,
+    enabled: bool,
+    configured: bool,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+    last_used_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TunnelNgrokSecret {
+    authtoken: Option<String>,
+}
+
+fn tunnel_provider_profile_summary(
+    profile: &TunnelProviderProfile,
+) -> TunnelProviderProfileSummary {
+    let _ = &profile.config_json;
+    TunnelProviderProfileSummary {
+        id: profile.id.clone(),
+        provider: profile.provider.clone(),
+        name: profile.name.clone(),
+        enabled: profile.enabled,
+        configured: ngrok_authtoken_from_secret(&profile.secret_json).is_some(),
+        created_at_ms: profile.created_at_ms,
+        updated_at_ms: profile.updated_at_ms,
+        last_used_at_ms: profile.last_used_at_ms,
+    }
+}
+
+fn ngrok_authtoken_from_secret(secret_json: &str) -> Option<String> {
+    serde_json::from_str::<TunnelNgrokSecret>(secret_json)
+        .ok()
+        .and_then(|secret| secret.authtoken)
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn valid_profile_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
 impl CapabilityService for CapabilityServiceImpl {
@@ -339,14 +558,18 @@ impl CapabilityService for CapabilityServiceImpl {
         _ctx: RequestContext,
         _request: OwnedListPluginsRequestView,
     ) -> ServiceResult<ListPluginsResponse> {
-        let plugins = self
+        let plugin_records = self
             .state
             .plugins
             .read()
             .map_err(|_| ConnectError::internal("plugin store lock poisoned"))?
             .values()
-            .map(PluginRecord::to_proto)
-            .collect();
+            .cloned()
+            .collect::<Vec<_>>();
+        let plugins = plugin_records
+            .iter()
+            .map(|plugin| self.plugin_descriptor(plugin))
+            .collect::<Result<Vec<_>, _>>()?;
         ConnectResponse::ok(ListPluginsResponse {
             plugins,
             ..Default::default()
@@ -359,6 +582,16 @@ impl CapabilityService for CapabilityServiceImpl {
         request: OwnedConfigurePluginRequestView,
     ) -> ServiceResult<ConfigurePluginResponse> {
         let plugin_id = required_field(request.plugin_id, "plugin_id")?;
+        let request_metadata = request
+            .metadata
+            .iter()
+            .map(|entry| (entry.0.to_owned(), entry.1.to_owned()))
+            .collect::<HashMap<_, _>>();
+        if plugin_id == tunnel::PLUGIN_ID {
+            if let Some(profiles_json) = request_metadata.get(TUNNEL_PROVIDER_PROFILES_METADATA) {
+                self.replace_tunnel_provider_profiles(profiles_json)?;
+            }
+        }
         let (plugin, snapshot) = {
             let mut plugins = self
                 .state
@@ -369,16 +602,30 @@ impl CapabilityService for CapabilityServiceImpl {
                 return Err(ConnectError::not_found("plugin not found"));
             };
             plugin.enabled = request.enabled.unwrap_or(false);
-            for entry in &request.metadata {
-                plugin
-                    .metadata
-                    .insert(entry.0.to_owned(), entry.1.to_owned());
+            for (key, value) in &request_metadata {
+                if plugin_id == tunnel::PLUGIN_ID
+                    && matches!(
+                        key.as_str(),
+                        TUNNEL_PROVIDER_PROFILES_METADATA
+                            | TUNNEL_NGROK_AUTHTOKEN_METADATA
+                            | "ngrokConfigured"
+                    )
+                {
+                    continue;
+                }
+                plugin.metadata.insert(key.to_owned(), value.to_owned());
             }
-            (plugin.to_proto(), plugins.clone())
+            if plugin_id == tunnel::PLUGIN_ID {
+                plugin.metadata.remove(TUNNEL_NGROK_AUTHTOKEN_METADATA);
+                plugin.metadata.remove("ngrokConfigured");
+                plugin.metadata.remove(TUNNEL_PROVIDER_PROFILES_METADATA);
+            }
+            (plugin.clone(), plugins.clone())
         };
         self.state
             .persist_plugins_snapshot(&snapshot)
             .map_err(|err| ConnectError::internal(err.to_string()))?;
+        let plugin = self.plugin_descriptor(&plugin)?;
         ConnectResponse::ok(ConfigurePluginResponse {
             plugin: MessageField::some(plugin),
             ..Default::default()

@@ -276,9 +276,19 @@ impl PluginRecord {
             input_schema_json: Some(self.input_schema_json.clone()),
             output_schema_json: Some(self.output_schema_json.clone()),
             enabled: Some(self.enabled),
-            metadata: self.metadata.clone(),
+            metadata: self.public_metadata(),
             ..Default::default()
         }
+    }
+
+    fn public_metadata(&self) -> HashMap<String, String> {
+        let mut metadata = self.metadata.clone();
+        if self.id == crate::plugins::tunnel::PLUGIN_ID {
+            metadata.remove("ngrokAuthtoken");
+            metadata.remove("ngrokConfigured");
+            metadata.remove("tunnelProviderProfiles");
+        }
+        metadata
     }
 }
 
@@ -839,7 +849,7 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             scopes: vec!["session".to_owned(), "network".to_owned(), "tunnel".to_owned()],
             accepted_content_types: vec!["application/json".to_owned()],
             produced_content_types: vec!["application/json".to_owned()],
-            input_schema_json: r#"{"operation":"start|stop|list","metadata":{"provider":"cloudflare-quick|ngrok","upstreamUrl":"http://127.0.0.1:port/","ngrokAuthtoken":"required for ngrok","tunnelId":"string for stop"}}"#.to_owned(),
+            input_schema_json: r#"{"operation":"start|stop|list","metadata":{"provider":"cloudflare-quick|ngrok","upstreamUrl":"http://127.0.0.1:port/","ngrokProfileId":"required for ngrok","tunnelId":"string for stop"}}"#.to_owned(),
             output_schema_json: r#"{"sessions":[{"id":"string","provider":"cloudflare-quick|ngrok","publicUrl":"https://...","upstreamUrl":"http://127.0.0.1:port/","status":"running"}]}"#.to_owned(),
             enabled: false,
             metadata: HashMap::from([

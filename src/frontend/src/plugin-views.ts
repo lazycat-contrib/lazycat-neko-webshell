@@ -72,6 +72,26 @@ export type PublicTunnelInfo = {
   createdAtMs: number;
 };
 
+export type TunnelProviderProfileSummary = {
+  id: string;
+  provider: string;
+  name: string;
+  enabled: boolean;
+  configured: boolean;
+  createdAtMs: number;
+  updatedAtMs: number;
+  lastUsedAtMs: number;
+};
+
+export type TunnelProviderProfileEditor = {
+  id: string;
+  provider: string;
+  name: string;
+  enabled: boolean;
+  configured: boolean;
+  authtoken: string;
+};
+
 export type LightOsPortForwardViewState = {
   disabled: boolean;
   remoteHost: string;
@@ -86,7 +106,7 @@ export type PublicTunnelViewState = {
   disabled: boolean;
   provider: string;
   upstreamUrl: string;
-  ngrokAuthtoken: string;
+  ngrokProfiles: TunnelProviderProfileSummary[];
   tunnels: PublicTunnelInfo[];
   forwards: LightOsForwardInfo[];
   loading: boolean;
@@ -99,6 +119,7 @@ export type PluginSettingsViewState = {
   pluginsLoading: boolean;
   savingPluginIds: Set<string>;
   aiAccess: AIAccessSettingsViewState;
+  publicTunnel: PublicTunnelSettingsViewState;
   tr: Translate;
 };
 
@@ -118,6 +139,18 @@ export type AIAccessSettingsViewState = {
 export type AIConfigDialogViewState =
   | { type: "ai"; profile: AiProviderProfile; isNew: boolean }
   | { type: "mcp"; index: number; server: AiMcpServerSettings; headersText: string };
+
+export type PublicTunnelSettingsViewState = {
+  disabled: boolean;
+  profiles: TunnelProviderProfileSummary[];
+  dialog: TunnelProviderProfileDialogViewState | undefined;
+  tr: Translate;
+};
+
+export type TunnelProviderProfileDialogViewState = {
+  profile: TunnelProviderProfileEditor;
+  isNew: boolean;
+};
 
 export function renderPluginSettingsView(state: PluginSettingsViewState): string {
   if (!state.plugins.length) {
@@ -517,7 +550,7 @@ export function renderLightOsPortForwardToolView(state: LightOsPortForwardViewSt
 
 export function renderPublicTunnelToolView(state: PublicTunnelViewState): string {
   const disabledAttr = state.disabled || state.loading ? "disabled" : "";
-  const ngrokSelected = state.provider === "ngrok";
+  const configuredNgrokProfiles = state.ngrokProfiles.filter((profile) => profile.enabled && profile.configured);
   return `
     <div class="plugin-tool network-tool">
       <div class="plugin-tool-head">
@@ -531,16 +564,15 @@ export function renderPublicTunnelToolView(state: PublicTunnelViewState): string
           <span>${escapeHtml(state.tr("field.tunnelProvider"))}</span>
           <select data-public-tunnel-field="provider" ${disabledAttr}>
             <option value="cloudflare-quick" ${state.provider === "cloudflare-quick" ? "selected" : ""}>Cloudflare Quick Tunnel</option>
-            <option value="ngrok" ${ngrokSelected ? "selected" : ""}>ngrok</option>
+            ${configuredNgrokProfiles.map((profile) => `
+              <option value="ngrok:${escapeAttr(profile.id)}" ${state.provider === `ngrok:${profile.id}` ? "selected" : ""}>ngrok · ${escapeHtml(profile.name)}</option>
+            `).join("")}
+            ${configuredNgrokProfiles.length ? "" : `<option value="" disabled>ngrok · ${escapeHtml(state.tr("status.noTunnelProfiles"))}</option>`}
           </select>
         </label>
         <label class="field network-field-wide">
           <span>${escapeHtml(state.tr("field.upstreamUrl"))}</span>
           <input data-public-tunnel-field="upstreamUrl" type="url" value="${escapeAttr(state.upstreamUrl)}" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:3000/" ${disabledAttr} />
-        </label>
-        <label class="field network-field-wide ${ngrokSelected ? "" : "is-muted"}">
-          <span>${escapeHtml(state.tr("field.ngrokAuthtoken"))}</span>
-          <input data-public-tunnel-field="ngrokAuthtoken" type="password" value="${escapeAttr(state.ngrokAuthtoken)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
         </label>
         <div class="network-actions">
           <button class="command-button primary" type="button" data-public-tunnel-action="start" ${disabledAttr}>
@@ -721,6 +753,12 @@ function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsView
       disabled: !plugin.enabled || saving || state.pluginsLoading,
       tr: state.tr,
     })
+    : plugin.id === PUBLIC_TUNNEL_PLUGIN_ID
+      ? renderPublicTunnelSettingsView({
+        ...state.publicTunnel,
+        disabled: saving || state.pluginsLoading,
+        tr: state.tr,
+      })
     : "";
   return `
     <div class="plugin-item" role="listitem">
@@ -745,6 +783,110 @@ function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsView
         <span>${escapeHtml(status)}</span>
       </label>
       ${settingsTool}
+    </div>
+  `;
+}
+
+function renderPublicTunnelSettingsView(
+  state: PublicTunnelSettingsViewState & { disabled: boolean; tr: Translate },
+): string {
+  return `
+    <div class="plugin-tool tunnel-settings">
+      <div class="settings-group-title">${escapeHtml(state.tr("section.tunnelProviders"))}</div>
+      <p class="settings-help">${escapeHtml(state.tr("plugin.publicTunnel.settingsHelp"))}</p>
+      <div class="ai-mcp-list tunnel-profile-list" role="list">
+        ${state.profiles.length
+          ? state.profiles.map((profile) => renderTunnelProfileItem(profile, state)).join("")
+          : `<div class="empty">${escapeHtml(state.tr("status.noTunnelProfiles"))}</div>`}
+      </div>
+      <button class="command-button" type="button" data-tunnel-profile-open="new" ${state.disabled ? "disabled" : ""}>
+        <i data-lucide="plus"></i>
+        <span>${escapeHtml(state.tr("action.tunnelProfileAdd"))}</span>
+      </button>
+      ${state.dialog ? renderTunnelProfileDialog(state) : ""}
+    </div>
+  `;
+}
+
+function renderTunnelProfileItem(
+  profile: TunnelProviderProfileSummary,
+  state: PublicTunnelSettingsViewState & { disabled: boolean; tr: Translate },
+): string {
+  const status = profile.enabled && profile.configured
+    ? state.tr("setting.pluginEnabled")
+    : profile.configured
+      ? state.tr("setting.pluginDisabled")
+      : state.tr("status.notConfigured");
+  return `
+    <div class="ai-mcp-item tunnel-profile-item" role="listitem">
+      <span class="ai-mcp-main">
+        <strong>${escapeHtml(profile.name)}</strong>
+        <small>${escapeHtml(profile.provider)}</small>
+      </span>
+      <span class="ai-mcp-transport">${escapeHtml(status)}</span>
+      <span class="ai-mcp-actions">
+        <button class="icon-button" type="button" data-tunnel-profile-open="${escapeAttr(profile.id)}" aria-label="${escapeAttr(state.tr("action.tunnelProfileEdit"))}" title="${escapeAttr(state.tr("action.tunnelProfileEdit"))}" ${state.disabled ? "disabled" : ""}>
+          <i data-lucide="square-pen"></i>
+        </button>
+        <button class="icon-button" type="button" data-tunnel-profile-remove="${escapeAttr(profile.id)}" aria-label="${escapeAttr(state.tr("action.tunnelProfileRemove"))}" title="${escapeAttr(state.tr("action.tunnelProfileRemove"))}" ${state.disabled ? "disabled" : ""}>
+          <i data-lucide="trash-2"></i>
+        </button>
+      </span>
+    </div>
+  `;
+}
+
+function renderTunnelProfileDialog(
+  state: PublicTunnelSettingsViewState & { disabled: boolean; tr: Translate },
+): string {
+  const dialog = state.dialog;
+  if (!dialog) return "";
+  const title = dialog.isNew ? state.tr("action.tunnelProfileAdd") : state.tr("action.tunnelProfileEdit");
+  return `
+    <div class="ai-config-modal-backdrop" data-tunnel-profile-close>
+      <section class="ai-config-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}" data-tunnel-profile-modal>
+        <header class="ai-config-modal-head">
+          <strong>${escapeHtml(title)}</strong>
+          <button class="icon-button" type="button" data-tunnel-profile-close aria-label="${escapeAttr(state.tr("action.close"))}" title="${escapeAttr(state.tr("action.close"))}">
+            <i data-lucide="x"></i>
+          </button>
+        </header>
+        <div class="ai-config-modal-body">
+          <div class="ai-config-grid">
+            <label class="field">
+              <span>${escapeHtml(state.tr("field.tunnelProfileName"))}</span>
+              <input data-tunnel-profile-field="name" type="text" value="${escapeAttr(dialog.profile.name)}" autocomplete="off" spellcheck="false" />
+            </label>
+            <label class="field">
+              <span>${escapeHtml(state.tr("field.aiProvider"))}</span>
+              <input type="text" value="ngrok" disabled />
+            </label>
+            <label class="field ai-config-full">
+              <span>${escapeHtml(state.tr("field.ngrokAuthtoken"))}</span>
+              <input data-tunnel-profile-field="authtoken" type="password" value="" autocomplete="off" spellcheck="false" placeholder="${escapeAttr(dialog.isNew ? "" : state.tr("field.secretKeepBlank"))}" />
+            </label>
+            <label class="switch ai-config-full">
+              <input data-tunnel-profile-field="enabled" type="checkbox" ${dialog.profile.enabled ? "checked" : ""} />
+              <span>${escapeHtml(state.tr("setting.pluginEnabled"))}</span>
+            </label>
+          </div>
+        </div>
+        <footer class="ai-config-modal-actions">
+          ${!dialog.isNew ? `
+            <button class="command-button danger" type="button" data-tunnel-profile-remove="${escapeAttr(dialog.profile.id)}">
+              <i data-lucide="trash-2"></i>
+              <span>${escapeHtml(state.tr("action.tunnelProfileRemove"))}</span>
+            </button>
+          ` : ""}
+          <button class="command-button" type="button" data-tunnel-profile-close>
+            <span>${escapeHtml(state.tr("action.cancel"))}</span>
+          </button>
+          <button class="command-button primary" type="button" data-tunnel-profile-save>
+            <i data-lucide="save"></i>
+            <span>${escapeHtml(state.tr("action.save"))}</span>
+          </button>
+        </footer>
+      </section>
     </div>
   `;
 }
