@@ -72,10 +72,10 @@
   --component-wash-hover: linear-gradient(transparent, transparent);
   --component-side-wash: linear-gradient(transparent, transparent);
   --component-side-wash-hover: linear-gradient(transparent, transparent);
-  --accent-soft: #06193a;
-  --accent-softer: #022248;
-  --accent-border: #003674;
-  --accent-fg: #eaf6ff;
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  --accent-softer: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 36%, transparent);
+  --accent-fg: var(--accent-strong);
   --primary-fg: #ffffff;
   --primary-shadow: none;
   --danger-fg: #ffe9ed;

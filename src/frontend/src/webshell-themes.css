@@ -1,3 +1,10 @@
+.webshell {
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  --accent-softer: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent) 36%, transparent);
+  --accent-fg: var(--accent-strong);
+}
+
 .webshell[data-interface-style="glass"] {
   --bg: #05080c;
   --chrome: rgba(12, 19, 28, 0.66);
@@ -148,6 +155,9 @@
   --component-wash-hover: linear-gradient(transparent, transparent);
   --component-side-wash: linear-gradient(transparent, transparent);
   --component-side-wash-hover: linear-gradient(transparent, transparent);
+  --accent-soft: color-mix(in srgb, var(--accent) 13%, white);
+  --accent-softer: color-mix(in srgb, var(--accent) 7%, white);
+  --accent-border: color-mix(in srgb, var(--accent) 25%, transparent);
   --accent-fg: var(--accent-strong);
   --primary-fg: #ffffff;
   --danger-fg: var(--danger);
