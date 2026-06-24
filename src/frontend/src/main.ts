@@ -100,6 +100,20 @@ import {
   renderMobileSymbolKeyboardPanel,
   type MobileSymbolAgent,
 } from "./mobile-quick-input";
+import {
+  formatMobilePomodoroRemaining,
+  idleMobilePomodoroState,
+  loadMobilePomodoroState,
+  MOBILE_POMODORO_DEFAULT_MINUTES,
+  MOBILE_POMODORO_MAX_MINUTES,
+  MOBILE_POMODORO_MIN_MINUTES,
+  normalizeMobilePomodoroMinutes,
+  reconcileMobilePomodoroState,
+  remainingMobilePomodoroMs,
+  startMobilePomodoro,
+  storeMobilePomodoroState,
+  type MobilePomodoroState,
+} from "./mobile-pomodoro";
 import { renderNewTabMenuView, renderTabsView, type TabViewItem } from "./navigation-views";
 import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
 import { createPaneTransport } from "./pane-transport";
@@ -241,6 +255,8 @@ const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
 const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
+const MOBILE_POMODORO_LONG_PRESS_MS = 600;
+const MOBILE_POMODORO_LONG_PRESS_MOVE_PX = 12;
 const MAX_AI_PROVIDER_PROFILES = 12;
 const AI_TERMINAL_CONTEXT_LINES = 40;
 const NETWORK_PLUGIN_TIMEOUT_MS = 70000;
@@ -319,6 +335,13 @@ let mobileSymbolAgentRefreshTime = 0;
 let mobileSymbolAgentRequest = 0;
 let mobileQuickPhraseEditingId = "";
 let mobileClockTimer: number | undefined;
+let mobilePomodoroState: MobilePomodoroState = loadMobilePomodoroState();
+let mobilePomodoroCompletionPromptShown = mobilePomodoroState.status !== "completed";
+let mobilePomodoroLongPressTimer: number | undefined;
+let mobilePomodoroLongPressPointerId: number | undefined;
+let mobilePomodoroLongPressStartX = 0;
+let mobilePomodoroLongPressStartY = 0;
+let mobilePomodoroLongPressFired = false;
 const lastMobileTerminalTap = {
   paneId: "",
   time: 0,
@@ -907,9 +930,18 @@ function bindSettings() {
     saveSettings();
     void remountTerminalsForTouchMode();
   });
+  elements.mobileClockEnabled.addEventListener("change", () => {
+    settings.mobileClockEnabled = elements.mobileClockEnabled.checked;
+    updateMobileClockSettingsState();
+    if (!settings.mobileClockEnabled) {
+      closeMobilePomodoroDialog();
+    }
+    saveSettings();
+    updateMobileClock();
+  });
   elements.mobileClockUse24Hour.addEventListener("change", () => {
     settings.mobileClockUse24Hour = elements.mobileClockUse24Hour.checked;
-    elements.mobileClockShowPeriod.disabled = settings.mobileClockUse24Hour;
+    updateMobileClockSettingsState();
     saveSettings();
     updateMobileClock();
   });
@@ -1160,6 +1192,7 @@ function bindActions() {
   bindSettingsTabs();
   bindLifecycleEvents();
   bindMobileShortcuts();
+  bindMobilePomodoro();
   document.addEventListener("keydown", handleTerminalInterruptCapture, true);
   document.addEventListener("keydown", handleTerminalClipboardCapture, true);
   document.addEventListener("paste", handleTerminalPasteEvent, true);
@@ -1383,6 +1416,91 @@ function bindMobileShortcuts() {
   updateMobileShortcutState();
 }
 
+function bindMobilePomodoro() {
+  elements.mobileShortcutClock.addEventListener("pointerdown", (event) => {
+    if (!settings.mobileClockEnabled || event.button !== 0) return;
+    event.preventDefault();
+    mobilePomodoroLongPressPointerId = event.pointerId;
+    mobilePomodoroLongPressStartX = event.clientX;
+    mobilePomodoroLongPressStartY = event.clientY;
+    mobilePomodoroLongPressFired = false;
+    elements.mobileShortcutClock.setPointerCapture?.(event.pointerId);
+    window.clearTimeout(mobilePomodoroLongPressTimer);
+    mobilePomodoroLongPressTimer = window.setTimeout(() => {
+      mobilePomodoroLongPressFired = true;
+      openMobilePomodoroDialog();
+    }, MOBILE_POMODORO_LONG_PRESS_MS);
+  });
+  elements.mobileShortcutClock.addEventListener("pointermove", (event) => {
+    if (event.pointerId !== mobilePomodoroLongPressPointerId) return;
+    const dx = event.clientX - mobilePomodoroLongPressStartX;
+    const dy = event.clientY - mobilePomodoroLongPressStartY;
+    if (Math.hypot(dx, dy) > MOBILE_POMODORO_LONG_PRESS_MOVE_PX) {
+      cancelMobilePomodoroLongPress();
+    }
+  });
+  const finishPointer = () => cancelMobilePomodoroLongPress();
+  elements.mobileShortcutClock.addEventListener("pointerup", finishPointer);
+  elements.mobileShortcutClock.addEventListener("pointercancel", finishPointer);
+  elements.mobileShortcutClock.addEventListener("lostpointercapture", finishPointer);
+  elements.mobileShortcutClock.addEventListener("click", (event) => {
+    if (!mobilePomodoroLongPressFired) return;
+    event.preventDefault();
+    mobilePomodoroLongPressFired = false;
+  });
+  elements.mobileShortcutClock.addEventListener("contextmenu", (event) => event.preventDefault());
+  elements.mobileShortcutClock.addEventListener("keydown", (event) => {
+    if (!settings.mobileClockEnabled || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    openMobilePomodoroDialog();
+  });
+
+  elements.mobilePomodoroDialog.addEventListener("click", (event) => {
+    if (event.target === elements.mobilePomodoroDialog) {
+      closeMobilePomodoroDialog();
+    }
+  });
+  elements.mobilePomodoroDialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeMobilePomodoroDialog();
+    }
+  });
+  elements.mobilePomodoroClose.addEventListener("click", () => closeMobilePomodoroDialog());
+  elements.mobilePomodoroStart.addEventListener("click", () => {
+    setMobilePomodoroState(startMobilePomodoro(elements.mobilePomodoroMinutes.value));
+    closeMobilePomodoroDialog();
+  });
+  elements.mobilePomodoroStop.addEventListener("click", () => {
+    setMobilePomodoroState(idleMobilePomodoroState());
+    closeMobilePomodoroDialog();
+  });
+  elements.mobilePomodoroDismiss.addEventListener("click", () => {
+    setMobilePomodoroState(idleMobilePomodoroState());
+    closeMobilePomodoroDialog();
+  });
+  elements.mobilePomodoroAgain.addEventListener("click", () => {
+    setMobilePomodoroState(startMobilePomodoro(mobilePomodoroState.durationMinutes || MOBILE_POMODORO_DEFAULT_MINUTES));
+    closeMobilePomodoroDialog();
+  });
+  elements.mobilePomodoroMinutes.addEventListener("change", () => {
+    elements.mobilePomodoroMinutes.value = String(normalizeMobilePomodoroMinutes(elements.mobilePomodoroMinutes.value));
+    renderMobilePomodoroDialog();
+  });
+  elements.mobilePomodoroDialog.querySelectorAll<HTMLButtonElement>("[data-pomodoro-preset]").forEach((button) => {
+    button.addEventListener("click", () => {
+      elements.mobilePomodoroMinutes.value = String(normalizeMobilePomodoroMinutes(button.dataset.pomodoroPreset));
+      renderMobilePomodoroDialog();
+    });
+  });
+}
+
+function cancelMobilePomodoroLongPress() {
+  window.clearTimeout(mobilePomodoroLongPressTimer);
+  mobilePomodoroLongPressTimer = undefined;
+  mobilePomodoroLongPressPointerId = undefined;
+}
+
 function activateMobileKeyboardPage(page: string) {
   if (!page) return;
   elements.mobileShortcuts.querySelectorAll<HTMLButtonElement>("[data-mobile-page]").forEach((button) => {
@@ -1525,10 +1643,10 @@ function updateMobileShortcutState() {
 
 function renderMobileQuickInput() {
   const pages = elements.mobileShortcuts.querySelector<HTMLElement>(".mobile-keyboard-pages");
+  const pageTabs = elements.mobileShortcuts.querySelector<HTMLElement>(".mobile-keyboard-page-tabs");
   const symPanel = elements.mobileShortcuts.querySelector<HTMLElement>("[data-mobile-panel='sym']");
   const phrasePanel = elements.mobileShortcuts.querySelector<HTMLElement>("[data-mobile-panel='phrases']");
-  const clock = elements.mobileShortcutClock;
-  if (!pages || !symPanel || !phrasePanel) return;
+  if (!pages || !pageTabs || !symPanel || !phrasePanel) return;
   const activePage = activeMobileKeyboardPage();
 
   const phraseButton = pages.querySelector<HTMLElement>("[data-mobile-page='phrases']");
@@ -1539,7 +1657,7 @@ function renderMobileQuickInput() {
   }
   const phraseButtonHtml = renderMobileQuickPhrasePageButton(phrases, tr);
   if (phraseButtonHtml) {
-    clock.insertAdjacentHTML("beforebegin", phraseButtonHtml);
+    pageTabs.insertAdjacentHTML("beforeend", phraseButtonHtml);
   } else if (!phrasePanel.hidden) {
     activateMobileKeyboardPage("sym");
   }
@@ -1640,16 +1758,145 @@ function startMobileClock() {
 }
 
 function updateMobileClock() {
+  const beforePomodoroStatus = mobilePomodoroState.status;
+  mobilePomodoroState = reconcileMobilePomodoroState(mobilePomodoroState);
+  if (mobilePomodoroState.status !== beforePomodoroStatus) {
+    storeMobilePomodoroState(mobilePomodoroState);
+    if (beforePomodoroStatus === "running" && mobilePomodoroState.status === "completed" && settings.mobileClockEnabled) {
+      mobilePomodoroCompletionPromptShown = true;
+      openMobilePomodoroDialog();
+    }
+  }
+  elements.mobileShortcutClock.hidden = !settings.mobileClockEnabled;
+  if (!settings.mobileClockEnabled) {
+    elements.mobileShortcutClock.replaceChildren();
+    return;
+  }
   const now = new Date();
   const hasPhrases = settings.mobileQuickPhrases.length > 0;
   const showPeriod = !settings.mobileClockUse24Hour && settings.mobileClockShowPeriod;
-  elements.mobileShortcutClock.textContent = formatMobileClockTime(now, {
+  const timeText = formatMobileClockTime(now, {
     hour12: !settings.mobileClockUse24Hour,
     showPeriod,
     showSeconds: !hasPhrases,
   });
+  renderMobileClockContent(timeText);
   elements.mobileShortcutClock.dataset.compact = String(hasPhrases);
   elements.mobileShortcutClock.dataset.period = String(showPeriod);
+  elements.mobileShortcutClock.dataset.pomodoro = mobilePomodoroState.status;
+  if (mobilePomodoroState.status === "running") {
+    elements.mobileShortcutClock.setAttribute(
+      "aria-label",
+      tr("pomodoro.clockRunning", {
+        time: timeText,
+        remaining: formatMobilePomodoroRemaining(remainingMobilePomodoroMs(mobilePomodoroState)),
+      }),
+    );
+  } else if (mobilePomodoroState.status === "completed") {
+    elements.mobileShortcutClock.setAttribute("aria-label", tr("pomodoro.clockComplete", { time: timeText }));
+    if (!mobilePomodoroCompletionPromptShown) {
+      mobilePomodoroCompletionPromptShown = true;
+      openMobilePomodoroDialog();
+    }
+  } else {
+    elements.mobileShortcutClock.setAttribute("aria-label", tr("label.currentTime"));
+  }
+  if (!elements.mobilePomodoroDialog.hidden) {
+    renderMobilePomodoroDialog();
+  }
+}
+
+function updateMobileClockSettingsState() {
+  elements.mobileClockEnabled.checked = settings.mobileClockEnabled;
+  elements.mobileClockUse24Hour.checked = settings.mobileClockUse24Hour;
+  elements.mobileClockUse24Hour.disabled = !settings.mobileClockEnabled;
+  elements.mobileClockShowPeriod.checked = settings.mobileClockShowPeriod;
+  elements.mobileClockShowPeriod.disabled = !settings.mobileClockEnabled || settings.mobileClockUse24Hour;
+}
+
+function renderMobileClockContent(timeText: string) {
+  const text = document.createElement("span");
+  text.className = "mobile-clock-text";
+  text.textContent = timeText;
+  if (mobilePomodoroState.status !== "running") {
+    elements.mobileShortcutClock.replaceChildren(text);
+    return;
+  }
+  const mark = document.createElement("span");
+  mark.className = "mobile-pomodoro-mark";
+  mark.setAttribute("aria-hidden", "true");
+  elements.mobileShortcutClock.replaceChildren(mark, text);
+}
+
+function setMobilePomodoroState(state: MobilePomodoroState) {
+  mobilePomodoroState = reconcileMobilePomodoroState(state);
+  mobilePomodoroCompletionPromptShown = mobilePomodoroState.status !== "running" && mobilePomodoroState.status !== "completed";
+  storeMobilePomodoroState(mobilePomodoroState);
+  renderMobilePomodoroDialog();
+  updateMobileClock();
+}
+
+function openMobilePomodoroDialog() {
+  if (!settings.mobileClockEnabled) return;
+  cancelMobilePomodoroLongPress();
+  renderMobilePomodoroDialog();
+  elements.mobilePomodoroDialog.hidden = false;
+  const focusTarget = mobilePomodoroState.status === "running"
+    ? elements.mobilePomodoroStop
+    : mobilePomodoroState.status === "completed"
+      ? elements.mobilePomodoroDismiss
+      : elements.mobilePomodoroStart;
+  requestAnimationFrame(() => focusTarget.focus());
+}
+
+function closeMobilePomodoroDialog() {
+  elements.mobilePomodoroDialog.hidden = true;
+}
+
+function renderMobilePomodoroDialog() {
+  mobilePomodoroState = reconcileMobilePomodoroState(mobilePomodoroState);
+  const state = mobilePomodoroState.status;
+  elements.mobilePomodoroDialog.dataset.state = state;
+  const inputMinutes = state === "idle"
+    ? normalizeMobilePomodoroMinutes(elements.mobilePomodoroMinutes.value || mobilePomodoroState.durationMinutes)
+    : mobilePomodoroState.durationMinutes;
+  elements.mobilePomodoroMinutes.min = String(MOBILE_POMODORO_MIN_MINUTES);
+  elements.mobilePomodoroMinutes.max = String(MOBILE_POMODORO_MAX_MINUTES);
+  elements.mobilePomodoroMinutes.value = String(inputMinutes);
+  elements.mobilePomodoroMinutes.disabled = state !== "idle";
+  elements.mobilePomodoroRemaining.textContent = state === "running"
+    ? formatMobilePomodoroRemaining(remainingMobilePomodoroMs(mobilePomodoroState))
+    : state === "completed"
+      ? "00:00"
+      : formatMobilePomodoroRemaining(inputMinutes * 60_000);
+
+  if (state === "running") {
+    elements.mobilePomodoroTitle.textContent = tr("pomodoro.runningTitle");
+    elements.mobilePomodoroStatus.textContent = tr("pomodoro.runningHint", {
+      time: formatMobileClockTime(new Date(mobilePomodoroState.deadline), {
+        hour12: !settings.mobileClockUse24Hour,
+        showPeriod: !settings.mobileClockUse24Hour && settings.mobileClockShowPeriod,
+        showSeconds: false,
+      }),
+    });
+  } else if (state === "completed") {
+    elements.mobilePomodoroTitle.textContent = tr("pomodoro.completeTitle");
+    elements.mobilePomodoroStatus.textContent = tr("pomodoro.completeHint");
+  } else {
+    elements.mobilePomodoroTitle.textContent = tr("pomodoro.title");
+    elements.mobilePomodoroStatus.textContent = tr("pomodoro.setupHint");
+  }
+
+  elements.mobilePomodoroDialog.querySelectorAll<HTMLButtonElement>("[data-pomodoro-preset]").forEach((button) => {
+    const active = normalizeMobilePomodoroMinutes(button.dataset.pomodoroPreset) === inputMinutes;
+    button.disabled = state !== "idle";
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  elements.mobilePomodoroStart.hidden = state !== "idle";
+  elements.mobilePomodoroStop.hidden = state !== "running";
+  elements.mobilePomodoroDismiss.hidden = state !== "completed";
+  elements.mobilePomodoroAgain.hidden = state !== "completed";
 }
 
 function formatMobileClockTime(date: Date, options: { hour12: boolean; showPeriod: boolean; showSeconds: boolean }): string {
@@ -2257,9 +2504,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.copyOnSelect.checked = settings.copyOnSelect;
   elements.useResttyClipboard.checked = settings.useResttyClipboard;
   elements.touchSelectionMode.value = settings.touchSelectionMode;
-  elements.mobileClockUse24Hour.checked = settings.mobileClockUse24Hour;
-  elements.mobileClockShowPeriod.checked = settings.mobileClockShowPeriod;
-  elements.mobileClockShowPeriod.disabled = settings.mobileClockUse24Hour;
+  updateMobileClockSettingsState();
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;
   updateSessionBackendSettings();

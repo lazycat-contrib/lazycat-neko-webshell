@@ -39,6 +39,7 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     copyOnSelect: value.copyOnSelect ?? DEFAULT_SETTINGS.copyOnSelect,
     useResttyClipboard: value.useResttyClipboard ?? DEFAULT_SETTINGS.useResttyClipboard,
     touchSelectionMode: normalizeTouchSelectionMode(value.touchSelectionMode),
+    mobileClockEnabled: value.mobileClockEnabled ?? DEFAULT_SETTINGS.mobileClockEnabled,
     mobileClockUse24Hour: value.mobileClockUse24Hour ?? DEFAULT_SETTINGS.mobileClockUse24Hour,
     mobileClockShowPeriod: value.mobileClockShowPeriod ?? DEFAULT_SETTINGS.mobileClockShowPeriod,
     terminalBackgroundEnabled: terminalBackgroundUrl

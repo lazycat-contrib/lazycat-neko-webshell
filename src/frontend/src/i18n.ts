@@ -63,6 +63,10 @@ export type MessageKey =
   | "action.pluginFileUpload"
   | "action.portForwardAcquire"
   | "action.portForwardRelease"
+  | "action.pomodoroAgain"
+  | "action.pomodoroDismiss"
+  | "action.pomodoroStart"
+  | "action.pomodoroStop"
   | "action.promoteSessionToTab"
   | "action.quickPhraseAdd"
   | "action.quickPhraseCancel"
@@ -207,6 +211,20 @@ export type MessageKey =
   | "plugin.publicTunnel.help"
   | "plugin.publicTunnel.name"
   | "plugin.publicTunnel.settingsHelp"
+  | "pomodoro.clockComplete"
+  | "pomodoro.clockRunning"
+  | "pomodoro.completeHint"
+  | "pomodoro.completeTitle"
+  | "pomodoro.customMinutes"
+  | "pomodoro.presets"
+  | "pomodoro.preset5"
+  | "pomodoro.preset15"
+  | "pomodoro.preset25"
+  | "pomodoro.remaining"
+  | "pomodoro.runningHint"
+  | "pomodoro.runningTitle"
+  | "pomodoro.setupHint"
+  | "pomodoro.title"
   | "section.appearance"
   | "section.aiAccess"
   | "section.fileTransfer"
@@ -236,6 +254,7 @@ export type MessageKey =
   | "setting.fontRenderingHelp"
   | "setting.herdrHighlightHelp"
   | "setting.mobileClock24Hour"
+  | "setting.mobileClockEnabled"
   | "setting.mobileClockHelp"
   | "setting.mobileClockPeriod"
   | "setting.mobileQuickInputHelp"
@@ -441,6 +460,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.pluginFileUpload": "Upload file",
     "action.portForwardAcquire": "Forward port",
     "action.portForwardRelease": "Stop forward",
+    "action.pomodoroAgain": "Start another",
+    "action.pomodoroDismiss": "Done",
+    "action.pomodoroStart": "Start",
+    "action.pomodoroStop": "End",
     "action.promoteSessionToTab": "Move session to new tab",
     "action.quickPhraseAdd": "Add phrase",
     "action.quickPhraseCancel": "Cancel",
@@ -592,6 +615,20 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.publicTunnel.help": "Tunnel sessions stay alive while the WebShell backend is running. Use a LightOS forward URL for services inside the selected instance.",
     "plugin.publicTunnel.name": "Public tunnel",
     "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel works without authentication. Add tunnel authentication configs here for providers that need tokens.",
+    "pomodoro.clockComplete": "Current time {time}. Pomodoro complete.",
+    "pomodoro.clockRunning": "Current time {time}. Pomodoro remaining {remaining}.",
+    "pomodoro.completeHint": "The focus timer is complete. Take a short break before starting another round.",
+    "pomodoro.completeTitle": "Time is up",
+    "pomodoro.customMinutes": "Custom minutes",
+    "pomodoro.presets": "Pomodoro presets",
+    "pomodoro.preset5": "5 min",
+    "pomodoro.preset15": "15 min",
+    "pomodoro.preset25": "25 min",
+    "pomodoro.remaining": "Remaining",
+    "pomodoro.runningHint": "Focus ends at {time}.",
+    "pomodoro.runningTitle": "Focus running",
+    "pomodoro.setupHint": "Choose a focus length and keep the terminal in view.",
+    "pomodoro.title": "Pomodoro",
     "section.appearance": "Appearance",
     "section.aiAccess": "AI access",
     "section.fileTransfer": "File transfer",
@@ -621,6 +658,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.fontRenderingHelp": "Ligatures shape operators such as => and !=. Font hinting can sharpen small text, but may cost extra rasterization time.",
     "setting.herdrHighlightHelp": "Customize the active Herdr workspace and tab background for dark and light interface styles.",
     "setting.mobileClock24Hour": "Use 24-hour time",
+    "setting.mobileClockEnabled": "Show mobile clock",
     "setting.mobileClockHelp": "Controls the time shown beside the mobile shortcut tabs.",
     "setting.mobileClockPeriod": "Show AM/PM",
     "setting.mobileQuickInputHelp": "Save personal phrases for the mobile shortcut bar. They appear after Sym and are sorted by usage.",
@@ -825,6 +863,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.pluginFileUpload": "上传文件",
     "action.portForwardAcquire": "转发端口",
     "action.portForwardRelease": "停止转发",
+    "action.pomodoroAgain": "再来一轮",
+    "action.pomodoroDismiss": "知道了",
+    "action.pomodoroStart": "开始",
+    "action.pomodoroStop": "结束番茄",
     "action.promoteSessionToTab": "将会话提升为新标签",
     "action.quickPhraseAdd": "添加短语",
     "action.quickPhraseCancel": "取消",
@@ -976,6 +1018,20 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.publicTunnel.help": "Tunnel 租约会在 WebShell 后端运行期间保持。要发布实例内服务，请先选择 LightOS 转发得到的本地 URL。",
     "plugin.publicTunnel.name": "Public Tunnel",
     "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel 无需认证配置。需要 token 的 Tunnel 服务商，请先在这里添加认证配置。",
+    "pomodoro.clockComplete": "当前时间 {time}。番茄时间到了。",
+    "pomodoro.clockRunning": "当前时间 {time}。番茄剩余 {remaining}。",
+    "pomodoro.completeHint": "本轮专注已经完成。休息一下，再开始下一轮。",
+    "pomodoro.completeTitle": "番茄时间到了",
+    "pomodoro.customMinutes": "自定义分钟",
+    "pomodoro.presets": "番茄时钟预设",
+    "pomodoro.preset5": "5 分钟",
+    "pomodoro.preset15": "15 分钟",
+    "pomodoro.preset25": "25 分钟",
+    "pomodoro.remaining": "剩余时间",
+    "pomodoro.runningHint": "本轮将在 {time} 结束。",
+    "pomodoro.runningTitle": "番茄进行中",
+    "pomodoro.setupHint": "选择一个专注时长，终端保持可见。",
+    "pomodoro.title": "番茄时钟",
     "section.appearance": "外观",
     "section.aiAccess": "AI 接入",
     "section.fileTransfer": "文件传输",
@@ -1005,6 +1061,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.fontRenderingHelp": "编程连字会渲染 =>、!= 这类符号；字体微调可以让小字号更锐利，但可能增加一点字体栅格化开销。",
     "setting.herdrHighlightHelp": "分别设置深色和浅色界面风格下，Herdr 当前工作区和标签的背景色。",
     "setting.mobileClock24Hour": "使用 24 小时制",
+    "setting.mobileClockEnabled": "显示移动端时间",
     "setting.mobileClockHelp": "控制移动端辅助键盘标签旁边的时间显示。",
     "setting.mobileClockPeriod": "显示上午/下午",
     "setting.mobileQuickInputHelp": "保存个人常用短语，移动端会在 Sym 后显示；点击后按使用频率排序。",

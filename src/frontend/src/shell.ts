@@ -34,6 +34,16 @@ export type ShellElements = {
   terminalStage: HTMLDivElement;
   mobileShortcuts: HTMLDivElement;
   mobileShortcutClock: HTMLSpanElement;
+  mobilePomodoroDialog: HTMLDivElement;
+  mobilePomodoroTitle: HTMLElement;
+  mobilePomodoroStatus: HTMLParagraphElement;
+  mobilePomodoroMinutes: HTMLInputElement;
+  mobilePomodoroRemaining: HTMLElement;
+  mobilePomodoroStart: HTMLButtonElement;
+  mobilePomodoroStop: HTMLButtonElement;
+  mobilePomodoroAgain: HTMLButtonElement;
+  mobilePomodoroDismiss: HTMLButtonElement;
+  mobilePomodoroClose: HTMLButtonElement;
   emptyState: HTMLDivElement;
   homeButton: HTMLButtonElement;
   settingsButton: HTMLButtonElement;
@@ -97,6 +107,7 @@ export type ShellElements = {
   copyOnSelect: HTMLInputElement;
   useResttyClipboard: HTMLInputElement;
   touchSelectionMode: HTMLSelectElement;
+  mobileClockEnabled: HTMLInputElement;
   mobileClockUse24Hour: HTMLInputElement;
   mobileClockShowPeriod: HTMLInputElement;
   mobileQuickPhraseSettings: HTMLDivElement;
@@ -271,13 +282,15 @@ export function renderShell(app: HTMLElement): ShellElements {
       </section>
 
       <div class="mobile-shortcuts" id="mobileShortcuts" aria-label="Terminal shortcuts" data-i18n-aria="menu.mobileShortcuts">
-        <div class="mobile-keyboard-pages" role="tablist" aria-label="Terminal shortcut pages" data-i18n-aria="menu.mobileShortcuts">
-          <button type="button" class="active" data-mobile-page="main" aria-pressed="true" aria-label="Main shortcuts" title="Main shortcuts" data-i18n-aria="label.mobileMainKeys" data-i18n-title="label.mobileMainKeys"><i data-lucide="keyboard"></i></button>
-          <button type="button" data-mobile-page="ops" aria-pressed="false" aria-label="Terminal actions" title="Terminal actions" data-i18n-aria="label.mobileOpsKeys" data-i18n-title="label.mobileOpsKeys"><i data-lucide="sliders-horizontal"></i></button>
-          <button type="button" data-mobile-page="nav" aria-pressed="false" aria-label="Navigation keys" title="Navigation keys" data-i18n-aria="label.mobileNavKeys" data-i18n-title="label.mobileNavKeys"><i data-lucide="navigation"></i></button>
-          <button type="button" data-mobile-page="fn" aria-pressed="false" aria-label="Function keys" title="Function keys" data-i18n-aria="label.mobileFnKeys" data-i18n-title="label.mobileFnKeys"><i data-lucide="hash"></i></button>
-          <button type="button" data-mobile-page="sym" aria-pressed="false" aria-label="Symbols" title="Symbols" data-i18n-aria="label.mobileSymbolKeys" data-i18n-title="label.mobileSymbolKeys"><i data-lucide="braces"></i></button>
-          <span class="mobile-shortcut-clock" id="mobileShortcutClock" aria-label="Current time" data-i18n-aria="label.currentTime"></span>
+        <div class="mobile-keyboard-pages">
+          <div class="mobile-keyboard-page-tabs" role="tablist" aria-label="Terminal shortcut pages" data-i18n-aria="menu.mobileShortcuts">
+            <button type="button" class="active" data-mobile-page="main" aria-pressed="true" aria-label="Main shortcuts" title="Main shortcuts" data-i18n-aria="label.mobileMainKeys" data-i18n-title="label.mobileMainKeys"><i data-lucide="keyboard"></i></button>
+            <button type="button" data-mobile-page="ops" aria-pressed="false" aria-label="Terminal actions" title="Terminal actions" data-i18n-aria="label.mobileOpsKeys" data-i18n-title="label.mobileOpsKeys"><i data-lucide="sliders-horizontal"></i></button>
+            <button type="button" data-mobile-page="nav" aria-pressed="false" aria-label="Navigation keys" title="Navigation keys" data-i18n-aria="label.mobileNavKeys" data-i18n-title="label.mobileNavKeys"><i data-lucide="navigation"></i></button>
+            <button type="button" data-mobile-page="fn" aria-pressed="false" aria-label="Function keys" title="Function keys" data-i18n-aria="label.mobileFnKeys" data-i18n-title="label.mobileFnKeys"><i data-lucide="hash"></i></button>
+            <button type="button" data-mobile-page="sym" aria-pressed="false" aria-label="Symbols" title="Symbols" data-i18n-aria="label.mobileSymbolKeys" data-i18n-title="label.mobileSymbolKeys"><i data-lucide="braces"></i></button>
+          </div>
+          <span class="mobile-shortcut-clock" id="mobileShortcutClock" role="button" tabindex="0" aria-haspopup="dialog" aria-label="Current time" data-i18n-aria="label.currentTime"></span>
         </div>
         <div class="mobile-keyboard-panel" data-mobile-panel="main">
           <button type="button" data-mobile-shortcut="ctrl" data-mobile-modifier="ctrl" aria-label="Control">Ctrl</button>
@@ -346,6 +359,42 @@ export function renderShell(app: HTMLElement): ShellElements {
         <div class="mobile-keyboard-panel" data-mobile-panel="sym" hidden></div>
         <div class="mobile-keyboard-panel" data-mobile-panel="phrases" hidden></div>
       </div>
+
+      <section class="mobile-pomodoro-shell" id="mobilePomodoroDialog" aria-label="Pomodoro timer" data-i18n-aria="pomodoro.title" hidden>
+        <div class="mobile-pomodoro-card" role="dialog" aria-modal="true" aria-labelledby="mobilePomodoroTitle">
+          <header class="mobile-pomodoro-head">
+            <span class="mobile-pomodoro-mark-large" aria-hidden="true"></span>
+            <div>
+              <strong id="mobilePomodoroTitle" data-i18n="pomodoro.title">Pomodoro</strong>
+              <p id="mobilePomodoroStatus" data-i18n="pomodoro.setupHint">Choose a focus length and keep the terminal in view.</p>
+            </div>
+            <button class="icon-button" id="mobilePomodoroClose" type="button" aria-label="Close" title="Close" data-i18n-aria="action.close" data-i18n-title="action.close">
+              <i data-lucide="x"></i>
+            </button>
+          </header>
+          <div class="mobile-pomodoro-body">
+            <div class="mobile-pomodoro-presets" aria-label="Pomodoro presets" data-i18n-aria="pomodoro.presets">
+              <button type="button" data-pomodoro-preset="25" data-i18n="pomodoro.preset25">25 min</button>
+              <button type="button" data-pomodoro-preset="15" data-i18n="pomodoro.preset15">15 min</button>
+              <button type="button" data-pomodoro-preset="5" data-i18n="pomodoro.preset5">5 min</button>
+            </div>
+            <label class="mobile-pomodoro-field">
+              <span data-i18n="pomodoro.customMinutes">Custom minutes</span>
+              <input id="mobilePomodoroMinutes" type="number" min="1" max="180" step="1" inputmode="numeric" autocomplete="off" />
+            </label>
+            <div class="mobile-pomodoro-meter" aria-live="polite">
+              <span data-i18n="pomodoro.remaining">Remaining</span>
+              <strong id="mobilePomodoroRemaining">25:00</strong>
+            </div>
+          </div>
+          <footer class="mobile-pomodoro-actions">
+            <button class="command-button danger" id="mobilePomodoroStop" type="button" data-i18n="action.pomodoroStop">End</button>
+            <button class="command-button" id="mobilePomodoroDismiss" type="button" data-i18n="action.pomodoroDismiss">Done</button>
+            <button class="command-button primary" id="mobilePomodoroAgain" type="button" data-i18n="action.pomodoroAgain">Start another</button>
+            <button class="command-button primary" id="mobilePomodoroStart" type="button" data-i18n="action.pomodoroStart">Start</button>
+          </footer>
+        </div>
+      </section>
 
       <aside class="plugin-sidebar" id="pluginSidebar" aria-label="Plugins" data-i18n-aria="section.plugins" hidden>
         <header class="plugin-sidebar-header">
@@ -524,6 +573,10 @@ export function renderShell(app: HTMLElement): ShellElements {
               <div class="settings-group">
                 <div class="settings-group-title" data-i18n="section.mobileClock">Mobile clock</div>
                 <p class="settings-help" data-i18n="setting.mobileClockHelp">Controls the time shown beside the mobile shortcut tabs.</p>
+                <label class="switch">
+                  <input id="mobileClockEnabled" type="checkbox" />
+                  <span data-i18n="setting.mobileClockEnabled">Show mobile clock</span>
+                </label>
                 <label class="switch">
                   <input id="mobileClockUse24Hour" type="checkbox" />
                   <span data-i18n="setting.mobileClock24Hour">Use 24-hour time</span>
@@ -715,6 +768,16 @@ export function renderShell(app: HTMLElement): ShellElements {
     terminalStage: qs<HTMLDivElement>("#terminalStage"),
     mobileShortcuts: qs<HTMLDivElement>("#mobileShortcuts"),
     mobileShortcutClock: qs<HTMLSpanElement>("#mobileShortcutClock"),
+    mobilePomodoroDialog: qs<HTMLDivElement>("#mobilePomodoroDialog"),
+    mobilePomodoroTitle: qs<HTMLElement>("#mobilePomodoroTitle"),
+    mobilePomodoroStatus: qs<HTMLParagraphElement>("#mobilePomodoroStatus"),
+    mobilePomodoroMinutes: qs<HTMLInputElement>("#mobilePomodoroMinutes"),
+    mobilePomodoroRemaining: qs<HTMLElement>("#mobilePomodoroRemaining"),
+    mobilePomodoroStart: qs<HTMLButtonElement>("#mobilePomodoroStart"),
+    mobilePomodoroStop: qs<HTMLButtonElement>("#mobilePomodoroStop"),
+    mobilePomodoroAgain: qs<HTMLButtonElement>("#mobilePomodoroAgain"),
+    mobilePomodoroDismiss: qs<HTMLButtonElement>("#mobilePomodoroDismiss"),
+    mobilePomodoroClose: qs<HTMLButtonElement>("#mobilePomodoroClose"),
     emptyState: qs<HTMLDivElement>("#emptyState"),
     homeButton: qs<HTMLButtonElement>("#homeButton"),
     settingsButton: qs<HTMLButtonElement>("#settingsButton"),
@@ -778,6 +841,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     copyOnSelect: qs<HTMLInputElement>("#copyOnSelect"),
     useResttyClipboard: qs<HTMLInputElement>("#useResttyClipboard"),
     touchSelectionMode: qs<HTMLSelectElement>("#touchSelectionMode"),
+    mobileClockEnabled: qs<HTMLInputElement>("#mobileClockEnabled"),
     mobileClockUse24Hour: qs<HTMLInputElement>("#mobileClockUse24Hour"),
     mobileClockShowPeriod: qs<HTMLInputElement>("#mobileClockShowPeriod"),
     mobileQuickPhraseSettings: qs<HTMLDivElement>("#mobileQuickPhraseSettings"),
