@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::{sleep, timeout};
+use tracing::warn;
 
 use crate::agent_protocol::{
     AGENT_PROTOCOL_VERSION, action_request, ping_request, read_agent_response, state_request,
@@ -120,29 +121,84 @@ pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<Agen
         socket_path: scoped_socket_path(selector),
     };
 
-    if ping_agent(&client).await.is_ok() {
-        return Ok(client);
+    match ping_agent(&client).await {
+        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+            return Ok(client);
+        }
+        Ok(response) if agent_protocol_version_is_stale(response.version.as_deref()) => {
+            warn!(
+                selector = %selector,
+                running_protocol = response.version.as_deref().unwrap_or(""),
+                expected_protocol = AGENT_PROTOCOL_VERSION,
+                "webshell agent protocol is stale; restarting agent"
+            );
+            ensure_agent_binary_installed(selector).await?;
+            restart_agent(&client).await?;
+            wait_for_agent(&client).await?;
+            return Ok(client);
+        }
+        Ok(response) => {
+            bail!(
+                "unsupported newer webshell agent protocol: running {}, provider expects {}",
+                response.version.unwrap_or_default(),
+                AGENT_PROTOCOL_VERSION
+            );
+        }
+        Err(_) => {}
     }
     ensure_agent_binary_installed(selector).await?;
-    if ping_agent(&client).await.is_ok() {
-        return Ok(client);
+    match ping_agent(&client).await {
+        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+            return Ok(client);
+        }
+        Ok(response) if agent_protocol_version_is_stale(response.version.as_deref()) => {
+            restart_agent(&client).await?;
+            wait_for_agent(&client).await?;
+            return Ok(client);
+        }
+        Ok(response) => {
+            bail!(
+                "unsupported newer webshell agent protocol: running {}, provider expects {}",
+                response.version.unwrap_or_default(),
+                AGENT_PROTOCOL_VERSION
+            );
+        }
+        Err(_) => {}
     }
     start_agent(&client).await?;
     wait_for_agent(&client).await?;
     Ok(client)
 }
 
-async fn ping_agent(client: &AgentClient) -> anyhow::Result<()> {
+async fn ping_agent(client: &AgentClient) -> anyhow::Result<AgentResponse> {
     let request = ping_request(client.selector.clone(), client.username.clone());
     let response = run_agent_request(client, &request).await?;
-    response_ok(response)
+    if response.ok != Some(true) {
+        bail!(
+            "{}",
+            response
+                .error
+                .clone()
+                .unwrap_or_else(|| "agent ping failed".to_owned())
+        );
+    }
+    Ok(response)
 }
 
 async fn wait_for_agent(client: &AgentClient) -> anyhow::Result<()> {
     let mut last_error = None;
     for _ in 0..25 {
         match ping_agent(client).await {
-            Ok(()) => return Ok(()),
+            Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+                return Ok(());
+            }
+            Ok(response) => {
+                last_error = Some(anyhow!(
+                    "agent protocol mismatch: running {}, expected {}",
+                    response.version.unwrap_or_default(),
+                    AGENT_PROTOCOL_VERSION
+                ));
+            }
             Err(err) => last_error = Some(err),
         }
         sleep(Duration::from_millis(120)).await;
@@ -252,7 +308,27 @@ printf '%s\n' {}
 }
 
 async fn start_agent(client: &AgentClient) -> anyhow::Result<()> {
+    start_agent_with_reset(client, false).await
+}
+
+async fn restart_agent(client: &AgentClient) -> anyhow::Result<()> {
+    start_agent_with_reset(client, true).await
+}
+
+async fn start_agent_with_reset(client: &AgentClient, stop_existing: bool) -> anyhow::Result<()> {
     let log_path = scoped_log_path(&client.selector);
+    let stop_script = if stop_existing {
+        format!(
+            r#"
+if [ -S "$socket" ]; then
+  old_pids="$(fuser "$socket" 2>/dev/null || true)"
+  if [ -n "$old_pids" ]; then kill $old_pids 2>/dev/null || true; fi
+fi
+"#
+        )
+    } else {
+        String::new()
+    };
     let script = format!(
         r#"set -eu
 agent={}
@@ -260,6 +336,7 @@ socket={}
 log={}
 selector={}
 username={}
+{}
 rm -f "$socket"
 if command -v setsid >/dev/null 2>&1; then
   setsid "$agent" agent daemon --socket "$socket" --selector "$selector" --username "$username" </dev/null >>"$log" 2>&1 &
@@ -273,6 +350,7 @@ printf '%s\n' {}
         shell_quote(&log_path),
         shell_quote(&client.selector),
         shell_quote(&client.username),
+        stop_script,
         shell_quote(AGENT_READY_MARKER),
     );
     let output = run_target_shell(&client.selector, &script, None, Duration::from_secs(10)).await?;
@@ -348,6 +426,31 @@ fn response_ok(response: AgentResponse) -> anyhow::Result<()> {
             .error
             .unwrap_or_else(|| "agent request failed".to_owned())
     )
+}
+
+fn agent_protocol_version_is_current(version: Option<&str>) -> bool {
+    version.is_some_and(|version| version.trim() == AGENT_PROTOCOL_VERSION)
+}
+
+fn agent_protocol_version_is_stale(version: Option<&str>) -> bool {
+    let Some(version) = version else {
+        return true;
+    };
+    match (
+        agent_protocol_generation(version),
+        agent_protocol_generation(AGENT_PROTOCOL_VERSION),
+    ) {
+        (Some(running), Some(current)) => running < current,
+        _ => true,
+    }
+}
+
+fn agent_protocol_generation(version: &str) -> Option<u32> {
+    version
+        .trim()
+        .strip_prefix("lazycat-neko-webshell-agent-v")?
+        .parse()
+        .ok()
 }
 
 fn current_exe() -> anyhow::Result<PathBuf> {
@@ -438,5 +541,19 @@ mod tests {
     #[test]
     fn quote_handles_single_quotes() {
         assert_eq!(shell_quote("dev'user"), "'dev'\"'\"'user'");
+    }
+
+    #[test]
+    fn classifies_agent_protocol_versions() {
+        assert!(agent_protocol_version_is_current(Some(
+            AGENT_PROTOCOL_VERSION
+        )));
+        assert!(agent_protocol_version_is_stale(None));
+        assert!(agent_protocol_version_is_stale(Some(
+            "lazycat-neko-webshell-agent-v1"
+        )));
+        assert!(!agent_protocol_version_is_stale(Some(
+            "lazycat-neko-webshell-agent-v999"
+        )));
     }
 }

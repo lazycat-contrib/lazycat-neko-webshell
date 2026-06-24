@@ -8,7 +8,7 @@ use crate::proto::lazycat::webshell::v1::{
     AgentResize, AgentResponse, AgentWorkspaceAction, AgentWorkspaceState,
 };
 
-pub const AGENT_PROTOCOL_VERSION: &str = "lazycat-neko-webshell-agent-v1";
+pub const AGENT_PROTOCOL_VERSION: &str = "lazycat-neko-webshell-agent-v2";
 pub const MAX_AGENT_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 
 pub fn write_agent_message<W, M>(mut writer: W, message: &M) -> io::Result<()>
