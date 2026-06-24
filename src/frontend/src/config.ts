@@ -178,4 +178,5 @@ export const DEFAULT_SETTINGS: Settings = {
   aiProviderProfiles: [],
   aiActiveProviderProfileId: "",
   aiMcpServers: "",
+  mobileQuickPhrases: [],
 };

@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, INTERFACE_STYLE_IDS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "../config";
+import { normalizeMobileQuickPhrases } from "../mobile-quick-input";
 import { normalizeFontHintTarget } from "../terminal-fonts/options";
 import { normalizeTerminalShaderEffect } from "../terminal-shaders/options";
 import type { AiProviderProfile, CustomTerminalTheme, InterfaceStyleId, SessionBackendId, Settings } from "../types";
@@ -77,6 +78,7 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     aiProviderProfiles,
     aiActiveProviderProfileId,
     aiMcpServers: typeof value.aiMcpServers === "string" ? value.aiMcpServers : DEFAULT_SETTINGS.aiMcpServers,
+    mobileQuickPhrases: normalizeMobileQuickPhrases(value.mobileQuickPhrases),
   };
 }
 

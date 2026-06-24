@@ -168,6 +168,14 @@ export type AiProviderProfile = {
   model: string;
 };
 
+export type MobileQuickPhrase = {
+  id: string;
+  label: string;
+  text: string;
+  useCount: number;
+  lastUsedAt: number;
+};
+
 export type ClipboardImagePayload = {
   extension: string;
   data: ArrayBuffer;
@@ -290,6 +298,7 @@ export type Settings = {
   aiProviderProfiles: AiProviderProfile[];
   aiActiveProviderProfileId: string;
   aiMcpServers: string;
+  mobileQuickPhrases: MobileQuickPhrase[];
 };
 
 export type TerminalPane = {

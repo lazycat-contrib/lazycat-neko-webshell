@@ -88,6 +88,18 @@ import {
   toggleMobileModifier,
   transformMobileStickyInput as encodeMobileStickyTextInput,
 } from "./mobile-shortcuts";
+import {
+  MAX_MOBILE_QUICK_PHRASES,
+  makeMobileQuickPhrase,
+  markMobileQuickPhraseUsed,
+  mobileSymbolAgentFromHerdrPane,
+  normalizeMobileQuickPhrases,
+  renderMobileQuickPhraseKeyboardPanel,
+  renderMobileQuickPhraseList,
+  renderMobileQuickPhrasePageButton,
+  renderMobileSymbolKeyboardPanel,
+  type MobileSymbolAgent,
+} from "./mobile-quick-input";
 import { renderNewTabMenuView, renderTabsView, type TabViewItem } from "./navigation-views";
 import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
 import { createPaneTransport } from "./pane-transport";
@@ -301,6 +313,12 @@ let renamingTabId: string | undefined;
 let contextPaneId: string | undefined;
 let customFonts: FontPreset[] = [];
 const mobileSticky = createMobileStickyState();
+let mobileSymbolAgent: MobileSymbolAgent = "default";
+let mobileSymbolAgentRefreshKey = "";
+let mobileSymbolAgentRefreshTime = 0;
+let mobileSymbolAgentRequest = 0;
+let mobileQuickPhraseEditingId = "";
+let mobileClockTimer: number | undefined;
 const lastMobileTerminalTap = {
   paneId: "",
   time: 0,
@@ -889,6 +907,23 @@ function bindSettings() {
     saveSettings();
     void remountTerminalsForTouchMode();
   });
+  elements.mobileQuickPhraseList.addEventListener("click", (event) => {
+    const removeButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-quick-phrase-remove]")
+      : null;
+    if (removeButton) {
+      removeMobileQuickPhrase(removeButton.dataset.quickPhraseRemove ?? "");
+      return;
+    }
+    const editButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-quick-phrase-edit]")
+      : null;
+    if (editButton) {
+      beginMobileQuickPhraseEdit(editButton.dataset.quickPhraseEdit ?? "");
+    }
+  });
+  elements.mobileQuickPhraseSave.addEventListener("click", () => saveMobileQuickPhrase());
+  elements.mobileQuickPhraseCancel.addEventListener("click", () => resetMobileQuickPhraseEditor());
   elements.autoRestartSessions.addEventListener("change", () => {
     settings.autoRestartSessions = elements.autoRestartSessions.checked;
     saveSettings();
@@ -1273,7 +1308,7 @@ function bindMobileShortcuts() {
   elements.mobileShortcuts.addEventListener("click", (event) => {
     if (
       event.target instanceof Element
-      && event.target.closest("[data-mobile-shortcut], [data-mobile-action], [data-mobile-chord], [data-mobile-page]")
+      && event.target.closest("[data-mobile-shortcut], [data-mobile-action], [data-mobile-chord], [data-mobile-page], [data-mobile-phrase]")
     ) {
       event.preventDefault();
     }
@@ -1294,6 +1329,15 @@ function bindMobileShortcuts() {
     if (!actionButton) return;
     event.preventDefault();
     void runMobileAction(actionButton.dataset.mobileAction ?? "");
+  });
+
+  elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-mobile-phrase]")
+      : null;
+    if (!button) return;
+    event.preventDefault();
+    void runMobileQuickPhrase(button.dataset.mobilePhrase ?? "");
   });
 
   elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
@@ -1390,6 +1434,21 @@ async function runMobileShortcut(shortcut: string, options: { keepModifiers?: bo
   focusAfterMobileShortcut();
 }
 
+async function runMobileQuickPhrase(id: string) {
+  const phrase = settings.mobileQuickPhrases.find((item) => item.id === id);
+  if (!phrase?.text) return;
+  const pane = activePane();
+  if (!pane) return;
+  const sent = pane.sessionBackend === "herdr"
+    ? await pasteTextIntoHerdrPane(pane, phrase.text, true)
+    : pasteTextIntoPane(pane, phrase.text);
+  if (!sent) return;
+  settings.mobileQuickPhrases = markMobileQuickPhraseUsed(settings.mobileQuickPhrases, id);
+  saveSettings();
+  renderMobileQuickInput();
+  focusAfterMobileShortcut();
+}
+
 function runMobileChord(chord: string) {
   const data = mobileChordInput(chord);
   if (data) {
@@ -1451,6 +1510,134 @@ function updateMobileShortcutState() {
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+}
+
+function renderMobileQuickInput() {
+  const pages = elements.mobileShortcuts.querySelector<HTMLElement>(".mobile-keyboard-pages");
+  const symPanel = elements.mobileShortcuts.querySelector<HTMLElement>("[data-mobile-panel='sym']");
+  const phrasePanel = elements.mobileShortcuts.querySelector<HTMLElement>("[data-mobile-panel='phrases']");
+  const clock = elements.mobileShortcutClock;
+  if (!pages || !symPanel || !phrasePanel) return;
+  const activePage = activeMobileKeyboardPage();
+
+  const phraseButton = pages.querySelector<HTMLElement>("[data-mobile-page='phrases']");
+  phraseButton?.remove();
+  const phrases = normalizeMobileQuickPhrases(settings.mobileQuickPhrases);
+  if (phrases !== settings.mobileQuickPhrases) {
+    settings.mobileQuickPhrases = phrases;
+  }
+  const phraseButtonHtml = renderMobileQuickPhrasePageButton(phrases, tr);
+  if (phraseButtonHtml) {
+    clock.insertAdjacentHTML("beforebegin", phraseButtonHtml);
+  } else if (!phrasePanel.hidden) {
+    activateMobileKeyboardPage("sym");
+  }
+
+  symPanel.innerHTML = renderMobileSymbolKeyboardPanel(mobileSymbolAgent);
+  phrasePanel.innerHTML = renderMobileQuickPhraseKeyboardPanel(phrases);
+  activateMobileKeyboardPage(activePage === "phrases" && !phrases.length ? "sym" : activePage);
+  renderMobileQuickPhraseSettings();
+  updateMobileClock();
+}
+
+function activeMobileKeyboardPage(): string {
+  return elements.mobileShortcuts.querySelector<HTMLButtonElement>("[data-mobile-page].active")?.dataset.mobilePage ?? "main";
+}
+
+function renderMobileQuickPhraseSettings() {
+  elements.mobileQuickPhraseList.innerHTML = renderMobileQuickPhraseList(settings.mobileQuickPhrases, tr);
+  elements.mobileQuickPhraseSave.textContent = mobileQuickPhraseEditingId
+    ? tr("action.quickPhraseSave")
+    : tr("action.quickPhraseAdd");
+  elements.mobileQuickPhraseCancel.hidden = !mobileQuickPhraseEditingId;
+  updateIcons();
+}
+
+function beginMobileQuickPhraseEdit(id: string) {
+  const phrase = settings.mobileQuickPhrases.find((item) => item.id === id);
+  if (!phrase) return;
+  mobileQuickPhraseEditingId = phrase.id;
+  elements.mobileQuickPhraseLabel.value = phrase.label;
+  elements.mobileQuickPhraseText.value = phrase.text;
+  elements.mobileQuickPhraseStatus.textContent = "";
+  renderMobileQuickPhraseSettings();
+  elements.mobileQuickPhraseText.focus();
+}
+
+function resetMobileQuickPhraseEditor() {
+  mobileQuickPhraseEditingId = "";
+  elements.mobileQuickPhraseLabel.value = "";
+  elements.mobileQuickPhraseText.value = "";
+  elements.mobileQuickPhraseStatus.textContent = "";
+  renderMobileQuickPhraseSettings();
+}
+
+function saveMobileQuickPhrase() {
+  const text = elements.mobileQuickPhraseText.value.trim();
+  if (!text) {
+    setMobileQuickPhraseStatus(tr("validation.quickPhraseText"), "error");
+    return;
+  }
+  const existingIndex = settings.mobileQuickPhrases.findIndex((phrase) => phrase.id === mobileQuickPhraseEditingId);
+  const phrase = makeMobileQuickPhrase({
+    id: existingIndex >= 0 ? mobileQuickPhraseEditingId : undefined,
+    label: elements.mobileQuickPhraseLabel.value,
+    text,
+  }, settings.mobileQuickPhrases);
+  const current = existingIndex >= 0 ? settings.mobileQuickPhrases[existingIndex] : undefined;
+  const next = {
+    ...phrase,
+    useCount: current?.useCount ?? 0,
+    lastUsedAt: current?.lastUsedAt ?? 0,
+  };
+  if (existingIndex >= 0) {
+    settings.mobileQuickPhrases = settings.mobileQuickPhrases.map((item) => item.id === mobileQuickPhraseEditingId ? next : item);
+  } else if (settings.mobileQuickPhrases.length >= MAX_MOBILE_QUICK_PHRASES) {
+    setMobileQuickPhraseStatus(tr("validation.quickPhraseLimit", { count: MAX_MOBILE_QUICK_PHRASES }), "error");
+    return;
+  } else {
+    settings.mobileQuickPhrases = [...settings.mobileQuickPhrases, next];
+  }
+  settings.mobileQuickPhrases = normalizeMobileQuickPhrases(settings.mobileQuickPhrases);
+  saveSettings();
+  resetMobileQuickPhraseEditor();
+  renderMobileQuickInput();
+  setMobileQuickPhraseStatus(tr("status.quickPhraseSaved"), "ok");
+}
+
+function removeMobileQuickPhrase(id: string) {
+  const before = settings.mobileQuickPhrases.length;
+  settings.mobileQuickPhrases = settings.mobileQuickPhrases.filter((phrase) => phrase.id !== id);
+  if (settings.mobileQuickPhrases.length === before) return;
+  if (mobileQuickPhraseEditingId === id) {
+    resetMobileQuickPhraseEditor();
+  }
+  saveSettings();
+  renderMobileQuickInput();
+  setMobileQuickPhraseStatus(tr("status.quickPhraseRemoved"));
+}
+
+function setMobileQuickPhraseStatus(message: string, tone: Tone = "neutral") {
+  elements.mobileQuickPhraseStatus.textContent = message;
+  elements.mobileQuickPhraseStatus.dataset.tone = tone;
+}
+
+function startMobileClock() {
+  updateMobileClock();
+  window.clearInterval(mobileClockTimer);
+  mobileClockTimer = window.setInterval(updateMobileClock, 1000);
+}
+
+function updateMobileClock() {
+  const now = new Date();
+  const hasPhrases = settings.mobileQuickPhrases.length > 0;
+  elements.mobileShortcutClock.textContent = now.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: hasPhrases ? undefined : "2-digit",
+    hour12: false,
+  });
+  elements.mobileShortcutClock.dataset.compact = String(hasPhrases);
 }
 
 async function navigateLightOSHome() {
@@ -1881,6 +2068,47 @@ async function currentHerdrPaneId(selector: string): Promise<string> {
   throw new Error("Herdr pane not found");
 }
 
+async function refreshMobileSymbolAgentForActivePane() {
+  const pane = activePane();
+  if (!pane || pane.sessionBackend !== "herdr") {
+    setMobileSymbolAgent("default");
+    return;
+  }
+  const selector = normalizeSelector(pane.selector || selectedSelector);
+  if (!selector) {
+    setMobileSymbolAgent("default");
+    return;
+  }
+  const refreshKey = `${selector}:${pane.sessionId ?? ""}`;
+  const now = Date.now();
+  if (mobileSymbolAgentRefreshKey === refreshKey && now - mobileSymbolAgentRefreshTime < 5000) return;
+  mobileSymbolAgentRefreshKey = refreshKey;
+  mobileSymbolAgentRefreshTime = now;
+  const request = ++mobileSymbolAgentRequest;
+  try {
+    const stateMatches = herdrState?.available && normalizeSelector(herdrState.selector) === selector;
+    if (!stateMatches && !await refreshHerdrState(selector)) {
+      setMobileSymbolAgent("default");
+      return;
+    }
+    const envelope = await runHerdrSocketRequest("pane.current", {}, {
+      selector,
+      id: "lazycat-webshell:mobile-symbol-agent",
+      mirrorNotification: false,
+    });
+    if (request !== mobileSymbolAgentRequest) return;
+    setMobileSymbolAgent(mobileSymbolAgentFromHerdrPane(envelope.result));
+  } catch {
+    if (request === mobileSymbolAgentRequest) setMobileSymbolAgent("default");
+  }
+}
+
+function setMobileSymbolAgent(agent: MobileSymbolAgent) {
+  if (mobileSymbolAgent === agent) return;
+  mobileSymbolAgent = agent;
+  renderMobileQuickInput();
+}
+
 function splitZellijPane(pane: TerminalPane, placement: SplitPlacement): boolean {
   const key = zellijSplitKey(placement);
   if (!key) {
@@ -2002,6 +2230,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;
   updateSessionBackendSettings();
+  renderMobileQuickInput();
   renderPlugins();
 
   for (const pane of allPanes()) {
@@ -2014,6 +2243,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   }
   renderTabs();
   updateActiveDetails();
+  startMobileClock();
 }
 
 function currentTheme(): TerminalTheme {
@@ -4094,6 +4324,10 @@ function handleHerdrEventMessage(raw: unknown) {
   if (message) {
     setGlobalStatus(message, herdrEventTone(event, data));
   }
+  if (event === "pane.agent_detected" || event === "pane.agent_status_changed") {
+    mobileSymbolAgentRefreshTime = 0;
+    void refreshMobileSymbolAgentForActivePane();
+  }
   if (herdrEventChangesDock(event)) {
     scheduleHerdrEventRefresh();
   }
@@ -5542,6 +5776,7 @@ function updateActiveDetails() {
     elements.instanceStatusDot.dataset.status = selectedInstance()?.status ?? "unknown";
     setGlobalStatus(tr("status.idle"));
     document.title = tr("app.title");
+    setMobileSymbolAgent("default");
     return;
   }
 
@@ -5550,6 +5785,7 @@ function updateActiveDetails() {
   elements.instanceStatusDot.dataset.status = instanceForSelector(tab.selector)?.status ?? "running";
   setGlobalStatus(pane.status, pane.tone);
   document.title = `${tabCurrentTitle(tab)} - ${tr("app.title")}`;
+  void refreshMobileSymbolAgentForActivePane();
 }
 
 function setPaneStatus(pane: TerminalPane, message: string, tone: Tone = "neutral") {

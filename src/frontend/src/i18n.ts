@@ -64,6 +64,10 @@ export type MessageKey =
   | "action.portForwardAcquire"
   | "action.portForwardRelease"
   | "action.promoteSessionToTab"
+  | "action.quickPhraseAdd"
+  | "action.quickPhraseCancel"
+  | "action.quickPhraseRemove"
+  | "action.quickPhraseSave"
   | "action.refresh"
   | "action.refreshHerdr"
   | "action.refreshInstances"
@@ -126,6 +130,8 @@ export type MessageKey =
   | "field.outputBuffer"
   | "field.panes"
   | "field.pluginPath"
+  | "field.quickPhraseLabel"
+  | "field.quickPhraseText"
   | "field.remoteHost"
   | "field.remotePort"
   | "field.scrollback"
@@ -165,6 +171,12 @@ export type MessageKey =
   | "interfaceStyle.steel"
   | "layout.horizontal"
   | "layout.vertical"
+  | "label.currentTime"
+  | "label.mobileFnKeys"
+  | "label.mobileMainKeys"
+  | "label.mobileNavKeys"
+  | "label.mobileOpsKeys"
+  | "label.mobileSymbolKeys"
   | "locale.auto"
   | "locale.en"
   | "locale.zhCN"
@@ -205,6 +217,7 @@ export type MessageKey =
   | "section.herdrWorkspaces"
   | "section.plugins"
   | "section.herdrHighlight"
+  | "section.mobileQuickInput"
   | "section.mobileShortcuts"
   | "section.sessionBackend"
   | "section.shortcuts"
@@ -221,6 +234,7 @@ export type MessageKey =
   | "setting.fontLigatures"
   | "setting.fontRenderingHelp"
   | "setting.herdrHighlightHelp"
+  | "setting.mobileQuickInputHelp"
   | "setting.pluginDisabled"
   | "setting.pluginEnabled"
   | "setting.terminalBackground"
@@ -247,6 +261,7 @@ export type MessageKey =
   | "tab.aiProvider"
   | "tab.mcp"
   | "tab.plugins"
+  | "tab.quickPhrases"
   | "tab.themes"
   | "status.closed"
   | "status.connected"
@@ -295,6 +310,7 @@ export type MessageKey =
   | "status.noPlugins"
   | "status.noPortForwards"
   | "status.noPublicTunnels"
+  | "status.noQuickPhrases"
   | "status.noTunnelProfiles"
   | "status.noSelection"
   | "status.noSessions"
@@ -317,6 +333,8 @@ export type MessageKey =
   | "status.pluginLoadFailed"
   | "status.portForwardReady"
   | "status.publicTunnelReady"
+  | "status.quickPhraseRemoved"
+  | "status.quickPhraseSaved"
   | "status.tunnelProfileRemoved"
   | "status.tunnelProfileSaved"
   | "status.pluginsLoading"
@@ -354,6 +372,8 @@ export type MessageKey =
   | "validation.mcpUrl"
   | "validation.pluginPath"
   | "validation.port"
+  | "validation.quickPhraseLimit"
+  | "validation.quickPhraseText"
   | "validation.themeName"
   | "validation.themeSource"
   | "validation.tunnelProfile"
@@ -416,6 +436,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.portForwardAcquire": "Forward port",
     "action.portForwardRelease": "Stop forward",
     "action.promoteSessionToTab": "Move session to new tab",
+    "action.quickPhraseAdd": "Add phrase",
+    "action.quickPhraseCancel": "Cancel",
+    "action.quickPhraseRemove": "Remove phrase",
+    "action.quickPhraseSave": "Save phrase",
     "action.refresh": "Refresh",
     "action.refreshHerdr": "Refresh Herdr",
     "action.refreshInstances": "Refresh instances",
@@ -478,6 +502,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.outputBuffer": "History lines",
     "field.panes": "Panes",
     "field.pluginPath": "Path",
+    "field.quickPhraseLabel": "Label",
+    "field.quickPhraseText": "Text",
     "field.remoteHost": "Remote host",
     "field.remotePort": "Remote port",
     "field.scrollback": "Scrollback",
@@ -517,6 +543,12 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "interfaceStyle.steel": "Steel",
     "layout.horizontal": "Horizontal",
     "layout.vertical": "Vertical",
+    "label.currentTime": "Current time",
+    "label.mobileFnKeys": "Function keys",
+    "label.mobileMainKeys": "Main shortcuts",
+    "label.mobileNavKeys": "Navigation keys",
+    "label.mobileOpsKeys": "Terminal actions",
+    "label.mobileSymbolKeys": "Symbols",
     "locale.auto": "Auto",
     "locale.en": "English",
     "locale.zhCN": "Chinese",
@@ -563,6 +595,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.herdrTabs": "Herdr tabs",
     "section.herdrWorkspaces": "Herdr spaces",
     "section.herdrHighlight": "Herdr selection",
+    "section.mobileQuickInput": "Mobile quick input",
     "section.mobileShortcuts": "Mobile",
     "section.plugins": "Plugins",
     "section.sessionBackend": "Session backend",
@@ -580,6 +613,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.fontLigatures": "Programming ligatures",
     "setting.fontRenderingHelp": "Ligatures shape operators such as => and !=. Font hinting can sharpen small text, but may cost extra rasterization time.",
     "setting.herdrHighlightHelp": "Customize the active Herdr workspace and tab background for dark and light interface styles.",
+    "setting.mobileQuickInputHelp": "Save personal phrases for the mobile shortcut bar. They appear after Sym and are sorted by usage.",
     "setting.pluginDisabled": "Disabled",
     "setting.pluginEnabled": "Enabled",
     "setting.terminalBackground": "Use background image",
@@ -606,6 +640,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.aiProvider": "AI provider",
     "tab.mcp": "MCP",
     "tab.plugins": "Plugins",
+    "tab.quickPhrases": "Phrases",
     "tab.themes": "Terminal",
     "status.closed": "Closed",
     "status.connected": "Connected",
@@ -654,6 +689,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noPlugins": "No plugins returned",
     "status.noPortForwards": "No active port forwards",
     "status.noPublicTunnels": "No active public tunnels",
+    "status.noQuickPhrases": "No quick phrases",
     "status.noTunnelProfiles": "No tunnel authentication configs",
     "status.noSelection": "No selection to copy",
     "status.noSessions": "No sessions",
@@ -676,6 +712,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginLoadFailed": "Plugin load failed: {message}",
     "status.portForwardReady": "{count} port forward(s) active",
     "status.publicTunnelReady": "{count} tunnel(s) active",
+    "status.quickPhraseRemoved": "Phrase removed",
+    "status.quickPhraseSaved": "Phrase saved",
     "status.tunnelProfileRemoved": "Tunnel profile removed",
     "status.tunnelProfileSaved": "Tunnel profile saved",
     "status.pluginsLoading": "Loading plugins...",
@@ -713,6 +751,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.mcpUrl": "enter an MCP server URL",
     "validation.pluginPath": "enter a target path",
     "validation.port": "enter a port from 1 to 65535",
+    "validation.quickPhraseLimit": "keep at most {count} phrases",
+    "validation.quickPhraseText": "enter phrase text",
     "validation.themeName": "theme name is required",
     "validation.themeSource": "paste a Ghostty theme with background, foreground, or palette entries",
     "validation.tunnelProfile": "select a configured tunnel profile",
@@ -774,6 +814,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.portForwardAcquire": "转发端口",
     "action.portForwardRelease": "停止转发",
     "action.promoteSessionToTab": "将会话提升为新标签",
+    "action.quickPhraseAdd": "添加短语",
+    "action.quickPhraseCancel": "取消",
+    "action.quickPhraseRemove": "删除短语",
+    "action.quickPhraseSave": "保存短语",
     "action.refresh": "刷新",
     "action.refreshHerdr": "刷新 Herdr",
     "action.refreshInstances": "刷新实例",
@@ -836,6 +880,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.outputBuffer": "历史行数",
     "field.panes": "面板",
     "field.pluginPath": "路径",
+    "field.quickPhraseLabel": "显示名称",
+    "field.quickPhraseText": "短语内容",
     "field.remoteHost": "远端主机",
     "field.remotePort": "远端端口",
     "field.scrollback": "回滚行数",
@@ -875,6 +921,12 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "interfaceStyle.steel": "钢铁风",
     "layout.horizontal": "横向",
     "layout.vertical": "竖向",
+    "label.currentTime": "当前时间",
+    "label.mobileFnKeys": "功能键",
+    "label.mobileMainKeys": "主快捷键",
+    "label.mobileNavKeys": "导航键",
+    "label.mobileOpsKeys": "终端操作",
+    "label.mobileSymbolKeys": "符号",
     "locale.auto": "跟随系统",
     "locale.en": "English",
     "locale.zhCN": "中文",
@@ -921,6 +973,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.herdrTabs": "Herdr 标签",
     "section.herdrWorkspaces": "Herdr Spaces",
     "section.herdrHighlight": "Herdr 选中态",
+    "section.mobileQuickInput": "移动端快速输入",
     "section.mobileShortcuts": "移动端",
     "section.plugins": "插件",
     "section.sessionBackend": "会话后端",
@@ -938,6 +991,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.fontLigatures": "编程连字",
     "setting.fontRenderingHelp": "编程连字会渲染 =>、!= 这类符号；字体微调可以让小字号更锐利，但可能增加一点字体栅格化开销。",
     "setting.herdrHighlightHelp": "分别设置深色和浅色界面风格下，Herdr 当前工作区和标签的背景色。",
+    "setting.mobileQuickInputHelp": "保存个人常用短语，移动端会在 Sym 后显示；点击后按使用频率排序。",
     "setting.pluginDisabled": "已关闭",
     "setting.pluginEnabled": "已启用",
     "setting.terminalBackground": "使用背景图片",
@@ -964,6 +1018,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.aiProvider": "AI 服务",
     "tab.mcp": "MCP",
     "tab.plugins": "插件",
+    "tab.quickPhrases": "短语",
     "tab.themes": "终端",
     "status.closed": "已关闭",
     "status.connected": "已连接",
@@ -1012,6 +1067,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noPlugins": "没有返回插件",
     "status.noPortForwards": "暂无活动端口转发",
     "status.noPublicTunnels": "暂无活动 Public Tunnel",
+    "status.noQuickPhrases": "暂无快速短语",
     "status.noTunnelProfiles": "暂无 Tunnel 认证配置",
     "status.noSelection": "没有可复制的选区",
     "status.noSessions": "没有会话",
@@ -1034,6 +1090,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginLoadFailed": "插件加载失败：{message}",
     "status.portForwardReady": "{count} 个端口转发正在运行",
     "status.publicTunnelReady": "{count} 个 Tunnel 正在运行",
+    "status.quickPhraseRemoved": "快速短语已删除",
+    "status.quickPhraseSaved": "快速短语已保存",
     "status.tunnelProfileRemoved": "Tunnel 配置已移除",
     "status.tunnelProfileSaved": "Tunnel 配置已保存",
     "status.pluginsLoading": "正在加载插件...",
@@ -1071,6 +1129,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.mcpUrl": "请输入 MCP 服务 URL",
     "validation.pluginPath": "请输入目标路径",
     "validation.port": "请输入 1 到 65535 之间的端口",
+    "validation.quickPhraseLimit": "最多保留 {count} 条短语",
+    "validation.quickPhraseText": "请输入短语内容",
     "validation.themeName": "请输入主题名称",
     "validation.themeSource": "请粘贴包含 background、foreground 或 palette 的 Ghostty 主题",
     "validation.tunnelProfile": "请选择已配置的 Tunnel 配置",

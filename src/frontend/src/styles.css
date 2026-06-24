@@ -1794,6 +1794,76 @@ textarea:focus-visible {
   height: 34px;
 }
 
+.quick-phrase-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.quick-phrase-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-phrase-preview {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--component-border);
+  border-radius: 6px;
+  background:
+    var(--component-wash),
+    var(--surface);
+  color: var(--text);
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.quick-phrase-preview:hover,
+.quick-phrase-preview:focus-visible {
+  border-color: var(--accent-border);
+  background:
+    var(--component-wash-hover),
+    var(--surface-2);
+}
+
+.quick-phrase-preview span,
+.quick-phrase-preview small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-phrase-preview span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.quick-phrase-preview small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.quick-phrase-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.quick-phrase-editor textarea {
+  resize: vertical;
+}
+
+.quick-phrase-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .shortcut-help {
   position: fixed;
   inset: 0;

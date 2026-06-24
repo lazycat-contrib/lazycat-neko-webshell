@@ -33,6 +33,7 @@ export type ShellElements = {
   herdrNewTab: HTMLButtonElement;
   terminalStage: HTMLDivElement;
   mobileShortcuts: HTMLDivElement;
+  mobileShortcutClock: HTMLSpanElement;
   emptyState: HTMLDivElement;
   homeButton: HTMLButtonElement;
   settingsButton: HTMLButtonElement;
@@ -96,6 +97,13 @@ export type ShellElements = {
   copyOnSelect: HTMLInputElement;
   useResttyClipboard: HTMLInputElement;
   touchSelectionMode: HTMLSelectElement;
+  mobileQuickPhraseSettings: HTMLDivElement;
+  mobileQuickPhraseList: HTMLDivElement;
+  mobileQuickPhraseLabel: HTMLInputElement;
+  mobileQuickPhraseText: HTMLTextAreaElement;
+  mobileQuickPhraseSave: HTMLButtonElement;
+  mobileQuickPhraseCancel: HTMLButtonElement;
+  mobileQuickPhraseStatus: HTMLElement;
   autoRestartSessions: HTMLInputElement;
   debugMode: HTMLInputElement;
   shortcutHelpButton: HTMLButtonElement;
@@ -262,11 +270,12 @@ export function renderShell(app: HTMLElement): ShellElements {
 
       <div class="mobile-shortcuts" id="mobileShortcuts" aria-label="Terminal shortcuts" data-i18n-aria="menu.mobileShortcuts">
         <div class="mobile-keyboard-pages" role="tablist" aria-label="Terminal shortcut pages" data-i18n-aria="menu.mobileShortcuts">
-          <button type="button" class="active" data-mobile-page="main" aria-pressed="true">Main</button>
-          <button type="button" data-mobile-page="ops" aria-pressed="false">Ops</button>
-          <button type="button" data-mobile-page="nav" aria-pressed="false">Nav</button>
-          <button type="button" data-mobile-page="fn" aria-pressed="false">Fn</button>
-          <button type="button" data-mobile-page="sym" aria-pressed="false">Sym</button>
+          <button type="button" class="active" data-mobile-page="main" aria-pressed="true" aria-label="Main shortcuts" title="Main shortcuts" data-i18n-aria="label.mobileMainKeys" data-i18n-title="label.mobileMainKeys"><i data-lucide="keyboard"></i></button>
+          <button type="button" data-mobile-page="ops" aria-pressed="false" aria-label="Terminal actions" title="Terminal actions" data-i18n-aria="label.mobileOpsKeys" data-i18n-title="label.mobileOpsKeys"><i data-lucide="sliders-horizontal"></i></button>
+          <button type="button" data-mobile-page="nav" aria-pressed="false" aria-label="Navigation keys" title="Navigation keys" data-i18n-aria="label.mobileNavKeys" data-i18n-title="label.mobileNavKeys"><i data-lucide="navigation"></i></button>
+          <button type="button" data-mobile-page="fn" aria-pressed="false" aria-label="Function keys" title="Function keys" data-i18n-aria="label.mobileFnKeys" data-i18n-title="label.mobileFnKeys"><i data-lucide="hash"></i></button>
+          <button type="button" data-mobile-page="sym" aria-pressed="false" aria-label="Symbols" title="Symbols" data-i18n-aria="label.mobileSymbolKeys" data-i18n-title="label.mobileSymbolKeys"><i data-lucide="braces"></i></button>
+          <span class="mobile-shortcut-clock" id="mobileShortcutClock" aria-label="Current time" data-i18n-aria="label.currentTime"></span>
         </div>
         <div class="mobile-keyboard-panel" data-mobile-panel="main">
           <button type="button" data-mobile-shortcut="ctrl" data-mobile-modifier="ctrl" aria-label="Control">Ctrl</button>
@@ -332,24 +341,8 @@ export function renderShell(app: HTMLElement): ShellElements {
           <button type="button" data-mobile-shortcut="f11" aria-label="F11">F11</button>
           <button type="button" data-mobile-shortcut="f12" aria-label="F12">F12</button>
         </div>
-        <div class="mobile-keyboard-panel" data-mobile-panel="sym" hidden>
-          <button type="button" data-mobile-shortcut="|" aria-label="Pipe">|</button>
-          <button type="button" data-mobile-shortcut="\\" aria-label="Backslash">\\</button>
-          <button type="button" data-mobile-shortcut="~" aria-label="Tilde">~</button>
-          <button type="button" data-mobile-shortcut="\`" aria-label="Backtick">\`</button>
-          <button type="button" data-mobile-shortcut="[" aria-label="Left bracket">[</button>
-          <button type="button" data-mobile-shortcut="]" aria-label="Right bracket">]</button>
-          <button type="button" data-mobile-shortcut="{" aria-label="Left brace">{</button>
-          <button type="button" data-mobile-shortcut="}" aria-label="Right brace">}</button>
-          <button type="button" data-mobile-shortcut="(" aria-label="Left parenthesis">(</button>
-          <button type="button" data-mobile-shortcut=")" aria-label="Right parenthesis">)</button>
-          <button type="button" data-mobile-shortcut="&" aria-label="Ampersand">&amp;</button>
-          <button type="button" data-mobile-shortcut=";" aria-label="Semicolon">;</button>
-          <button type="button" data-mobile-shortcut=":" aria-label="Colon">:</button>
-          <button type="button" data-mobile-shortcut="$" aria-label="Dollar">$</button>
-          <button type="button" data-mobile-shortcut="*" aria-label="Asterisk">*</button>
-          <button type="button" data-mobile-shortcut="?" aria-label="Question mark">?</button>
-        </div>
+        <div class="mobile-keyboard-panel" data-mobile-panel="sym" hidden></div>
+        <div class="mobile-keyboard-panel" data-mobile-panel="phrases" hidden></div>
       </div>
 
       <aside class="plugin-sidebar" id="pluginSidebar" aria-label="Plugins" data-i18n-aria="section.plugins" hidden>
@@ -512,6 +505,26 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <option value="off" data-i18n="touch.off">Touch selection off</option>
                 </select>
               </label>
+              <div class="settings-group" id="mobileQuickPhraseSettings">
+                <div class="settings-group-title" data-i18n="section.mobileQuickInput">Mobile quick input</div>
+                <p class="settings-help" data-i18n="setting.mobileQuickInputHelp">Save personal phrases for the mobile shortcut bar. They appear after Sym and are sorted by usage.</p>
+                <div class="quick-phrase-list" id="mobileQuickPhraseList"></div>
+                <div class="quick-phrase-editor">
+                  <label class="field">
+                    <span data-i18n="field.quickPhraseLabel">Label</span>
+                    <input id="mobileQuickPhraseLabel" type="text" maxlength="32" autocomplete="off" />
+                  </label>
+                  <label class="field">
+                    <span data-i18n="field.quickPhraseText">Text</span>
+                    <textarea id="mobileQuickPhraseText" rows="2" maxlength="256"></textarea>
+                  </label>
+                  <div class="quick-phrase-actions">
+                    <button class="command-button primary" id="mobileQuickPhraseSave" type="button" data-i18n="action.quickPhraseAdd">Add phrase</button>
+                    <button class="command-button" id="mobileQuickPhraseCancel" type="button" data-i18n="action.quickPhraseCancel" hidden>Cancel</button>
+                  </div>
+                  <p id="mobileQuickPhraseStatus" class="field-status"></p>
+                </div>
+              </div>
               <label class="switch">
                 <input id="autoRestartSessions" type="checkbox" />
                 <span data-i18n="setting.autoRestartSessions">Restart sessions after provider restart</span>
@@ -673,6 +686,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     herdrNewTab: qs<HTMLButtonElement>("#herdrNewTab"),
     terminalStage: qs<HTMLDivElement>("#terminalStage"),
     mobileShortcuts: qs<HTMLDivElement>("#mobileShortcuts"),
+    mobileShortcutClock: qs<HTMLSpanElement>("#mobileShortcutClock"),
     emptyState: qs<HTMLDivElement>("#emptyState"),
     homeButton: qs<HTMLButtonElement>("#homeButton"),
     settingsButton: qs<HTMLButtonElement>("#settingsButton"),
@@ -736,6 +750,13 @@ export function renderShell(app: HTMLElement): ShellElements {
     copyOnSelect: qs<HTMLInputElement>("#copyOnSelect"),
     useResttyClipboard: qs<HTMLInputElement>("#useResttyClipboard"),
     touchSelectionMode: qs<HTMLSelectElement>("#touchSelectionMode"),
+    mobileQuickPhraseSettings: qs<HTMLDivElement>("#mobileQuickPhraseSettings"),
+    mobileQuickPhraseList: qs<HTMLDivElement>("#mobileQuickPhraseList"),
+    mobileQuickPhraseLabel: qs<HTMLInputElement>("#mobileQuickPhraseLabel"),
+    mobileQuickPhraseText: qs<HTMLTextAreaElement>("#mobileQuickPhraseText"),
+    mobileQuickPhraseSave: qs<HTMLButtonElement>("#mobileQuickPhraseSave"),
+    mobileQuickPhraseCancel: qs<HTMLButtonElement>("#mobileQuickPhraseCancel"),
+    mobileQuickPhraseStatus: qs<HTMLElement>("#mobileQuickPhraseStatus"),
     autoRestartSessions: qs<HTMLInputElement>("#autoRestartSessions"),
     debugMode: qs<HTMLInputElement>("#debugMode"),
     shortcutHelpButton: qs<HTMLButtonElement>("#shortcutHelpButton"),
