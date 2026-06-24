@@ -191,16 +191,15 @@ import {
   runHerdrActionRequest,
   runHerdrSocketApiRequest,
   runWorkspaceActionRequest,
+  saveHerdrOutputSequence,
 } from "./workspace-api";
 import {
   instanceSelector,
   isRunningInstance,
   lastTabStorageKey,
   normalizeSelector,
-  readRememberedHerdrOutputSequence,
   readRememberedSelector,
   readRememberedTabId,
-  rememberHerdrOutputSequence,
   rememberSelector,
   requestedTabIdFromLocation,
   updateWorkspaceLocation,
@@ -257,7 +256,7 @@ let herdrEventRefreshTimer: number | undefined;
 let sessionBackendsState: SessionBackendsState | undefined;
 let sessionBackendsGeneration = 0;
 const herdrAutoRestoredSelectors = new Set<string>();
-const pendingHerdrOutputSequences = new Map<string, number>();
+const pendingHerdrOutputSequences = new Map<string, { selector: string; sequence: number }>();
 const herdrOutputSequenceTimers = new Map<string, number>();
 let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
@@ -3829,7 +3828,7 @@ async function restoreWorkspacePane(
   pane.sessionId = paneState.session_id;
   pane.sessionStatus = paneState.status;
   pane.sessionBackend = normalizeSessionMode(paneState.session_backend);
-  restoreHerdrOutputSequence(pane);
+  restoreHerdrOutputSequence(pane, paneState.herdr_output_sequence);
   pane.cols = paneState.cols || INITIAL_COLS;
   pane.rows = paneState.rows || INITIAL_ROWS;
   pane.exited = paneState.status === "exited";
@@ -3863,9 +3862,10 @@ function preparePaneForFullReplay(pane: TerminalPane) {
   clearPendingInput(pane);
 }
 
-function restoreHerdrOutputSequence(pane: TerminalPane) {
+function restoreHerdrOutputSequence(pane: TerminalPane, sequence: unknown) {
   if (pane.sessionBackend !== "herdr" || !pane.sessionId) return;
-  const remembered = readRememberedHerdrOutputSequence(pane.sessionId);
+  if (typeof sequence !== "number" || !Number.isFinite(sequence)) return;
+  const remembered = Math.max(0, Math.trunc(sequence));
   if (remembered > pane.lastOutputSequence) {
     pane.lastOutputSequence = remembered;
   }
@@ -4366,17 +4366,17 @@ function updatePaneOutputSequence(
 }
 
 function scheduleRememberHerdrOutputSequence(pane: TerminalPane) {
-  if (pane.sessionBackend !== "herdr" || !pane.sessionId) return;
+  if (pane.sessionBackend !== "herdr" || !pane.sessionId || !pane.selector) return;
   const sequence = Number.isFinite(pane.lastOutputSequence) ? Math.max(0, Math.trunc(pane.lastOutputSequence)) : 0;
   const sessionId = pane.sessionId;
-  pendingHerdrOutputSequences.set(sessionId, sequence);
+  pendingHerdrOutputSequences.set(sessionId, { selector: pane.selector, sequence });
   if (herdrOutputSequenceTimers.has(sessionId)) return;
   const timer = window.setTimeout(() => {
     herdrOutputSequenceTimers.delete(sessionId);
     const pending = pendingHerdrOutputSequences.get(sessionId);
     pendingHerdrOutputSequences.delete(sessionId);
     if (pending !== undefined) {
-      rememberHerdrOutputSequence(sessionId, pending);
+      void persistHerdrOutputSequence(pending.selector, sessionId, pending.sequence);
     }
   }, HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS);
   herdrOutputSequenceTimers.set(sessionId, timer);
@@ -4388,15 +4388,55 @@ function flushHerdrOutputSequences() {
   }
   herdrOutputSequenceTimers.clear();
   for (const pane of allPanes()) {
-    if (pane.sessionBackend === "herdr" && pane.sessionId) {
+    if (pane.sessionBackend === "herdr" && pane.sessionId && pane.selector) {
       const sequence = Number.isFinite(pane.lastOutputSequence) ? Math.max(0, Math.trunc(pane.lastOutputSequence)) : 0;
-      pendingHerdrOutputSequences.set(pane.sessionId, sequence);
+      pendingHerdrOutputSequences.set(pane.sessionId, { selector: pane.selector, sequence });
     }
   }
-  for (const [sessionId, sequence] of pendingHerdrOutputSequences) {
-    rememberHerdrOutputSequence(sessionId, sequence);
+  for (const [sessionId, pending] of pendingHerdrOutputSequences) {
+    void persistHerdrOutputSequence(pending.selector, sessionId, pending.sequence, { keepalive: true });
   }
   pendingHerdrOutputSequences.clear();
+}
+
+async function persistHerdrOutputSequence(
+  selector: string,
+  sessionId: string,
+  sequence: number,
+  options: { keepalive?: boolean } = {},
+) {
+  const normalizedSelector = normalizeSelector(selector);
+  const normalizedSessionId = normalizeSelector(sessionId);
+  if (!normalizedSelector || !normalizedSessionId || !Number.isFinite(sequence) || sequence < 0) return;
+  const normalizedSequence = Math.max(0, Math.trunc(sequence));
+  if (options.keepalive && navigator.sendBeacon) {
+    const payload = JSON.stringify({
+      name: normalizedSelector,
+      session_id: normalizedSessionId,
+      sequence: normalizedSequence,
+    });
+    const blob = new Blob([payload], { type: "application/json" });
+    if (navigator.sendBeacon(new URL("./api/herdr/output-sequence", window.location.href), blob)) {
+      return;
+    }
+  }
+  try {
+    const stored = await saveHerdrOutputSequence(
+      normalizedSelector,
+      normalizedSessionId,
+      normalizedSequence,
+      { keepalive: options.keepalive },
+    );
+    for (const pane of allPanes()) {
+      if (pane.sessionId === normalizedSessionId && pane.sessionBackend === "herdr") {
+        pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, stored);
+      }
+    }
+  } catch (error) {
+    if (settings.debugMode) {
+      console.debug("failed to persist Herdr output sequence", error);
+    }
+  }
 }
 
 function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {

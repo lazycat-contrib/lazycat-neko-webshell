@@ -49,6 +49,12 @@ impl AppDatabase {
                 data BLOB NOT NULL,
                 PRIMARY KEY (session_id, sequence)
             );
+
+            CREATE TABLE IF NOT EXISTS herdr_output_sequences (
+                session_id TEXT NOT NULL PRIMARY KEY,
+                sequence INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
             ",
         )
         .map_err(TO_IO_ERROR)?;
@@ -178,6 +184,57 @@ impl AppDatabase {
         .map_err(TO_IO_ERROR)
     }
 
+    pub fn load_herdr_output_sequence(&self, session_id: &str) -> io::Result<Option<u64>> {
+        let conn = self.lock()?;
+        let sequence = conn
+            .query_row(
+                "SELECT sequence FROM herdr_output_sequences WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(TO_IO_ERROR)?;
+        sequence.map(u64_from_i64).transpose()
+    }
+
+    pub fn store_herdr_output_sequence(&self, session_id: &str, sequence: u64) -> io::Result<u64> {
+        let sequence = i64_from_u64(sequence)?;
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(TO_IO_ERROR)?;
+        let current = tx
+            .query_row(
+                "SELECT sequence FROM herdr_output_sequences WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(TO_IO_ERROR)?;
+        let next = current.map_or(sequence, |current| current.max(sequence));
+        tx.execute(
+            r"
+            INSERT INTO herdr_output_sequences (session_id, sequence, updated_at)
+            VALUES (?1, ?2, unixepoch())
+            ON CONFLICT(session_id) DO UPDATE SET
+                sequence = excluded.sequence,
+                updated_at = excluded.updated_at
+            ",
+            params![session_id, next],
+        )
+        .map_err(TO_IO_ERROR)?;
+        tx.commit().map_err(TO_IO_ERROR)?;
+        u64_from_i64(next)
+    }
+
+    pub fn delete_herdr_output_sequence(&self, session_id: &str) -> io::Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "DELETE FROM herdr_output_sequences WHERE session_id = ?1",
+            params![session_id],
+        )
+        .map(|_| ())
+        .map_err(TO_IO_ERROR)
+    }
+
     fn lock(&self) -> io::Result<std::sync::MutexGuard<'_, Connection>> {
         self.conn
             .lock()
@@ -215,4 +272,63 @@ fn u64_from_i64(value: i64) -> io::Result<u64> {
             "terminal output sequence must not be negative",
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::{AppDatabase, remove_database_file};
+
+    fn temp_database() -> (AppDatabase, std::path::PathBuf) {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("lazycat-neko-webshell-database-test-{suffix}.db"));
+        let _ = remove_database_file(&path);
+        let database = AppDatabase::open(path.clone()).expect("test database");
+        (database, path)
+    }
+
+    #[test]
+    fn herdr_output_sequence_cursor_is_monotonic() {
+        let (database, path) = temp_database();
+        assert_eq!(
+            database.load_herdr_output_sequence("session-one").unwrap(),
+            None
+        );
+        assert_eq!(
+            database
+                .store_herdr_output_sequence("session-one", 8)
+                .unwrap(),
+            8
+        );
+        assert_eq!(
+            database
+                .store_herdr_output_sequence("session-one", 5)
+                .unwrap(),
+            8
+        );
+        assert_eq!(
+            database
+                .store_herdr_output_sequence("session-one", 12)
+                .unwrap(),
+            12
+        );
+        assert_eq!(
+            database.load_herdr_output_sequence("session-one").unwrap(),
+            Some(12)
+        );
+        database
+            .delete_herdr_output_sequence("session-one")
+            .unwrap();
+        assert_eq!(
+            database.load_herdr_output_sequence("session-one").unwrap(),
+            None
+        );
+        drop(database);
+        let _ = remove_database_file(&path);
+    }
 }

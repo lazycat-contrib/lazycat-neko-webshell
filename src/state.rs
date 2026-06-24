@@ -52,6 +52,9 @@ impl AppState {
             if let Err(err) = database.delete_output_history(&session_id) {
                 warn!(error = %err, session_id = %session_id, "failed to remove unreferenced terminal output history");
             }
+            if let Err(err) = database.delete_herdr_output_sequence(&session_id) {
+                warn!(error = %err, session_id = %session_id, "failed to remove unreferenced Herdr output sequence cursor");
+            }
         }
         if let Err(err) = session_store.save(&sessions) {
             warn!(error = %err, "failed to prune unreferenced terminal sessions");

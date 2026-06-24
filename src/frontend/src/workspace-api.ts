@@ -154,6 +154,30 @@ export async function runHerdrSocketApiRequest(
   return response.json() as Promise<HerdrSocketEnvelope>;
 }
 
+export async function saveHerdrOutputSequence(
+  selector: string,
+  sessionId: string,
+  sequence: number,
+  options: { keepalive?: boolean } = {},
+): Promise<number> {
+  const response = await fetch(new URL("./api/herdr/output-sequence", window.location.href), {
+    method: "POST",
+    credentials: "same-origin",
+    keepalive: options.keepalive,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: selector,
+      session_id: sessionId,
+      sequence,
+    }),
+  });
+  await throwIfFailed(response);
+  const payload = await response.json() as { sequence?: number };
+  return typeof payload.sequence === "number" && Number.isFinite(payload.sequence)
+    ? Math.max(0, Math.trunc(payload.sequence))
+    : sequence;
+}
+
 async function throwIfFailed(response: Response) {
   if (!response.ok) {
     throw new Error(await response.text() || response.statusText);

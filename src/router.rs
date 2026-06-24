@@ -13,7 +13,9 @@ use crate::assets::{frontend_asset, frontend_font, frontend_icon, index, securit
 use crate::backgrounds::{background_file, delete_background, upload_background};
 use crate::config::{MAX_CLIPBOARD_IMAGE_BYTES, MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES};
 use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
-use crate::herdr::{get_herdr_state, herdr_ws, post_herdr_action, post_herdr_socket};
+use crate::herdr::{
+    get_herdr_state, herdr_ws, post_herdr_action, post_herdr_output_sequence, post_herdr_socket,
+};
 use crate::lightos::{self, AdminInfo};
 use crate::preferences::{get_settings, put_settings};
 use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
@@ -44,6 +46,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
         .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
         .route("/api/herdr/socket", post(post_herdr_socket))
+        .route("/api/herdr/output-sequence", post(post_herdr_output_sequence))
         .route("/api/clipboard-image", post(upload_clipboard_image))
         .route("/api/fonts", get(list_fonts).post(upload_font))
         .route("/api/fonts/{id}", delete(delete_font))

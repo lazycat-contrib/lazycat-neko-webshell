@@ -102,6 +102,9 @@ impl SessionManager {
     pub fn close_terminal_and_output(&self, session_id: &str) {
         self.terminals.close(session_id);
         self.remove_output_buffer(session_id);
+        if let Err(err) = self.database.delete_herdr_output_sequence(session_id) {
+            warn!(error = %err, session_id = %session_id, "failed to remove Herdr output sequence cursor");
+        }
     }
 
     pub fn forget_terminal(&self, session_id: &str) {

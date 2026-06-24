@@ -40,6 +40,7 @@ export type WorkspacePaneState = {
   session_id: string;
   status: string;
   session_backend?: SessionBackendId;
+  herdr_output_sequence?: number;
   cols: number;
   rows: number;
 };

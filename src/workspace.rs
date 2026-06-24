@@ -103,6 +103,8 @@ pub struct WorkspacePaneState {
     pub session_id: String,
     pub status: String,
     pub session_backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub herdr_output_sequence: Option<u64>,
     pub cols: u16,
     pub rows: u16,
 }
@@ -509,6 +511,7 @@ fn optional_backend_workspace_state(state: &AppState, selector: &str) -> Workspa
             .iter()
             .any(|pane| pane.session_backend != "webshell")
     });
+    attach_herdr_output_sequences(state, &mut filtered);
     if !filtered
         .active_tab_id
         .as_deref()
@@ -517,6 +520,27 @@ fn optional_backend_workspace_state(state: &AppState, selector: &str) -> Workspa
         filtered.active_tab_id = None;
     }
     filtered
+}
+
+fn attach_herdr_output_sequences(state: &AppState, workspace: &mut WorkspaceState) {
+    let database = state.database();
+    for pane in workspace
+        .tabs
+        .iter_mut()
+        .flat_map(|tab| tab.panes.iter_mut())
+        .filter(|pane| pane.session_backend == "herdr")
+    {
+        match database.load_herdr_output_sequence(&pane.session_id) {
+            Ok(sequence) => pane.herdr_output_sequence = sequence,
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    session_id = %pane.session_id,
+                    "failed to load Herdr output sequence cursor"
+                );
+            }
+        }
+    }
 }
 
 fn empty_workspace_state(selector: &str) -> WorkspaceState {
@@ -555,6 +579,7 @@ fn workspace_state_from_agent(state: AgentWorkspaceState) -> WorkspaceState {
                             .unwrap_or_else(|| "webshell".to_owned()),
                         cols: i32_to_u16(pane.cols, DEFAULT_COLS),
                         rows: i32_to_u16(pane.rows, DEFAULT_ROWS),
+                        herdr_output_sequence: None,
                     })
                     .collect(),
             })
@@ -930,6 +955,7 @@ impl WorkspaceRecord {
                                     |session| session.status.clone(),
                                 ),
                                 session_backend: session_backend_from_session(session),
+                                herdr_output_sequence: None,
                                 cols: session.map_or(pane.cols, |session| session.cols),
                                 rows: session.map_or(pane.rows, |session| session.rows),
                             }

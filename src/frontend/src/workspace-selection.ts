@@ -2,7 +2,6 @@ import type { Instance } from "./gen/lazycat/webshell/v1/capability_pb";
 
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
-const HERDR_OUTPUT_SEQUENCE_STORAGE_PREFIX = "lazycat-neko-webshell.herdrOutputSequence";
 
 export function normalizeSelector(value: unknown): string {
   return String(value ?? "").trim();
@@ -64,10 +63,6 @@ export function lastTabStorageKey(selector: string): string {
   return `${LAST_TAB_STORAGE_PREFIX}.${selector}`;
 }
 
-function herdrOutputSequenceStorageKey(sessionId: string): string {
-  return `${HERDR_OUTPUT_SEQUENCE_STORAGE_PREFIX}.${sessionId}`;
-}
-
 export function readRememberedTabId(selector: string): string {
   try {
     return normalizeSelector(window.localStorage.getItem(lastTabStorageKey(selector)) ?? "");
@@ -91,26 +86,5 @@ export function rememberSelector(selector: string) {
     window.localStorage.setItem(LAST_SELECTOR_STORAGE_KEY, normalized);
   } catch {
     // localStorage is best-effort; URL and server workspace state remain authoritative.
-  }
-}
-
-export function readRememberedHerdrOutputSequence(sessionId: string): number {
-  const normalized = normalizeSelector(sessionId);
-  if (!normalized) return 0;
-  try {
-    const value = Number(window.localStorage.getItem(herdrOutputSequenceStorageKey(normalized)) ?? "0");
-    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
-  } catch {
-    return 0;
-  }
-}
-
-export function rememberHerdrOutputSequence(sessionId: string, sequence: number) {
-  const normalized = normalizeSelector(sessionId);
-  if (!normalized || !Number.isFinite(sequence) || sequence < 0) return;
-  try {
-    window.localStorage.setItem(herdrOutputSequenceStorageKey(normalized), String(Math.floor(sequence)));
-  } catch {
-    // localStorage is best-effort; replay can still fall back to server history.
   }
 }

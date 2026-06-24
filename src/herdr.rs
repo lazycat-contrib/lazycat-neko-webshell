@@ -128,6 +128,19 @@ pub struct HerdrSocketRequest {
     id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct HerdrOutputSequenceRequest {
+    name: String,
+    session_id: String,
+    sequence: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HerdrOutputSequenceResponse {
+    session_id: String,
+    sequence: u64,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum HerdrAction {
@@ -285,6 +298,23 @@ pub(crate) async fn post_herdr_socket(
         response
     })?;
     Ok(Json(response))
+}
+
+pub(crate) async fn post_herdr_output_sequence(
+    State(state): State<std::sync::Arc<crate::state::AppState>>,
+    Json(request): Json<HerdrOutputSequenceRequest>,
+) -> Result<Json<HerdrOutputSequenceResponse>, HerdrBridgeError> {
+    let target = authorize_herdr_target(&request.name).await?;
+    let session_id = request.session_id.trim();
+    authorize_herdr_output_sequence_session(&state, &target.selector, session_id)?;
+    let sequence = state
+        .database()
+        .store_herdr_output_sequence(session_id, request.sequence)
+        .map_err(|err| database_error("failed to persist Herdr output sequence", err))?;
+    Ok(Json(HerdrOutputSequenceResponse {
+        session_id: session_id.to_owned(),
+        sequence,
+    }))
 }
 
 pub(crate) async fn herdr_ws(
@@ -665,6 +695,76 @@ fn validate_herdr_method(method: &str) -> Result<(), HerdrBridgeError> {
 
 fn is_allowed_herdr_method(method: &str) -> bool {
     ALLOWED_HERDR_METHODS.contains(&method.trim())
+}
+
+fn authorize_herdr_output_sequence_session(
+    state: &crate::state::AppState,
+    selector: &str,
+    session_id: &str,
+) -> Result<(), HerdrBridgeError> {
+    if session_id.is_empty() {
+        return Err(HerdrBridgeError {
+            status: StatusCode::BAD_REQUEST,
+            message: "session_id is required".to_owned(),
+        });
+    }
+    let sessions = state.sessions.read().map_err(|_| HerdrBridgeError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: "session store lock poisoned".to_owned(),
+    })?;
+    let Some(session) = sessions.get(session_id) else {
+        return Err(HerdrBridgeError {
+            status: StatusCode::NOT_FOUND,
+            message: "Herdr session not found".to_owned(),
+        });
+    };
+    if session.selector != selector {
+        return Err(HerdrBridgeError {
+            status: StatusCode::FORBIDDEN,
+            message: "Herdr session does not belong to the selected instance".to_owned(),
+        });
+    }
+    if !session
+        .metadata
+        .get("sessionBackend")
+        .is_some_and(|backend| backend == "herdr")
+    {
+        return Err(HerdrBridgeError {
+            status: StatusCode::BAD_REQUEST,
+            message: "session is not a Herdr session".to_owned(),
+        });
+    }
+    drop(sessions);
+
+    let workspaces = state.workspaces.read().map_err(|_| HerdrBridgeError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: "workspace store lock poisoned".to_owned(),
+    })?;
+    let in_workspace = workspaces.get(selector).is_some_and(|workspace| {
+        workspace
+            .tabs
+            .iter()
+            .any(|tab| tab.panes.iter().any(|pane| pane.session_id == session_id))
+    });
+    if !in_workspace {
+        return Err(HerdrBridgeError {
+            status: StatusCode::NOT_FOUND,
+            message: "Herdr session is not attached to the workspace".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn database_error(context: &str, err: std::io::Error) -> HerdrBridgeError {
+    let status = if err.kind() == std::io::ErrorKind::InvalidData {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    HerdrBridgeError {
+        status,
+        message: format!("{context}: {err}"),
+    }
 }
 
 fn normalize_herdr_params(params: Value) -> Value {
