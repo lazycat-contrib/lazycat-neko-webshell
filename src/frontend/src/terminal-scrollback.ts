@@ -20,8 +20,7 @@ export function installPaneScrollbackFallback(
   };
 
   pane.mount.addEventListener("wheel", (event) => {
-    if (pane.sessionBackend === "herdr") return;
-    if (paneMouseReportingActive(pane, event)) return;
+    if (pane.sessionBackend !== "herdr" && paneMouseReportingActive(pane, event)) return;
     const host = paneScrollbackHost(pane);
     if (!host || !hostCanScroll(host)) return;
     if (scrollPaneHost(host, normalizedWheelDeltaPx(event, host))) {
