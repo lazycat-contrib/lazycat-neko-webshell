@@ -2,6 +2,7 @@ import "./styles.css";
 import "./plugin-tools.css";
 import "./webshell-themes.css";
 import "./terminal-themes.css";
+import "./mobile.css";
 
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
