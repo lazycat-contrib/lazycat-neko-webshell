@@ -159,6 +159,8 @@ export const DEFAULT_SETTINGS: Settings = {
   copyOnSelect: false,
   useResttyClipboard: true,
   touchSelectionMode: "long-press",
+  mobileClockUse24Hour: true,
+  mobileClockShowPeriod: false,
   terminalBackgroundEnabled: false,
   terminalBackgroundUrl: "",
   terminalBackgroundOpacity: 0.24,

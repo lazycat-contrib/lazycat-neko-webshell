@@ -783,32 +783,72 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 }
 
 .mobile-shortcut-clock {
+  position: relative;
   flex: 0 0 auto;
   margin-left: auto;
-  min-width: 78px;
-  height: 28px;
+  min-width: 86px;
+  height: 32px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--accent-border) 70%, transparent);
-  border-radius: 5px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-border) 74%, var(--line));
+  border-radius: 7px;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 88%, black), color-mix(in srgb, var(--surface) 82%, black)),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 88%, white) 0%, color-mix(in srgb, var(--surface-2) 72%, black) 46%, color-mix(in srgb, var(--surface) 84%, black) 100%),
     var(--surface);
   color: var(--accent-fg);
-  padding: 0 8px;
+  padding: 0 9px;
   font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   line-height: 1;
   letter-spacing: 0;
-  text-shadow: 0 0 7px color-mix(in srgb, var(--accent-fg) 60%, transparent);
+  text-shadow:
+    0 0 6px color-mix(in srgb, var(--accent-fg) 70%, transparent),
+    0 1px 0 color-mix(in srgb, var(--surface) 62%, black);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--surface) 72%, transparent),
-    0 0 12px color-mix(in srgb, var(--accent-border) 22%, transparent);
+    inset 0 1px 0 color-mix(in srgb, white 24%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, black 42%, transparent),
+    inset 0 0 0 2px color-mix(in srgb, var(--surface) 70%, black),
+    0 1px 2px color-mix(in srgb, black 42%, transparent),
+    0 0 14px color-mix(in srgb, var(--accent-border) 20%, transparent);
   user-select: none;
 }
 
+.mobile-shortcut-clock::before {
+  position: absolute;
+  inset: 3px;
+  content: "";
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, white 16%, transparent), transparent 38%),
+    repeating-linear-gradient(180deg, transparent 0 2px, color-mix(in srgb, black 12%, transparent) 2px 3px);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, black 36%, transparent),
+    inset 0 0 12px color-mix(in srgb, black 34%, transparent);
+  pointer-events: none;
+}
+
+.mobile-shortcut-clock::after {
+  position: absolute;
+  top: 3px;
+  right: 8px;
+  left: 8px;
+  height: 1px;
+  content: "";
+  background: color-mix(in srgb, white 28%, transparent);
+  pointer-events: none;
+}
+
 .mobile-shortcut-clock[data-compact="true"] {
-  min-width: 58px;
+  min-width: 66px;
+}
+
+.mobile-shortcut-clock[data-period="true"] {
+  min-width: 104px;
+}
+
+.mobile-shortcut-clock[data-compact="true"][data-period="true"] {
+  min-width: 86px;
 }

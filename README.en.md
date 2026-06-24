@@ -2,7 +2,7 @@
 
 [中文](./README.md)
 
-Current version: `0.4.4`
+Current version: `0.4.5`
 
 Neko Webshell is a browser terminal for LazyCat and LightOS. Open an app instance, run commands, read output, move files, paste images, publish a local preview URL, and use AI Chat to organize recent terminal context without setting up an SSH client first.
 

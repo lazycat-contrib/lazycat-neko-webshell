@@ -217,6 +217,7 @@ export type MessageKey =
   | "section.herdrWorkspaces"
   | "section.plugins"
   | "section.herdrHighlight"
+  | "section.mobileClock"
   | "section.mobileQuickInput"
   | "section.mobileShortcuts"
   | "section.sessionBackend"
@@ -234,6 +235,9 @@ export type MessageKey =
   | "setting.fontLigatures"
   | "setting.fontRenderingHelp"
   | "setting.herdrHighlightHelp"
+  | "setting.mobileClock24Hour"
+  | "setting.mobileClockHelp"
+  | "setting.mobileClockPeriod"
   | "setting.mobileQuickInputHelp"
   | "setting.pluginDisabled"
   | "setting.pluginEnabled"
@@ -597,6 +601,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.herdrTabs": "Herdr tabs",
     "section.herdrWorkspaces": "Herdr spaces",
     "section.herdrHighlight": "Herdr selection",
+    "section.mobileClock": "Mobile clock",
     "section.mobileQuickInput": "Mobile quick input",
     "section.mobileShortcuts": "Mobile",
     "section.plugins": "Plugins",
@@ -615,6 +620,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.fontLigatures": "Programming ligatures",
     "setting.fontRenderingHelp": "Ligatures shape operators such as => and !=. Font hinting can sharpen small text, but may cost extra rasterization time.",
     "setting.herdrHighlightHelp": "Customize the active Herdr workspace and tab background for dark and light interface styles.",
+    "setting.mobileClock24Hour": "Use 24-hour time",
+    "setting.mobileClockHelp": "Controls the time shown beside the mobile shortcut tabs.",
+    "setting.mobileClockPeriod": "Show AM/PM",
     "setting.mobileQuickInputHelp": "Save personal phrases for the mobile shortcut bar. They appear after Sym and are sorted by usage.",
     "setting.pluginDisabled": "Disabled",
     "setting.pluginEnabled": "Enabled",
@@ -977,6 +985,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.herdrTabs": "Herdr 标签",
     "section.herdrWorkspaces": "Herdr Spaces",
     "section.herdrHighlight": "Herdr 选中态",
+    "section.mobileClock": "移动端时间显示",
     "section.mobileQuickInput": "移动端快速输入",
     "section.mobileShortcuts": "移动端",
     "section.plugins": "插件",
@@ -995,6 +1004,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.fontLigatures": "编程连字",
     "setting.fontRenderingHelp": "编程连字会渲染 =>、!= 这类符号；字体微调可以让小字号更锐利，但可能增加一点字体栅格化开销。",
     "setting.herdrHighlightHelp": "分别设置深色和浅色界面风格下，Herdr 当前工作区和标签的背景色。",
+    "setting.mobileClock24Hour": "使用 24 小时制",
+    "setting.mobileClockHelp": "控制移动端辅助键盘标签旁边的时间显示。",
+    "setting.mobileClockPeriod": "显示上午/下午",
     "setting.mobileQuickInputHelp": "保存个人常用短语，移动端会在 Sym 后显示；点击后按使用频率排序。",
     "setting.pluginDisabled": "已关闭",
     "setting.pluginEnabled": "已启用",

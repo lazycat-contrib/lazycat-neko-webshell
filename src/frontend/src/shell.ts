@@ -97,6 +97,8 @@ export type ShellElements = {
   copyOnSelect: HTMLInputElement;
   useResttyClipboard: HTMLInputElement;
   touchSelectionMode: HTMLSelectElement;
+  mobileClockUse24Hour: HTMLInputElement;
+  mobileClockShowPeriod: HTMLInputElement;
   mobileQuickPhraseSettings: HTMLDivElement;
   mobileQuickPhraseList: HTMLDivElement;
   mobileQuickPhraseLabel: HTMLInputElement;
@@ -519,6 +521,18 @@ export function renderShell(app: HTMLElement): ShellElements {
             </section>
 
             <section class="settings-section" id="mobileSettingsPanel" data-settings-panel="mobile" role="tabpanel" hidden>
+              <div class="settings-group">
+                <div class="settings-group-title" data-i18n="section.mobileClock">Mobile clock</div>
+                <p class="settings-help" data-i18n="setting.mobileClockHelp">Controls the time shown beside the mobile shortcut tabs.</p>
+                <label class="switch">
+                  <input id="mobileClockUse24Hour" type="checkbox" />
+                  <span data-i18n="setting.mobileClock24Hour">Use 24-hour time</span>
+                </label>
+                <label class="switch">
+                  <input id="mobileClockShowPeriod" type="checkbox" />
+                  <span data-i18n="setting.mobileClockPeriod">Show AM/PM</span>
+                </label>
+              </div>
               <label class="field mobile-only-setting">
                 <span data-i18n="field.touchBehavior">Touch behavior</span>
                 <select id="touchSelectionMode">
@@ -764,6 +778,8 @@ export function renderShell(app: HTMLElement): ShellElements {
     copyOnSelect: qs<HTMLInputElement>("#copyOnSelect"),
     useResttyClipboard: qs<HTMLInputElement>("#useResttyClipboard"),
     touchSelectionMode: qs<HTMLSelectElement>("#touchSelectionMode"),
+    mobileClockUse24Hour: qs<HTMLInputElement>("#mobileClockUse24Hour"),
+    mobileClockShowPeriod: qs<HTMLInputElement>("#mobileClockShowPeriod"),
     mobileQuickPhraseSettings: qs<HTMLDivElement>("#mobileQuickPhraseSettings"),
     mobileQuickPhraseList: qs<HTMLDivElement>("#mobileQuickPhraseList"),
     mobileQuickPhraseLabel: qs<HTMLInputElement>("#mobileQuickPhraseLabel"),

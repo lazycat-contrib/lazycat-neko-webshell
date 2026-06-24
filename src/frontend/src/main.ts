@@ -907,6 +907,17 @@ function bindSettings() {
     saveSettings();
     void remountTerminalsForTouchMode();
   });
+  elements.mobileClockUse24Hour.addEventListener("change", () => {
+    settings.mobileClockUse24Hour = elements.mobileClockUse24Hour.checked;
+    elements.mobileClockShowPeriod.disabled = settings.mobileClockUse24Hour;
+    saveSettings();
+    updateMobileClock();
+  });
+  elements.mobileClockShowPeriod.addEventListener("change", () => {
+    settings.mobileClockShowPeriod = elements.mobileClockShowPeriod.checked;
+    saveSettings();
+    updateMobileClock();
+  });
   elements.mobileQuickPhraseList.addEventListener("click", (event) => {
     const removeButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-quick-phrase-remove]")
@@ -1631,13 +1642,32 @@ function startMobileClock() {
 function updateMobileClock() {
   const now = new Date();
   const hasPhrases = settings.mobileQuickPhrases.length > 0;
-  elements.mobileShortcutClock.textContent = now.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: hasPhrases ? undefined : "2-digit",
-    hour12: false,
+  const showPeriod = !settings.mobileClockUse24Hour && settings.mobileClockShowPeriod;
+  elements.mobileShortcutClock.textContent = formatMobileClockTime(now, {
+    hour12: !settings.mobileClockUse24Hour,
+    showPeriod,
+    showSeconds: !hasPhrases,
   });
   elements.mobileShortcutClock.dataset.compact = String(hasPhrases);
+  elements.mobileShortcutClock.dataset.period = String(showPeriod);
+}
+
+function formatMobileClockTime(date: Date, options: { hour12: boolean; showPeriod: boolean; showSeconds: boolean }): string {
+  const formatOptions: Intl.DateTimeFormatOptions = {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: options.showSeconds ? "2-digit" : undefined,
+    hour12: options.hour12,
+  };
+  const formatter = new Intl.DateTimeFormat(settings.locale === "auto" ? undefined : settings.locale, formatOptions);
+  if (!options.hour12 || options.showPeriod) {
+    return formatter.format(date);
+  }
+  return formatter.formatToParts(date)
+    .filter((part) => part.type !== "dayPeriod")
+    .map((part) => part.value)
+    .join("")
+    .trim();
 }
 
 async function navigateLightOSHome() {
@@ -2227,6 +2257,9 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.copyOnSelect.checked = settings.copyOnSelect;
   elements.useResttyClipboard.checked = settings.useResttyClipboard;
   elements.touchSelectionMode.value = settings.touchSelectionMode;
+  elements.mobileClockUse24Hour.checked = settings.mobileClockUse24Hour;
+  elements.mobileClockShowPeriod.checked = settings.mobileClockShowPeriod;
+  elements.mobileClockShowPeriod.disabled = settings.mobileClockUse24Hour;
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;
   updateSessionBackendSettings();

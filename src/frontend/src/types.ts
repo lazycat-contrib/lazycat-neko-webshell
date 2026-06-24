@@ -279,6 +279,8 @@ export type Settings = {
   copyOnSelect: boolean;
   useResttyClipboard: boolean;
   touchSelectionMode: TouchSelectionMode;
+  mobileClockUse24Hour: boolean;
+  mobileClockShowPeriod: boolean;
   terminalBackgroundEnabled: boolean;
   terminalBackgroundUrl: string;
   terminalBackgroundOpacity: number;
