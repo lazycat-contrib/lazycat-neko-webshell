@@ -117,6 +117,8 @@
   color-scheme: light;
   --danger: #d8001b;
   --ok: #28a948;
+  --warning: #b76a00;
+  --warning-soft: #fff0c7;
   --shadow-deep: 0 1px 1px rgba(0, 0, 0, 0.02), 0 8px 16px -4px rgba(0, 0, 0, 0.04), 0 24px 32px -8px rgba(0, 0, 0, 0.06);
   --shadow-raised: 0 1px 1px rgba(0, 0, 0, 0.02), 0 4px 8px -4px rgba(0, 0, 0, 0.04), 0 16px 24px -8px rgba(0, 0, 0, 0.06);
   --shadow-inset-soft: none;

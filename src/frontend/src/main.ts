@@ -3563,6 +3563,7 @@ function renderHerdrDock() {
     elements.herdrWorkspaceList.replaceChildren();
     elements.herdrTabList.replaceChildren();
     elements.herdrStatus.textContent = "";
+    renderHerdrProtocolNotice(undefined);
     renderHerdrWorkspaceMenu();
     void syncHerdrEventBridge();
     return;
@@ -3580,9 +3581,43 @@ function renderHerdrDock() {
   );
   elements.herdrTabList.innerHTML = renderHerdrTabButtons(herdrState?.tabs);
   elements.herdrStatus.textContent = herdrState?.message ?? "";
+  renderHerdrProtocolNotice(herdrState);
   renderHerdrWorkspaceMenu();
   void syncHerdrEventBridge();
   updateIcons();
+}
+
+function renderHerdrProtocolNotice(state: HerdrBridgeState | undefined) {
+  const notice = herdrProtocolNotice(state);
+  if (!notice) {
+    elements.herdrProtocolNotice.hidden = true;
+    elements.herdrProtocolNotice.removeAttribute("data-state");
+    elements.herdrProtocolNotice.removeAttribute("title");
+    elements.herdrProtocolNotice.removeAttribute("aria-label");
+    return;
+  }
+  elements.herdrProtocolNotice.hidden = false;
+  elements.herdrProtocolNotice.dataset.state = notice.state;
+  elements.herdrProtocolNotice.title = notice.message;
+  elements.herdrProtocolNotice.setAttribute("aria-label", notice.message);
+}
+
+function herdrProtocolNotice(
+  state: HerdrBridgeState | undefined,
+): { state: "newer" | "older"; message: string } | undefined {
+  const actual = state?.herdr_protocol;
+  const expected = state?.supported_protocol;
+  if (typeof actual !== "number" || typeof expected !== "number" || actual === expected) return undefined;
+  const expectedVersion = state?.supported_herdr_version || "?";
+  const params = {
+    actual: String(actual),
+    expected: String(expected),
+    expectedVersion,
+  };
+  if (actual > expected) {
+    return { state: "newer", message: tr("status.herdrProtocolNewer", params) };
+  }
+  return { state: "older", message: tr("status.herdrProtocolOlder", params) };
 }
 
 function findPaneBySessionBackend(

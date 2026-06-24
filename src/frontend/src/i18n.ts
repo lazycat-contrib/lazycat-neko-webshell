@@ -242,6 +242,8 @@ export type MessageKey =
   | "status.herdrEventAgent"
   | "status.herdrEntryRestored"
   | "status.herdrNotification"
+  | "status.herdrProtocolNewer"
+  | "status.herdrProtocolOlder"
   | "status.herdrUnavailable"
   | "status.herdrWorkspaceFocused"
   | "status.idle"
@@ -555,6 +557,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.herdrEventAgent": "Herdr {agent}: {status}",
     "status.herdrEntryRestored": "Herdr entry restored",
     "status.herdrNotification": "Herdr: {message}",
+    "status.herdrProtocolNewer": "The device Herdr protocol is {actual}, newer than WebShell supports ({expected}, based on Herdr {expectedVersion}). The WebShell author may need to update Herdr protocol support.",
+    "status.herdrProtocolOlder": "The device Herdr protocol is {actual}, older than WebShell expects ({expected}, based on Herdr {expectedVersion}). You may need to update Herdr on the device.",
     "status.herdrUnavailable": "Herdr socket unavailable",
     "status.herdrWorkspaceFocused": "Herdr workspace focused",
     "status.idle": "Idle",
@@ -867,6 +871,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.herdrEventAgent": "Herdr {agent}：{status}",
     "status.herdrEntryRestored": "已恢复 Herdr 入口",
     "status.herdrNotification": "Herdr：{message}",
+    "status.herdrProtocolNewer": "设备上的 Herdr 协议为 {actual}，高于 WebShell 当前适配的 {expected}（参考 Herdr {expectedVersion}）。可能需要通知软件作者更新 Herdr protocol 适配。",
+    "status.herdrProtocolOlder": "设备上的 Herdr 协议为 {actual}，低于 WebShell 当前适配的 {expected}（参考 Herdr {expectedVersion}）。可能需要更新设备上的 Herdr。",
     "status.herdrUnavailable": "Herdr socket 不可用",
     "status.herdrWorkspaceFocused": "已切换 Herdr 工作区",
     "status.idle": "空闲",

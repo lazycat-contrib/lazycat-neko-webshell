@@ -89,10 +89,20 @@ export type HerdrTabInfo = {
   pane_count: number;
 };
 
+export type HerdrCapabilitiesInfo = {
+  live_handoff: boolean;
+};
+
 export type HerdrBridgeState = {
   selector: string;
   available: boolean;
   message?: string;
+  herdr_version?: string;
+  herdr_protocol?: number;
+  supported_herdr_version: string;
+  supported_protocol: number;
+  protocol_compatible?: boolean;
+  capabilities?: HerdrCapabilitiesInfo;
   workspaces: HerdrWorkspaceInfo[];
   tabs: HerdrTabInfo[];
 };

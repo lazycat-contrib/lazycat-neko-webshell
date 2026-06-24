@@ -27,6 +27,7 @@ export type ShellElements = {
   herdrWorkspaceList: HTMLDivElement;
   herdrTabList: HTMLDivElement;
   herdrStatus: HTMLParagraphElement;
+  herdrProtocolNotice: HTMLSpanElement;
   herdrRefresh: HTMLButtonElement;
   herdrNewWorkspace: HTMLButtonElement;
   herdrNewTab: HTMLButtonElement;
@@ -240,6 +241,9 @@ export function renderShell(app: HTMLElement): ShellElements {
           <button class="herdr-icon-button" id="herdrNewTab" type="button" aria-label="New Herdr tab" title="New Herdr tab" data-i18n-aria="action.newHerdrTab" data-i18n-title="action.newHerdrTab">
             <i data-lucide="plus"></i>
           </button>
+          <span class="herdr-protocol-notice" id="herdrProtocolNotice" role="img" hidden>
+            <i data-lucide="arrow-up"></i>
+          </span>
           <button class="herdr-icon-button" id="herdrRefresh" type="button" aria-label="Refresh Herdr" title="Refresh Herdr" data-i18n-aria="action.refreshHerdr" data-i18n-title="action.refreshHerdr">
             <i data-lucide="refresh-cw"></i>
           </button>
@@ -663,6 +667,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     herdrWorkspaceList: qs<HTMLDivElement>("#herdrWorkspaceList"),
     herdrTabList: qs<HTMLDivElement>("#herdrTabList"),
     herdrStatus: qs<HTMLParagraphElement>("#herdrStatus"),
+    herdrProtocolNotice: qs<HTMLSpanElement>("#herdrProtocolNotice"),
     herdrRefresh: qs<HTMLButtonElement>("#herdrRefresh"),
     herdrNewWorkspace: qs<HTMLButtonElement>("#herdrNewWorkspace"),
     herdrNewTab: qs<HTMLButtonElement>("#herdrNewTab"),

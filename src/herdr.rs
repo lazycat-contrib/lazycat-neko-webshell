@@ -23,6 +23,8 @@ use crate::validation::validate_selector;
 const HERDR_API_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_HERDR_SOCKET_REQUEST_BYTES: usize = 1024 * 1024;
 const HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS: u64 = 5;
+const SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 14;
+const SUPPORTED_HERDR_SOURCE_VERSION: &str = "0.7.0";
 
 type HerdrSocketSender = SplitSink<WebSocket, Message>;
 
@@ -142,8 +144,23 @@ pub struct HerdrBridgeState {
     available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    herdr_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    herdr_protocol: Option<u32>,
+    supported_herdr_version: &'static str,
+    supported_protocol: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    protocol_compatible: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capabilities: Option<HerdrCapabilitiesInfo>,
     workspaces: Vec<HerdrWorkspaceInfo>,
     tabs: Vec<HerdrTabInfo>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct HerdrCapabilitiesInfo {
+    live_handoff: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -170,6 +187,13 @@ pub struct HerdrTabInfo {
 struct AuthorizedHerdrTarget {
     selector: String,
     login_user: String,
+}
+
+#[derive(Clone, Debug, Default)]
+struct HerdrPingInfo {
+    version: Option<String>,
+    protocol: Option<u32>,
+    capabilities: Option<HerdrCapabilitiesInfo>,
 }
 
 #[derive(Debug)]
@@ -306,26 +330,31 @@ async fn authorize_herdr_target(selector: &str) -> Result<AuthorizedHerdrTarget,
 }
 
 async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeState {
-    if let Err(err) = run_herdr_request(target, "ping", json!({})).await {
-        return HerdrBridgeState {
-            selector: target.selector.clone(),
-            available: false,
-            message: Some(err.message),
-            workspaces: Vec::new(),
-            tabs: Vec::new(),
-        };
-    }
+    let ping_info = match run_herdr_request(target, "ping", json!({})).await {
+        Ok(response) => parse_herdr_ping(&response),
+        Err(err) => {
+            return build_herdr_state(
+                target,
+                false,
+                Some(err.message),
+                HerdrPingInfo::default(),
+                Vec::new(),
+                Vec::new(),
+            );
+        }
+    };
 
     let workspaces = match run_herdr_request(target, "workspace.list", json!({})).await {
         Ok(response) => parse_workspaces(&response),
         Err(err) => {
-            return HerdrBridgeState {
-                selector: target.selector.clone(),
-                available: true,
-                message: Some(err.message),
-                workspaces: Vec::new(),
-                tabs: Vec::new(),
-            };
+            return build_herdr_state(
+                target,
+                true,
+                Some(err.message),
+                ping_info,
+                Vec::new(),
+                Vec::new(),
+            );
         }
     };
     let focused_workspace = workspaces
@@ -354,10 +383,29 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
         Vec::new()
     };
 
+    build_herdr_state(target, true, None, ping_info, workspaces, tabs)
+}
+
+fn build_herdr_state(
+    target: &AuthorizedHerdrTarget,
+    available: bool,
+    message: Option<String>,
+    ping_info: HerdrPingInfo,
+    workspaces: Vec<HerdrWorkspaceInfo>,
+    tabs: Vec<HerdrTabInfo>,
+) -> HerdrBridgeState {
     HerdrBridgeState {
         selector: target.selector.clone(),
-        available: true,
-        message: None,
+        available,
+        message,
+        herdr_version: ping_info.version,
+        herdr_protocol: ping_info.protocol,
+        supported_herdr_version: SUPPORTED_HERDR_SOURCE_VERSION,
+        supported_protocol: SUPPORTED_HERDR_PROTOCOL_VERSION,
+        protocol_compatible: ping_info
+            .protocol
+            .map(|protocol| protocol == SUPPORTED_HERDR_PROTOCOL_VERSION),
+        capabilities: ping_info.capabilities,
         workspaces,
         tabs,
     }
@@ -814,6 +862,37 @@ fn parse_tabs(response: &Value) -> Vec<HerdrTabInfo> {
         .collect()
 }
 
+fn parse_herdr_ping(response: &Value) -> HerdrPingInfo {
+    let Some(result) = response.get("result") else {
+        return HerdrPingInfo::default();
+    };
+    HerdrPingInfo {
+        version: result
+            .get("version")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        protocol: result
+            .get("protocol")
+            .and_then(Value::as_u64)
+            .and_then(|protocol| u32::try_from(protocol).ok()),
+        capabilities: result
+            .get("capabilities")
+            .and_then(parse_herdr_capabilities),
+    }
+}
+
+fn parse_herdr_capabilities(value: &Value) -> Option<HerdrCapabilitiesInfo> {
+    if value.is_null() {
+        return None;
+    }
+    Some(HerdrCapabilitiesInfo {
+        live_handoff: value
+            .get("live_handoff")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
 fn json_usize(value: &Value, key: &str) -> usize {
     value
         .get(key)
@@ -872,7 +951,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        ALLOWED_HERDR_METHODS, is_allowed_herdr_method, parse_tabs, parse_workspaces, shell_quote,
+        ALLOWED_HERDR_METHODS, SUPPORTED_HERDR_PROTOCOL_VERSION, SUPPORTED_HERDR_SOURCE_VERSION,
+        is_allowed_herdr_method, parse_herdr_ping, parse_tabs, parse_workspaces, shell_quote,
         validate_herdr_wire_request,
     };
 
@@ -921,6 +1001,8 @@ mod tests {
 
     #[test]
     fn herdr_socket_allowlist_covers_documented_methods() {
+        assert_eq!(SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
+        assert_eq!(SUPPORTED_HERDR_SOURCE_VERSION, "0.7.0");
         assert!(ALLOWED_HERDR_METHODS.len() > 60);
         for method in ALLOWED_HERDR_METHODS {
             assert!(
@@ -930,6 +1012,27 @@ mod tests {
         }
         assert!(!is_allowed_herdr_method("workspace.delete"));
         assert!(!is_allowed_herdr_method("../../../bin/sh"));
+    }
+
+    #[test]
+    fn parses_herdr_ping_protocol_metadata() {
+        let ping = parse_herdr_ping(&json!({
+            "result": {
+                "type": "pong",
+                "version": "0.7.0",
+                "protocol": 14,
+                "capabilities": {
+                    "live_handoff": true
+                }
+            }
+        }));
+        assert_eq!(ping.version.as_deref(), Some("0.7.0"));
+        assert_eq!(ping.protocol, Some(14));
+        assert!(
+            ping.capabilities
+                .as_ref()
+                .is_some_and(|capabilities| capabilities.live_handoff)
+        );
     }
 
     #[test]

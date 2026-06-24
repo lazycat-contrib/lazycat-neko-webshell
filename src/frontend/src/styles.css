@@ -19,6 +19,8 @@
   --accent-cool: #00aa95;
   --danger: #f13242;
   --ok: #00ac3a;
+  --warning: #f5a524;
+  --warning-soft: #332000;
   --radius: 6px;
   --shadow-deep: 0 1px 1px rgba(0, 0, 0, 0.02), 0 8px 16px -4px rgba(0, 0, 0, 0.04), 0 24px 32px -8px rgba(0, 0, 0, 0.06);
   --shadow-raised: 0 1px 1px rgba(0, 0, 0, 0.02), 0 4px 8px -4px rgba(0, 0, 0, 0.04), 0 16px 24px -8px rgba(0, 0, 0, 0.06);
@@ -675,7 +677,7 @@ textarea:focus-visible {
 
 .herdr-tabs-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
   align-items: center;
   gap: 5px;
   min-width: 0;
@@ -903,6 +905,37 @@ textarea:focus-visible {
 .herdr-icon-button svg {
   width: 15px;
   height: 15px;
+}
+
+.herdr-protocol-notice {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.herdr-protocol-notice[hidden] {
+  display: none;
+}
+
+.herdr-protocol-notice[data-state="newer"] {
+  color: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-soft);
+}
+
+.herdr-protocol-notice[data-state="older"] {
+  color: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+.herdr-protocol-notice svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.1;
 }
 
 .herdr-status {
