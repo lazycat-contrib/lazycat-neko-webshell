@@ -6,19 +6,13 @@ import { escapeAttr, escapeHtml } from "./utils";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
-export function renderFontFamilyOptions(uploadedFonts: FontPreset[], localFonts: FontPreset[], tr: Translate): string {
-  const localOptions = localFonts.map(
-    (font) => `<option value="${escapeAttr(font.id)}">${escapeHtml(font.label)}</option>`,
-  ).join("");
+export function renderFontFamilyOptions(uploadedFonts: FontPreset[], tr: Translate): string {
   const customOptions = uploadedFonts.map(
     (font) => `<option value="${escapeAttr(font.id)}">${escapeHtml(font.label)}</option>`,
   ).join("");
   return `
     <optgroup label="${escapeAttr(tr("font.builtIn"))}">
       ${FONT_PRESETS.map((font) => `<option value="${escapeAttr(font.id)}">${escapeHtml(font.label)}</option>`).join("")}
-    </optgroup>
-    <optgroup label="${escapeAttr(tr("font.local"))}">
-      ${localOptions || `<option disabled>${escapeHtml(tr("font.noLocal"))}</option>`}
     </optgroup>
     <optgroup label="${escapeAttr(tr("font.uploaded"))}">
       ${customOptions || `<option disabled>${escapeHtml(tr("font.noUploaded"))}</option>`}

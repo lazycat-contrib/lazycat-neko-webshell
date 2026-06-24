@@ -15,8 +15,3 @@ export const FONT_HINT_TARGETS: FontHintTargetOption[] = [
 export function normalizeFontHintTarget(value: unknown): TerminalFontHintTarget {
   return value === "light" || value === "normal" ? value : "auto";
 }
-
-export function normalizeLocalFontFamily(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return value.trim().replace(/[\r\n]/g, " ").slice(0, 96);
-}

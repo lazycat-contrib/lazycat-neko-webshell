@@ -70,7 +70,6 @@ export type ShellElements = {
   themeStatus: HTMLElement;
   fontFamily: HTMLSelectElement;
   fontPreview: HTMLDivElement;
-  detectLocalFonts: HTMLButtonElement;
   fontRenderingSettings: HTMLDivElement;
   tabLayout: HTMLSelectElement;
   fontUpload: HTMLInputElement;
@@ -529,10 +528,6 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <span data-i18n="field.font">Font</span>
                   <select id="fontFamily"></select>
                 </label>
-                <button class="command-button font-local-button" id="detectLocalFonts" type="button" aria-label="Detect local fonts" title="Detect local fonts" data-i18n-aria="action.detectLocalFonts" data-i18n-title="action.detectLocalFonts">
-                  <i data-lucide="scan-search"></i>
-                  <span data-i18n="action.detectLocalFonts">Detect local fonts</span>
-                </button>
                 <div class="font-preview" id="fontPreview" aria-label="Font preview" data-i18n-aria="field.fontPreview">
                   <span data-i18n="app.title">Neko Webshell</span>
                   <code>λ ~/app $ ls -la --color=auto 0123456789</code>
@@ -711,7 +706,6 @@ export function renderShell(app: HTMLElement): ShellElements {
     themeStatus: qs<HTMLElement>("#themeStatus"),
     fontFamily: qs<HTMLSelectElement>("#fontFamily"),
     fontPreview: qs<HTMLDivElement>("#fontPreview"),
-    detectLocalFonts: qs<HTMLButtonElement>("#detectLocalFonts"),
     fontRenderingSettings: qs<HTMLDivElement>("#fontRenderingSettings"),
     tabLayout: qs<HTMLSelectElement>("#tabLayout"),
     fontUpload: qs<HTMLInputElement>("#fontUpload"),

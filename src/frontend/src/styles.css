@@ -483,6 +483,7 @@ textarea:focus-visible {
   background: transparent;
   color: inherit;
   opacity: 0;
+  pointer-events: none;
   transform: translateY(-50%);
 }
 
@@ -490,6 +491,7 @@ textarea:focus-visible {
 .tab:focus-within .tab-close,
 .tab.active .tab-close {
   opacity: 0.74;
+  pointer-events: auto;
 }
 
 .tab-close:hover {
@@ -533,6 +535,10 @@ textarea:focus-visible {
 }
 
 .tab-add::after {
+  inset: 0;
+}
+
+.tab-close::after {
   inset: 0;
 }
 
@@ -2029,11 +2035,6 @@ kbd {
 .font-preview code {
   color: var(--accent);
   font-family: var(--font-mono);
-}
-
-.font-local-button {
-  width: 100%;
-  margin-top: 10px;
 }
 
 .font-rendering-options {

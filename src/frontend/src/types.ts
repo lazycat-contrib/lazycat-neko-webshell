@@ -249,7 +249,6 @@ export type Settings = {
   interfaceStyleId: InterfaceStyleId;
   customThemes: CustomTerminalTheme[];
   fontFamilyId: string;
-  localFontFamily: string;
   tabLayout: TabLayout;
   fontSize: number;
   lineHeight: number;

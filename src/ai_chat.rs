@@ -1390,17 +1390,55 @@ fn build_prompt(action: &str, payload: &Value) -> String {
     let cwd = json_string(ctx, "cwd", "~");
     let shell = json_string(ctx, "shell", "sh");
     let os = json_string(ctx, "os", "LightOS");
+    let backend = json_string(ctx, "backend", "");
+    let selector = json_string(ctx, "selector", "");
     let recent_output = json_string(ctx, "recent_output", "");
     let conversation = payload
         .get("conversation")
         .map_or_else(String::new, Value::to_string);
+    let terminal_context = terminal_context_block(
+        &cwd,
+        &shell,
+        &os,
+        &backend,
+        &selector,
+        &recent_output,
+    );
     match action {
         "chat" => format!(
-            "你是 WebShell 内的 Chat 工具，不控制终端，也不会替用户执行命令。\n当前上下文：{cwd} | {shell} | {os}\n最近终端输出（可能为空，已脱敏）：\n{recent_output}\n\n当前模型会话历史（JSON，可能为空）：\n{conversation}\n\n用户：{}\n\n要求：\n- 简洁回答，优先给可执行建议。\n- 需要命令时用 ```shell 代码块，但不要声称已经执行。\n- 对删除、覆盖、sudo、系统路径写入等风险操作明确提醒。\n- 不要把终端输出逐行复述。",
+            "你是 WebShell 内的 Chat 工具，不控制终端，也不会替用户执行命令。\n{terminal_context}\n\n当前模型会话历史（JSON，可能为空）：\n{conversation}\n\n用户：{}\n\n要求：\n- 如果提供了终端上下文，优先依据上下文回答；上下文不足时明确说明缺少什么。\n- 简洁回答，优先给可执行建议。\n- 需要命令时用 ```shell 代码块，但不要声称已经执行。\n- 对删除、覆盖、sudo、系统路径写入等风险操作明确提醒。\n- 不要把终端输出逐行复述。",
             json_string(payload, "input", "")
         ),
         _ => format!("用户：{}", json_string(payload, "input", "")),
     }
+}
+
+fn terminal_context_block(
+    cwd: &str,
+    shell: &str,
+    os: &str,
+    backend: &str,
+    selector: &str,
+    recent_output: &str,
+) -> String {
+    let backend_line = if backend.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n- 后端：{backend}")
+    };
+    let selector_line = if selector.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n- 实例：{selector}")
+    };
+    let output = if recent_output.trim().is_empty() {
+        "（未提供最近终端输出）"
+    } else {
+        recent_output
+    };
+    format!(
+        "用户允许提供的终端上下文：\n- 当前目录：{cwd}\n- Shell：{shell}\n- OS：{os}{backend_line}{selector_line}\n- 最近终端输出（已脱敏）：\n```text\n{output}\n```"
+    )
 }
 
 fn core_ai_system_prompt() -> &'static str {
@@ -1665,6 +1703,31 @@ mod tests {
             parse_anthropic_text_delta(&anthropic_event),
             Some("ok".to_owned())
         );
+    }
+
+    #[test]
+    fn chat_prompt_includes_terminal_context_block() {
+        let prompt = build_prompt(
+            "chat",
+            &json!({
+                "input": "当前有哪些文件？",
+                "ctx": {
+                    "cwd": "/",
+                    "shell": "zsh",
+                    "os": "LightOS",
+                    "backend": "webshell",
+                    "selector": "lzcapp",
+                    "recent_output": "drwxr-xr-x root root bin\n-rw-r--r-- root root .dockerenv"
+                },
+                "conversation": []
+            }),
+        );
+
+        assert!(prompt.contains("用户允许提供的终端上下文"));
+        assert!(prompt.contains("- 当前目录：/"));
+        assert!(prompt.contains("- 后端：webshell"));
+        assert!(prompt.contains("drwxr-xr-x root root bin"));
+        assert!(prompt.contains("当前有哪些文件？"));
     }
 
     #[test]

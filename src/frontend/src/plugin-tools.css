@@ -544,6 +544,25 @@
   gap: 6px;
 }
 
+.ai-chat-actions .ai-context-toggle {
+  position: relative;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  grid-template-columns: 1fr;
+  place-items: center;
+  padding: 0;
+}
+
+.ai-chat-actions .ai-context-toggle-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .ai-chat-box {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
@@ -891,7 +910,7 @@
 }
 
 .ai-chat-model-row {
-  grid-template-columns: minmax(92px, 0.82fr) minmax(0, 1fr) minmax(0, 1fr) minmax(88px, auto) 32px 32px;
+  grid-template-columns: minmax(92px, 0.82fr) minmax(0, 1fr) minmax(0, 1fr) 32px 32px;
 }
 
 .ai-chat-input-row {

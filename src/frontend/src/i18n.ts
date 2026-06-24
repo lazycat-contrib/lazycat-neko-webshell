@@ -39,7 +39,6 @@ export type MessageKey =
   | "action.closePlugins"
   | "action.closeSettings"
   | "action.copySelection"
-  | "action.detectLocalFonts"
   | "action.focusTerminal"
   | "action.fullscreen"
   | "action.lightosHome"
@@ -130,8 +129,6 @@ export type MessageKey =
   | "fileKind.other"
   | "fileKind.symlink"
   | "font.builtIn"
-  | "font.local"
-  | "font.noLocal"
   | "font.noUploaded"
   | "font.uploaded"
   | "hint.auto"
@@ -229,8 +226,6 @@ export type MessageKey =
   | "status.defaultBackend"
   | "status.fontDeleteFailed"
   | "status.fontLoadFailed"
-  | "status.localFontsLoaded"
-  | "status.localFontsUnavailable"
   | "status.fontReady"
   | "status.fontsReady"
   | "status.fontRegistrationFailed"
@@ -350,7 +345,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closePlugins": "Close plugins",
     "action.closeSettings": "Close settings",
     "action.copySelection": "Copy selection",
-    "action.detectLocalFonts": "Detect local fonts",
     "action.focusTerminal": "Focus terminal",
     "action.fullscreen": "Full screen",
     "action.lightosHome": "LightOS home",
@@ -441,8 +435,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "fileKind.other": "Other",
     "fileKind.symlink": "Symlink",
     "font.builtIn": "Built in",
-    "font.local": "Local",
-    "font.noLocal": "No local fonts detected",
     "font.noUploaded": "No uploaded fonts",
     "font.uploaded": "Uploaded",
     "hint.auto": "Auto",
@@ -547,8 +539,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.defaultBackend": "Default",
     "status.fontDeleteFailed": "Font delete failed: {message}",
     "status.fontLoadFailed": "Font load failed: {message}",
-    "status.localFontsLoaded": "{count} local font(s) detected",
-    "status.localFontsUnavailable": "Local fonts unavailable: {message}",
     "status.fontReady": "{name} ready",
     "status.fontsReady": "{count} uploaded font(s) ready",
     "status.fontRegistrationFailed": "font registration failed",
@@ -667,7 +657,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closePlugins": "关闭插件",
     "action.closeSettings": "关闭设置",
     "action.copySelection": "复制选区",
-    "action.detectLocalFonts": "检测本地字体",
     "action.focusTerminal": "聚焦终端",
     "action.fullscreen": "全屏",
     "action.lightosHome": "LightOS 首页",
@@ -758,8 +747,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "fileKind.other": "其他",
     "fileKind.symlink": "软链接",
     "font.builtIn": "内置",
-    "font.local": "本地",
-    "font.noLocal": "尚未检测本地字体",
     "font.noUploaded": "暂无上传字体",
     "font.uploaded": "已上传",
     "hint.auto": "自动",
@@ -864,8 +851,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.defaultBackend": "默认",
     "status.fontDeleteFailed": "字体删除失败：{message}",
     "status.fontLoadFailed": "字体加载失败：{message}",
-    "status.localFontsLoaded": "已检测到 {count} 个本地字体",
-    "status.localFontsUnavailable": "本地字体不可用：{message}",
     "status.fontReady": "{name} 已就绪",
     "status.fontsReady": "{count} 个上传字体已就绪",
     "status.fontRegistrationFailed": "字体注册失败",

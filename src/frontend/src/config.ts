@@ -148,7 +148,6 @@ export const DEFAULT_SETTINGS: Settings = {
   interfaceStyleId: "steel",
   customThemes: [],
   fontFamilyId: "system-mono",
-  localFontFamily: "",
   tabLayout: "horizontal",
   fontSize: 14,
   lineHeight: 1.22,

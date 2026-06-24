@@ -374,6 +374,11 @@ export function renderAIChatToolView(state: AIChatViewState): string {
           <p class="settings-help">${escapeHtml(state.description)}</p>
         </div>
         <div class="ai-chat-actions">
+          ${renderAIChatContextToggle({
+            enabled: state.sendTerminalContext,
+            disabled: state.disabled || state.streaming,
+            tr,
+          })}
           <button class="icon-button" type="button" data-ai-action="new-chat" aria-label="${escapeAttr(tr("action.aiNewChat"))}" title="${escapeAttr(tr("action.aiNewChat"))}" ${disabledAttr}>
             <i data-lucide="message-square-plus"></i>
           </button>
@@ -408,11 +413,6 @@ export function renderAIChatToolView(state: AIChatViewState): string {
               options: state.sessionOptions,
               selected: state.selectedSessionId,
               disabled: state.disabled,
-            })}
-            ${renderAIChatContextToggle({
-              enabled: state.sendTerminalContext,
-              disabled: state.disabled,
-              tr,
             })}
             <button class="icon-button" type="button" data-ai-action="copy-output" aria-label="${escapeAttr(tr("action.aiCopy"))}" title="${escapeAttr(tr("action.aiCopy"))}" ${disabledAttr}>
               <i data-lucide="copy"></i>

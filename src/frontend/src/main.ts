@@ -114,14 +114,10 @@ import {
 } from "./session-backends";
 import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
+import { bindTabWheelSwitch } from "./tab-wheel-switch";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
 import {
-  isLocalFontPresetId,
-  localFontFamilyFromPresetId,
-  localFontPreset,
   normalizeFontHintTarget,
-  normalizeLocalFontFamily,
-  queryBrowserLocalFonts,
   renderTerminalFontRenderingSettings,
 } from "./terminal-fonts";
 import {
@@ -270,7 +266,6 @@ let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
 let contextPaneId: string | undefined;
 let customFonts: FontPreset[] = [];
-let localFonts: FontPreset[] = [];
 const mobileSticky = createMobileStickyState();
 const lastMobileTerminalTap = {
   paneId: "",
@@ -295,7 +290,6 @@ init().catch((error) => setGlobalStatus(tr("status.startupFailed", { message: er
 async function init() {
   updateViewportMetrics();
   settings = await loadSettings();
-  syncSelectedLocalFontPreset();
   syncActiveAiProviderProfile();
   await loadUploadedFonts();
   renderOptions();
@@ -387,7 +381,7 @@ function applyI18n() {
 
 function renderOptions() {
   renderThemeOptions();
-  elements.fontFamily.innerHTML = renderFontFamilyOptions(customFonts, localFonts, tr);
+  elements.fontFamily.innerHTML = renderFontFamilyOptions(customFonts, tr);
 }
 
 function renderThemeOptions() {
@@ -641,15 +635,9 @@ function bindSettings() {
   });
   elements.fontFamily.addEventListener("change", () => {
     settings.fontFamilyId = elements.fontFamily.value;
-    if (isLocalFontPresetId(settings.fontFamilyId)) {
-      settings.localFontFamily = localFontFamilyFromPresetId(settings.fontFamilyId);
-      syncSelectedLocalFontPreset();
-      renderOptions();
-    }
     saveSettings();
     applySettings({ resizeTerminals: true });
   });
-  elements.detectLocalFonts.addEventListener("click", () => void detectLocalFonts());
   elements.fontRenderingSettings.addEventListener("change", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const ligatures = target?.closest<HTMLInputElement>("#fontLigatures");
@@ -795,6 +783,53 @@ function bindActions() {
     if (!button) return;
     closeNewTabMenu();
     void createSelectedTab(normalizeSessionMode(button.dataset.newTabBackend));
+  });
+  elements.tabList.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const closeButton = target?.closest<HTMLElement>("[data-close-tab]");
+    if (closeButton && elements.tabList.contains(closeButton)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void requestCloseTab(closeButton.dataset.closeTab ?? "");
+      return;
+    }
+    if (target instanceof HTMLInputElement) return;
+    const tabButton = target?.closest<HTMLElement>(".tab-main[data-tab-id]");
+    if (!tabButton || !elements.tabList.contains(tabButton)) return;
+    activateTab(tabButton.dataset.tabId ?? "");
+  });
+  elements.tabList.addEventListener("dblclick", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target instanceof HTMLInputElement) return;
+    const tabButton = target?.closest<HTMLElement>(".tab-main[data-tab-id]");
+    if (!tabButton || !elements.tabList.contains(tabButton)) return;
+    event.preventDefault();
+    startRenamingTab(tabButton.dataset.tabId ?? "");
+  });
+  elements.tabList.addEventListener("keydown", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const tabButton = target?.closest<HTMLElement>(".tab-main[data-tab-id]");
+    if (!tabButton || !elements.tabList.contains(tabButton) || target instanceof HTMLInputElement) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      activateTab(tabButton.dataset.tabId ?? "");
+    } else if (event.key === "F2") {
+      event.preventDefault();
+      startRenamingTab(tabButton.dataset.tabId ?? "");
+    }
+  });
+  elements.tabList.addEventListener("auxclick", (event) => {
+    if (event.button !== 1) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const tabElement = target?.closest<HTMLElement>(".tab");
+    if (!tabElement || !elements.tabList.contains(tabElement)) return;
+    const tabId = tabElement.querySelector<HTMLElement>("[data-tab-id]")?.dataset.tabId;
+    if (tabId) void requestCloseTab(tabId);
+  });
+  bindTabWheelSwitch(elements.tabList, {
+    tabCount: () => tabs.length,
+    canSwitch: () => !renamingTabId,
+    switchTab: activateAdjacentTab,
   });
   elements.emptyNewTab.addEventListener("click", () => void createSelectedTab());
   elements.herdrRefresh.addEventListener("click", () => void refreshHerdrState(selectedSelector));
@@ -1898,7 +1933,7 @@ function currentAppearanceContext() {
 }
 
 function terminalFontPresets(): FontPreset[] {
-  return [...customFonts, ...localFonts];
+  return customFonts;
 }
 
 function reportFontLoadError(error: unknown) {
@@ -1961,44 +1996,6 @@ async function loadUploadedFonts() {
     setFontStatus(customFonts.length ? tr("status.fontsReady", { count: customFonts.length }) : "");
   } catch (error) {
     setFontStatus(tr("status.fontLoadFailed", { message: errorMessage(error) }), "error");
-  }
-}
-
-function syncSelectedLocalFontPreset() {
-  const family = normalizeLocalFontFamily(settings.localFontFamily);
-  settings.localFontFamily = family;
-  const preset = localFontPreset(family);
-  if (!preset) {
-    localFonts = localFonts.filter((font) => !isLocalFontPresetId(font.id));
-    return;
-  }
-  localFonts = [
-    preset,
-    ...localFonts.filter((font) => font.id !== preset.id && !isLocalFontPresetId(font.id)),
-  ];
-}
-
-async function detectLocalFonts() {
-  elements.detectLocalFonts.disabled = true;
-  setFontStatus(tr("status.loadingGhostty"));
-  try {
-    const detected = await queryBrowserLocalFonts();
-    const selectedLocal = localFontPreset(settings.localFontFamily);
-    const byId = new Map<string, FontPreset>();
-    for (const font of detected) byId.set(font.id, font);
-    if (selectedLocal) byId.set(selectedLocal.id, selectedLocal);
-    localFonts = Array.from(byId.values()).sort((left, right) => left.label.localeCompare(right.label));
-    if (!localFonts.length) {
-      setFontStatus(tr("font.noLocal"));
-      return;
-    }
-    renderOptions();
-    applySettings();
-    setFontStatus(tr("status.localFontsLoaded", { count: localFonts.length }), "ok");
-  } catch (error) {
-    setFontStatus(tr("status.localFontsUnavailable", { message: errorMessage(error) }), "error");
-  } finally {
-    elements.detectLocalFonts.disabled = false;
   }
 }
 
@@ -2659,6 +2656,7 @@ async function runAIChat() {
   }
   await flushSettings();
   const session = ensureAIChatSession(currentAIChatModelKey());
+  const contextSnapshot = terminalAIContext(session.sendTerminalContext);
   input!.value = "";
   resizeAIChatInput(input!);
   session.messages.push({ role: "user", content: prompt });
@@ -2669,7 +2667,7 @@ async function runAIChat() {
   try {
     await actionClient.send("ai", "chat", {
       input: prompt,
-      ctx: terminalAIContext(session.sendTerminalContext),
+      ctx: contextSnapshot,
       conversation: session.messages.slice(0, -1).slice(-12),
     }, {
       onStream: (chunk) => {
@@ -4406,26 +4404,6 @@ function renderTabs() {
     rename: tr("action.renameTab"),
     close: tr("action.closeTab"),
   });
-  elements.tabList.querySelectorAll<HTMLElement>(".tab-main[data-tab-id]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      if (event.target instanceof HTMLInputElement) return;
-      activateTab(button.dataset.tabId ?? "");
-    });
-    button.addEventListener("dblclick", (event) => {
-      event.preventDefault();
-      startRenamingTab(button.dataset.tabId ?? "");
-    });
-    button.addEventListener("keydown", (event) => {
-      if (event.target instanceof HTMLInputElement) return;
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        activateTab(button.dataset.tabId ?? "");
-      } else if (event.key === "F2") {
-        event.preventDefault();
-        startRenamingTab(button.dataset.tabId ?? "");
-      }
-    });
-  });
   elements.tabList.querySelectorAll<HTMLInputElement>(".tab-rename[data-rename-tab]").forEach((input) => {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
@@ -4437,21 +4415,6 @@ function renderTabs() {
       }
     });
     input.addEventListener("blur", () => void commitTabRename(input.dataset.renameTab ?? "", input.value));
-  });
-  elements.tabList.querySelectorAll<HTMLElement>("[data-close-tab]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void requestCloseTab(button.dataset.closeTab ?? "");
-    });
-    button.addEventListener("auxclick", (event) => event.stopPropagation());
-  });
-  elements.tabList.querySelectorAll<HTMLElement>(".tab").forEach((tabElement) => {
-    tabElement.addEventListener("auxclick", (event) => {
-      if (event.button !== 1) return;
-      const tabId = tabElement.querySelector<HTMLElement>("[data-tab-id]")?.dataset.tabId;
-      if (tabId) void requestCloseTab(tabId);
-    });
   });
   updateIcons();
   focusRenameInput();

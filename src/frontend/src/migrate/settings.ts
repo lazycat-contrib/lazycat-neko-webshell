@@ -1,5 +1,5 @@
 import { DEFAULT_SETTINGS, INTERFACE_STYLE_IDS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "../config";
-import { normalizeFontHintTarget, normalizeLocalFontFamily } from "../terminal-fonts/options";
+import { normalizeFontHintTarget } from "../terminal-fonts/options";
 import { normalizeTerminalShaderEffect } from "../terminal-shaders/options";
 import type { AiProviderProfile, CustomTerminalTheme, InterfaceStyleId, SessionBackendId, Settings } from "../types";
 import { clampNumber } from "../utils";
@@ -27,8 +27,7 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     themeId: typeof value.themeId === "string" ? value.themeId : DEFAULT_SETTINGS.themeId,
     interfaceStyleId: normalizeInterfaceStyleId(value.interfaceStyleId),
     customThemes: normalizeCustomThemes(value.customThemes),
-    fontFamilyId: typeof value.fontFamilyId === "string" ? value.fontFamilyId : DEFAULT_SETTINGS.fontFamilyId,
-    localFontFamily: normalizeLocalFontFamily(value.localFontFamily),
+    fontFamilyId: normalizeFontFamilyId(value.fontFamilyId),
     fontSize: clampNumber(value.fontSize, 11, 22, DEFAULT_SETTINGS.fontSize),
     lineHeight: clampNumber(value.lineHeight, 1.05, 1.6, DEFAULT_SETTINGS.lineHeight),
     fontLigatures: value.fontLigatures ?? DEFAULT_SETTINGS.fontLigatures,
@@ -165,6 +164,13 @@ function normalizeTerminalBackgroundUrl(value: unknown): string {
   } catch {
     return "";
   }
+}
+
+function normalizeFontFamilyId(value: unknown): string {
+  if (typeof value !== "string" || value.startsWith("local:")) {
+    return DEFAULT_SETTINGS.fontFamilyId;
+  }
+  return value;
 }
 
 function normalizeTouchSelectionMode(value: unknown): Settings["touchSelectionMode"] {

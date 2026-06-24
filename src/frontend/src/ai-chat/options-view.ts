@@ -22,7 +22,7 @@ export function renderAIChatContextToggle(state: AIChatContextToggleState): stri
       ${state.disabled ? "disabled" : ""}
     >
       <i data-lucide="terminal"></i>
-      <span>${escapeHtml(label)}</span>
+      <span class="ai-context-toggle-label">${escapeHtml(label)}</span>
     </button>
   `;
 }
