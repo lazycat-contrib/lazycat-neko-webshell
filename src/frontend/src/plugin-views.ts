@@ -4,10 +4,12 @@ import { renderAIChatContextToggle } from "./ai-chat/options-view";
 import { renderChatMarkdown } from "./chat-markdown";
 import {
   AI_CHAT_PLUGIN_ID,
+  LIGHTOS_PORT_FORWARD_PLUGIN_ID,
   pluginDescription,
   pluginDisplayName,
   pluginIcon,
   pluginMetaLabel,
+  PUBLIC_TUNNEL_PLUGIN_ID,
 } from "./plugin-utils";
 import { fileEntryIcon, formatFileSize, normalizeRemotePath } from "./remote-files";
 import type { AIChatMessage, AIChatSession, AiMcpServerSettings, AiProviderProfile, FileBrowserContextMenu, FileBrowserEntry } from "./types";
@@ -46,6 +48,49 @@ export type AIChatViewState = {
   providerPickerOpen: boolean;
   sendTerminalContext: boolean;
   terminalContextPreview: string;
+  tr: Translate;
+};
+
+export type LightOsForwardInfo = {
+  id: string;
+  selector: string;
+  localHost: string;
+  localPort: number;
+  localUrl: string;
+  remoteHost: string;
+  remotePort: number;
+  status: string;
+  createdAtMs: number;
+};
+
+export type PublicTunnelInfo = {
+  id: string;
+  provider: string;
+  publicUrl: string;
+  upstreamUrl: string;
+  status: string;
+  createdAtMs: number;
+};
+
+export type LightOsPortForwardViewState = {
+  disabled: boolean;
+  remoteHost: string;
+  remotePort: string;
+  forwards: LightOsForwardInfo[];
+  loading: boolean;
+  output: string;
+  tr: Translate;
+};
+
+export type PublicTunnelViewState = {
+  disabled: boolean;
+  provider: string;
+  upstreamUrl: string;
+  ngrokAuthtoken: string;
+  tunnels: PublicTunnelInfo[];
+  forwards: LightOsForwardInfo[];
+  loading: boolean;
+  output: string;
   tr: Translate;
 };
 
@@ -430,6 +475,165 @@ export function renderAIChatToolView(state: AIChatViewState): string {
           </div>
         </div>
       </div>
+    </div>
+  `;
+}
+
+export function renderLightOsPortForwardToolView(state: LightOsPortForwardViewState): string {
+  const disabledAttr = state.disabled || state.loading ? "disabled" : "";
+  return `
+    <div class="plugin-tool network-tool">
+      <div class="plugin-tool-head">
+        <div>
+          <div class="settings-group-title">${escapeHtml(state.tr("plugin.lightosPortForward.name"))}</div>
+          <p class="settings-help">${escapeHtml(state.tr("plugin.lightosPortForward.help"))}</p>
+        </div>
+      </div>
+      <div class="network-form-grid">
+        <label class="field">
+          <span>${escapeHtml(state.tr("field.remoteHost"))}</span>
+          <input data-port-forward-field="remoteHost" type="text" value="${escapeAttr(state.remoteHost)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
+        </label>
+        <label class="field">
+          <span>${escapeHtml(state.tr("field.remotePort"))}</span>
+          <input data-port-forward-field="remotePort" type="number" min="1" max="65535" inputmode="numeric" value="${escapeAttr(state.remotePort)}" ${disabledAttr} />
+        </label>
+        <div class="network-actions">
+          <button class="command-button primary" type="button" data-port-forward-action="acquire" ${disabledAttr}>
+            <i data-lucide="waypoints"></i>
+            <span>${escapeHtml(state.tr("action.portForwardAcquire"))}</span>
+          </button>
+          <button class="command-button" type="button" data-port-forward-action="list" ${state.disabled || state.loading ? "disabled" : ""}>
+            <i data-lucide="refresh-cw"></i>
+            <span>${escapeHtml(state.tr("action.refresh"))}</span>
+          </button>
+        </div>
+      </div>
+      ${renderLightOsForwardList(state)}
+      ${state.output ? `<pre class="plugin-output network-output">${escapeHtml(state.output)}</pre>` : ""}
+    </div>
+  `;
+}
+
+export function renderPublicTunnelToolView(state: PublicTunnelViewState): string {
+  const disabledAttr = state.disabled || state.loading ? "disabled" : "";
+  const ngrokSelected = state.provider === "ngrok";
+  return `
+    <div class="plugin-tool network-tool">
+      <div class="plugin-tool-head">
+        <div>
+          <div class="settings-group-title">${escapeHtml(state.tr("plugin.publicTunnel.name"))}</div>
+          <p class="settings-help">${escapeHtml(state.tr("plugin.publicTunnel.help"))}</p>
+        </div>
+      </div>
+      <div class="network-form-grid">
+        <label class="field">
+          <span>${escapeHtml(state.tr("field.tunnelProvider"))}</span>
+          <select data-public-tunnel-field="provider" ${disabledAttr}>
+            <option value="cloudflare-quick" ${state.provider === "cloudflare-quick" ? "selected" : ""}>Cloudflare Quick Tunnel</option>
+            <option value="ngrok" ${ngrokSelected ? "selected" : ""}>ngrok</option>
+          </select>
+        </label>
+        <label class="field network-field-wide">
+          <span>${escapeHtml(state.tr("field.upstreamUrl"))}</span>
+          <input data-public-tunnel-field="upstreamUrl" type="url" value="${escapeAttr(state.upstreamUrl)}" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:3000/" ${disabledAttr} />
+        </label>
+        <label class="field network-field-wide ${ngrokSelected ? "" : "is-muted"}">
+          <span>${escapeHtml(state.tr("field.ngrokAuthtoken"))}</span>
+          <input data-public-tunnel-field="ngrokAuthtoken" type="password" value="${escapeAttr(state.ngrokAuthtoken)}" autocomplete="off" spellcheck="false" ${disabledAttr} />
+        </label>
+        <div class="network-actions">
+          <button class="command-button primary" type="button" data-public-tunnel-action="start" ${disabledAttr}>
+            <i data-lucide="radio-tower"></i>
+            <span>${escapeHtml(state.tr("action.tunnelStart"))}</span>
+          </button>
+          <button class="command-button" type="button" data-public-tunnel-action="list" ${state.disabled || state.loading ? "disabled" : ""}>
+            <i data-lucide="refresh-cw"></i>
+            <span>${escapeHtml(state.tr("action.refresh"))}</span>
+          </button>
+        </div>
+      </div>
+      ${renderForwardPickerForTunnel(state)}
+      ${renderPublicTunnelList(state)}
+      ${state.output ? `<pre class="plugin-output network-output">${escapeHtml(state.output)}</pre>` : ""}
+    </div>
+  `;
+}
+
+function renderLightOsForwardList(state: LightOsPortForwardViewState): string {
+  if (state.loading && !state.forwards.length) {
+    return `<div class="network-list empty">${escapeHtml(state.tr("status.pluginsLoading"))}</div>`;
+  }
+  if (!state.forwards.length) {
+    return `<div class="network-list empty">${escapeHtml(state.tr("status.noPortForwards"))}</div>`;
+  }
+  return `
+    <div class="network-list" role="list">
+      ${state.forwards.map((forward) => `
+        <article class="network-item" role="listitem">
+          <span class="network-item-main">
+            <strong>${escapeHtml(forward.localUrl)}</strong>
+            <small>${escapeHtml(`${forward.remoteHost}:${forward.remotePort} -> ${forward.localHost}:${forward.localPort}`)}</small>
+          </span>
+          <span class="network-badge">${escapeHtml(forward.status)}</span>
+          <span class="network-item-actions">
+            <button class="icon-button" type="button" data-network-copy="${escapeAttr(forward.localUrl)}" aria-label="${escapeAttr(state.tr("action.copyUrl"))}" title="${escapeAttr(state.tr("action.copyUrl"))}" ${state.disabled ? "disabled" : ""}>
+              <i data-lucide="copy"></i>
+            </button>
+            <button class="icon-button" type="button" data-port-forward-use-tunnel="${escapeAttr(forward.localUrl)}" aria-label="${escapeAttr(state.tr("action.useForTunnel"))}" title="${escapeAttr(state.tr("action.useForTunnel"))}" ${state.disabled ? "disabled" : ""}>
+              <i data-lucide="radio-tower"></i>
+            </button>
+            <button class="icon-button" type="button" data-port-forward-release="${escapeAttr(forward.id)}" aria-label="${escapeAttr(state.tr("action.portForwardRelease"))}" title="${escapeAttr(state.tr("action.portForwardRelease"))}" ${state.disabled ? "disabled" : ""}>
+              <i data-lucide="x"></i>
+            </button>
+          </span>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderForwardPickerForTunnel(state: PublicTunnelViewState): string {
+  if (!state.forwards.length) return "";
+  return `
+    <div class="network-forward-picks" aria-label="${escapeAttr(state.tr("plugin.lightosPortForward.name"))}">
+      ${state.forwards.map((forward) => `
+        <button type="button" class="network-forward-pick" data-public-tunnel-upstream="${escapeAttr(forward.localUrl)}" ${state.disabled ? "disabled" : ""}>
+          <i data-lucide="waypoints"></i>
+          <span>${escapeHtml(`${forward.remoteHost}:${forward.remotePort}`)}</span>
+          <small>${escapeHtml(forward.localUrl)}</small>
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderPublicTunnelList(state: PublicTunnelViewState): string {
+  if (state.loading && !state.tunnels.length) {
+    return `<div class="network-list empty">${escapeHtml(state.tr("status.pluginsLoading"))}</div>`;
+  }
+  if (!state.tunnels.length) {
+    return `<div class="network-list empty">${escapeHtml(state.tr("status.noPublicTunnels"))}</div>`;
+  }
+  return `
+    <div class="network-list" role="list">
+      ${state.tunnels.map((tunnel) => `
+        <article class="network-item" role="listitem">
+          <span class="network-item-main">
+            <strong>${escapeHtml(tunnel.publicUrl)}</strong>
+            <small>${escapeHtml(`${tunnel.provider} -> ${tunnel.upstreamUrl}`)}</small>
+          </span>
+          <span class="network-badge">${escapeHtml(tunnel.status)}</span>
+          <span class="network-item-actions">
+            <button class="icon-button" type="button" data-network-copy="${escapeAttr(tunnel.publicUrl)}" aria-label="${escapeAttr(state.tr("action.copyUrl"))}" title="${escapeAttr(state.tr("action.copyUrl"))}" ${state.disabled ? "disabled" : ""}>
+              <i data-lucide="copy"></i>
+            </button>
+            <button class="icon-button" type="button" data-public-tunnel-stop="${escapeAttr(tunnel.id)}" aria-label="${escapeAttr(state.tr("action.tunnelStop"))}" title="${escapeAttr(state.tr("action.tunnelStop"))}" ${state.disabled ? "disabled" : ""}>
+              <i data-lucide="x"></i>
+            </button>
+          </span>
+        </article>
+      `).join("")}
     </div>
   `;
 }

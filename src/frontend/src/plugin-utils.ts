@@ -7,6 +7,8 @@ type Translate = (key: MessageKey, values?: Record<string, string | number>) => 
 
 export const FILE_TRANSFER_PLUGIN_ID = "file-transfer";
 export const AI_CHAT_PLUGIN_ID = "ai-chat";
+export const LIGHTOS_PORT_FORWARD_PLUGIN_ID = "lightos-port-forward";
+export const PUBLIC_TUNNEL_PLUGIN_ID = "public-tunnel";
 
 export function downloadPluginPayload(payload: Uint8Array, name: string, contentType: string) {
   const bytes = new Uint8Array(payload);
@@ -33,25 +35,34 @@ export function transferProgressText(meta: ActionResponseMeta | undefined): stri
 export function pluginDisplayName(plugin: PluginDescriptor, tr: Translate): string {
   if (plugin.id === AI_CHAT_PLUGIN_ID) return tr("plugin.aiChat.name");
   if (plugin.id === FILE_TRANSFER_PLUGIN_ID) return tr("plugin.fileTransfer.name");
+  if (plugin.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID) return tr("plugin.lightosPortForward.name");
+  if (plugin.id === PUBLIC_TUNNEL_PLUGIN_ID) return tr("plugin.publicTunnel.name");
   return plugin.displayName || plugin.id;
 }
 
 export function pluginIcon(pluginId: string): string {
   if (pluginId === AI_CHAT_PLUGIN_ID) return "message-square-text";
   if (pluginId === FILE_TRANSFER_PLUGIN_ID) return "folder-up";
+  if (pluginId === LIGHTOS_PORT_FORWARD_PLUGIN_ID) return "waypoints";
+  if (pluginId === PUBLIC_TUNNEL_PLUGIN_ID) return "radio-tower";
   return "plug";
 }
 
 export function pluginDescription(plugin: PluginDescriptor, tr: Translate): string {
   if (plugin.id === AI_CHAT_PLUGIN_ID) return tr("plugin.aiChat.description");
   if (plugin.id === FILE_TRANSFER_PLUGIN_ID) return tr("plugin.fileTransfer.description");
+  if (plugin.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID) return tr("plugin.lightosPortForward.description");
+  if (plugin.id === PUBLIC_TUNNEL_PLUGIN_ID) return tr("plugin.publicTunnel.description");
   return plugin.description || plugin.kind || plugin.id;
 }
 
 export function pluginMetaLabel(value: string, tr: Translate): string {
   if (value === "ai") return tr("plugin.meta.ai");
   if (value === "filesystem") return tr("plugin.meta.filesystem");
+  if (value === "lightos") return tr("plugin.meta.lightos");
+  if (value === "network") return tr("plugin.meta.network");
   if (value === "session") return tr("plugin.meta.session");
+  if (value === "tunnel") return tr("plugin.meta.tunnel");
   if (value === "transfer") return tr("plugin.meta.transfer");
   return value;
 }

@@ -95,9 +95,11 @@ import {
   AI_CHAT_PLUGIN_ID,
   downloadPluginPayload,
   FILE_TRANSFER_PLUGIN_ID,
+  LIGHTOS_PORT_FORWARD_PLUGIN_ID,
   pluginDescription,
   pluginDisplayName,
   pluginIcon,
+  PUBLIC_TUNNEL_PLUGIN_ID,
   transferProgressText,
 } from "./plugin-utils";
 import { fileNameFromPath, normalizeRemotePath, parentRemotePath, parseFileBrowserEntries, uploadTargetPath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
@@ -148,7 +150,11 @@ import {
   renderAIChatMessages as renderAIChatMessagesView,
   renderAIChatToolView,
   renderFileTransferToolView,
+  renderLightOsPortForwardToolView,
   renderPluginSettingsView,
+  renderPublicTunnelToolView,
+  type LightOsForwardInfo,
+  type PublicTunnelInfo,
 } from "./plugin-views";
 import type {
   AIChatMessage,
@@ -223,6 +229,7 @@ const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
 const MAX_AI_PROVIDER_PROFILES = 12;
 const AI_TERMINAL_CONTEXT_LINES = 40;
+const NETWORK_PLUGIN_TIMEOUT_MS = 70000;
 type AISettingsTab = "ai" | "mcp";
 type AIConfigDialogState = { type: "ai"; profileId?: string; isNew?: boolean } | { type: "mcp"; index: number };
 const capabilityClient = createClient(
@@ -264,6 +271,23 @@ let pluginsLoading = false;
 let activePluginToolId = "";
 const aiChat = new AIChatStore();
 const fileBrowser = new FileBrowserStore();
+const lightosPortForwardTool = {
+  remoteHost: "127.0.0.1",
+  remotePort: "3000",
+  forwards: [] as LightOsForwardInfo[],
+  loading: false,
+  loaded: false,
+  output: "",
+};
+const publicTunnelTool = {
+  provider: "cloudflare-quick",
+  upstreamUrl: "",
+  ngrokAuthtoken: "",
+  tunnels: [] as PublicTunnelInfo[],
+  loading: false,
+  loaded: false,
+  output: "",
+};
 let activeAISettingsTab: AISettingsTab = "ai";
 let aiConfigDialog: AIConfigDialogState | undefined;
 let aiProviderPickerOpen = false;
@@ -525,6 +549,20 @@ function bindSettings() {
       : null;
     if (aiInput) {
       resizeAIChatInput(aiInput);
+      return;
+    }
+    const portField = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-port-forward-field]")
+      : null;
+    if (portField) {
+      updatePortForwardField(portField.dataset.portForwardField ?? "", portField.value);
+      return;
+    }
+    const tunnelField = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-public-tunnel-field]")
+      : null;
+    if (tunnelField) {
+      updatePublicTunnelField(tunnelField.dataset.publicTunnelField ?? "", tunnelField.value);
     }
   });
   elements.pluginToolBody.addEventListener("change", (event) => {
@@ -545,6 +583,13 @@ function bindSettings() {
       : null;
     if (aiSetting) {
       updateAISetting(aiSetting.dataset.aiChatSetting ?? "", aiSetting.value);
+      return;
+    }
+    const tunnelField = event.target instanceof Element
+      ? event.target.closest<HTMLSelectElement>("[data-public-tunnel-field]")
+      : null;
+    if (tunnelField) {
+      updatePublicTunnelField(tunnelField.dataset.publicTunnelField ?? "", tunnelField.value);
     }
   });
   elements.pluginToolBody.addEventListener("keydown", (event) => {
@@ -578,6 +623,56 @@ function bindSettings() {
       : null;
     if (fileButton) {
       void runFileTransfer(fileButton.dataset.fileTransferAction ?? "");
+      return;
+    }
+    const copyButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-network-copy]")
+      : null;
+    if (copyButton) {
+      void copyNetworkUrl(copyButton.dataset.networkCopy ?? "");
+      return;
+    }
+    const portActionButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-port-forward-action]")
+      : null;
+    if (portActionButton) {
+      void runPortForward(portActionButton.dataset.portForwardAction ?? "");
+      return;
+    }
+    const releaseForwardButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-port-forward-release]")
+      : null;
+    if (releaseForwardButton) {
+      void releasePortForward(releaseForwardButton.dataset.portForwardRelease ?? "");
+      return;
+    }
+    const useForwardButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-port-forward-use-tunnel]")
+      : null;
+    if (useForwardButton) {
+      useForwardForTunnel(useForwardButton.dataset.portForwardUseTunnel ?? "");
+      return;
+    }
+    const tunnelUpstreamButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-public-tunnel-upstream]")
+      : null;
+    if (tunnelUpstreamButton) {
+      publicTunnelTool.upstreamUrl = tunnelUpstreamButton.dataset.publicTunnelUpstream ?? "";
+      renderPluginTools();
+      return;
+    }
+    const tunnelActionButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-public-tunnel-action]")
+      : null;
+    if (tunnelActionButton) {
+      void runPublicTunnel(tunnelActionButton.dataset.publicTunnelAction ?? "");
+      return;
+    }
+    const stopTunnelButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-public-tunnel-stop]")
+      : null;
+    if (stopTunnelButton) {
+      void stopPublicTunnel(stopTunnelButton.dataset.publicTunnelStop ?? "");
       return;
     }
     const aiSettingButton = event.target instanceof Element
@@ -2194,7 +2289,12 @@ function pluginControlsDisabled(plugin: PluginDescriptor): boolean {
 }
 
 function renderPluginTools() {
-  const tools = plugins.filter((plugin) => plugin.enabled && (plugin.id === FILE_TRANSFER_PLUGIN_ID || plugin.id === AI_CHAT_PLUGIN_ID));
+  const tools = plugins.filter((plugin) => plugin.enabled && (
+    plugin.id === FILE_TRANSFER_PLUGIN_ID
+    || plugin.id === AI_CHAT_PLUGIN_ID
+    || plugin.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID
+    || plugin.id === PUBLIC_TUNNEL_PLUGIN_ID
+  ));
   if (!tools.length) {
     activePluginToolId = "";
     elements.pluginToolTabs.innerHTML = "";
@@ -2219,6 +2319,10 @@ function renderPluginTools() {
     ? renderFileTransferTool(activePlugin)
     : activePlugin?.id === AI_CHAT_PLUGIN_ID
       ? renderAIChatTool(activePlugin)
+      : activePlugin?.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID
+        ? renderLightOsPortForwardTool(activePlugin)
+        : activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID
+          ? renderPublicTunnelTool(activePlugin)
       : "";
   updateIcons();
   if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID && !fileBrowser.loading && fileBrowser.loadedPath !== normalizeRemotePath(fileBrowser.path)) {
@@ -2226,6 +2330,12 @@ function renderPluginTools() {
   }
   if (activePlugin?.id === AI_CHAT_PLUGIN_ID) {
     scrollAIChatToBottom();
+  }
+  if (activePlugin?.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID && !lightosPortForwardTool.loaded && !lightosPortForwardTool.loading) {
+    void listPortForwards();
+  }
+  if (activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID && !publicTunnelTool.loaded && !publicTunnelTool.loading) {
+    void listPublicTunnels();
   }
 }
 
@@ -2263,6 +2373,267 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
     terminalContextPreview: session.sendTerminalContext ? recentAIContext(activePane()) : "",
     tr,
   });
+}
+
+function renderLightOsPortForwardTool(plugin: PluginDescriptor): string {
+  return renderLightOsPortForwardToolView({
+    disabled: pluginControlsDisabled(plugin),
+    remoteHost: lightosPortForwardTool.remoteHost,
+    remotePort: lightosPortForwardTool.remotePort,
+    forwards: lightosPortForwardTool.forwards,
+    loading: lightosPortForwardTool.loading,
+    output: lightosPortForwardTool.output,
+    tr,
+  });
+}
+
+function renderPublicTunnelTool(plugin: PluginDescriptor): string {
+  return renderPublicTunnelToolView({
+    disabled: pluginControlsDisabled(plugin),
+    provider: publicTunnelTool.provider,
+    upstreamUrl: publicTunnelTool.upstreamUrl,
+    ngrokAuthtoken: publicTunnelTool.ngrokAuthtoken,
+    tunnels: publicTunnelTool.tunnels,
+    forwards: lightosPortForwardTool.forwards,
+    loading: publicTunnelTool.loading,
+    output: publicTunnelTool.output,
+    tr,
+  });
+}
+
+function updatePortForwardField(field: string, value: string) {
+  if (field === "remoteHost") {
+    lightosPortForwardTool.remoteHost = value;
+  } else if (field === "remotePort") {
+    lightosPortForwardTool.remotePort = value;
+  }
+}
+
+function updatePublicTunnelField(field: string, value: string) {
+  if (field === "provider") {
+    publicTunnelTool.provider = value === "ngrok" ? "ngrok" : "cloudflare-quick";
+  } else if (field === "upstreamUrl") {
+    publicTunnelTool.upstreamUrl = value;
+  } else if (field === "ngrokAuthtoken") {
+    publicTunnelTool.ngrokAuthtoken = value;
+  }
+}
+
+async function runPortForward(action: string) {
+  if (!pluginIsEnabled(LIGHTOS_PORT_FORWARD_PLUGIN_ID)) return;
+  if (action === "list" || action === "default" || action === "status") {
+    await listPortForwards();
+    return;
+  }
+  if (action !== "acquire") return;
+  const remotePort = Number(lightosPortForwardTool.remotePort);
+  if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535) {
+    setPortForwardOutput(tr("validation.port"), "error");
+    return;
+  }
+  await invokePortForward("acquire", {
+    remoteHost: lightosPortForwardTool.remoteHost || "127.0.0.1",
+    remotePort: String(remotePort),
+  });
+}
+
+async function listPortForwards() {
+  if (!pluginIsEnabled(LIGHTOS_PORT_FORWARD_PLUGIN_ID)) return;
+  await invokePortForward("list", {});
+}
+
+async function releasePortForward(forwardId: string) {
+  if (!forwardId || !pluginIsEnabled(LIGHTOS_PORT_FORWARD_PLUGIN_ID)) return;
+  await invokePortForward("release", { forwardId });
+}
+
+async function invokePortForward(operation: string, metadata: Record<string, string>) {
+  const sessionId = activePane()?.sessionId;
+  if (!sessionId) {
+    setPortForwardOutput(tr("status.pluginFileNoSession"), "error");
+    return;
+  }
+  lightosPortForwardTool.loading = true;
+  renderPluginTools();
+  try {
+    const payload = await invokePluginJson(LIGHTOS_PORT_FORWARD_PLUGIN_ID, sessionId, operation, metadata);
+    lightosPortForwardTool.forwards = parseLightOsForwards(payload);
+    lightosPortForwardTool.loaded = true;
+    const forward = recordValue(payload, "forward");
+    const localUrl = stringValue(forward, "localUrl");
+    if (localUrl) {
+      lightosPortForwardTool.output = localUrl;
+      publicTunnelTool.upstreamUrl ||= localUrl;
+    } else {
+      lightosPortForwardTool.output = tr("status.portForwardReady", { count: lightosPortForwardTool.forwards.length });
+    }
+    setPluginStatus(tr("status.portForwardReady", { count: lightosPortForwardTool.forwards.length }), "ok");
+  } catch (error) {
+    setPortForwardOutput(errorMessage(error), "error");
+    setPluginStatus(errorMessage(error), "error");
+  } finally {
+    lightosPortForwardTool.loading = false;
+    renderPluginTools();
+  }
+}
+
+function useForwardForTunnel(localUrl: string) {
+  if (!localUrl) return;
+  publicTunnelTool.upstreamUrl = localUrl;
+  activePluginToolId = PUBLIC_TUNNEL_PLUGIN_ID;
+  renderPluginTools();
+}
+
+async function runPublicTunnel(action: string) {
+  if (!pluginIsEnabled(PUBLIC_TUNNEL_PLUGIN_ID)) return;
+  if (action === "list" || action === "default" || action === "status") {
+    await listPublicTunnels();
+    return;
+  }
+  if (action !== "start") return;
+  const upstreamUrl = publicTunnelTool.upstreamUrl.trim();
+  if (!upstreamUrl) {
+    setPublicTunnelOutput(tr("validation.upstreamUrl"), "error");
+    return;
+  }
+  const metadata: Record<string, string> = {
+    provider: publicTunnelTool.provider,
+    upstreamUrl,
+  };
+  if (publicTunnelTool.provider === "ngrok") {
+    metadata.ngrokAuthtoken = publicTunnelTool.ngrokAuthtoken;
+  }
+  await invokePublicTunnel("start", metadata);
+}
+
+async function listPublicTunnels() {
+  if (!pluginIsEnabled(PUBLIC_TUNNEL_PLUGIN_ID)) return;
+  await invokePublicTunnel("list", {});
+}
+
+async function stopPublicTunnel(tunnelId: string) {
+  if (!tunnelId || !pluginIsEnabled(PUBLIC_TUNNEL_PLUGIN_ID)) return;
+  await invokePublicTunnel("stop", { tunnelId });
+}
+
+async function invokePublicTunnel(operation: string, metadata: Record<string, string>) {
+  const sessionId = activePane()?.sessionId;
+  if (!sessionId) {
+    setPublicTunnelOutput(tr("status.pluginFileNoSession"), "error");
+    return;
+  }
+  publicTunnelTool.loading = true;
+  renderPluginTools();
+  try {
+    const payload = await invokePluginJson(PUBLIC_TUNNEL_PLUGIN_ID, sessionId, operation, metadata);
+    publicTunnelTool.tunnels = parsePublicTunnels(payload);
+    publicTunnelTool.loaded = true;
+    const session = recordValue(payload, "session");
+    const publicUrl = stringValue(session, "publicUrl");
+    publicTunnelTool.output = publicUrl || tr("status.publicTunnelReady", { count: publicTunnelTool.tunnels.length });
+    setPluginStatus(tr("status.publicTunnelReady", { count: publicTunnelTool.tunnels.length }), "ok");
+  } catch (error) {
+    setPublicTunnelOutput(errorMessage(error), "error");
+    setPluginStatus(errorMessage(error), "error");
+  } finally {
+    publicTunnelTool.loading = false;
+    renderPluginTools();
+  }
+}
+
+async function invokePluginJson(
+  pluginId: string,
+  sessionId: string,
+  operation: string,
+  metadata: Record<string, string>,
+): Promise<JsonRecord> {
+  const response = await capabilityClient.invokePlugin({
+    pluginId,
+    sessionId,
+    operation,
+    contentType: "application/json",
+    metadata,
+  }, { timeoutMs: NETWORK_PLUGIN_TIMEOUT_MS });
+  const text = new TextDecoder().decode(response.payload);
+  if (!text.trim()) return {};
+  const parsed = JSON.parse(text) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("plugin returned invalid JSON");
+  }
+  return parsed as JsonRecord;
+}
+
+function parseLightOsForwards(payload: JsonRecord): LightOsForwardInfo[] {
+  return recordArray(payload, "forwards").map((item) => ({
+    id: stringValue(item, "id"),
+    selector: stringValue(item, "selector"),
+    localHost: stringValue(item, "localHost") || "127.0.0.1",
+    localPort: numberValue(item, "localPort"),
+    localUrl: stringValue(item, "localUrl"),
+    remoteHost: stringValue(item, "remoteHost") || "127.0.0.1",
+    remotePort: numberValue(item, "remotePort"),
+    status: stringValue(item, "status") || "unknown",
+    createdAtMs: numberValue(item, "createdAtMs"),
+  })).filter((item) => item.id && item.localUrl);
+}
+
+function parsePublicTunnels(payload: JsonRecord): PublicTunnelInfo[] {
+  return recordArray(payload, "sessions").map((item) => ({
+    id: stringValue(item, "id"),
+    provider: stringValue(item, "provider"),
+    publicUrl: stringValue(item, "publicUrl"),
+    upstreamUrl: stringValue(item, "upstreamUrl"),
+    status: stringValue(item, "status") || "unknown",
+    createdAtMs: numberValue(item, "createdAtMs"),
+  })).filter((item) => item.id && item.publicUrl);
+}
+
+function recordArray(record: JsonRecord, key: string): JsonRecord[] {
+  const value = record[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is JsonRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function recordValue(record: JsonRecord, key: string): JsonRecord | undefined {
+  const value = record[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : undefined;
+}
+
+function stringValue(record: JsonRecord | undefined, key: string): string {
+  const value = record?.[key];
+  return typeof value === "string" ? value : "";
+}
+
+function numberValue(record: JsonRecord | undefined, key: string): number {
+  const value = record?.[key];
+  return typeof value === "number" ? value : Number(value || 0);
+}
+
+function setPortForwardOutput(message: string, tone: Tone = "neutral") {
+  lightosPortForwardTool.output = message;
+  setPluginStatus(message, tone);
+  renderPluginTools();
+}
+
+function setPublicTunnelOutput(message: string, tone: Tone = "neutral") {
+  publicTunnelTool.output = message;
+  setPluginStatus(message, tone);
+  renderPluginTools();
+}
+
+async function copyNetworkUrl(url: string) {
+  if (!url) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      fallbackCopyText(url);
+    }
+    setPluginStatus(tr("status.urlCopied"), "ok");
+  } catch (error) {
+    setPluginStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
+  }
 }
 
 async function runFileTransfer(action: string) {

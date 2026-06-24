@@ -1,6 +1,6 @@
 [package]
 name = "lazycat-neko-webshell"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
 rust-version = "1.88"
 
@@ -10,15 +10,21 @@ axum = { version = "0.8.7", features = ["tokio", "http1", "json", "ws"] }
 buffa = { version = "0.5.2", features = ["json"] }
 buffa-types = "0.5.2"
 bytes = "1.11.0"
+capnp = "0.19.1"
+capnp-futures = "0.19.0"
+capnp-rpc = "0.19.0"
 connectrpc = { version = "0.4.2", features = ["axum"] }
 futures = "0.3.31"
 http = "1.4.0"
 http-body = "1.0.1"
 mime_guess = "2.0.5"
+ngrok = "0.18.0"
 portable-pty = "0.9.0"
+quinn = { version = "0.10.2", features = ["futures-io"] }
 base64 = "0.22.1"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+rustls = "0.21.12"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
@@ -27,6 +33,7 @@ tokio = { version = "1.48.0", features = ["full"] }
 tower-http = { version = "0.6.6", features = ["trace", "cors", "fs", "set-header"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+url = "2.5.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 wuff = "0.2.5"
 

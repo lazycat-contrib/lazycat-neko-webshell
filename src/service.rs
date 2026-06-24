@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::agent_client::ensure_agent;
 use crate::config::{APP_ID, APP_NAME, DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_COLS, MAX_ROWS};
 use crate::lightos;
+use crate::plugins::{lightos_port_forward, tunnel};
 use crate::proto::lazycat::webshell::v1::{
     AgentPaneState, AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
     Capability, CapabilityService, CloseSessionResponse, ConfigurePluginResponse, ControlLease,
@@ -97,6 +98,11 @@ impl CapabilityServiceImpl {
                     .await
             }
             "ai-chat" => Self::invoke_ai_chat_plugin(&session, operation),
+            lightos_port_forward::PLUGIN_ID => {
+                self.invoke_lightos_port_forward_plugin(&session, operation, metadata)
+                    .await
+            }
+            tunnel::PLUGIN_ID => self.invoke_public_tunnel_plugin(operation, metadata).await,
             _ => Err(ConnectError::unimplemented(format!(
                 "plugin has no runtime implementation: {plugin_id}"
             ))),
@@ -123,6 +129,43 @@ impl CapabilityServiceImpl {
                 "unsupported ai-chat operation: {operation}"
             ))),
         }
+    }
+
+    async fn invoke_lightos_port_forward_plugin(
+        &self,
+        session: &SessionRecord,
+        operation: &str,
+        metadata: HashMap<String, String>,
+    ) -> ServiceResult<InvokePluginResponse> {
+        let manager = Arc::clone(&self.state.lightos_port_forwards);
+        let session = session.clone();
+        let operation = operation.to_owned();
+        let payload =
+            tokio::task::spawn_blocking(move || manager.invoke(&session, &operation, &metadata))
+                .await
+                .map_err(|err| ConnectError::internal(format!("plugin task failed: {err}")))?
+                .map_err(|err| ConnectError::failed_precondition(err.to_string()))?;
+        plugin_json_response("complete", &payload, HashMap::new())
+    }
+
+    async fn invoke_public_tunnel_plugin(
+        &self,
+        operation: &str,
+        metadata: HashMap<String, String>,
+    ) -> ServiceResult<InvokePluginResponse> {
+        let manager = Arc::clone(&self.state.public_tunnels);
+        let operation = operation.to_owned();
+        let response =
+            tokio::task::spawn_blocking(move || manager.invoke_metadata(&operation, metadata))
+                .await
+                .map_err(|err| ConnectError::internal(format!("plugin task failed: {err}")))?
+                .map_err(|err| ConnectError::failed_precondition(err.to_string()))?;
+        plugin_response(
+            &response.status,
+            &response.content_type,
+            response.payload,
+            response.metadata,
+        )
     }
 }
 

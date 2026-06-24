@@ -39,6 +39,7 @@ export type MessageKey =
   | "action.closePlugins"
   | "action.closeSettings"
   | "action.copySelection"
+  | "action.copyUrl"
   | "action.focusTerminal"
   | "action.fullscreen"
   | "action.lightosHome"
@@ -59,7 +60,10 @@ export type MessageKey =
   | "action.pluginFileStat"
   | "action.pluginFileSyncCwd"
   | "action.pluginFileUpload"
+  | "action.portForwardAcquire"
+  | "action.portForwardRelease"
   | "action.promoteSessionToTab"
+  | "action.refresh"
   | "action.refreshHerdr"
   | "action.refreshInstances"
   | "action.refreshPlugins"
@@ -78,8 +82,11 @@ export type MessageKey =
   | "action.splitRight"
   | "action.splitUp"
   | "action.switchInstance"
+  | "action.tunnelStart"
+  | "action.tunnelStop"
   | "action.uploadFont"
   | "action.uploadTerminalBackground"
+  | "action.useForTunnel"
   | "app.title"
   | "backend.herdr"
   | "backend.webshell"
@@ -114,6 +121,8 @@ export type MessageKey =
   | "field.outputBuffer"
   | "field.panes"
   | "field.pluginPath"
+  | "field.remoteHost"
+  | "field.remotePort"
   | "field.scrollback"
   | "field.tabs"
   | "field.terminalBackgroundBlur"
@@ -123,6 +132,9 @@ export type MessageKey =
   | "field.themeName"
   | "field.themeSource"
   | "field.touchBehavior"
+  | "field.tunnelProvider"
+  | "field.upstreamUrl"
+  | "field.ngrokAuthtoken"
   | "fileKind.directory"
   | "fileKind.file"
   | "fileKind.hardlink"
@@ -162,10 +174,19 @@ export type MessageKey =
   | "plugin.fileTransfer.output"
   | "plugin.fileTransfer.description"
   | "plugin.fileTransfer.name"
+  | "plugin.lightosPortForward.description"
+  | "plugin.lightosPortForward.help"
+  | "plugin.lightosPortForward.name"
   | "plugin.meta.ai"
   | "plugin.meta.filesystem"
+  | "plugin.meta.lightos"
+  | "plugin.meta.network"
   | "plugin.meta.session"
+  | "plugin.meta.tunnel"
   | "plugin.meta.transfer"
+  | "plugin.publicTunnel.description"
+  | "plugin.publicTunnel.help"
+  | "plugin.publicTunnel.name"
   | "section.appearance"
   | "section.aiAccess"
   | "section.fileTransfer"
@@ -263,6 +284,8 @@ export type MessageKey =
   | "status.noInstances"
   | "status.noInstancesVisible"
   | "status.noPlugins"
+  | "status.noPortForwards"
+  | "status.noPublicTunnels"
   | "status.noSelection"
   | "status.noSessions"
   | "status.noTarget"
@@ -281,6 +304,8 @@ export type MessageKey =
   | "status.pluginFileNoSession"
   | "status.pluginFileUploadDone"
   | "status.pluginLoadFailed"
+  | "status.portForwardReady"
+  | "status.publicTunnelReady"
   | "status.pluginsLoading"
   | "status.pluginsReady"
   | "status.processExited"
@@ -293,6 +318,7 @@ export type MessageKey =
   | "status.sessionStopped"
   | "status.terminalError"
   | "status.themeInvalid"
+  | "status.urlCopied"
   | "status.themeRemoved"
   | "status.themeSaved"
   | "theme.builtIn"
@@ -313,8 +339,10 @@ export type MessageKey =
   | "validation.aiPrompt"
   | "validation.mcpUrl"
   | "validation.pluginPath"
+  | "validation.port"
   | "validation.themeName"
-  | "validation.themeSource";
+  | "validation.themeSource"
+  | "validation.upstreamUrl";
 
 const messages: Record<Language, Record<MessageKey, string>> = {
   en: {
@@ -347,6 +375,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closePlugins": "Close plugins",
     "action.closeSettings": "Close settings",
     "action.copySelection": "Copy selection",
+    "action.copyUrl": "Copy URL",
     "action.focusTerminal": "Focus terminal",
     "action.fullscreen": "Full screen",
     "action.lightosHome": "LightOS home",
@@ -367,7 +396,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.pluginFileStat": "Stat",
     "action.pluginFileSyncCwd": "Use terminal cwd",
     "action.pluginFileUpload": "Upload file",
+    "action.portForwardAcquire": "Forward port",
+    "action.portForwardRelease": "Stop forward",
     "action.promoteSessionToTab": "Move session to new tab",
+    "action.refresh": "Refresh",
     "action.refreshHerdr": "Refresh Herdr",
     "action.refreshInstances": "Refresh instances",
     "action.refreshPlugins": "Refresh plugins",
@@ -386,8 +418,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.splitRight": "Split right",
     "action.splitUp": "Split up",
     "action.switchInstance": "Switch instance",
+    "action.tunnelStart": "Start tunnel",
+    "action.tunnelStop": "Stop tunnel",
     "action.uploadFont": "Upload font",
     "action.uploadTerminalBackground": "Upload terminal background",
+    "action.useForTunnel": "Use for tunnel",
     "app.title": "Neko Webshell",
     "backend.herdr": "Herdr",
     "backend.webshell": "WebShell native",
@@ -422,6 +457,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.outputBuffer": "History lines",
     "field.panes": "Panes",
     "field.pluginPath": "Path",
+    "field.remoteHost": "Remote host",
+    "field.remotePort": "Remote port",
     "field.scrollback": "Scrollback",
     "field.tabs": "Tabs",
     "field.terminalBackgroundBlur": "Background blur",
@@ -431,6 +468,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.themeName": "Theme name",
     "field.themeSource": "Ghostty theme",
     "field.touchBehavior": "Touch behavior",
+    "field.tunnelProvider": "Tunnel provider",
+    "field.upstreamUrl": "Upstream URL",
+    "field.ngrokAuthtoken": "ngrok authtoken",
     "fileKind.directory": "Directory",
     "fileKind.file": "File",
     "fileKind.hardlink": "Hard link",
@@ -477,10 +517,19 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.fileTransfer.help": "Device side uses the active terminal session and login user. The browser can choose local files, but cannot expose a local directory tree.",
     "plugin.fileTransfer.name": "File transfer",
     "plugin.fileTransfer.output": "File transfer output",
+    "plugin.lightosPortForward.description": "Forward a HTTP port from the selected LightOS instance to the WebShell provider.",
+    "plugin.lightosPortForward.help": "Keeps a provider-side forward alive while the WebShell backend is running. Use the local URL directly or publish it with Public Tunnel.",
+    "plugin.lightosPortForward.name": "LightOS port forward",
     "plugin.meta.ai": "AI",
     "plugin.meta.filesystem": "Filesystem",
+    "plugin.meta.lightos": "LightOS",
+    "plugin.meta.network": "Network",
     "plugin.meta.session": "Session",
+    "plugin.meta.tunnel": "Tunnel",
     "plugin.meta.transfer": "Transfer",
+    "plugin.publicTunnel.description": "Publish a local HTTP URL through Cloudflare Quick Tunnel or ngrok.",
+    "plugin.publicTunnel.help": "Tunnel sessions stay alive while the WebShell backend is running. Use a LightOS forward URL for services inside the selected instance.",
+    "plugin.publicTunnel.name": "Public tunnel",
     "section.appearance": "Appearance",
     "section.aiAccess": "AI access",
     "section.fileTransfer": "File transfer",
@@ -578,6 +627,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noInstances": "No instances returned",
     "status.noInstancesVisible": "No LightOS instances visible.",
     "status.noPlugins": "No plugins returned",
+    "status.noPortForwards": "No active port forwards",
+    "status.noPublicTunnels": "No active public tunnels",
     "status.noSelection": "No selection to copy",
     "status.noSessions": "No sessions",
     "status.noTarget": "No instance selected",
@@ -596,6 +647,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginFileNoSession": "Open or select a terminal session first.",
     "status.pluginFileUploadDone": "Uploaded {name}",
     "status.pluginLoadFailed": "Plugin load failed: {message}",
+    "status.portForwardReady": "{count} port forward(s) active",
+    "status.publicTunnelReady": "{count} tunnel(s) active",
     "status.pluginsLoading": "Loading plugins...",
     "status.pluginsReady": "{count} plugin(s) ready",
     "status.processExited": "Process exited: {code}",
@@ -610,6 +663,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.themeInvalid": "Theme invalid: {message}",
     "status.themeRemoved": "{name} removed",
     "status.themeSaved": "{name} saved",
+    "status.urlCopied": "URL copied",
     "theme.builtIn": "Built in",
     "theme.custom": "Custom",
     "theme.gallery": "Ghostty Style Gallery",
@@ -628,8 +682,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.aiPrompt": "enter a prompt",
     "validation.mcpUrl": "enter an MCP server URL",
     "validation.pluginPath": "enter a target path",
+    "validation.port": "enter a port from 1 to 65535",
     "validation.themeName": "theme name is required",
     "validation.themeSource": "paste a Ghostty theme with background, foreground, or palette entries",
+    "validation.upstreamUrl": "enter a local upstream URL",
   },
   "zh-CN": {
     "about.description": "面向 LightOS 设备的浏览器终端。",
@@ -661,6 +717,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closePlugins": "关闭插件",
     "action.closeSettings": "关闭设置",
     "action.copySelection": "复制选区",
+    "action.copyUrl": "复制 URL",
     "action.focusTerminal": "聚焦终端",
     "action.fullscreen": "全屏",
     "action.lightosHome": "LightOS 首页",
@@ -681,7 +738,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.pluginFileStat": "信息",
     "action.pluginFileSyncCwd": "使用终端目录",
     "action.pluginFileUpload": "上传文件",
+    "action.portForwardAcquire": "转发端口",
+    "action.portForwardRelease": "停止转发",
     "action.promoteSessionToTab": "将会话提升为新标签",
+    "action.refresh": "刷新",
     "action.refreshHerdr": "刷新 Herdr",
     "action.refreshInstances": "刷新实例",
     "action.refreshPlugins": "刷新插件",
@@ -700,8 +760,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.splitRight": "向右拆分",
     "action.splitUp": "向上拆分",
     "action.switchInstance": "切换实例",
+    "action.tunnelStart": "启动 Tunnel",
+    "action.tunnelStop": "停止 Tunnel",
     "action.uploadFont": "上传字体",
     "action.uploadTerminalBackground": "上传终端背景",
+    "action.useForTunnel": "用于 Tunnel",
     "app.title": "小橘Web Shell",
     "backend.herdr": "Herdr",
     "backend.webshell": "WebShell 原生",
@@ -736,6 +799,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.outputBuffer": "历史行数",
     "field.panes": "面板",
     "field.pluginPath": "路径",
+    "field.remoteHost": "远端主机",
+    "field.remotePort": "远端端口",
     "field.scrollback": "回滚行数",
     "field.tabs": "标签栏",
     "field.terminalBackgroundBlur": "背景模糊",
@@ -745,6 +810,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.themeName": "主题名称",
     "field.themeSource": "Ghostty 主题",
     "field.touchBehavior": "触控行为",
+    "field.tunnelProvider": "Tunnel 服务",
+    "field.upstreamUrl": "上游 URL",
+    "field.ngrokAuthtoken": "ngrok authtoken",
     "fileKind.directory": "目录",
     "fileKind.file": "文件",
     "fileKind.hardlink": "硬链接",
@@ -791,10 +859,19 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.fileTransfer.help": "设备侧使用当前活动终端会话和登录用户；浏览器可以选择本地文件，但不能暴露本地目录树。",
     "plugin.fileTransfer.name": "文件传输",
     "plugin.fileTransfer.output": "文件传输输出",
+    "plugin.lightosPortForward.description": "把当前 LightOS 实例里的 HTTP 端口转发到 WebShell 后端本地。",
+    "plugin.lightosPortForward.help": "转发租约会在 WebShell 后端运行期间保持。可以直接使用本地 URL，也可以交给 Public Tunnel 发布。",
+    "plugin.lightosPortForward.name": "LightOS 端口转发",
     "plugin.meta.ai": "AI",
     "plugin.meta.filesystem": "文件系统",
+    "plugin.meta.lightos": "LightOS",
+    "plugin.meta.network": "网络",
     "plugin.meta.session": "会话",
+    "plugin.meta.tunnel": "Tunnel",
     "plugin.meta.transfer": "传输",
+    "plugin.publicTunnel.description": "通过 Cloudflare Quick Tunnel 或 ngrok 发布本地 HTTP URL。",
+    "plugin.publicTunnel.help": "Tunnel 租约会在 WebShell 后端运行期间保持。要发布实例内服务，请先选择 LightOS 转发得到的本地 URL。",
+    "plugin.publicTunnel.name": "Public Tunnel",
     "section.appearance": "外观",
     "section.aiAccess": "AI 接入",
     "section.fileTransfer": "文件传输",
@@ -892,6 +969,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noInstances": "没有返回实例",
     "status.noInstancesVisible": "没有可见的 LightOS 实例。",
     "status.noPlugins": "没有返回插件",
+    "status.noPortForwards": "暂无活动端口转发",
+    "status.noPublicTunnels": "暂无活动 Public Tunnel",
     "status.noSelection": "没有可复制的选区",
     "status.noSessions": "没有会话",
     "status.noTarget": "未选择实例",
@@ -910,6 +989,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginFileNoSession": "请先打开或选择一个终端会话。",
     "status.pluginFileUploadDone": "已上传 {name}",
     "status.pluginLoadFailed": "插件加载失败：{message}",
+    "status.portForwardReady": "{count} 个端口转发正在运行",
+    "status.publicTunnelReady": "{count} 个 Tunnel 正在运行",
     "status.pluginsLoading": "正在加载插件...",
     "status.pluginsReady": "{count} 个插件已就绪",
     "status.processExited": "进程已退出：{code}",
@@ -924,6 +1005,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.themeInvalid": "主题无效：{message}",
     "status.themeRemoved": "{name} 已删除",
     "status.themeSaved": "{name} 已保存",
+    "status.urlCopied": "URL 已复制",
     "theme.builtIn": "内置",
     "theme.custom": "自定义",
     "theme.gallery": "Ghostty 主题库",
@@ -942,8 +1024,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.aiPrompt": "请输入内容",
     "validation.mcpUrl": "请输入 MCP 服务 URL",
     "validation.pluginPath": "请输入目标路径",
+    "validation.port": "请输入 1 到 65535 之间的端口",
     "validation.themeName": "请输入主题名称",
     "validation.themeSource": "请粘贴包含 background、foreground 或 palette 的 Ghostty 主题",
+    "validation.upstreamUrl": "请输入本地上游 URL",
   },
 };
 

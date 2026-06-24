@@ -14,6 +14,8 @@ use crate::database::remove_database_file;
 use crate::database::{
     AppDatabase, KV_KEY_PLUGINS, KV_KEY_SESSIONS, KV_NAMESPACE_STATE, database_path,
 };
+use crate::plugins::lightos_port_forward::LightOsPortForwardManager;
+use crate::plugins::tunnel::TunnelManager;
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
 use crate::session_manager::SessionManager;
 use crate::terminal_manager::{OutputBuffer, TerminalSpec};
@@ -30,6 +32,8 @@ pub const METADATA_LOGIN_USER: &str = "loginUser";
 pub struct AppState {
     pub sessions: Arc<SessionManager>,
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
+    pub lightos_port_forwards: Arc<LightOsPortForwardManager>,
+    pub public_tunnels: Arc<TunnelManager>,
     pub workspaces: Arc<RwLock<HashMap<String, WorkspaceRecord>>>,
     database: Arc<AppDatabase>,
     workspace_store: Arc<WorkspaceStore>,
@@ -72,6 +76,8 @@ impl AppState {
                 Arc::clone(&database),
             )),
             plugins: Arc::new(RwLock::new(plugins)),
+            lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
+            public_tunnels: Arc::new(TunnelManager::default()),
             workspaces: Arc::new(RwLock::new(workspaces)),
             database,
             workspace_store,
@@ -118,6 +124,8 @@ impl AppState {
                 Arc::clone(&database),
             )),
             plugins: Arc::new(RwLock::new(HashMap::new())),
+            lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
+            public_tunnels: Arc::new(TunnelManager::default()),
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             database: Arc::clone(&database),
             workspace_store: Arc::new(WorkspaceStore::new(database)),
@@ -805,6 +813,39 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             metadata: HashMap::from([
                 ("builtin".to_owned(), "true".to_owned()),
                 ("defaultEnabled".to_owned(), "false".to_owned()),
+            ]),
+        },
+        PluginRecord {
+            id: crate::plugins::lightos_port_forward::PLUGIN_ID.to_owned(),
+            kind: "network".to_owned(),
+            display_name: "LightOS Port Forward".to_owned(),
+            description: "Forward a target LightOS instance HTTP port to a local WebShell provider port for preview or tunnel publishing.".to_owned(),
+            scopes: vec!["session".to_owned(), "network".to_owned(), "lightos".to_owned()],
+            accepted_content_types: vec!["application/json".to_owned()],
+            produced_content_types: vec!["application/json".to_owned()],
+            input_schema_json: r#"{"operation":"acquire|release|list","metadata":{"remoteHost":"127.0.0.1","remotePort":"number","forwardId":"string for release"}}"#.to_owned(),
+            output_schema_json: r#"{"forwards":[{"id":"string","localUrl":"http://127.0.0.1:port/","remotePort":8080,"status":"running"}]}"#.to_owned(),
+            enabled: false,
+            metadata: HashMap::from([
+                ("builtin".to_owned(), "true".to_owned()),
+                ("defaultEnabled".to_owned(), "false".to_owned()),
+            ]),
+        },
+        PluginRecord {
+            id: crate::plugins::tunnel::PLUGIN_ID.to_owned(),
+            kind: "tunnel".to_owned(),
+            display_name: "Public Tunnel".to_owned(),
+            description: "Publish a local HTTP endpoint through Cloudflare Quick Tunnel or ngrok. Pair it with LightOS Port Forward to expose an instance port.".to_owned(),
+            scopes: vec!["session".to_owned(), "network".to_owned(), "tunnel".to_owned()],
+            accepted_content_types: vec!["application/json".to_owned()],
+            produced_content_types: vec!["application/json".to_owned()],
+            input_schema_json: r#"{"operation":"start|stop|list","metadata":{"provider":"cloudflare-quick|ngrok","upstreamUrl":"http://127.0.0.1:port/","ngrokAuthtoken":"required for ngrok","tunnelId":"string for stop"}}"#.to_owned(),
+            output_schema_json: r#"{"sessions":[{"id":"string","provider":"cloudflare-quick|ngrok","publicUrl":"https://...","upstreamUrl":"http://127.0.0.1:port/","status":"running"}]}"#.to_owned(),
+            enabled: false,
+            metadata: HashMap::from([
+                ("builtin".to_owned(), "true".to_owned()),
+                ("defaultEnabled".to_owned(), "false".to_owned()),
+                ("providers".to_owned(), "cloudflare-quick,ngrok".to_owned()),
             ]),
         },
     ]

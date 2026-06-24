@@ -21,6 +21,7 @@ mod embedded_frontend;
 mod fonts;
 mod herdr;
 mod lightos;
+mod plugins;
 mod preferences;
 mod proto;
 mod router;
