@@ -75,6 +75,7 @@ import {
   boolField,
   metaString,
   metaStringArray,
+  recordField,
   stringField,
 } from "./json-meta";
 import { resolveLightOSHomeUrl } from "./lightos-navigation";
@@ -2663,7 +2664,7 @@ async function runAIChat() {
   }
   await flushSettings();
   const session = ensureAIChatSession(currentAIChatModelKey());
-  const contextSnapshot = terminalAIContext(session.sendTerminalContext);
+  const contextSnapshot = await terminalAIContext(session.sendTerminalContext);
   input!.value = "";
   resizeAIChatInput(input!);
   session.messages.push({ role: "user", content: prompt });
@@ -2844,7 +2845,7 @@ function aiAccessConfigured(): boolean {
   return Boolean(settings.aiBaseUrl.trim() && settings.aiApiKey.trim());
 }
 
-function terminalAIContext(includeTerminalContext: boolean): Record<string, unknown> {
+async function terminalAIContext(includeTerminalContext: boolean): Promise<Record<string, unknown>> {
   const pane = activePane();
   const context: Record<string, unknown> = {
     cwd: pane?.workingDirectory ?? "~",
@@ -2856,11 +2857,115 @@ function terminalAIContext(includeTerminalContext: boolean): Record<string, unkn
     history: [],
     last_command: "",
   };
-  if (includeTerminalContext && pane) {
+  if (!includeTerminalContext || !pane) {
+    return context;
+  }
+  context.context_lines = AI_TERMINAL_CONTEXT_LINES;
+  context.context_source = pane.sessionBackend === "herdr" ? "herdr.sockapi" : "terminal.buffer";
+  if (pane.sessionBackend === "herdr") {
+    await appendHerdrAIContext(context, pane);
+  } else {
     context.recent_output = recentAIContext(pane);
-    context.context_lines = AI_TERMINAL_CONTEXT_LINES;
   }
   return context;
+}
+
+async function appendHerdrAIContext(context: Record<string, unknown>, pane: TerminalPane) {
+  const fallbackOutput = recentAIContext(pane);
+  try {
+    const selector = await ensureHerdrSocketReady(pane);
+    const paneId = await currentHerdrPaneId(selector);
+    context.herdr_pane_id = paneId;
+    const [processInfo, paneRead] = await Promise.allSettled([
+      runHerdrSocketRequest("pane.process_info", { pane_id: paneId }, {
+        selector,
+        id: "lazycat-webshell:ai-context:process-info",
+        mirrorNotification: false,
+      }),
+      runHerdrSocketRequest("pane.read", {
+        pane_id: paneId,
+        source: "recent",
+        lines: AI_TERMINAL_CONTEXT_LINES,
+      }, {
+        selector,
+        id: "lazycat-webshell:ai-context:pane-read",
+        mirrorNotification: false,
+      }),
+    ]);
+    if (processInfo.status === "fulfilled") {
+      applyHerdrProcessInfoToAIContext(context, processInfo.value.result);
+    }
+    const readText = paneRead.status === "fulfilled" ? herdrPaneReadText(paneRead.value.result) : "";
+    context.recent_output = readText || fallbackOutput;
+    if (paneRead.status === "rejected" || processInfo.status === "rejected") {
+      context.context_warning = "Herdr sockapi context was partially unavailable; local terminal buffer may be used as fallback.";
+    }
+  } catch (error) {
+    context.context_source = "terminal.buffer";
+    context.context_warning = `Herdr sockapi context unavailable: ${errorMessage(error)}`;
+    context.recent_output = fallbackOutput;
+  }
+}
+
+function applyHerdrProcessInfoToAIContext(context: Record<string, unknown>, result: JsonRecord | undefined) {
+  const process = recordField(result, "process")
+    ?? recordField(result, "process_info")
+    ?? recordField(result, "info")
+    ?? result;
+  const cwd = stringField(process, "cwd")
+    || stringField(process, "current_working_directory")
+    || stringField(process, "working_directory");
+  const shell = stringField(process, "shell");
+  const command = stringField(process, "command")
+    || stringField(process, "cmd")
+    || stringField(process, "name")
+    || herdrStringArrayField(process, "argv").join(" ");
+  if (cwd) context.cwd = cwd;
+  if (shell) context.shell = shell;
+  if (command) context.last_command = command;
+  const safeInfo = safeHerdrProcessInfo(process);
+  if (Object.keys(safeInfo).length) {
+    context.process_info = safeInfo;
+  }
+}
+
+function safeHerdrProcessInfo(process: JsonRecord | undefined): JsonRecord {
+  const safe: JsonRecord = {};
+  for (const key of ["pane_id", "pid", "ppid", "name", "command", "cmd", "cwd", "working_directory", "current_working_directory", "shell"]) {
+    const value = process?.[key];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      safe[key] = value;
+    }
+  }
+  const argv = herdrStringArrayField(process, "argv");
+  if (argv.length) safe.argv = argv;
+  return safe;
+}
+
+function herdrPaneReadText(result: JsonRecord | undefined): string {
+  const direct = stringField(result, "text")
+    || stringField(result, "content")
+    || stringField(result, "output")
+    || stringField(result, "data");
+  if (direct) return recentAIContextText(direct, AI_TERMINAL_CONTEXT_LINES);
+  const pane = recordField(result, "pane");
+  const nested = stringField(pane, "text")
+    || stringField(pane, "content")
+    || stringField(pane, "output")
+    || stringField(pane, "data");
+  if (nested) return recentAIContextText(nested, AI_TERMINAL_CONTEXT_LINES);
+  const lines = herdrStringArrayField(result, "lines")
+    .concat(herdrStringArrayField(pane, "lines"));
+  return recentAIContextText(lines.join("\n"), AI_TERMINAL_CONTEXT_LINES);
+}
+
+function herdrStringArrayField(record: JsonRecord | undefined, key: string): string[] {
+  const value = record?.[key];
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function recentAIContext(pane: TerminalPane | undefined): string {

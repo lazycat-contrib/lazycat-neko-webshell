@@ -1393,6 +1393,12 @@ fn build_prompt(action: &str, payload: &Value) -> String {
     let backend = json_string(ctx, "backend", "");
     let selector = json_string(ctx, "selector", "");
     let recent_output = json_string(ctx, "recent_output", "");
+    let context_source = json_string(ctx, "context_source", "");
+    let context_warning = json_string(ctx, "context_warning", "");
+    let process_info = ctx
+        .get("process_info")
+        .filter(|value| !value.is_null())
+        .map_or_else(String::new, |value| redact_sensitive(&value.to_string()));
     let conversation = payload
         .get("conversation")
         .map_or_else(String::new, Value::to_string);
@@ -1403,6 +1409,9 @@ fn build_prompt(action: &str, payload: &Value) -> String {
         &backend,
         &selector,
         &recent_output,
+        &context_source,
+        &context_warning,
+        &process_info,
     );
     match action {
         "chat" => format!(
@@ -1420,6 +1429,9 @@ fn terminal_context_block(
     backend: &str,
     selector: &str,
     recent_output: &str,
+    context_source: &str,
+    context_warning: &str,
+    process_info: &str,
 ) -> String {
     let backend_line = if backend.trim().is_empty() {
         String::new()
@@ -1436,8 +1448,23 @@ fn terminal_context_block(
     } else {
         recent_output
     };
+    let source_line = if context_source.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n- 上下文来源：{context_source}")
+    };
+    let warning_line = if context_warning.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n- 上下文提示：{context_warning}")
+    };
+    let process_line = if process_info.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\n- 进程信息 JSON：\n```json\n{process_info}\n```")
+    };
     format!(
-        "用户允许提供的终端上下文：\n- 当前目录：{cwd}\n- Shell：{shell}\n- OS：{os}{backend_line}{selector_line}\n- 最近终端输出（已脱敏）：\n```text\n{output}\n```"
+        "用户允许提供的终端上下文：\n- 当前目录：{cwd}\n- Shell：{shell}\n- OS：{os}{backend_line}{selector_line}{source_line}{warning_line}{process_line}\n- 最近终端输出（已脱敏）：\n```text\n{output}\n```"
     )
 }
 
@@ -1717,6 +1744,8 @@ mod tests {
                     "os": "LightOS",
                     "backend": "webshell",
                     "selector": "lzcapp",
+                    "context_source": "herdr.sockapi",
+                    "process_info": { "command": "codex", "cwd": "/repo" },
                     "recent_output": "drwxr-xr-x root root bin\n-rw-r--r-- root root .dockerenv"
                 },
                 "conversation": []
@@ -1726,6 +1755,8 @@ mod tests {
         assert!(prompt.contains("用户允许提供的终端上下文"));
         assert!(prompt.contains("- 当前目录：/"));
         assert!(prompt.contains("- 后端：webshell"));
+        assert!(prompt.contains("- 上下文来源：herdr.sockapi"));
+        assert!(prompt.contains("\"command\":\"codex\""));
         assert!(prompt.contains("drwxr-xr-x root root bin"));
         assert!(prompt.contains("当前有哪些文件？"));
     }
