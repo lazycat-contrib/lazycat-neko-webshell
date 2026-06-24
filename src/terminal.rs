@@ -822,7 +822,7 @@ async fn send_replay_snapshot(
         frame_count = frames.len(),
         "replaying terminal output history"
     );
-    let mut last_sent_sequence = replay_after.max(last_sequence);
+    let mut last_sent_sequence = last_sequence;
     for frame in frames {
         if !send_output_frame(sender, &frame).await? {
             return Ok(None);
@@ -872,7 +872,7 @@ async fn send_replay_snapshot_for_target(
         frame_count = frames.len(),
         "replaying stopped terminal output history"
     );
-    let mut last_sent_sequence = replay_after.max(last_sequence);
+    let mut last_sent_sequence = last_sequence;
     for frame in frames {
         if !send_output_frame(sender, &frame).await? {
             return Ok(None);

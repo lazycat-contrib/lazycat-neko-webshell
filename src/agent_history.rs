@@ -56,7 +56,7 @@ impl AgentHistory {
                 .collect(),
             self.frames
                 .back()
-                .map_or(sequence, |frame| frame.sequence.max(sequence)),
+                .map_or(self.next_sequence, |frame| frame.sequence),
         )
     }
 
@@ -119,6 +119,17 @@ mod tests {
                 data: b"two".to_vec(),
             }]
         );
+    }
+
+    #[test]
+    fn snapshot_reports_real_last_sequence_when_after_is_stale() {
+        let mut history = AgentHistory::new(128);
+        history.push(b"one".to_vec());
+
+        let (frames, last_sequence) = history.snapshot_after(99);
+
+        assert!(frames.is_empty());
+        assert_eq!(last_sequence, 1);
     }
 
     #[test]

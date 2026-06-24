@@ -450,7 +450,7 @@ impl OutputBuffer {
             inner
                 .frames
                 .back()
-                .map_or(sequence, |frame| frame.sequence.max(sequence)),
+                .map_or(inner.next_sequence, |frame| frame.sequence),
         )
     }
 
@@ -602,6 +602,17 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].sequence, 2);
         assert_eq!(frames[0].data, b"two");
+    }
+
+    #[test]
+    fn snapshot_reports_real_last_sequence_when_after_is_stale() {
+        let output = OutputBuffer::default();
+        output.push(b"one".to_vec());
+
+        let (frames, last_sequence) = output.snapshot_after(99);
+
+        assert!(frames.is_empty());
+        assert_eq!(last_sequence, 1);
     }
 
     #[test]

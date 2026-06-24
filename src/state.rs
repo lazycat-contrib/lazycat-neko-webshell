@@ -520,11 +520,15 @@ pub fn sync_session_login_user(session: &mut SessionRecord, login_user: &str) ->
 }
 
 fn herdr_launch_script() -> &'static str {
-    r#"if ! command -v herdr >/dev/null 2>&1; then
+    r#"if command -v herdr >/dev/null 2>&1; then
+  exec herdr
+fi
+if [ -n "${HOME:-}" ] && [ -x "$HOME/.local/bin/herdr" ]; then
+  exec "$HOME/.local/bin/herdr"
+fi
   echo "Herdr is not installed in this instance."
   exit 127
-fi
-exec herdr"#
+"#
 }
 
 fn zellij_launch_script(selector: &str) -> String {
@@ -576,11 +580,14 @@ fn current_user_bootstrap_script(final_script: &str) -> String {
     [
         "__webshell_user=\"$(id -un 2>/dev/null || true)\"",
         "__webshell_entry=\"$(getent passwd \"$__webshell_user\" 2>/dev/null || true)\"",
+        "__webshell_home=\"$(printf '%s\\n' \"$__webshell_entry\" | cut -d: -f6)\"",
+        "if [ -z \"$__webshell_home\" ]; then __webshell_home=\"${HOME:-}\"; fi",
+        "if [ -n \"$__webshell_home\" ]; then export PATH=\"$__webshell_home/.local/bin:$__webshell_home/bin:$PATH\"; fi",
         "__webshell_shell=\"$(printf '%s\\n' \"$__webshell_entry\" | cut -d: -f7)\"",
         "if [ -z \"$__webshell_shell\" ]; then __webshell_shell=\"${SHELL:-/bin/sh}\"; fi",
         "case \"$__webshell_shell\" in */*) ;; *) __webshell_shell=\"$(command -v \"$__webshell_shell\" 2>/dev/null || printf '%s' \"$__webshell_shell\")\";; esac",
         terminal_session_bootstrap_script(),
-        "unset __webshell_user __webshell_entry",
+        "unset __webshell_user __webshell_entry __webshell_home",
         final_script,
     ]
     .join("\n")
@@ -610,6 +617,8 @@ fi
 if [ -z "$shell" ]; then
   shell=/bin/sh
 fi
+PATH="$home/.local/bin:$home/bin:$PATH"
+export PATH
 if [ ! -d "$home" ]; then
   mkdir -p "$home"
 fi
@@ -674,6 +683,8 @@ fi
 if [ -z "$shell" ]; then
   shell=/bin/sh
 fi
+PATH="$home/.local/bin:$home/bin:$PATH"
+export PATH
 if [ ! -d "$home" ]; then
   mkdir -p "$home"
 fi

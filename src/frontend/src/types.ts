@@ -305,6 +305,7 @@ export type TerminalPane = {
   pendingInput: string[];
   pendingInputBytes: number;
   replaying: boolean;
+  lastReplayAfter?: number;
   lastOutputSequence: number;
   aiContextText: string;
   terminalShaderEffect?: TerminalShaderEffect;

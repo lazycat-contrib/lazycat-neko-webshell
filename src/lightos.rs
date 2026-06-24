@@ -83,8 +83,8 @@ pub async fn target_command_available(
     {
         return Err(ConnectError::invalid_argument("invalid command name"));
     }
-    authorize_selector(selector, true).await?;
-    let script = target_command_probe_script(command_name);
+    let instance = authorized_instance(selector, true).await?;
+    let script = target_command_probe_bootstrap_script(command_name, instance.username.trim());
     let mut command = tokio::process::Command::new(LIGHTOSCTL);
     command.args(["exec", "-i", selector, "/bin/sh", "-lc", script.as_str()]);
     let output = timeout(Duration::from_secs(5), command.output())
@@ -95,12 +95,70 @@ pub async fn target_command_available(
 }
 
 fn target_command_probe_script(command_name: &str) -> String {
-    match command_name {
-        "zellij" => {
-            "command -v zellij >/dev/null 2>&1 && zellij --version >/dev/null 2>&1".to_owned()
-        }
-        _ => format!("command -v {command_name} >/dev/null 2>&1"),
+    let version_check = match command_name {
+        "zellij" => "\n[ -n \"$target_command\" ] && \"$target_command\" --version >/dev/null 2>&1",
+        _ => "\n[ -n \"$target_command\" ]",
+    };
+    format!(
+        r#"if [ -n "${{HOME:-}}" ]; then
+  PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+fi
+export PATH
+target_command="$(command -v {command_name} 2>/dev/null || true)"
+if [ -z "$target_command" ] && [ -n "${{HOME:-}}" ] && [ -x "$HOME/.local/bin/{command_name}" ]; then
+  target_command="$HOME/.local/bin/{command_name}"
+fi{version_check}"#
+    )
+}
+
+fn target_command_probe_bootstrap_script(command_name: &str, login_user: &str) -> String {
+    let probe_script = target_command_probe_script(command_name);
+    let login_user = login_user.trim();
+    if !login_user_needs_switch(login_user) {
+        return probe_script;
     }
+    format!(
+        r#"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+user={}
+probe_script={}
+uid=$(id -u "$user" 2>/dev/null) || exit 127
+gid=$(id -g "$user" 2>/dev/null) || exit 127
+entry=$(getent passwd "$user" 2>/dev/null) || exit 127
+home=$(printf '%s\n' "$entry" | cut -d: -f6)
+if [ -z "$home" ]; then
+  home=/
+fi
+PATH="$home/.local/bin:$home/bin:$PATH"
+export PATH
+if command -v setpriv >/dev/null 2>&1; then
+  exec env HOME="$home" USER="$user" LOGNAME="$user" PATH="$PATH" setpriv --reuid "$uid" --regid "$gid" --init-groups /bin/sh -lc "$probe_script"
+fi
+if command -v su >/dev/null 2>&1; then
+  export HOME="$home" USER="$user" LOGNAME="$user" PATH="$PATH"
+  exec su -s /bin/sh "$user" -c "$probe_script"
+fi
+exit 127"#,
+        shell_script_quote(login_user),
+        shell_script_quote(&probe_script),
+    )
+}
+
+fn login_user_needs_switch(login_user: &str) -> bool {
+    !matches!(login_user.trim(), "" | "root")
+}
+
+fn shell_script_quote(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len() + 2);
+    quoted.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            quoted.push_str("'\"'\"'");
+        } else {
+            quoted.push(ch);
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 async fn authorized_instance(
@@ -205,7 +263,7 @@ async fn run_lightosctl<const N: usize>(args: [&str; N]) -> Result<Vec<u8>, Conn
 mod tests {
     use super::{
         parse_admin_info, parse_lightos_instances, selector_for_instance,
-        target_command_probe_script,
+        target_command_probe_bootstrap_script, target_command_probe_script,
     };
 
     #[test]
@@ -230,15 +288,29 @@ mod tests {
     }
 
     #[test]
-    fn zellij_probe_requires_executable_version() {
-        assert_eq!(
-            target_command_probe_script("zellij"),
-            "command -v zellij >/dev/null 2>&1 && zellij --version >/dev/null 2>&1"
-        );
-        assert_eq!(
-            target_command_probe_script("herdr"),
-            "command -v herdr >/dev/null 2>&1"
-        );
+    fn command_probe_checks_user_local_bin() {
+        let zellij = target_command_probe_script("zellij");
+        assert!(zellij.contains("$HOME/.local/bin:$HOME/bin:$PATH"));
+        assert!(zellij.contains("target_command=\"$(command -v zellij"));
+        assert!(zellij.contains("\"$target_command\" --version"));
+
+        let herdr = target_command_probe_script("herdr");
+        assert!(herdr.contains("$HOME/.local/bin:$HOME/bin:$PATH"));
+        assert!(herdr.contains("target_command=\"$(command -v herdr"));
+        assert!(herdr.contains("$HOME/.local/bin/herdr"));
+        assert!(!herdr.contains("--version"));
+    }
+
+    #[test]
+    fn command_probe_switches_to_instance_login_user() {
+        let script = target_command_probe_bootstrap_script("herdr", "admin");
+
+        assert!(script.contains("user='admin'"));
+        assert!(script.contains(
+            "setpriv --reuid \"$uid\" --regid \"$gid\" --init-groups /bin/sh -lc \"$probe_script\""
+        ));
+        assert!(script.contains("exec su -s /bin/sh \"$user\" -c \"$probe_script\""));
+        assert!(script.contains("PATH=\"$home/.local/bin:$home/bin:$PATH\""));
     }
 
     #[test]

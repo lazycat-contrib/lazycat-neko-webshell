@@ -196,8 +196,10 @@ import {
   isRunningInstance,
   lastTabStorageKey,
   normalizeSelector,
+  readRememberedHerdrOutputSequence,
   readRememberedSelector,
   readRememberedTabId,
+  rememberHerdrOutputSequence,
   rememberSelector,
   requestedTabIdFromLocation,
   updateWorkspaceLocation,
@@ -207,6 +209,8 @@ import { zellijPaneModeInput, zellijSplitKey } from "./zellij-backend";
 
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
+const HERDR_REPLAY_TAIL_FRAMES = 80;
+const HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS = 500;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
 const MOBILE_TERMINAL_TAP_MOVE_THRESHOLD_PX = 18;
@@ -252,6 +256,8 @@ let herdrEventRefreshTimer: number | undefined;
 let sessionBackendsState: SessionBackendsState | undefined;
 let sessionBackendsGeneration = 0;
 const herdrAutoRestoredSelectors = new Set<string>();
+const pendingHerdrOutputSequences = new Map<string, number>();
+const herdrOutputSequenceTimers = new Map<string, number>();
 let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
 let pluginsLoading = false;
@@ -1069,6 +1075,7 @@ function bindActions() {
 }
 
 function bindLifecycleEvents() {
+  window.addEventListener("pagehide", flushHerdrOutputSequences);
   window.addEventListener("online", () => {
     void connectRestoredPanes();
     void refreshSessionBackends(selectedSelector);
@@ -3682,6 +3689,7 @@ async function restoreWorkspacePane(
   pane.sessionId = paneState.session_id;
   pane.sessionStatus = paneState.status;
   pane.sessionBackend = normalizeSessionMode(paneState.session_backend);
+  restoreHerdrOutputSequence(pane);
   pane.cols = paneState.cols || INITIAL_COLS;
   pane.rows = paneState.rows || INITIAL_ROWS;
   pane.exited = paneState.status === "exited";
@@ -3709,9 +3717,18 @@ function preparePaneForFullReplay(pane: TerminalPane) {
   pane.term = undefined;
   pane.terminalShaderEffect = undefined;
   pane.socket = undefined;
+  pane.lastReplayAfter = undefined;
   pane.lastOutputSequence = 0;
   pane.titleBuffer = "";
   clearPendingInput(pane);
+}
+
+function restoreHerdrOutputSequence(pane: TerminalPane) {
+  if (pane.sessionBackend !== "herdr" || !pane.sessionId) return;
+  const remembered = readRememberedHerdrOutputSequence(pane.sessionId);
+  if (remembered > pane.lastOutputSequence) {
+    pane.lastOutputSequence = remembered;
+  }
 }
 
 function shouldConnectRestoredPane(pane: TerminalPane): boolean {
@@ -4087,6 +4104,8 @@ function connectPanePty(pane: TerminalPane) {
 function openSocket(pane: TerminalPane) {
   if (!pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
+  const replayAfter = replayAfterForPane(pane);
+  pane.lastReplayAfter = replayAfter;
   const url = webshellTerminalSocketUrl({
     selector: pane.selector,
     sessionId: pane.sessionId,
@@ -4095,7 +4114,7 @@ function openSocket(pane: TerminalPane) {
     cols: pane.cols || pane.term?.cols || INITIAL_COLS,
     rows: pane.rows || pane.term?.rows || INITIAL_ROWS,
     restart: settings.autoRestartSessions,
-    after: pane.lastOutputSequence,
+    after: replayAfter,
     outputLimit: settings.outputBufferLimit,
   });
 
@@ -4133,6 +4152,12 @@ function openSocket(pane: TerminalPane) {
     pane.transport?.notifyError(tr("status.socketError"));
     setPaneStatus(pane, tr("status.socketError"), "error");
   });
+}
+
+function replayAfterForPane(pane: TerminalPane): number {
+  const sequence = Number.isFinite(pane.lastOutputSequence) ? Math.max(0, Math.trunc(pane.lastOutputSequence)) : 0;
+  if (pane.sessionBackend !== "herdr" || sequence <= 0) return sequence;
+  return Math.max(0, sequence - HERDR_REPLAY_TAIL_FRAMES);
 }
 
 function beginReplayInputLock(pane: TerminalPane, socket: WebSocket) {
@@ -4178,6 +4203,62 @@ function sendRestartPolicy(pane: TerminalPane) {
   pane.socket.send(webshellRestartPolicyMessage(settings.autoRestartSessions));
 }
 
+function updatePaneOutputSequence(
+  pane: TerminalPane,
+  sequence: unknown,
+  options: { allowReset?: boolean } = {},
+) {
+  if (typeof sequence !== "number" || !Number.isFinite(sequence)) return;
+  const next = Math.max(0, Math.trunc(sequence));
+  const replayAfter = pane.lastReplayAfter ?? 0;
+  if (
+    pane.sessionBackend === "herdr"
+    && options.allowReset
+    && replayAfter > 0
+    && next < replayAfter
+    && next < pane.lastOutputSequence
+  ) {
+    pane.lastOutputSequence = next;
+  } else {
+    pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, next);
+  }
+  scheduleRememberHerdrOutputSequence(pane);
+}
+
+function scheduleRememberHerdrOutputSequence(pane: TerminalPane) {
+  if (pane.sessionBackend !== "herdr" || !pane.sessionId) return;
+  const sequence = Number.isFinite(pane.lastOutputSequence) ? Math.max(0, Math.trunc(pane.lastOutputSequence)) : 0;
+  const sessionId = pane.sessionId;
+  pendingHerdrOutputSequences.set(sessionId, sequence);
+  if (herdrOutputSequenceTimers.has(sessionId)) return;
+  const timer = window.setTimeout(() => {
+    herdrOutputSequenceTimers.delete(sessionId);
+    const pending = pendingHerdrOutputSequences.get(sessionId);
+    pendingHerdrOutputSequences.delete(sessionId);
+    if (pending !== undefined) {
+      rememberHerdrOutputSequence(sessionId, pending);
+    }
+  }, HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS);
+  herdrOutputSequenceTimers.set(sessionId, timer);
+}
+
+function flushHerdrOutputSequences() {
+  for (const timer of herdrOutputSequenceTimers.values()) {
+    window.clearTimeout(timer);
+  }
+  herdrOutputSequenceTimers.clear();
+  for (const pane of allPanes()) {
+    if (pane.sessionBackend === "herdr" && pane.sessionId) {
+      const sequence = Number.isFinite(pane.lastOutputSequence) ? Math.max(0, Math.trunc(pane.lastOutputSequence)) : 0;
+      pendingHerdrOutputSequences.set(pane.sessionId, sequence);
+    }
+  }
+  for (const [sessionId, sequence] of pendingHerdrOutputSequences) {
+    rememberHerdrOutputSequence(sessionId, sequence);
+  }
+  pendingHerdrOutputSequences.clear();
+}
+
 function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {
   if (pane.closing) return;
   if (event.data instanceof ArrayBuffer) {
@@ -4210,6 +4291,9 @@ function handleServerText(pane: TerminalPane, text: string) {
       setPaneStatus(pane, tr("status.terminalError"), "error");
       return;
     }
+    if (typeof event.replay_after === "number" && Number.isFinite(event.replay_after)) {
+      pane.lastReplayAfter = Math.max(0, Math.trunc(event.replay_after));
+    }
     pane.replaying = true;
   } else if (event.type === "error") {
     clearReplayInputLock(pane);
@@ -4233,7 +4317,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     pane.sessionStatus = "stopped";
     setPaneStatus(pane, event.message || tr("status.sessionStopped"), "neutral");
   } else if (event.type === "output-sequence") {
-    pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, event.sequence);
+    updatePaneOutputSequence(pane, event.sequence);
   } else if (event.type === "replay-complete") {
     if (!matchesPaneReplay(pane, event)) {
       clearReplayInputLock(pane);
@@ -4241,7 +4325,7 @@ function handleServerText(pane: TerminalPane, text: string) {
       setPaneStatus(pane, tr("status.terminalError"), "error");
       return;
     }
-    pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, event.last_sequence);
+    updatePaneOutputSequence(pane, event.last_sequence, { allowReset: true });
     finishReplayInputLock(pane);
   }
 }
