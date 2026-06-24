@@ -39,6 +39,7 @@ export type MessageKey =
   | "action.closePlugins"
   | "action.closeSettings"
   | "action.copySelection"
+  | "action.detectLocalFonts"
   | "action.focusTerminal"
   | "action.fullscreen"
   | "action.lightosHome"
@@ -90,6 +91,7 @@ export type MessageKey =
   | "cursor.underline"
   | "field.cursor"
   | "field.font"
+  | "field.fontHintTarget"
   | "field.fontPreview"
   | "field.fontSize"
   | "field.aiApiKey"
@@ -117,6 +119,7 @@ export type MessageKey =
   | "field.tabs"
   | "field.terminalBackgroundBlur"
   | "field.terminalBackgroundOpacity"
+  | "field.terminalShaderEffect"
   | "field.theme"
   | "field.themeName"
   | "field.themeSource"
@@ -127,8 +130,13 @@ export type MessageKey =
   | "fileKind.other"
   | "fileKind.symlink"
   | "font.builtIn"
+  | "font.local"
+  | "font.noLocal"
   | "font.noUploaded"
   | "font.uploaded"
+  | "hint.auto"
+  | "hint.light"
+  | "hint.normal"
   | "interfaceStyle.brass"
   | "interfaceStyle.candy"
   | "interfaceStyle.champagne"
@@ -181,11 +189,20 @@ export type MessageKey =
   | "setting.cursorBlink"
   | "setting.debugAdapter"
   | "setting.defaultSessionBackendHelp"
+  | "setting.aiTerminalContext"
+  | "setting.fontHinting"
+  | "setting.fontLigatures"
+  | "setting.fontRenderingHelp"
   | "setting.herdrHighlightHelp"
   | "setting.pluginDisabled"
   | "setting.pluginEnabled"
   | "setting.terminalBackground"
+  | "setting.terminalShaderHelp"
   | "setting.useResttyClipboard"
+  | "shader.interactiveGlow"
+  | "shader.off"
+  | "shader.scanline"
+  | "shader.softVignette"
   | "shortcut.closeTab"
   | "shortcut.copyPaste"
   | "shortcut.mobileFont"
@@ -212,6 +229,8 @@ export type MessageKey =
   | "status.defaultBackend"
   | "status.fontDeleteFailed"
   | "status.fontLoadFailed"
+  | "status.localFontsLoaded"
+  | "status.localFontsUnavailable"
   | "status.fontReady"
   | "status.fontsReady"
   | "status.fontRegistrationFailed"
@@ -331,6 +350,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closePlugins": "Close plugins",
     "action.closeSettings": "Close settings",
     "action.copySelection": "Copy selection",
+    "action.detectLocalFonts": "Detect local fonts",
     "action.focusTerminal": "Focus terminal",
     "action.fullscreen": "Full screen",
     "action.lightosHome": "LightOS home",
@@ -382,6 +402,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "cursor.underline": "Underline",
     "field.cursor": "Cursor",
     "field.font": "Font",
+    "field.fontHintTarget": "Hinting mode",
     "field.fontPreview": "Font preview",
     "field.fontSize": "Font size",
     "field.aiApiKey": "API key",
@@ -409,6 +430,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.tabs": "Tabs",
     "field.terminalBackgroundBlur": "Background blur",
     "field.terminalBackgroundOpacity": "Background opacity",
+    "field.terminalShaderEffect": "Terminal effect",
     "field.theme": "Terminal theme",
     "field.themeName": "Theme name",
     "field.themeSource": "Ghostty theme",
@@ -419,8 +441,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "fileKind.other": "Other",
     "fileKind.symlink": "Symlink",
     "font.builtIn": "Built in",
+    "font.local": "Local",
+    "font.noLocal": "No local fonts detected",
     "font.noUploaded": "No uploaded fonts",
     "font.uploaded": "Uploaded",
+    "hint.auto": "Auto",
+    "hint.light": "Light",
+    "hint.normal": "Normal",
     "interfaceStyle.brass": "Brass",
     "interfaceStyle.candy": "Candy",
     "interfaceStyle.champagne": "Champagne",
@@ -480,11 +507,20 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.cursorBlink": "Cursor blink",
     "setting.debugAdapter": "Debug adapter",
     "setting.defaultSessionBackendHelp": "The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.",
+    "setting.aiTerminalContext": "Terminal context",
+    "setting.fontHinting": "Font hinting",
+    "setting.fontLigatures": "Programming ligatures",
+    "setting.fontRenderingHelp": "Ligatures shape operators such as => and !=. Font hinting can sharpen small text, but may cost extra rasterization time.",
     "setting.herdrHighlightHelp": "Customize the active Herdr workspace and tab background for dark and light interface styles.",
     "setting.pluginDisabled": "Disabled",
     "setting.pluginEnabled": "Enabled",
     "setting.terminalBackground": "Use background image",
+    "setting.terminalShaderHelp": "GPU effects are off by default. Enable them only when you want extra terminal feedback.",
     "setting.useResttyClipboard": "Use restty clipboard",
+    "shader.interactiveGlow": "Input glow",
+    "shader.off": "Off",
+    "shader.scanline": "Scanline",
+    "shader.softVignette": "Soft vignette",
     "shortcut.closeTab": "Close tab",
     "shortcut.copyPaste": "Copy or paste",
     "shortcut.mobileFont": "Adjust terminal font",
@@ -511,6 +547,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.defaultBackend": "Default",
     "status.fontDeleteFailed": "Font delete failed: {message}",
     "status.fontLoadFailed": "Font load failed: {message}",
+    "status.localFontsLoaded": "{count} local font(s) detected",
+    "status.localFontsUnavailable": "Local fonts unavailable: {message}",
     "status.fontReady": "{name} ready",
     "status.fontsReady": "{count} uploaded font(s) ready",
     "status.fontRegistrationFailed": "font registration failed",
@@ -629,6 +667,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closePlugins": "关闭插件",
     "action.closeSettings": "关闭设置",
     "action.copySelection": "复制选区",
+    "action.detectLocalFonts": "检测本地字体",
     "action.focusTerminal": "聚焦终端",
     "action.fullscreen": "全屏",
     "action.lightosHome": "LightOS 首页",
@@ -680,6 +719,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "cursor.underline": "下划线",
     "field.cursor": "光标",
     "field.font": "字体",
+    "field.fontHintTarget": "微调模式",
     "field.fontPreview": "字体预览",
     "field.fontSize": "字号",
     "field.aiApiKey": "API Key",
@@ -707,6 +747,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.tabs": "标签栏",
     "field.terminalBackgroundBlur": "背景模糊",
     "field.terminalBackgroundOpacity": "背景透明度",
+    "field.terminalShaderEffect": "终端特效",
     "field.theme": "终端主题",
     "field.themeName": "主题名称",
     "field.themeSource": "Ghostty 主题",
@@ -717,8 +758,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "fileKind.other": "其他",
     "fileKind.symlink": "软链接",
     "font.builtIn": "内置",
+    "font.local": "本地",
+    "font.noLocal": "尚未检测本地字体",
     "font.noUploaded": "暂无上传字体",
     "font.uploaded": "已上传",
+    "hint.auto": "自动",
+    "hint.light": "轻微",
+    "hint.normal": "标准",
     "interfaceStyle.brass": "黄铜",
     "interfaceStyle.candy": "糖果彩",
     "interfaceStyle.champagne": "浅黄铜",
@@ -778,11 +824,20 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.cursorBlink": "光标闪烁",
     "setting.debugAdapter": "调试适配器",
     "setting.defaultSessionBackendHelp": "+ 按钮使用这个后端创建。Herdr 已有引擎入口时，再点 + 会在同一个 Herdr session 里新建 Workspace。",
+    "setting.aiTerminalContext": "终端上下文",
+    "setting.fontHinting": "字体微调",
+    "setting.fontLigatures": "编程连字",
+    "setting.fontRenderingHelp": "编程连字会渲染 =>、!= 这类符号；字体微调可以让小字号更锐利，但可能增加一点字体栅格化开销。",
     "setting.herdrHighlightHelp": "分别设置深色和浅色界面风格下，Herdr 当前工作区和标签的背景色。",
     "setting.pluginDisabled": "已关闭",
     "setting.pluginEnabled": "已启用",
     "setting.terminalBackground": "使用背景图片",
+    "setting.terminalShaderHelp": "GPU 特效默认关闭。需要额外的输入反馈时再开启。",
     "setting.useResttyClipboard": "使用 restty 剪贴板",
+    "shader.interactiveGlow": "输入光效",
+    "shader.off": "关闭",
+    "shader.scanline": "扫描线",
+    "shader.softVignette": "柔和暗角",
     "shortcut.closeTab": "关闭标签",
     "shortcut.copyPaste": "复制或粘贴",
     "shortcut.mobileFont": "调整终端字号",
@@ -809,6 +864,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.defaultBackend": "默认",
     "status.fontDeleteFailed": "字体删除失败：{message}",
     "status.fontLoadFailed": "字体加载失败：{message}",
+    "status.localFontsLoaded": "已检测到 {count} 个本地字体",
+    "status.localFontsUnavailable": "本地字体不可用：{message}",
     "status.fontReady": "{name} 已就绪",
     "status.fontsReady": "{count} 个上传字体已就绪",
     "status.fontRegistrationFailed": "字体注册失败",

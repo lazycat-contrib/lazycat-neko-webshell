@@ -116,6 +116,15 @@ import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
 import {
+  isLocalFontPresetId,
+  localFontFamilyFromPresetId,
+  localFontPreset,
+  normalizeFontHintTarget,
+  normalizeLocalFontFamily,
+  queryBrowserLocalFonts,
+  renderTerminalFontRenderingSettings,
+} from "./terminal-fonts";
+import {
   installPaneTouchKeyboardGuard,
   installPaneViewportGuard,
   paneImeInput,
@@ -123,6 +132,8 @@ import {
   schedulePaneViewportReset,
 } from "./terminal-viewport";
 import { createPaneTerminal } from "./terminal-options";
+import { createAIContextPlugin, createTerminalShaderPlugin, TERMINAL_SHADER_PLUGIN_ID } from "./restty-plugins";
+import { normalizeTerminalShaderEffect, renderTerminalShaderSettings } from "./terminal-shaders";
 import {
   applyCursorAppearance,
   applyTerminalAppearance,
@@ -211,6 +222,7 @@ const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
 const MAX_AI_PROVIDER_PROFILES = 12;
+const AI_TERMINAL_CONTEXT_LINES = 40;
 type AISettingsTab = "ai" | "mcp";
 type AIConfigDialogState = { type: "ai"; profileId?: string; isNew?: boolean } | { type: "mcp"; index: number };
 const capabilityClient = createClient(
@@ -258,6 +270,7 @@ let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
 let contextPaneId: string | undefined;
 let customFonts: FontPreset[] = [];
+let localFonts: FontPreset[] = [];
 const mobileSticky = createMobileStickyState();
 const lastMobileTerminalTap = {
   paneId: "",
@@ -282,6 +295,7 @@ init().catch((error) => setGlobalStatus(tr("status.startupFailed", { message: er
 async function init() {
   updateViewportMetrics();
   settings = await loadSettings();
+  syncSelectedLocalFontPreset();
   syncActiveAiProviderProfile();
   await loadUploadedFonts();
   renderOptions();
@@ -373,7 +387,7 @@ function applyI18n() {
 
 function renderOptions() {
   renderThemeOptions();
-  elements.fontFamily.innerHTML = renderFontFamilyOptions(customFonts, tr);
+  elements.fontFamily.innerHTML = renderFontFamilyOptions(customFonts, localFonts, tr);
 }
 
 function renderThemeOptions() {
@@ -612,6 +626,8 @@ function bindSettings() {
     } else if (action === "toggle-provider-menu") {
       aiProviderPickerOpen = !aiProviderPickerOpen;
       renderPluginTools();
+    } else if (action === "toggle-terminal-context") {
+      toggleAIChatTerminalContext();
     }
   });
   elements.pluginToolBody.addEventListener("contextmenu", (event) => {
@@ -625,8 +641,37 @@ function bindSettings() {
   });
   elements.fontFamily.addEventListener("change", () => {
     settings.fontFamilyId = elements.fontFamily.value;
+    if (isLocalFontPresetId(settings.fontFamilyId)) {
+      settings.localFontFamily = localFontFamilyFromPresetId(settings.fontFamilyId);
+      syncSelectedLocalFontPreset();
+      renderOptions();
+    }
     saveSettings();
     applySettings({ resizeTerminals: true });
+  });
+  elements.detectLocalFonts.addEventListener("click", () => void detectLocalFonts());
+  elements.fontRenderingSettings.addEventListener("change", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const ligatures = target?.closest<HTMLInputElement>("#fontLigatures");
+    if (ligatures) {
+      settings.fontLigatures = ligatures.checked;
+      saveSettings();
+      applySettings();
+      return;
+    }
+    const hinting = target?.closest<HTMLInputElement>("#fontHinting");
+    if (hinting) {
+      settings.fontHinting = hinting.checked;
+      saveSettings();
+      applySettings();
+      return;
+    }
+    const hintTarget = target?.closest<HTMLSelectElement>("#fontHintTarget");
+    if (hintTarget) {
+      settings.fontHintTarget = normalizeFontHintTarget(hintTarget.value);
+      saveSettings();
+      applySettings();
+    }
   });
   elements.tabLayout.addEventListener("change", () => {
     settings.tabLayout = elements.tabLayout.value === "vertical" ? "vertical" : "horizontal";
@@ -692,6 +737,15 @@ function bindSettings() {
     settings.cursorShape = elements.cursorShape.value === "bar" || elements.cursorShape.value === "underline"
       ? elements.cursorShape.value
       : "block";
+    saveSettings();
+    applySettings();
+  });
+  elements.terminalShaderSettings.addEventListener("change", (event) => {
+    const select = event.target instanceof Element
+      ? event.target.closest<HTMLSelectElement>("[data-terminal-shader-effect]")
+      : null;
+    if (!select) return;
+    settings.terminalShaderEffect = normalizeTerminalShaderEffect(select.value);
     saveSettings();
     applySettings();
   });
@@ -1744,6 +1798,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.fontFamily.value = font.id;
   elements.fontPreview.style.fontFamily = font.family;
   elements.fontPreview.style.fontSize = `${settings.fontSize}px`;
+  elements.fontRenderingSettings.innerHTML = renderTerminalFontRenderingSettings({ settings, tr });
   elements.tabLayout.value = settings.tabLayout;
   applyWebshellStyle(elements.webshell, settings);
   elements.removeFont.disabled = !font.custom;
@@ -1762,6 +1817,10 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.terminalBackgroundOpacityValue.textContent = `${Math.round(settings.terminalBackgroundOpacity * 100)}%`;
   elements.terminalBackgroundBlur.value = String(settings.terminalBackgroundBlur);
   elements.terminalBackgroundBlurValue.textContent = `${settings.terminalBackgroundBlur}px`;
+  elements.terminalShaderSettings.innerHTML = renderTerminalShaderSettings({
+    selected: settings.terminalShaderEffect,
+    tr,
+  });
   elements.cursorBlink.checked = settings.cursorBlink;
   elements.cursorShape.value = settings.cursorShape;
   elements.copyOnSelect.checked = settings.copyOnSelect;
@@ -1774,6 +1833,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
 
   for (const pane of allPanes()) {
     applyTerminalAppearance(pane, appearance, reportFontLoadError);
+    void applyPaneShaderPlugin(pane);
     if (options.resizeTerminals) {
       pane.term?.restty?.setFontSize(settings.fontSize);
       pane.term?.restty?.updateSize(true);
@@ -1830,11 +1890,15 @@ function updateHerdrWorkspaceEntry() {
 }
 
 function currentFont(): FontPreset {
-  return currentTerminalFont(settings, customFonts);
+  return currentTerminalFont(settings, terminalFontPresets());
 }
 
 function currentAppearanceContext() {
-  return terminalAppearanceContext(settings, customFonts);
+  return terminalAppearanceContext(settings, terminalFontPresets());
+}
+
+function terminalFontPresets(): FontPreset[] {
+  return [...customFonts, ...localFonts];
 }
 
 function reportFontLoadError(error: unknown) {
@@ -1897,6 +1961,44 @@ async function loadUploadedFonts() {
     setFontStatus(customFonts.length ? tr("status.fontsReady", { count: customFonts.length }) : "");
   } catch (error) {
     setFontStatus(tr("status.fontLoadFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+function syncSelectedLocalFontPreset() {
+  const family = normalizeLocalFontFamily(settings.localFontFamily);
+  settings.localFontFamily = family;
+  const preset = localFontPreset(family);
+  if (!preset) {
+    localFonts = localFonts.filter((font) => !isLocalFontPresetId(font.id));
+    return;
+  }
+  localFonts = [
+    preset,
+    ...localFonts.filter((font) => font.id !== preset.id && !isLocalFontPresetId(font.id)),
+  ];
+}
+
+async function detectLocalFonts() {
+  elements.detectLocalFonts.disabled = true;
+  setFontStatus(tr("status.loadingGhostty"));
+  try {
+    const detected = await queryBrowserLocalFonts();
+    const selectedLocal = localFontPreset(settings.localFontFamily);
+    const byId = new Map<string, FontPreset>();
+    for (const font of detected) byId.set(font.id, font);
+    if (selectedLocal) byId.set(selectedLocal.id, selectedLocal);
+    localFonts = Array.from(byId.values()).sort((left, right) => left.label.localeCompare(right.label));
+    if (!localFonts.length) {
+      setFontStatus(tr("font.noLocal"));
+      return;
+    }
+    renderOptions();
+    applySettings();
+    setFontStatus(tr("status.localFontsLoaded", { count: localFonts.length }), "ok");
+  } catch (error) {
+    setFontStatus(tr("status.localFontsUnavailable", { message: errorMessage(error) }), "error");
+  } finally {
+    elements.detectLocalFonts.disabled = false;
   }
 }
 
@@ -2153,6 +2255,8 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
     providerProfiles: settings.aiProviderProfiles,
     activeProviderProfileId: settings.aiActiveProviderProfileId,
     providerPickerOpen: aiProviderPickerOpen,
+    sendTerminalContext: session.sendTerminalContext,
+    terminalContextPreview: session.sendTerminalContext ? recentAIContext(activePane()) : "",
     tr,
   });
 }
@@ -2565,7 +2669,7 @@ async function runAIChat() {
   try {
     await actionClient.send("ai", "chat", {
       input: prompt,
-      ctx: terminalAIContext(),
+      ctx: terminalAIContext(session.sendTerminalContext),
       conversation: session.messages.slice(0, -1).slice(-12),
     }, {
       onStream: (chunk) => {
@@ -2665,6 +2769,13 @@ function newAIChatSession() {
   renderPluginTools();
 }
 
+function toggleAIChatTerminalContext() {
+  if (aiChat.streaming) return;
+  const session = ensureAIChatSession(currentAIChatModelKey());
+  session.sendTerminalContext = !session.sendTerminalContext;
+  renderPluginTools();
+}
+
 function appendAIChatSystem(content: string, tone: Tone = "neutral") {
   aiChat.appendSystem(content, tone, currentAIChatModelKey(), tr("plugin.aiChat.block"), newId);
   renderPluginTools();
@@ -2687,6 +2798,8 @@ function renderAIChatMessages(): string {
   return renderAIChatMessagesView({
     messages: session.messages,
     streaming: aiChat.streaming,
+    sendTerminalContext: session.sendTerminalContext,
+    terminalContextPreview: session.sendTerminalContext ? recentAIContext(activePane()) : "",
     tr,
   });
 }
@@ -2726,7 +2839,7 @@ function aiAccessConfigured(): boolean {
   return Boolean(settings.aiBaseUrl.trim() && settings.aiApiKey.trim());
 }
 
-function terminalAIContext(): Record<string, unknown> {
+function terminalAIContext(includeTerminalContext: boolean): Record<string, unknown> {
   const pane = activePane();
   const context: Record<string, unknown> = {
     cwd: pane?.workingDirectory ?? "~",
@@ -2738,21 +2851,36 @@ function terminalAIContext(): Record<string, unknown> {
     history: [],
     last_command: "",
   };
-  if (settings.aiSendTerminalContext && pane) {
+  if (includeTerminalContext && pane) {
     context.recent_output = recentAIContext(pane);
-    context.context_lines = settings.aiContextLines;
+    context.context_lines = AI_TERMINAL_CONTEXT_LINES;
   }
   return context;
 }
 
-function recentAIContext(pane: TerminalPane): string {
-  return recentAIContextText(pane.aiContextText, settings.aiContextLines);
+function recentAIContext(pane: TerminalPane | undefined): string {
+  if (!pane) return "";
+  return recentAIContextText(pane.aiContextText, AI_TERMINAL_CONTEXT_LINES);
 }
 
 function appendAIContext(pane: TerminalPane, text: string) {
-  if (!text || pane.sessionBackend !== "webshell") return;
+  if (!text) return;
   pane.aiContextText = appendAIContextText(pane.aiContextText, text);
-  observeWorkingDirectory(pane, text);
+  updateAIContextLcd(pane);
+  if (pane.sessionBackend === "webshell") {
+    observeWorkingDirectory(pane, text);
+  }
+}
+
+function updateAIContextLcd(pane: TerminalPane) {
+  if (activePluginToolId !== AI_CHAT_PLUGIN_ID) return;
+  if (pane.id !== activePane()?.id) return;
+  const session = activeAIChatSession();
+  if (!session?.sendTerminalContext) return;
+  const preview = document.querySelector<HTMLElement>(".ai-context-lcd pre");
+  if (!preview) return;
+  preview.textContent = recentAIContext(pane).trim().split(/\r?\n/).slice(-12).join("\n");
+  preview.scrollTop = preview.scrollHeight;
 }
 
 async function activateFileBrowserEntry(path: string, open = false) {
@@ -3581,6 +3709,7 @@ function preparePaneForFullReplay(pane: TerminalPane) {
   flushPaneDecoder(pane);
   pane.term?.dispose();
   pane.term = undefined;
+  pane.terminalShaderEffect = undefined;
   pane.socket = undefined;
   pane.lastOutputSequence = 0;
   pane.titleBuffer = "";
@@ -3839,6 +3968,7 @@ function updatePaneActiveState(tab: TerminalTab) {
 
 async function mountTerminal(pane: TerminalPane) {
   pane.term?.dispose();
+  pane.terminalShaderEffect = undefined;
   pane.mount.innerHTML = "";
   applyThemeToMount(pane.mount, currentAppearanceContext());
   pane.decoder = new TextDecoder();
@@ -3848,6 +3978,9 @@ async function mountTerminal(pane: TerminalPane) {
     rows: pane.rows || INITIAL_ROWS,
     fontSources: resttyFontSourcesFor(currentFont()),
     fontSize: settings.fontSize,
+    fontLigatures: settings.fontLigatures,
+    fontHinting: settings.fontHinting,
+    fontHintTarget: settings.fontHintTarget,
     scrollbackLimit: settings.scrollbackLimit,
     touchSelectionMode: settings.touchSelectionMode,
     transport: pane.transport,
@@ -3861,6 +3994,7 @@ async function mountTerminal(pane: TerminalPane) {
   pane.term = term;
   term.open(pane.mount);
   term.restty?.setMouseMode("auto");
+  void installPaneResttyPlugins(pane);
   installPaneScrollbackFallback(pane, {
     touchSelectionMode: () => settings.touchSelectionMode,
   });
@@ -3875,6 +4009,41 @@ async function mountTerminal(pane: TerminalPane) {
   applyTerminalAppearance(pane, currentAppearanceContext(), reportFontLoadError);
   if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
     term.focus();
+  }
+}
+
+async function installPaneResttyPlugins(pane: TerminalPane) {
+  const restty = pane.term?.restty;
+  if (!restty || pane.closing) return;
+  try {
+    await restty.use(createAIContextPlugin({
+      onOutput: (text) => appendAIContext(pane, text),
+    }));
+  } catch (error) {
+    if (settings.debugMode) {
+      setGlobalStatus(tr("status.pluginLoadFailed", { message: errorMessage(error) }), "error");
+    }
+  }
+  await applyPaneShaderPlugin(pane);
+}
+
+async function applyPaneShaderPlugin(pane: TerminalPane) {
+  const restty = pane.term?.restty;
+  if (!restty || pane.closing) return;
+  const effect = normalizeTerminalShaderEffect(settings.terminalShaderEffect);
+  if (pane.terminalShaderEffect === effect) return;
+  try {
+    restty.unuse(TERMINAL_SHADER_PLUGIN_ID);
+    pane.terminalShaderEffect = "off";
+    if (effect !== "off") {
+      await restty.use(createTerminalShaderPlugin({ effect }));
+    }
+    pane.terminalShaderEffect = effect;
+  } catch (error) {
+    pane.terminalShaderEffect = undefined;
+    if (settings.debugMode) {
+      setGlobalStatus(tr("status.pluginLoadFailed", { message: errorMessage(error) }), "error");
+    }
   }
 }
 
@@ -4096,7 +4265,6 @@ function flushPaneDecoder(pane: TerminalPane) {
 }
 
 function writeTerminalText(pane: TerminalPane, text: string) {
-  appendAIContext(pane, text);
   observeTerminalTitle(pane, text);
   if (!pane.transport?.notifyData(text)) {
     pane.term?.write(text);
@@ -4174,6 +4342,7 @@ function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: 
   renderTabs();
   updateActiveDetails();
   renderHerdrDock();
+  refreshAIContextPreviewForActivePane();
   activePane()?.term?.focus();
   if (options.updateLocation !== false) {
     rememberActiveTab();
@@ -4202,6 +4371,7 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   renderTabs();
   updateActiveDetails();
   renderHerdrDock();
+  refreshAIContextPreviewForActivePane();
   if (options.focus !== false) {
     activePane(tab)?.term?.focus();
   }
@@ -4221,6 +4391,12 @@ function activateAdjacentPane(direction: -1 | 1) {
   if (next) {
     activatePane(tab.id, next.id);
   }
+}
+
+function refreshAIContextPreviewForActivePane() {
+  if (activePluginToolId !== AI_CHAT_PLUGIN_ID) return;
+  if (!activeAIChatSession()?.sendTerminalContext) return;
+  renderPluginTools();
 }
 
 function renderTabs() {
@@ -4506,6 +4682,7 @@ function disposePaneLocal(pane: TerminalPane) {
   clearPendingInput(pane);
   pane.term?.dispose();
   pane.term = undefined;
+  pane.terminalShaderEffect = undefined;
   pane.mount.remove();
 }
 

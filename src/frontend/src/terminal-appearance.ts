@@ -2,6 +2,7 @@ import type { GhosttyTheme } from "restty";
 
 import { FONT_PRESETS, THEMES } from "./config";
 import { resttyFontSourcesFor } from "./font-registry";
+import { applyTerminalFontRuntimeOptions } from "./terminal-fonts";
 import { resolveTheme, resttyThemeFor } from "./theme-registry";
 import type { CursorShape, FontPreset, Settings, TerminalPane, TerminalTheme } from "./types";
 
@@ -12,6 +13,9 @@ type TerminalAppearanceSettings = Pick<
   | "cursorBlink"
   | "cursorShape"
   | "fontFamilyId"
+  | "fontLigatures"
+  | "fontHinting"
+  | "fontHintTarget"
   | "fontSize"
   | "lineHeight"
   | "terminalBackgroundBlur"
@@ -127,6 +131,7 @@ export function applyTerminalAppearance(
   });
   applyCursorAppearance(pane, context.settings);
   term.restty.setFontSize(context.settings.fontSize);
+  applyTerminalFontRuntimeOptions(term, context.settings);
   void term.restty.setFontSources(resttyFontSourcesFor(context.font)).catch((error) => {
     onFontLoadError?.(error);
   });

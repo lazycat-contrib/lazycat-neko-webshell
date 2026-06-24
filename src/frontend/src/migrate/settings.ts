@@ -1,4 +1,6 @@
 import { DEFAULT_SETTINGS, INTERFACE_STYLE_IDS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "../config";
+import { normalizeFontHintTarget, normalizeLocalFontFamily } from "../terminal-fonts/options";
+import { normalizeTerminalShaderEffect } from "../terminal-shaders/options";
 import type { AiProviderProfile, CustomTerminalTheme, InterfaceStyleId, SessionBackendId, Settings } from "../types";
 import { clampNumber } from "../utils";
 
@@ -26,8 +28,12 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     interfaceStyleId: normalizeInterfaceStyleId(value.interfaceStyleId),
     customThemes: normalizeCustomThemes(value.customThemes),
     fontFamilyId: typeof value.fontFamilyId === "string" ? value.fontFamilyId : DEFAULT_SETTINGS.fontFamilyId,
+    localFontFamily: normalizeLocalFontFamily(value.localFontFamily),
     fontSize: clampNumber(value.fontSize, 11, 22, DEFAULT_SETTINGS.fontSize),
     lineHeight: clampNumber(value.lineHeight, 1.05, 1.6, DEFAULT_SETTINGS.lineHeight),
+    fontLigatures: value.fontLigatures ?? DEFAULT_SETTINGS.fontLigatures,
+    fontHinting: value.fontHinting ?? DEFAULT_SETTINGS.fontHinting,
+    fontHintTarget: normalizeFontHintTarget(value.fontHintTarget),
     cursorBlink: value.cursorBlink ?? DEFAULT_SETTINGS.cursorBlink,
     cursorShape: value.cursorShape === "bar" || value.cursorShape === "underline" ? value.cursorShape : "block",
     copyOnSelect: value.copyOnSelect ?? DEFAULT_SETTINGS.copyOnSelect,
@@ -46,6 +52,7 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     terminalBackgroundBlur: Math.round(
       clampNumber(value.terminalBackgroundBlur, 0, 24, DEFAULT_SETTINGS.terminalBackgroundBlur),
     ),
+    terminalShaderEffect: normalizeTerminalShaderEffect(value.terminalShaderEffect),
     scrollbackLimit: Math.round(
       clampNumber(value.scrollbackLimit, 1000, 100000, DEFAULT_SETTINGS.scrollbackLimit),
     ),
@@ -71,8 +78,6 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     aiProviderProfiles,
     aiActiveProviderProfileId,
     aiMcpServers: typeof value.aiMcpServers === "string" ? value.aiMcpServers : DEFAULT_SETTINGS.aiMcpServers,
-    aiSendTerminalContext: value.aiSendTerminalContext ?? DEFAULT_SETTINGS.aiSendTerminalContext,
-    aiContextLines: Math.round(clampNumber(value.aiContextLines, 0, 200, DEFAULT_SETTINGS.aiContextLines)),
   };
 }
 

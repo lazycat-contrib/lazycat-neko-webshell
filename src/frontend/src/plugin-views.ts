@@ -1,5 +1,6 @@
 import type { MessageKey } from "./i18n";
 import type { PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
+import { renderAIChatContextToggle } from "./ai-chat/options-view";
 import { renderChatMarkdown } from "./chat-markdown";
 import {
   AI_CHAT_PLUGIN_ID,
@@ -43,6 +44,8 @@ export type AIChatViewState = {
   providerProfiles: AiProviderProfile[];
   activeProviderProfileId: string;
   providerPickerOpen: boolean;
+  sendTerminalContext: boolean;
+  terminalContextPreview: string;
   tr: Translate;
 };
 
@@ -406,6 +409,11 @@ export function renderAIChatToolView(state: AIChatViewState): string {
               selected: state.selectedSessionId,
               disabled: state.disabled,
             })}
+            ${renderAIChatContextToggle({
+              enabled: state.sendTerminalContext,
+              disabled: state.disabled,
+              tr,
+            })}
             <button class="icon-button" type="button" data-ai-action="copy-output" aria-label="${escapeAttr(tr("action.aiCopy"))}" title="${escapeAttr(tr("action.aiCopy"))}" ${disabledAttr}>
               <i data-lucide="copy"></i>
             </button>
@@ -453,7 +461,7 @@ function renderAIProviderPicker(state: AIChatViewState): string {
   `;
 }
 
-export function renderAIChatMessages(state: Pick<AIChatViewState, "messages" | "streaming" | "tr">): string {
+export function renderAIChatMessages(state: Pick<AIChatViewState, "messages" | "streaming" | "sendTerminalContext" | "terminalContextPreview" | "tr">): string {
   if (!state.messages.length) {
     return `<div class="empty">${escapeHtml(state.tr("plugin.aiChat.description"))}</div>`;
   }
@@ -471,13 +479,25 @@ export function renderAIChatMessages(state: Pick<AIChatViewState, "messages" | "
     return `
     <article class="ai-chat-message ${escapeAttr(message.role)}" data-tone="${escapeAttr(message.tone ?? "neutral")}">
       <div class="ai-chat-message-head">
+        <span class="ai-chat-avatar" aria-hidden="true"><i data-lucide="${escapeAttr(aiChatRoleIcon(message.role))}"></i></span>
         <span class="ai-chat-message-role">${escapeHtml(aiChatRoleLabel(message.role))}</span>
+        ${message.role === "assistant" ? renderAIContextLcd(state) : ""}
         ${message.content.trim() ? `<button class="ai-message-copy" type="button" data-ai-action="copy-message" data-ai-message-index="${escapeAttr(String(index))}" aria-label="${escapeAttr(state.tr("action.aiCopy"))}" title="${escapeAttr(state.tr("action.aiCopy"))}"><i data-lucide="copy"></i></button>` : ""}
       </div>
       <div class="${escapeAttr(contentClass)}">${content}</div>
     </article>
   `;
   }).join("");
+}
+
+function renderAIContextLcd(state: Pick<AIChatViewState, "sendTerminalContext" | "terminalContextPreview" | "tr">): string {
+  if (!state.sendTerminalContext || !state.terminalContextPreview.trim()) return "";
+  const lines = state.terminalContextPreview.trim().split(/\r?\n/).slice(-12);
+  return `
+    <div class="ai-context-lcd" role="note" aria-label="${escapeAttr(state.tr("setting.aiTerminalContext"))}">
+      <pre>${escapeHtml(lines.join("\n"))}</pre>
+    </div>
+  `;
 }
 
 export function aiChatTranscript(session: AIChatSession): string {
@@ -618,6 +638,12 @@ function aiChatRoleLabel(role: AIChatMessage["role"]): string {
   if (role === "user") return "You";
   if (role === "assistant") return "AI";
   return "WebShell";
+}
+
+function aiChatRoleIcon(role: AIChatMessage["role"]): string {
+  if (role === "user") return "user";
+  if (role === "assistant") return "bot";
+  return "terminal";
 }
 
 function aiProviderLabel(provider: string, tr: Translate): string {

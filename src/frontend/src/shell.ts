@@ -70,6 +70,8 @@ export type ShellElements = {
   themeStatus: HTMLElement;
   fontFamily: HTMLSelectElement;
   fontPreview: HTMLDivElement;
+  detectLocalFonts: HTMLButtonElement;
+  fontRenderingSettings: HTMLDivElement;
   tabLayout: HTMLSelectElement;
   fontUpload: HTMLInputElement;
   removeFont: HTMLButtonElement;
@@ -88,6 +90,7 @@ export type ShellElements = {
   terminalBackgroundBlur: HTMLInputElement;
   terminalBackgroundBlurValue: HTMLOutputElement;
   terminalBackgroundStatus: HTMLElement;
+  terminalShaderSettings: HTMLDivElement;
   cursorBlink: HTMLInputElement;
   cursorShape: HTMLSelectElement;
   copyOnSelect: HTMLInputElement;
@@ -450,6 +453,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <option value="underline" data-i18n="cursor.underline">Underline</option>
                 </select>
               </label>
+              <div id="terminalShaderSettings" class="terminal-shader-settings"></div>
               <label class="field">
                 <span data-i18n="field.scrollback">Scrollback</span>
                 <input id="scrollbackLimit" type="number" min="1000" max="100000" step="1000" />
@@ -525,6 +529,10 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <span data-i18n="field.font">Font</span>
                   <select id="fontFamily"></select>
                 </label>
+                <button class="command-button font-local-button" id="detectLocalFonts" type="button" aria-label="Detect local fonts" title="Detect local fonts" data-i18n-aria="action.detectLocalFonts" data-i18n-title="action.detectLocalFonts">
+                  <i data-lucide="scan-search"></i>
+                  <span data-i18n="action.detectLocalFonts">Detect local fonts</span>
+                </button>
                 <div class="font-preview" id="fontPreview" aria-label="Font preview" data-i18n-aria="field.fontPreview">
                   <span data-i18n="app.title">Neko Webshell</span>
                   <code>λ ~/app $ ls -la --color=auto 0123456789</code>
@@ -537,6 +545,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                   <span><span data-i18n="field.lineHeight">Line height</span> <output id="lineHeightValue"></output></span>
                   <input id="lineHeight" type="range" min="1.05" max="1.6" step="0.01" />
                 </label>
+                <div id="fontRenderingSettings"></div>
               </div>
               <div class="settings-tab-panel" id="fontUploadPanel" data-font-panel="font-upload" role="tabpanel" hidden>
                 <div class="font-actions">
@@ -702,6 +711,8 @@ export function renderShell(app: HTMLElement): ShellElements {
     themeStatus: qs<HTMLElement>("#themeStatus"),
     fontFamily: qs<HTMLSelectElement>("#fontFamily"),
     fontPreview: qs<HTMLDivElement>("#fontPreview"),
+    detectLocalFonts: qs<HTMLButtonElement>("#detectLocalFonts"),
+    fontRenderingSettings: qs<HTMLDivElement>("#fontRenderingSettings"),
     tabLayout: qs<HTMLSelectElement>("#tabLayout"),
     fontUpload: qs<HTMLInputElement>("#fontUpload"),
     removeFont: qs<HTMLButtonElement>("#removeFont"),
@@ -720,6 +731,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     terminalBackgroundBlur: qs<HTMLInputElement>("#terminalBackgroundBlur"),
     terminalBackgroundBlurValue: qs<HTMLOutputElement>("#terminalBackgroundBlurValue"),
     terminalBackgroundStatus: qs<HTMLElement>("#terminalBackgroundStatus"),
+    terminalShaderSettings: qs<HTMLDivElement>("#terminalShaderSettings"),
     cursorBlink: qs<HTMLInputElement>("#cursorBlink"),
     cursorShape: qs<HTMLSelectElement>("#cursorShape"),
     copyOnSelect: qs<HTMLInputElement>("#copyOnSelect"),

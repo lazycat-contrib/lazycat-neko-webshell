@@ -73,7 +73,7 @@ export const THEMES: TerminalTheme[] = [
   { id: "light", label: "Classic Light", ghosttyName: "Builtin Light", className: "theme-light" },
 ];
 
-const SYMBOLS_SOURCE = {
+export const SYMBOLS_SOURCE = {
   type: "url" as const,
   url: `${PREINSTALLED_FONT_BASE}SymbolsNerdFontMono-Regular.ttf`,
   label: "Symbols Nerd Font Mono",
@@ -148,9 +148,13 @@ export const DEFAULT_SETTINGS: Settings = {
   interfaceStyleId: "steel",
   customThemes: [],
   fontFamilyId: "system-mono",
+  localFontFamily: "",
   tabLayout: "horizontal",
   fontSize: 14,
   lineHeight: 1.22,
+  fontLigatures: true,
+  fontHinting: false,
+  fontHintTarget: "auto",
   cursorBlink: true,
   cursorShape: "block",
   copyOnSelect: false,
@@ -160,6 +164,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalBackgroundUrl: "",
   terminalBackgroundOpacity: 0.24,
   terminalBackgroundBlur: 0,
+  terminalShaderEffect: "off",
   scrollbackLimit: 10000,
   outputBufferLimit: 4096,
   defaultSessionBackend: "webshell",
@@ -174,6 +179,4 @@ export const DEFAULT_SETTINGS: Settings = {
   aiProviderProfiles: [],
   aiActiveProviderProfileId: "",
   aiMcpServers: "",
-  aiSendTerminalContext: false,
-  aiContextLines: 40,
 };

@@ -74,6 +74,7 @@ export class AIChatStore {
       id: createId(),
       model,
       title: `${titlePrefix} ${count}`,
+      sendTerminalContext: false,
       messages: [],
     };
   }

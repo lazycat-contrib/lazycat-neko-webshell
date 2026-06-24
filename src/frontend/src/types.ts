@@ -8,6 +8,8 @@ export type SplitPlacement = "up" | "down" | "left" | "right";
 export type SplitAxis = "rows" | "columns";
 export type LocaleSetting = "auto" | "en" | "zh-CN";
 export type TouchSelectionMode = "long-press" | "drag" | "off";
+export type TerminalShaderEffect = "off" | "interactive-glow" | "soft-vignette" | "scanline";
+export type TerminalFontHintTarget = "auto" | "light" | "normal";
 export type InterfaceStyleId =
   | "steel"
   | "glass"
@@ -134,6 +136,7 @@ export type AIChatSession = {
   id: string;
   model: string;
   title: string;
+  sendTerminalContext: boolean;
   messages: AIChatMessage[];
 };
 
@@ -246,9 +249,13 @@ export type Settings = {
   interfaceStyleId: InterfaceStyleId;
   customThemes: CustomTerminalTheme[];
   fontFamilyId: string;
+  localFontFamily: string;
   tabLayout: TabLayout;
   fontSize: number;
   lineHeight: number;
+  fontLigatures: boolean;
+  fontHinting: boolean;
+  fontHintTarget: TerminalFontHintTarget;
   cursorBlink: boolean;
   cursorShape: CursorShape;
   copyOnSelect: boolean;
@@ -258,6 +265,7 @@ export type Settings = {
   terminalBackgroundUrl: string;
   terminalBackgroundOpacity: number;
   terminalBackgroundBlur: number;
+  terminalShaderEffect: TerminalShaderEffect;
   scrollbackLimit: number;
   outputBufferLimit: number;
   defaultSessionBackend: SessionBackendId;
@@ -272,8 +280,6 @@ export type Settings = {
   aiProviderProfiles: AiProviderProfile[];
   aiActiveProviderProfileId: string;
   aiMcpServers: string;
-  aiSendTerminalContext: boolean;
-  aiContextLines: number;
 };
 
 export type TerminalPane = {
@@ -302,6 +308,7 @@ export type TerminalPane = {
   replaying: boolean;
   lastOutputSequence: number;
   aiContextText: string;
+  terminalShaderEffect?: TerminalShaderEffect;
   viewportGuardInstalled?: boolean;
   scrollbackFallbackInstalled?: boolean;
   touchKeyboardGuardInstalled?: boolean;

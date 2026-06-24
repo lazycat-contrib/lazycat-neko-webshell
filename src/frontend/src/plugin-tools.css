@@ -592,6 +592,59 @@
   font-weight: 500;
 }
 
+.ai-chat-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--component-border);
+  border-radius: 999px;
+  background: var(--component-wash);
+  color: var(--accent-fg);
+}
+
+.ai-chat-avatar svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ai-context-lcd {
+  display: grid;
+  flex: 0 1 min(178px, 42vw);
+  width: min(178px, 42vw);
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--line));
+  border-radius: 5px;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--accent) 8%, transparent) 0,
+      color-mix(in srgb, var(--accent) 8%, transparent) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    color-mix(in srgb, var(--accent) 10%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.ai-context-lcd pre {
+  margin: 0;
+  overflow: auto;
+  color: var(--accent-fg);
+  padding: 3px 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.15;
+  scrollbar-width: none;
+  white-space: pre;
+}
+
+.ai-context-lcd pre::-webkit-scrollbar {
+  display: none;
+}
+
 .ai-message-copy {
   display: inline-grid;
   place-items: center;
@@ -838,7 +891,7 @@
 }
 
 .ai-chat-model-row {
-  grid-template-columns: minmax(92px, 0.82fr) minmax(0, 1fr) minmax(0, 1fr) 32px 32px;
+  grid-template-columns: minmax(92px, 0.82fr) minmax(0, 1fr) minmax(0, 1fr) minmax(88px, auto) 32px 32px;
 }
 
 .ai-chat-input-row {
@@ -938,6 +991,48 @@
   width: 15px;
   height: 15px;
   color: var(--accent-fg);
+}
+
+.ai-context-toggle {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--input-border);
+  border-radius: 7px;
+  background:
+    var(--input-wash),
+    var(--input-bg);
+  color: var(--text);
+  padding: 0 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-context-toggle[aria-pressed="true"] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+}
+
+.ai-context-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ai-context-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ai-context-toggle span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-provider-button span {

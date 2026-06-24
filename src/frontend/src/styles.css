@@ -2031,6 +2031,21 @@ kbd {
   font-family: var(--font-mono);
 }
 
+.font-local-button {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.font-rendering-options {
+  margin-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 2px;
+}
+
+.font-hint-target {
+  margin-top: 10px;
+}
+
 .field.mobile-only-setting {
   display: none;
 }

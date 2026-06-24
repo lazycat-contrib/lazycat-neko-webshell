@@ -1,4 +1,4 @@
-import type { ResttyFontSource } from "restty";
+import type { ResttyFontHintTarget, ResttyFontSource } from "restty";
 import { Terminal } from "restty/xterm";
 
 import type { PaneTerminalTransport, TouchSelectionMode } from "./types";
@@ -12,6 +12,9 @@ export type PaneTerminalOptions = {
   cols: number;
   rows: number;
   fontSize: number;
+  fontLigatures: boolean;
+  fontHinting: boolean;
+  fontHintTarget: ResttyFontHintTarget;
   fontSources: ResttyFontSource[];
   scrollbackLimit: number;
   touchSelectionMode: TouchSelectionMode;
@@ -42,7 +45,9 @@ export function createPaneTerminal(options: PaneTerminalOptions): Terminal {
       renderer: "auto",
       fontPreset: "none",
       fontSize: options.fontSize,
-      ligatures: true,
+      ligatures: options.fontLigatures,
+      fontHinting: options.fontHinting,
+      fontHintTarget: options.fontHintTarget,
       autoResize: true,
       attachWindowEvents: true,
       attachCanvasEvents: true,
