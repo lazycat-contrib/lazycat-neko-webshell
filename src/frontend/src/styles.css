@@ -328,6 +328,12 @@ textarea:focus-visible {
   max-width: min(260px, 38vw);
 }
 
+.tab.pinned {
+  width: 46px;
+  min-width: 46px;
+  max-width: 46px;
+}
+
 .webshell[data-tab-layout="vertical"] .tab {
   width: 100%;
   height: 40px;
@@ -381,6 +387,7 @@ textarea:focus-visible {
   background: transparent;
   color: inherit;
   padding: 0 20px 0 10px;
+  cursor: pointer;
   transition: background 0.16s ease, box-shadow 0.16s ease;
 }
 
@@ -392,6 +399,11 @@ textarea:focus-visible {
   justify-content: flex-start;
   min-width: 0;
   max-width: 100%;
+}
+
+.tab.pinned .tab-main {
+  width: 100%;
+  padding: 0 12px 0 8px;
 }
 
 .webshell[data-tab-layout="vertical"].has-named-tabs .tab-main {
@@ -449,6 +461,20 @@ textarea:focus-visible {
   text-align: center;
 }
 
+.tab-pin-glyph {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--control-hover-bg);
+  color: var(--tab-active-fg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .webshell[data-tab-layout="vertical"].has-named-tabs .tab-title {
   max-width: 124px;
 }
@@ -469,6 +495,60 @@ textarea:focus-visible {
 
 .webshell[data-tab-layout="vertical"].has-named-tabs .tab-rename {
   width: 124px;
+}
+
+.tab-pin-actions {
+  position: absolute;
+  top: 50%;
+  right: 22px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.tab.pinned .tab-pin-actions {
+  right: 20px;
+}
+
+.tab:hover .tab-pin-actions,
+.tab:focus-within .tab-pin-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tab-pin-toggle,
+.tab-pin-move {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+}
+
+.tab-pin-toggle:hover,
+.tab-pin-move:hover:not(:disabled) {
+  background: var(--control-hover-bg);
+}
+
+.tab-pin-move:disabled {
+  opacity: 0.3;
+}
+
+.tab-pin-toggle svg,
+.tab-pin-move svg {
+  width: 12px;
+  height: 12px;
 }
 
 .tab-close {

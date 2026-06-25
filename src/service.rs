@@ -10,7 +10,10 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::agent_client::ensure_agent;
-use crate::config::{APP_ID, APP_NAME, DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_COLS, MAX_ROWS};
+use crate::config::{
+    APP_ID, APP_NAME, DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, LIGHTOSCTL, MAX_COLS,
+    MAX_ROWS,
+};
 use crate::database::{TunnelProviderProfile, TunnelProviderProfileUpsert};
 use crate::lightos;
 use crate::plugins::{lightos_port_forward, tunnel};
@@ -506,15 +509,34 @@ impl CapabilityService for CapabilityServiceImpl {
         _ctx: RequestContext,
         request: OwnedCloseSessionRequestView,
     ) -> ServiceResult<CloseSessionResponse> {
-        let session_id = required_field(request.session_id, "session_id")?;
-        let closed =
-            close_workspace_session(&self.state, session_id).map_err(connect_workspace_error)?;
-        self.state
-            .sessions
-            .close_sessions(closed.closed_session_ids.iter().map(String::as_str));
+        let session_id = required_field(request.session_id, "session_id")?.to_owned();
+        match close_workspace_session(&self.state, &session_id) {
+            Ok(closed) => {
+                self.state
+                    .sessions
+                    .close_sessions(closed.closed_session_ids.iter().map(String::as_str));
+                return ConnectResponse::ok(CloseSessionResponse {
+                    session_id: Some(closed.session_id),
+                    status: Some(closed.status),
+                    ..Default::default()
+                });
+            }
+            Err(WorkspaceSessionError::NotFound(_)) => {}
+            Err(error) => return Err(connect_workspace_error(error)),
+        }
+        let selector = request
+            .selector
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ConnectError::invalid_argument(
+                    "selector is required to close agent-managed sessions",
+                )
+            })?;
+        close_agent_session(selector, &session_id).await?;
         ConnectResponse::ok(CloseSessionResponse {
-            session_id: Some(closed.session_id),
-            status: Some(closed.status),
+            session_id: Some(session_id),
+            status: Some("closed".to_owned()),
             ..Default::default()
         })
     }
@@ -1082,6 +1104,31 @@ fn shell_quote(value: &str) -> String {
     }
     quoted.push('\'');
     quoted
+}
+
+async fn close_agent_session(selector: &str, session_id: &str) -> Result<(), ConnectError> {
+    validate_selector(selector)?;
+    let login_user = lightos::login_user_for_selector(selector, true).await?;
+    let agent = ensure_agent(selector, &login_user)
+        .await
+        .map_err(|err| ConnectError::unavailable(err.to_string()))?;
+    agent
+        .close_session(
+            session_id,
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            DEFAULT_OUTPUT_FRAME_LIMIT,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|err| {
+            let message = err.to_string();
+            if message.contains("session not found") {
+                ConnectError::not_found(message)
+            } else {
+                ConnectError::internal(message)
+            }
+        })
 }
 
 fn connect_workspace_error(error: WorkspaceSessionError) -> ConnectError {

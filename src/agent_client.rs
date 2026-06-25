@@ -13,7 +13,8 @@ use tokio::time::{sleep, timeout};
 use tracing::warn;
 
 use crate::agent_protocol::{
-    AGENT_PROTOCOL_VERSION, action_request, ping_request, read_agent_response, state_request,
+    AGENT_PROTOCOL_VERSION, action_request, close_session_request, ping_request,
+    read_agent_response, state_request,
 };
 use crate::config::LIGHTOSCTL;
 use crate::proto::lazycat::webshell::v1::{
@@ -63,6 +64,24 @@ impl AgentClient {
             rows,
             output_limit,
             action,
+        );
+        response_state(run_agent_request(self, &request).await?)
+    }
+
+    pub async fn close_session(
+        &self,
+        session_id: &str,
+        cols: u16,
+        rows: u16,
+        output_limit: usize,
+    ) -> anyhow::Result<AgentWorkspaceState> {
+        let request = close_session_request(
+            self.selector.clone(),
+            self.username.clone(),
+            session_id.to_owned(),
+            cols,
+            rows,
+            output_limit,
         );
         response_state(run_agent_request(self, &request).await?)
     }

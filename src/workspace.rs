@@ -26,6 +26,10 @@ use crate::state::{
 };
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkspaceRecord {
     pub selector: String,
@@ -33,6 +37,16 @@ pub struct WorkspaceRecord {
     pub active_tab_id: Option<String>,
     #[serde(default)]
     pub tabs: Vec<WorkspaceTab>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub tab_metadata: HashMap<String, WorkspaceTabMetadata>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceTabMetadata {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_order: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -90,6 +104,10 @@ pub struct WorkspaceTabState {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_label: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pinned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned_order: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active_pane_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -132,6 +150,8 @@ pub struct WorkspaceActionRequest {
     output_limit: Option<usize>,
     auto_restart: Option<bool>,
     session_backend: Option<SessionBackend>,
+    pinned: Option<bool>,
+    pinned_order: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -203,6 +223,7 @@ pub enum WorkspaceAction {
     ActivatePane,
     PromotePaneToTab,
     UpdateLayout,
+    SetTabPinned,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -428,6 +449,9 @@ fn workspace_action_uses_legacy_store(
     selector: &str,
     request: &WorkspaceActionRequest,
 ) -> bool {
+    if request.action == WorkspaceAction::SetTabPinned {
+        return true;
+    }
     match request.session_backend {
         Some(SessionBackend::Herdr | SessionBackend::Zellij) => return true,
         Some(SessionBackend::Webshell) => return false,
@@ -489,7 +513,60 @@ fn merge_optional_backend_tabs(
     {
         workspace.active_tab_id = optional.active_tab_id;
     }
+    sync_workspace_tab_metadata(state, &mut workspace);
     workspace
+}
+
+fn sync_workspace_tab_metadata(state: &AppState, workspace: &mut WorkspaceState) {
+    let selector = workspace.selector.clone();
+    let tab_ids = workspace
+        .tabs
+        .iter()
+        .map(|tab| tab.id.clone())
+        .collect::<Vec<_>>();
+    let workspace_snapshot = {
+        let Ok(mut workspaces) = state.workspaces.write() else {
+            sort_workspace_tabs(workspace);
+            return;
+        };
+        let Some(record) = workspaces.get_mut(&selector) else {
+            sort_workspace_tabs(workspace);
+            return;
+        };
+        let changed = record.normalize_tab_metadata(Some(&tab_ids));
+        record.apply_tab_metadata(workspace);
+        sort_workspace_tabs(workspace);
+        changed.then(|| workspaces.clone())
+    };
+    if let Some(workspaces) = workspace_snapshot
+        && let Err(err) = state.persist_workspaces_snapshot(&workspaces)
+    {
+        warn!(error = %err, selector = %selector, "failed to persist normalized tab metadata");
+    }
+}
+
+fn sort_workspace_tabs(workspace: &mut WorkspaceState) {
+    let original_index = workspace
+        .tabs
+        .iter()
+        .enumerate()
+        .map(|(index, tab)| (tab.id.clone(), index))
+        .collect::<HashMap<_, _>>();
+    workspace.tabs.sort_by(|left, right| {
+        tab_sort_key(left, &original_index).cmp(&tab_sort_key(right, &original_index))
+    });
+}
+
+fn tab_sort_key(
+    tab: &WorkspaceTabState,
+    original_index: &HashMap<String, usize>,
+) -> (u8, u32, usize) {
+    let index = original_index.get(&tab.id).copied().unwrap_or(usize::MAX);
+    if tab.pinned {
+        (0, tab.pinned_order.unwrap_or(u32::MAX), index)
+    } else {
+        (1, u32::MAX, index)
+    }
 }
 
 fn optional_backend_workspace_state(state: &AppState, selector: &str) -> WorkspaceState {
@@ -562,6 +639,8 @@ fn workspace_state_from_agent(state: AgentWorkspaceState) -> WorkspaceState {
                 id: tab.id.unwrap_or_default(),
                 label: tab.label.unwrap_or_default(),
                 custom_label: tab.custom_label,
+                pinned: false,
+                pinned_order: None,
                 active_pane_id: tab.active_pane_id,
                 layout: tab
                     .layout
@@ -612,6 +691,9 @@ fn workspace_layout_from_agent(node: AgentLayoutNode) -> Option<WorkspaceLayoutN
 fn agent_action_from_workspace_request(
     request: &WorkspaceActionRequest,
 ) -> Result<AgentWorkspaceAction, String> {
+    if request.action == WorkspaceAction::SetTabPinned {
+        return Err("set_tab_pinned is handled by workspace metadata".to_owned());
+    }
     Ok(AgentWorkspaceAction {
         action: Some(agent_action_type(request.action).into()),
         tab_id: request.tab_id.clone(),
@@ -656,6 +738,9 @@ fn agent_action_type(action: WorkspaceAction) -> AgentWorkspaceActionType {
         }
         WorkspaceAction::UpdateLayout => {
             AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_UPDATE_LAYOUT
+        }
+        WorkspaceAction::SetTabPinned => {
+            AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_UNSPECIFIED
         }
     }
 }
@@ -786,7 +871,9 @@ fn apply_workspace_action(
         let workspace = workspaces
             .entry(selector.to_owned())
             .or_insert_with(|| WorkspaceRecord::new(selector));
-        if request.action == WorkspaceAction::CreateTab {
+        if request.action == WorkspaceAction::SetTabPinned {
+            workspace.repair();
+        } else if request.action == WorkspaceAction::CreateTab {
             workspace.repair();
         } else {
             workspace.ensure_ready(&mut sessions, defaults);
@@ -826,6 +913,7 @@ impl WorkspaceRecord {
             selector: selector.to_owned(),
             active_tab_id: None,
             tabs: Vec::new(),
+            tab_metadata: HashMap::new(),
         }
     }
 
@@ -911,6 +999,17 @@ impl WorkspaceRecord {
                     request.active_pane_id.as_deref(),
                 )?;
             }
+            WorkspaceAction::SetTabPinned => {
+                let tab_id = request
+                    .tab_id
+                    .as_deref()
+                    .ok_or_else(|| "tab_id is required".to_owned())?;
+                self.set_tab_pinned(
+                    tab_id,
+                    request.pinned.unwrap_or(false),
+                    request.pinned_order,
+                )?;
+            }
         }
         self.repair();
         Ok(())
@@ -940,6 +1039,15 @@ impl WorkspaceRecord {
                         .clone()
                         .unwrap_or_else(|| (index + 1).to_string()),
                     custom_label: tab.custom_label.clone(),
+                    pinned: self
+                        .tab_metadata
+                        .get(&tab.id)
+                        .is_some_and(|metadata| metadata.pinned),
+                    pinned_order: self
+                        .tab_metadata
+                        .get(&tab.id)
+                        .and_then(|metadata| metadata.pinned.then_some(metadata.pinned_order))
+                        .flatten(),
                     active_pane_id: tab.active_pane_id.clone(),
                     layout: tab.layout.clone(),
                     panes: tab
@@ -1139,6 +1247,79 @@ impl WorkspaceRecord {
             return Err("session not found in workspace".to_owned());
         };
         self.close_pane(&tab_id, &pane_id, sessions, closed_sessions)
+    }
+
+    fn set_tab_pinned(
+        &mut self,
+        tab_id: &str,
+        pinned: bool,
+        requested_order: Option<u32>,
+    ) -> Result<(), String> {
+        let tab_id = tab_id.trim();
+        if tab_id.is_empty() {
+            return Err("tab_id is required".to_owned());
+        }
+        if pinned {
+            let next_order = requested_order
+                .or_else(|| {
+                    self.tab_metadata
+                        .get(tab_id)
+                        .and_then(|metadata| metadata.pinned.then_some(metadata.pinned_order))
+                        .flatten()
+                })
+                .unwrap_or_else(|| self.next_pinned_order());
+            self.tab_metadata.insert(
+                tab_id.to_owned(),
+                WorkspaceTabMetadata {
+                    pinned: true,
+                    pinned_order: Some(next_order),
+                },
+            );
+        } else {
+            self.tab_metadata.remove(tab_id);
+        }
+        Ok(())
+    }
+
+    fn next_pinned_order(&self) -> u32 {
+        self.tab_metadata
+            .values()
+            .filter(|metadata| metadata.pinned)
+            .filter_map(|metadata| metadata.pinned_order)
+            .max()
+            .map_or(0, |order| order.saturating_add(1))
+    }
+
+    fn apply_tab_metadata(&self, workspace: &mut WorkspaceState) {
+        for tab in &mut workspace.tabs {
+            if let Some(metadata) = self.tab_metadata.get(&tab.id)
+                && metadata.pinned
+            {
+                tab.pinned = true;
+                tab.pinned_order = metadata.pinned_order;
+                continue;
+            }
+            tab.pinned = false;
+            tab.pinned_order = None;
+        }
+    }
+
+    fn normalize_tab_metadata(&mut self, visible_tab_ids: Option<&[String]>) -> bool {
+        let original = self.tab_metadata.clone();
+        if let Some(ids) = visible_tab_ids {
+            let visible = ids.iter().map(String::as_str).collect::<HashSet<_>>();
+            self.tab_metadata
+                .retain(|tab_id, _| visible.contains(tab_id.as_str()));
+        }
+        self.tab_metadata.retain(|_, metadata| metadata.pinned);
+        let mut next_order = self.next_pinned_order();
+        for metadata in self.tab_metadata.values_mut() {
+            if metadata.pinned_order.is_none() {
+                metadata.pinned_order = Some(next_order);
+                next_order = next_order.saturating_add(1);
+            }
+        }
+        self.tab_metadata != original
     }
 
     fn activate_pane(&mut self, tab_id: &str, pane_id: &str) -> Result<(), String> {
@@ -1756,6 +1937,8 @@ mod tests {
             output_limit: None,
             auto_restart: None,
             session_backend: None,
+            pinned: None,
+            pinned_order: None,
         };
         let defaults = WorkspaceTerminalDefaults::new(
             DEFAULT_COLS,
@@ -1810,6 +1993,7 @@ mod tests {
             WorkspaceRecord {
                 selector: "demo@owner".to_owned(),
                 active_tab_id: Some(tab_id.clone()),
+                tab_metadata: HashMap::new(),
                 tabs: vec![WorkspaceTab {
                     id: tab_id,
                     custom_label: Some("Build".to_owned()),
@@ -1862,6 +2046,8 @@ mod tests {
             output_limit: None,
             auto_restart: None,
             session_backend: Some(SessionBackend::Herdr),
+            pinned: None,
+            pinned_order: None,
         };
 
         let (workspace, closed) =
@@ -1871,6 +2057,111 @@ mod tests {
         assert_eq!(workspace.tabs.len(), 1);
         assert_eq!(workspace.tabs[0].panes.len(), 1);
         assert_eq!(workspace.tabs[0].panes[0].session_backend, "herdr");
+    }
+
+    #[test]
+    fn pinned_tab_order_is_not_reused_after_unpin() {
+        let mut workspace = WorkspaceRecord::new("demo@owner");
+
+        workspace.set_tab_pinned("tab-a", true, None).unwrap();
+        workspace.set_tab_pinned("tab-b", true, None).unwrap();
+        workspace.set_tab_pinned("tab-c", true, None).unwrap();
+        workspace.set_tab_pinned("tab-b", false, None).unwrap();
+        workspace.set_tab_pinned("tab-d", true, None).unwrap();
+
+        assert_eq!(
+            workspace
+                .tab_metadata
+                .get("tab-a")
+                .and_then(|metadata| metadata.pinned_order),
+            Some(0)
+        );
+        assert!(!workspace.tab_metadata.contains_key("tab-b"));
+        assert_eq!(
+            workspace
+                .tab_metadata
+                .get("tab-c")
+                .and_then(|metadata| metadata.pinned_order),
+            Some(2)
+        );
+        assert_eq!(
+            workspace
+                .tab_metadata
+                .get("tab-d")
+                .and_then(|metadata| metadata.pinned_order),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn pinned_tab_order_can_swap_adjacent_tabs() {
+        let mut workspace = WorkspaceRecord::new("demo@owner");
+
+        workspace.set_tab_pinned("tab-a", true, None).unwrap();
+        workspace.set_tab_pinned("tab-b", true, None).unwrap();
+        let a_order = workspace
+            .tab_metadata
+            .get("tab-a")
+            .and_then(|metadata| metadata.pinned_order)
+            .unwrap();
+        let b_order = workspace
+            .tab_metadata
+            .get("tab-b")
+            .and_then(|metadata| metadata.pinned_order)
+            .unwrap();
+
+        workspace
+            .set_tab_pinned("tab-b", true, Some(a_order))
+            .unwrap();
+        workspace
+            .set_tab_pinned("tab-a", true, Some(b_order))
+            .unwrap();
+
+        assert_eq!(
+            workspace
+                .tab_metadata
+                .get("tab-a")
+                .and_then(|metadata| metadata.pinned_order),
+            Some(b_order)
+        );
+        assert_eq!(
+            workspace
+                .tab_metadata
+                .get("tab-b")
+                .and_then(|metadata| metadata.pinned_order),
+            Some(a_order)
+        );
+    }
+
+    #[test]
+    fn pinned_metadata_applies_to_agent_tabs_without_local_tab_records() {
+        let state = test_app_state();
+        {
+            let mut workspaces = state.workspaces.write().unwrap();
+            let workspace = workspaces
+                .entry("demo@owner".to_owned())
+                .or_insert_with(|| WorkspaceRecord::new("demo@owner"));
+            workspace.set_tab_pinned("agent-tab", true, None).unwrap();
+        }
+        let mut workspace = WorkspaceState {
+            selector: "demo@owner".to_owned(),
+            active_tab_id: Some("agent-tab".to_owned()),
+            tabs: vec![WorkspaceTabState {
+                id: "agent-tab".to_owned(),
+                label: "1".to_owned(),
+                custom_label: None,
+                pinned: false,
+                pinned_order: None,
+                active_pane_id: None,
+                layout: None,
+                panes: Vec::new(),
+            }],
+        };
+
+        sync_workspace_tab_metadata(&state, &mut workspace);
+
+        assert!(workspace.tabs[0].pinned);
+        assert_eq!(workspace.tabs[0].pinned_order, Some(0));
     }
 
     #[test]

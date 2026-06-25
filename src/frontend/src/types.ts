@@ -49,6 +49,8 @@ export type WorkspaceTabState = {
   id: string;
   label: string;
   custom_label?: string;
+  pinned?: boolean;
+  pinned_order?: number;
   active_pane_id?: string;
   layout?: SplitNode;
   panes: WorkspacePaneState[];
@@ -69,7 +71,8 @@ export type WorkspaceAction =
   | "close_pane"
   | "activate_pane"
   | "promote_pane_to_tab"
-  | "update_layout";
+  | "update_layout"
+  | "set_tab_pinned";
 
 export type HerdrWorkspaceInfo = {
   workspace_id: string;
@@ -350,5 +353,7 @@ export type TerminalTab = {
   panes: TerminalPane[];
   activePaneId?: string;
   layout?: SplitNode;
+  pinned: boolean;
+  pinnedOrder?: number;
   closing: boolean;
 };

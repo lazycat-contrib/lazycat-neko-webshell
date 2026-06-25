@@ -168,6 +168,10 @@ impl AgentDaemon {
                 let response = self.action(&request).unwrap_or_else(error_response);
                 write_agent_response(stream, &response)?;
             }
+            Some(AgentRequestType::AGENT_REQUEST_TYPE_CLOSE_SESSION) => {
+                let response = self.close_session(&request).unwrap_or_else(error_response);
+                write_agent_response(stream, &response)?;
+            }
             Some(AgentRequestType::AGENT_REQUEST_TYPE_ATTACH) => {
                 self.attach(stream, &request)?;
             }
@@ -217,6 +221,27 @@ impl AgentDaemon {
             .ok_or_else(|| "workspace action is required".to_owned())?;
         workspace
             .apply_action(action, cols, rows, output_limit)
+            .map(state_response)
+            .map_err(|err| err.to_string())
+    }
+
+    fn close_session(
+        &self,
+        request: &AgentRequest,
+    ) -> Result<crate::proto::lazycat::webshell::v1::AgentResponse, String> {
+        let workspace = self
+            .workspace_for_request(request)
+            .map_err(|err| err.to_string())?;
+        let (cols, rows) = request_size(request).map_err(|err| err.to_string())?;
+        let output_limit = request_output_limit(request);
+        let session_id = request
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| "session_id is required".to_owned())?;
+        workspace
+            .close_session(session_id, cols, rows, output_limit)
             .map(state_response)
             .map_err(|err| err.to_string())
     }

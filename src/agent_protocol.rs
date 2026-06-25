@@ -8,7 +8,7 @@ use crate::proto::lazycat::webshell::v1::{
     AgentResize, AgentResponse, AgentWorkspaceAction, AgentWorkspaceState,
 };
 
-pub const AGENT_PROTOCOL_VERSION: &str = "lazycat-neko-webshell-agent-v2";
+pub const AGENT_PROTOCOL_VERSION: &str = "lazycat-neko-webshell-agent-v3";
 pub const MAX_AGENT_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 
 pub fn write_agent_message<W, M>(mut writer: W, message: &M) -> io::Result<()>
@@ -184,6 +184,20 @@ pub fn attach_request(
     request
 }
 
+pub fn close_session_request(
+    selector: impl Into<String>,
+    username: impl Into<String>,
+    session_id: impl Into<String>,
+    cols: u16,
+    rows: u16,
+    output_limit: usize,
+) -> AgentRequest {
+    let mut request = state_request(selector, username, cols, rows, output_limit);
+    request.r#type = Some(AgentRequestType::AGENT_REQUEST_TYPE_CLOSE_SESSION.into());
+    request.session_id = Some(session_id.into());
+    request
+}
+
 pub fn ok_response() -> AgentResponse {
     AgentResponse {
         ok: Some(true),
@@ -356,6 +370,19 @@ mod tests {
         assert_eq!(response.version.as_deref(), Some(AGENT_PROTOCOL_VERSION));
         assert_eq!(response.state.selector.as_deref(), Some("app@owner"));
         assert_eq!(response.state.active_tab_id.as_deref(), Some("tab-1"));
+    }
+
+    #[test]
+    fn close_session_request_carries_session_identity() {
+        let request = close_session_request("app@owner", "alice", "session-1", 120, 32, 256);
+
+        assert_eq!(
+            request.r#type.and_then(|kind| kind.as_known()),
+            Some(AgentRequestType::AGENT_REQUEST_TYPE_CLOSE_SESSION)
+        );
+        assert_eq!(request.selector.as_deref(), Some("app@owner"));
+        assert_eq!(request.username.as_deref(), Some("alice"));
+        assert_eq!(request.session_id.as_deref(), Some("session-1"));
     }
 
     #[test]

@@ -43,6 +43,10 @@ resize:<cols>,<rows>
 
 The browser uses Connect over HTTP for these APIs. This avoids forcing terminal byte streams through browser-limited request streaming while keeping platform operations typed.
 
+`CloseSession` accepts `session_id` and an optional `selector`. Provider-local workspace sessions can be closed with the session ID alone. Agent-managed sessions require the selector when the provider has no local workspace record, so the close request is routed to the correct instance-local agent instead of scanning or waking unrelated instances.
+
+Agent-managed close is explicit lifecycle cleanup: the agent resolves `session_id -> pane -> owning tab`, removes that pane from workspace state, closes the pane PTY, and repairs orphan panes that are no longer referenced by any tab. Non-active tabs or panes are not treated as idle and are not cleaned up unless they become unreachable orphan objects.
+
 ## Generic Plugin Protocol
 
 Plugins are described with:

@@ -33,6 +33,8 @@ export type WorkspaceActionRequestOptions = {
   layout?: SplitNode;
   activePaneId?: string;
   sessionBackend?: SessionBackendId;
+  pinned?: boolean;
+  pinnedOrder?: number;
 };
 
 export async function fetchInstances(): Promise<Instance[]> {
@@ -88,6 +90,8 @@ export async function runWorkspaceActionRequest(
       output_limit: options.outputLimit,
       auto_restart: options.autoRestart,
       session_backend: options.sessionBackend,
+      pinned: options.pinned,
+      pinned_order: options.pinnedOrder,
     }),
   });
   await throwIfFailed(response);

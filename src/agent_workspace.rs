@@ -249,6 +249,20 @@ impl AgentWorkspace {
         Ok(inner.snapshot())
     }
 
+    pub fn close_session(
+        &self,
+        session_id: &str,
+        cols: u16,
+        rows: u16,
+        output_limit: usize,
+    ) -> anyhow::Result<AgentWorkspaceState> {
+        let mut inner = self.lock_inner()?;
+        inner.update_existing_panes(cols, rows, output_limit)?;
+        inner.close_session(session_id)?;
+        inner.repair();
+        Ok(inner.snapshot())
+    }
+
     pub fn pane(&self, pane_id: &str) -> anyhow::Result<Arc<AgentPane>> {
         let inner = self.lock_inner()?;
         inner
@@ -551,6 +565,14 @@ impl AgentWorkspaceInner {
         Ok(())
     }
 
+    fn close_session(&mut self, session_id: &str) -> anyhow::Result<()> {
+        let session_id = required_string(Some(session_id), "session_id")?;
+        let Some((tab_id, pane_id)) = self.pane_for_session(session_id) else {
+            bail!("session not found")
+        };
+        self.close_pane(&tab_id, &pane_id)
+    }
+
     fn activate_pane(&mut self, tab_id: &str, pane_id: &str) -> anyhow::Result<()> {
         let tab = self
             .tab_mut(tab_id)
@@ -655,6 +677,18 @@ impl AgentWorkspaceInner {
             }
         }
         self.tabs.retain(|tab| !tab.pane_ids.is_empty());
+        let referenced_pane_ids = self
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.pane_ids.iter().cloned())
+            .collect::<std::collections::HashSet<_>>();
+        self.panes.retain(|pane_id, pane| {
+            let keep = referenced_pane_ids.contains(pane_id);
+            if !keep {
+                pane.close();
+            }
+            keep
+        });
         if !self
             .active_tab_id
             .as_deref()
@@ -679,6 +713,16 @@ impl AgentWorkspaceInner {
 
     fn tab_mut(&mut self, tab_id: &str) -> Option<&mut AgentTab> {
         self.tabs.iter_mut().find(|tab| tab.id == tab_id)
+    }
+
+    fn pane_for_session(&self, session_id: &str) -> Option<(String, String)> {
+        self.tabs.iter().find_map(|tab| {
+            tab.pane_ids.iter().find_map(|pane_id| {
+                self.panes.get(pane_id).and_then(|pane| {
+                    (pane.session_id() == session_id).then(|| (tab.id.clone(), pane_id.clone()))
+                })
+            })
+        })
     }
 
     fn next_tab_id(&mut self) -> String {
@@ -1047,5 +1091,81 @@ mod tests {
             .unwrap();
 
         assert_eq!(created.tabs.len(), 1);
+    }
+
+    #[test]
+    fn close_session_removes_the_matching_single_pane_tab() {
+        let workspace = AgentWorkspace::new("demo@owner", "");
+        let initial = workspace
+            .ensure_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+        let session_id = initial.tabs[0].panes[0].session_id.clone().unwrap();
+
+        let closed = workspace
+            .close_session(&session_id, DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+
+        assert_eq!(closed.tabs.len(), 0);
+        assert!(workspace.pane("pane-1").is_err());
+    }
+
+    #[test]
+    fn close_session_removes_only_the_matching_pane_from_a_split_tab() {
+        let workspace = AgentWorkspace::new("demo@owner", "");
+        let initial = workspace
+            .ensure_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+        let tab_id = initial.tabs[0].id.clone().unwrap();
+        let split = workspace
+            .apply_action(
+                &AgentWorkspaceAction {
+                    action: Some(
+                        AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_SPLIT_PANE.into(),
+                    ),
+                    tab_id: Some(tab_id.clone()),
+                    pane_id: Some("pane-1".to_owned()),
+                    direction: Some(AgentSplitDirection::AGENT_SPLIT_DIRECTION_RIGHT.into()),
+                    ..Default::default()
+                },
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                32,
+            )
+            .unwrap();
+        let session_id = split.tabs[0].panes[0].session_id.clone().unwrap();
+
+        let closed = workspace
+            .close_session(&session_id, DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+
+        assert_eq!(closed.tabs.len(), 1);
+        assert_eq!(closed.tabs[0].id.as_deref(), Some(tab_id.as_str()));
+        assert_eq!(closed.tabs[0].panes.len(), 1);
+        assert_ne!(
+            closed.tabs[0].panes[0].session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+    }
+
+    #[test]
+    fn repair_closes_unreferenced_orphan_panes() {
+        let workspace = AgentWorkspace::new("demo@owner", "");
+        workspace
+            .ensure_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+
+        let orphan_id = {
+            let mut inner = workspace.inner.lock().unwrap();
+            let orphan = inner.create_pane(DEFAULT_COLS, DEFAULT_ROWS, 32).unwrap();
+            let orphan_id = orphan.id().to_owned();
+            assert!(inner.panes.contains_key(&orphan_id));
+
+            inner.repair();
+
+            assert!(!inner.panes.contains_key(&orphan_id));
+            orphan_id
+        };
+
+        assert!(workspace.pane(&orphan_id).is_err());
     }
 }

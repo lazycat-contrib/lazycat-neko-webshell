@@ -80,6 +80,9 @@ export type MessageKey =
   | "action.refreshHerdr"
   | "action.refreshInstances"
   | "action.refreshPlugins"
+  | "action.movePinnedTabNext"
+  | "action.movePinnedTabPrevious"
+  | "action.pinTab"
   | "action.removeFont"
   | "action.removeTerminalBackground"
   | "action.removeTheme"
@@ -102,6 +105,7 @@ export type MessageKey =
   | "action.tunnelProfileRemove"
   | "action.uploadFont"
   | "action.uploadTerminalBackground"
+  | "action.unpinTab"
   | "action.useForTunnel"
   | "action.showToken"
   | "app.title"
@@ -489,6 +493,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.refreshHerdr": "Refresh Herdr",
     "action.refreshInstances": "Refresh instances",
     "action.refreshPlugins": "Refresh plugins",
+    "action.movePinnedTabNext": "Move pinned tab right",
+    "action.movePinnedTabPrevious": "Move pinned tab left",
+    "action.pinTab": "Pin tab",
     "action.removeFont": "Remove selected font",
     "action.removeTerminalBackground": "Remove terminal background",
     "action.removeTheme": "Remove custom theme",
@@ -511,6 +518,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.tunnelProfileRemove": "Remove configuration",
     "action.uploadFont": "Upload font",
     "action.uploadTerminalBackground": "Upload terminal background",
+    "action.unpinTab": "Unpin tab",
     "action.useForTunnel": "Use for tunnel",
     "action.showToken": "Show token",
     "app.title": "Neko Webshell",
@@ -904,6 +912,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.refreshHerdr": "刷新 Herdr",
     "action.refreshInstances": "刷新实例",
     "action.refreshPlugins": "刷新插件",
+    "action.movePinnedTabNext": "固定标签后移",
+    "action.movePinnedTabPrevious": "固定标签前移",
+    "action.pinTab": "固定标签",
     "action.removeFont": "移除当前字体",
     "action.removeTerminalBackground": "移除终端背景",
     "action.removeTheme": "删除自定义主题",
@@ -926,6 +937,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.tunnelProfileRemove": "移除配置",
     "action.uploadFont": "上传字体",
     "action.uploadTerminalBackground": "上传终端背景",
+    "action.unpinTab": "取消固定标签",
     "action.useForTunnel": "用于 Tunnel",
     "action.showToken": "显示 token",
     "app.title": "小橘Web Shell",

@@ -88,37 +88,37 @@ export const CJK_FONT_SOURCE = {
 export const FONT_PRESETS: FontPreset[] = [
   {
     id: "system-mono",
-    label: "System Mono",
-    family: "\"SFMono-Regular\", \"Cascadia Mono\", \"Consolas\", \"Liberation Mono\", monospace",
+    label: "Hack Nerd Font",
+    family: "\"Hack Nerd Font Mono\", \"Hack\", \"SFMono-Regular\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}Hack-Regular.woff2`, label: "Hack Regular" },
+      { type: "url", url: `${PREINSTALLED_FONT_BASE}HackNerdFontMono-Regular.ttf`, label: "Hack Nerd Font Mono" },
       SYMBOLS_SOURCE,
     ],
   },
   {
     id: "jetbrains",
-    label: "Hack",
-    family: "\"Hack\", \"SFMono-Regular\", \"Cascadia Mono\", monospace",
+    label: "JetBrainsMono Nerd Font",
+    family: "\"JetBrainsMono Nerd Font Mono\", \"JetBrainsMono NFM\", \"SFMono-Regular\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}Hack-Regular.woff2`, label: "Hack Regular" },
+      { type: "url", url: `${PREINSTALLED_FONT_BASE}JetBrainsMonoNerdFontMono-Regular.ttf`, label: "JetBrainsMono Nerd Font Mono" },
       SYMBOLS_SOURCE,
     ],
   },
   {
     id: "ibm-plex",
-    label: "Source Code Pro",
-    family: "\"Source Code Pro\", \"SFMono-Regular\", \"Cascadia Mono\", monospace",
+    label: "MesloLGS Nerd Font",
+    family: "\"MesloLGS Nerd Font Mono\", \"SFMono-Regular\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}SourceCodePro-Regular.ttf`, label: "Source Code Pro Regular" },
+      { type: "url", url: `${PREINSTALLED_FONT_BASE}MesloLGSNerdFontMono-Regular.ttf`, label: "MesloLGS Nerd Font Mono" },
       SYMBOLS_SOURCE,
     ],
   },
   {
     id: "fira-code",
-    label: "Fira Code",
-    family: "\"Fira Code\", \"SFMono-Regular\", \"Cascadia Mono\", monospace",
+    label: "FiraCode Nerd Font",
+    family: "\"FiraCode Nerd Font Mono\", \"Fira Code\", \"SFMono-Regular\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}FiraCode-Regular.ttf`, label: "Fira Code Regular" },
+      { type: "url", url: `${PREINSTALLED_FONT_BASE}FiraCodeNerdFontMono-Regular.ttf`, label: "FiraCode Nerd Font Mono" },
       SYMBOLS_SOURCE,
     ],
   },

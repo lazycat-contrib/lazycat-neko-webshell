@@ -1059,6 +1059,21 @@ function bindActions() {
       void requestCloseTab(closeButton.dataset.closeTab ?? "");
       return;
     }
+    const pinButton = target?.closest<HTMLElement>("[data-pin-tab]");
+    if (pinButton && elements.tabList.contains(pinButton)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void toggleTabPinned(pinButton.dataset.pinTab ?? "");
+      return;
+    }
+    const moveButton = target?.closest<HTMLElement>("[data-move-pinned-tab]");
+    if (moveButton && elements.tabList.contains(moveButton)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const direction = moveButton.dataset.direction === "-1" ? -1 : 1;
+      void movePinnedTab(moveButton.dataset.movePinnedTab ?? "", direction);
+      return;
+    }
     if (target instanceof HTMLInputElement) return;
     const tabButton = target?.closest<HTMLElement>(".tab-main[data-tab-id]");
     if (!tabButton || !elements.tabList.contains(tabButton)) return;
@@ -4669,6 +4684,8 @@ async function runWorkspaceAction(
     layout?: SplitNode;
     activePaneId?: string;
     sessionBackend?: SessionBackendId;
+    pinned?: boolean;
+    pinnedOrder?: number;
     apply?: boolean;
   } = {},
 ): Promise<WorkspaceState | undefined> {
@@ -4687,6 +4704,8 @@ async function runWorkspaceAction(
     layout: options.layout,
     activePaneId: options.activePaneId,
     sessionBackend: options.sessionBackend,
+    pinned: options.pinned,
+    pinnedOrder: options.pinnedOrder,
   });
   if (options.apply !== false) {
     await applyWorkspaceState(workspace, {
@@ -5296,6 +5315,8 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
   for (const tabState of workspace.tabs) {
     const tab = makeTab(workspaceSelector, tabState.id);
     tab.customTitle = tabState.custom_label?.trim() || undefined;
+    tab.pinned = tabState.pinned === true;
+    tab.pinnedOrder = typeof tabState.pinned_order === "number" ? tabState.pinned_order : undefined;
     tab.activePaneId = tabState.active_pane_id;
     tab.layout = tabState.layout;
     tabs = [...tabs, tab];
@@ -5508,6 +5529,8 @@ function makeTab(selector: string, restoredId?: string): TerminalTab {
     label: selectorLabel(selector),
     mount,
     panes: [],
+    pinned: false,
+    pinnedOrder: undefined,
     closing: false,
   };
 }
@@ -6206,6 +6229,10 @@ function renderTabs() {
     empty: tr("status.noSessions"),
     rename: tr("action.renameTab"),
     close: tr("action.closeTab"),
+    pin: tr("action.pinTab"),
+    unpin: tr("action.unpinTab"),
+    movePinnedPrevious: tr("action.movePinnedTabPrevious"),
+    movePinnedNext: tr("action.movePinnedTabNext"),
   });
   elements.tabList.querySelectorAll<HTMLInputElement>(".tab-rename[data-rename-tab]").forEach((input) => {
     input.addEventListener("keydown", (event) => {
@@ -6224,22 +6251,29 @@ function renderTabs() {
 }
 
 function tabViewItems(): TabViewItem[] {
+  const pinned = sortedPinnedTabs();
   return tabs.map((tab) => {
     const displayName = tabDisplayName(tab);
+    const pinnedIndex = tab.pinned ? pinned.findIndex((item) => item.id === tab.id) : -1;
     return {
       id: tab.id,
       active: tab.id === activeTabId,
       renaming: renamingTabId === tab.id,
-      named: tabHasTextTitle(tab, displayName),
+      named: !tab.pinned && tabHasTextTitle(tab, displayName),
+      pinned: tab.pinned,
+      pinnedGlyph: tabPinnedGlyph(tab, displayName),
+      canMovePinnedPrevious: pinnedIndex > 0,
+      canMovePinnedNext: pinnedIndex >= 0 && pinnedIndex < pinned.length - 1,
       displayName,
-      title: tabCurrentTitle(tab),
+      title: tab.pinned ? displayName : tabCurrentTitle(tab),
       tone: tabTone(tab),
     };
   });
 }
 
 function updateTabChrome() {
-  elements.webshell.classList.toggle("has-named-tabs", tabs.some((tab) => tabHasTextTitle(tab, tabDisplayName(tab))));
+  elements.webshell.classList.toggle("has-named-tabs", tabs.some((tab) => !tab.pinned && tabHasTextTitle(tab, tabDisplayName(tab))));
+  elements.webshell.classList.toggle("has-pinned-tabs", tabs.some((tab) => tab.pinned));
 }
 
 function tabDisplayName(tab: TerminalTab): string {
@@ -6251,6 +6285,24 @@ function tabDisplayName(tab: TerminalTab): string {
 
 function tabHasTextTitle(tab: TerminalTab, displayName = tabDisplayName(tab)): boolean {
   return Boolean(tab.customTitle?.trim()) || !/^\d+$/.test(displayName.trim());
+}
+
+function tabPinnedGlyph(tab: TerminalTab, displayName = tabDisplayName(tab)): string {
+  const source = displayName.trim() || tab.label.trim() || "T";
+  const match = Array.from(source).find((char) => /[\p{Letter}\p{Number}]/u.test(char));
+  return (match || source[0] || "T").toLocaleUpperCase();
+}
+
+function sortedPinnedTabs(): TerminalTab[] {
+  return tabs
+    .filter((tab) => tab.pinned)
+    .map((tab, index) => ({ tab, index }))
+    .sort((left, right) => {
+      const leftOrder = left.tab.pinnedOrder ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = right.tab.pinnedOrder ?? Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder || left.index - right.index;
+    })
+    .map((entry) => entry.tab);
 }
 
 function herdrWorkspaceLabelForTab(tab: TerminalTab): string {
@@ -6376,6 +6428,55 @@ function cancelTabRename() {
   renamingTabId = undefined;
   renderTabs();
   activePane()?.term?.focus();
+}
+
+async function toggleTabPinned(tabId: string) {
+  const tab = tabs.find((item) => item.id === tabId);
+  if (!tab) return;
+  try {
+    await runWorkspaceAction("set_tab_pinned", {
+      selector: tab.selector,
+      tabId,
+      pinned: !tab.pinned,
+    });
+  } catch (error) {
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+async function movePinnedTab(tabId: string, direction: -1 | 1) {
+  const pinned = sortedPinnedTabs();
+  const index = pinned.findIndex((tab) => tab.id === tabId);
+  const tab = pinned[index];
+  const neighbor = pinned[index + direction];
+  if (!tab || !neighbor) return;
+  const currentOrder = tab.pinnedOrder ?? index;
+  const neighborOrder = neighbor.pinnedOrder ?? index + direction;
+  const temporaryOrder = Math.max(currentOrder, neighborOrder, ...pinned.map((item, fallback) => item.pinnedOrder ?? fallback)) + 1;
+  try {
+    await runWorkspaceAction("set_tab_pinned", {
+      selector: tab.selector,
+      tabId: tab.id,
+      pinned: true,
+      pinnedOrder: temporaryOrder,
+      apply: false,
+    });
+    await runWorkspaceAction("set_tab_pinned", {
+      selector: neighbor.selector,
+      tabId: neighbor.id,
+      pinned: true,
+      pinnedOrder: currentOrder,
+      apply: false,
+    });
+    await runWorkspaceAction("set_tab_pinned", {
+      selector: tab.selector,
+      tabId: tab.id,
+      pinned: true,
+      pinnedOrder: neighborOrder,
+    });
+  } catch (error) {
+    setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+  }
 }
 
 function closeActiveTab() {
