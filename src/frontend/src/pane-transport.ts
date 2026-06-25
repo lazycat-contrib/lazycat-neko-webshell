@@ -44,6 +44,7 @@ export function createPaneTransport(
       pane.socket = undefined;
     },
     notifyConnect: () => {
+      if (!callbacks) return;
       connected = true;
       callbacks?.onConnect?.();
     },

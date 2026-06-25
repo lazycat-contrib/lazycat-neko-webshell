@@ -59,7 +59,12 @@ export function createNotificationController(options: NotificationControllerOpti
         await markNotificationRead(id);
         closeModalIfActive(id);
       } else if (command === "dismiss") {
-        await dismissNotification(id);
+        const notification = notificationById(id);
+        if (notification?.sourceKind === "pomodoro" && notificationHasAction(notification, "pomodoro.dismiss")) {
+          await runNotificationAction(id, "pomodoro.dismiss");
+        } else {
+          await dismissNotification(id);
+        }
         closeModalIfActive(id);
       }
       await refreshAfterMutation();
@@ -112,6 +117,14 @@ export function createNotificationController(options: NotificationControllerOpti
     if (options.activeModalId() === id) {
       options.closeModal();
     }
+  }
+
+  function notificationById(id: string): WebshellNotification | undefined {
+    return notifications.find((notification) => notification.id === id);
+  }
+
+  function notificationHasAction(notification: WebshellNotification, actionId: string): boolean {
+    return notification.actions.some((action) => action.id === actionId);
   }
 
   return {

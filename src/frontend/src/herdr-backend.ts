@@ -1,5 +1,5 @@
 import { boolField, recordField, stringField } from "./json-meta";
-import type { JsonRecord, SplitPlacement, Tone } from "./types";
+import type { JsonRecord, SplitPlacement, TerminalPane, TerminalTab, Tone } from "./types";
 
 const HERDR_SPLIT_DIRECTIONS: Partial<Record<SplitPlacement, "right" | "down">> = {
   right: "right",
@@ -8,6 +8,22 @@ const HERDR_SPLIT_DIRECTIONS: Partial<Record<SplitPlacement, "right" | "down">> 
 
 export function herdrSplitDirection(placement: SplitPlacement): "right" | "down" | undefined {
   return HERDR_SPLIT_DIRECTIONS[placement];
+}
+
+export function selectHerdrTerminalPane(
+  tab: TerminalTab | undefined,
+  preferredPane?: TerminalPane,
+): TerminalPane | undefined {
+  if (!tab) return undefined;
+  if (
+    preferredPane
+    && preferredPane.tabId === tab.id
+    && preferredPane.sessionBackend === "herdr"
+    && !preferredPane.closing
+  ) {
+    return preferredPane;
+  }
+  return tab.panes.find((pane) => pane.sessionBackend === "herdr" && !pane.closing);
 }
 
 export function herdrEventSocketUrl(selector: string): URL {

@@ -61,6 +61,7 @@ import {
   herdrFocusedOrFirstPaneId,
   herdrPaneIdsFromListResult,
   herdrSplitDirection,
+  selectHerdrTerminalPane,
 } from "./herdr-backend";
 import {
   renderHerdrTabButtons,
@@ -103,6 +104,11 @@ import {
   visibleTabPanes,
 } from "./pane-selection";
 import { createPaneTransport } from "./pane-transport";
+import {
+  destroyPaneTransport,
+  disposePaneTerminalRuntime,
+  replacePaneTransport,
+} from "./pane-runtime";
 import { createPaneMenuController } from "./pane-menu-controller";
 import {
   AI_CHAT_PLUGIN_ID,
@@ -175,6 +181,7 @@ import {
   normalizeFontHintTarget,
   renderTerminalFontRenderingSettings,
 } from "./terminal-fonts";
+import { focusPaneImeInput, preparePaneImeForKeyboardEvent } from "./terminal-ime";
 import {
   installPaneTouchKeyboardGuard,
   installPaneViewportGuard,
@@ -330,8 +337,8 @@ const paneMenuController = createPaneMenuController({
 });
 const mobileSymbolAgent = createMobileSymbolAgentController({
   activeHerdrPane: () => {
-    const pane = activePane();
-    if (!pane || pane.sessionBackend !== "herdr") return undefined;
+    const pane = activeHerdrTerminalPane();
+    if (!pane) return undefined;
     const selector = normalizeSelector(pane.selector || selectedSelector);
     if (!selector) return undefined;
     return { selector, sessionId: pane.sessionId ?? "" };
@@ -1388,6 +1395,7 @@ function bindActions() {
   bindSettingsTabs();
   bindLifecycleEvents();
   bindMobileShortcuts();
+  document.addEventListener("keydown", handleTerminalImeFocusCapture, true);
   document.addEventListener("keydown", handleTerminalInterruptCapture, true);
   document.addEventListener("keydown", handleTerminalClipboardCapture, true);
   document.addEventListener("paste", handleTerminalPasteEvent, true);
@@ -1563,7 +1571,7 @@ function activateFontTab(tabId: string) {
 async function runMobileQuickPhrase(id: string) {
   const phrase = settings.mobileQuickPhrases.find((item) => item.id === id);
   if (!phrase?.text) return;
-  const pane = activePane();
+  const pane = activeHerdrTerminalPane() ?? activePane();
   if (!pane) return;
   const sent = pane.sessionBackend === "herdr"
     ? await pasteTextIntoHerdrPane(pane, phrase.text, true)
@@ -1830,7 +1838,7 @@ async function toggleFullscreen() {
     }
   } catch {
     if (!mobileMode) {
-      activePane()?.term?.focus();
+      focusActivePaneCanvas();
     }
   } finally {
     handleViewportChange();
@@ -1858,7 +1866,7 @@ function closeMobileOverlaysBeforeViewportChange() {
 
 function restoreTerminalFocusAfterOverlay() {
   if (!isMobileOverlayMode()) {
-    activePane()?.term?.focus();
+    focusActivePaneCanvas();
   }
 }
 
@@ -1960,7 +1968,6 @@ function splitPlacementForPaneAction(action: string): SplitPlacement | undefined
 async function splitHerdrPane(pane: TerminalPane, placement: SplitPlacement): Promise<boolean> {
   const direction = herdrSplitDirection(placement);
   if (!direction) {
-    setBackendActionUnavailable(pane);
     return false;
   }
   const selector = await ensureHerdrSocketReady(pane);
@@ -1976,7 +1983,7 @@ async function splitHerdrPane(pane: TerminalPane, placement: SplitPlacement): Pr
   });
   await refreshHerdrState(selector);
   await syncHerdrEventBridge({ force: true });
-  activePane()?.term?.focus();
+  refreshHerdrPaneTerminalAfterAction(pane);
   return true;
 }
 
@@ -1990,7 +1997,7 @@ async function closeHerdrPane(pane: TerminalPane): Promise<boolean> {
   });
   await refreshHerdrState(selector);
   await syncHerdrEventBridge({ force: true });
-  activePane()?.term?.focus();
+  refreshHerdrPaneTerminalAfterAction(pane);
   return true;
 }
 
@@ -2020,7 +2027,7 @@ async function pasteTextIntoHerdrPane(pane: TerminalPane, text: string, report: 
       id: "lazycat-webshell:pane-paste",
       mirrorNotification: false,
     });
-    pane.term?.focus();
+    focusPaneCanvas(pane);
     return true;
   } catch (error) {
     if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
@@ -2055,7 +2062,7 @@ async function pasteClipboardImageIntoHerdrPane(
     imageUploadProgress.finish();
     void notifyHerdrImageUpload(selector, "status.imageUploadDone");
     if (report) setGlobalStatus(tr("status.imageUploadDone"), "ok");
-    pane.term?.focus();
+    focusPaneCanvas(pane);
     return true;
   } catch (error) {
     imageUploadProgress.fail();
@@ -2118,7 +2125,7 @@ function closeZellijPane(pane: TerminalPane): boolean {
 
 function sendZellijPaneModeKey(pane: TerminalPane, key: string): boolean {
   if (sendPaneInput(pane, zellijPaneModeInput(key))) {
-    pane.term?.focus();
+    focusPaneCanvas(pane);
     return true;
   }
   setBackendActionFailed(pane, "input unavailable");
@@ -3371,7 +3378,7 @@ async function runHerdrAction(
     herdrState = state;
     renderHerdrDock();
     refreshHerdrTerminalAfterAction(selector, action);
-    activePane()?.term?.focus();
+    focusActivePaneCanvas();
   } catch (error) {
     elements.herdrStatus.textContent = tr("status.herdrActionFailed", { message: errorMessage(error) });
   }
@@ -3381,10 +3388,7 @@ function refreshHerdrTerminalAfterAction(selector: string, action: HerdrAction) 
   if (!herdrActionChangesVisibleScreen(action)) return;
   const match = findPaneBySessionBackend(selector, "herdr");
   if (!match) return;
-  refreshHerdrPaneTerminal(match.pane);
-  for (const delay of HERDR_FOCUS_REFRESH_DELAYS_MS) {
-    window.setTimeout(() => refreshHerdrPaneTerminal(match.pane), delay);
-  }
+  refreshHerdrPaneTerminalAfterAction(match.pane);
 }
 
 function herdrActionChangesVisibleScreen(action: HerdrAction): boolean {
@@ -3404,6 +3408,14 @@ function refreshHerdrPaneTerminal(pane: TerminalPane) {
   if (pane.socket?.readyState !== WebSocket.CONNECTING) {
     connectPanePty(pane);
   }
+}
+
+function refreshHerdrPaneTerminalAfterAction(pane: TerminalPane) {
+  refreshHerdrPaneTerminal(pane);
+  for (const delay of HERDR_FOCUS_REFRESH_DELAYS_MS) {
+    window.setTimeout(() => refreshHerdrPaneTerminal(pane), delay);
+  }
+  focusPaneCanvas(pane);
 }
 
 async function ensureHerdrEntry(selector = selectedSelector): Promise<boolean> {
@@ -3481,8 +3493,7 @@ async function fetchHerdrPaneIds(selector: string): Promise<string[]> {
 
 async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   const selector = normalizeSelector(selectedSelector);
-  const activeMode = activePane()?.sessionBackend;
-  const shouldSubscribe = Boolean(selector && herdrState?.available && activeMode === "herdr");
+  const shouldSubscribe = Boolean(selector && herdrState?.available && activeHerdrTerminalPane());
   if (!shouldSubscribe) {
     stopHerdrEventBridge();
     return;
@@ -3627,8 +3638,7 @@ function clearHerdrState() {
 
 function renderHerdrDock() {
   const hasHerdrControls = Boolean(herdrState?.available);
-  const activeMode = activePane()?.sessionBackend;
-  const showHerdrControls = hasHerdrControls && activeMode === "herdr";
+  const showHerdrControls = hasHerdrControls && Boolean(activeHerdrTerminalPane());
   updateSessionBackendSettings();
   if (!showHerdrControls) {
     elements.webshell.classList.remove("has-herdr");
@@ -3702,6 +3712,11 @@ function findPaneBySessionBackend(
   mode: SessionMode,
 ): { tab: TerminalTab; pane: TerminalPane } | undefined {
   return findSessionBackendPane(tabs, selector, mode);
+}
+
+function activeHerdrTerminalPane(): TerminalPane | undefined {
+  const tab = activeTab();
+  return selectHerdrTerminalPane(tab, activePane(tab));
 }
 
 function renderNewTabMenu() {
@@ -3941,12 +3956,9 @@ async function restoreWorkspacePane(
 function preparePaneForFullReplay(pane: TerminalPane) {
   window.clearTimeout(pane.reconnectTimer);
   clearReplayInputLock(pane);
-  pane.transport?.disconnect();
   flushPaneDecoder(pane);
-  pane.term?.dispose();
-  pane.term = undefined;
-  pane.terminalShaderEffect = undefined;
-  pane.socket = undefined;
+  disposePaneTerminalRuntime(pane);
+  destroyPaneTransport(pane);
   pane.lastReplayAfter = undefined;
   pane.lastOutputSequence = 0;
   pane.titleBuffer = "";
@@ -4165,21 +4177,26 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     cols: INITIAL_COLS,
     rows: INITIAL_ROWS,
   };
-  pane.transport = createPaneTransport(pane, {
+  applyThemeToMount(mount, currentAppearanceContext());
+  return pane;
+}
+
+function createPaneRuntimeTransport(pane: TerminalPane) {
+  return createPaneTransport(pane, {
     updateSize: updatePaneTerminalSize,
     openSocket,
     sendInput: sendPaneInput,
     resize: sendPaneResize,
   });
-  applyThemeToMount(mount, currentAppearanceContext());
-  return pane;
 }
 
 async function createPane(tab: TerminalTab, placement: SplitPlacement) {
   const pane = activePane(tab);
-  if (pane?.sessionBackend === "herdr") {
+  const herdrPane = selectHerdrTerminalPane(tab, pane);
+  if (herdrPane) {
+    if (!herdrSplitDirection(placement)) return;
     try {
-      await splitHerdrPane(pane, placement);
+      await splitHerdrPane(herdrPane, placement);
     } catch (error) {
       setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
     }
@@ -4231,8 +4248,8 @@ function updatePaneActiveState(tab: TerminalTab) {
 }
 
 async function mountTerminal(pane: TerminalPane) {
-  pane.term?.dispose();
-  pane.terminalShaderEffect = undefined;
+  disposePaneTerminalRuntime(pane);
+  const transport = replacePaneTransport(pane, createPaneRuntimeTransport);
   pane.mount.innerHTML = "";
   applyThemeToMount(pane.mount, currentAppearanceContext());
   pane.decoder = new TextDecoder();
@@ -4247,7 +4264,7 @@ async function mountTerminal(pane: TerminalPane) {
     fontHintTarget: settings.fontHintTarget,
     scrollbackLimit: settings.scrollbackLimit,
     touchSelectionMode: settings.touchSelectionMode,
-    transport: pane.transport,
+    transport,
     beforeInput: ({ text, source }) => transformMobileStickyInput(text, source),
     onGridSize: (cols, rows) => {
       handleTerminalResize(pane, cols, rows);
@@ -4272,7 +4289,7 @@ async function mountTerminal(pane: TerminalPane) {
   schedulePaneViewportReset(pane);
   applyTerminalAppearance(pane, currentAppearanceContext(), reportFontLoadError);
   if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
-    term.focus();
+    focusPaneCanvas(pane);
   }
 }
 
@@ -4382,7 +4399,7 @@ function openSocket(pane: TerminalPane) {
     sendOutputBufferLimit(pane);
     setPaneStatus(pane, tr("status.connected"), "ok");
     if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
-      pane.term?.focus();
+      focusPaneCanvas(pane);
     }
   });
   socket.addEventListener("message", (event) => {
@@ -4716,7 +4733,7 @@ function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: 
   updateActiveDetails();
   renderHerdrDock();
   refreshAIContextPreviewForActivePane();
-  activePane()?.term?.focus();
+  focusActivePaneCanvas();
   if (options.updateLocation !== false) {
     rememberActiveTab();
   }
@@ -4746,7 +4763,7 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   renderHerdrDock();
   refreshAIContextPreviewForActivePane();
   if (options.focus !== false) {
-    activePane(tab)?.term?.focus();
+    focusPaneCanvas(activePane(tab));
   }
   if (options.sync !== false) {
     void runWorkspaceAction("activate_pane", { selector: tab.selector, tabId, paneId, apply: false }).catch(() => undefined);
@@ -4880,7 +4897,7 @@ async function commitTabRename(tabId: string, value: string) {
     tab.customTitle = undefined;
     renderTabs();
     updateActiveDetails();
-    activePane()?.term?.focus();
+    focusActivePaneCanvas();
     try {
       await runWorkspaceAction("rename_tab", {
         selector: tab.selector,
@@ -4899,7 +4916,7 @@ async function commitTabRename(tabId: string, value: string) {
   tab.customTitle = trimmed && trimmed !== defaultName ? trimmed : undefined;
   renderTabs();
   updateActiveDetails();
-  activePane()?.term?.focus();
+  focusActivePaneCanvas();
   try {
     await runWorkspaceAction("rename_tab", {
       selector: tab.selector,
@@ -4959,7 +4976,7 @@ function applyHerdrWorkspaceLabel(workspaceId: string, label: string) {
 function cancelTabRename() {
   renamingTabId = undefined;
   renderTabs();
-  activePane()?.term?.focus();
+  focusActivePaneCanvas();
 }
 
 async function toggleTabPinned(tabId: string) {
@@ -5083,14 +5100,10 @@ function disposePaneLocal(pane: TerminalPane) {
   pane.closing = true;
   window.clearTimeout(pane.reconnectTimer);
   clearReplayInputLock(pane);
-  pane.transport?.destroy();
-  pane.socket?.close();
-  pane.socket = undefined;
   flushPaneDecoder(pane);
   clearPendingInput(pane);
-  pane.term?.dispose();
-  pane.term = undefined;
-  pane.terminalShaderEffect = undefined;
+  disposePaneTerminalRuntime(pane);
+  destroyPaneTransport(pane);
   pane.mount.remove();
 }
 
@@ -5163,6 +5176,7 @@ function focusActivePaneSystemKeyboard() {
 
 function focusPaneCanvas(pane: TerminalPane | undefined) {
   if (!pane) return;
+  if (!isCoarseTouchPointer() && focusPaneImeInput(pane)) return;
   if (isCoarseTouchPointer()) {
     const canvas = pane.term?.restty?.activePane()?.getRawPane().canvas;
     if (canvas instanceof HTMLElement) {
@@ -5175,13 +5189,16 @@ function focusPaneCanvas(pane: TerminalPane | undefined) {
 
 function focusPaneSystemKeyboard(pane: TerminalPane) {
   activatePane(pane.tabId, pane.id, { focus: false });
-  const input = paneImeInput(pane);
-  if (input) {
-    input.focus({ preventScroll: true });
-  } else {
+  if (!focusPaneImeInput(pane)) {
     pane.term?.focus();
   }
   handleViewportChange();
+}
+
+function handleTerminalImeFocusCapture(event: KeyboardEvent) {
+  const pane = paneForEventTarget(event.target);
+  if (!pane) return;
+  preparePaneImeForKeyboardEvent(pane, event);
 }
 
 function handleTerminalInterruptCapture(event: KeyboardEvent) {
@@ -5194,7 +5211,7 @@ function handleTerminalInterruptCapture(event: KeyboardEvent) {
   event.stopImmediatePropagation();
   cancelPaneImeComposition(pane, imeActive);
   sendPaneInput(pane, "\x03");
-  pane.term?.focus();
+  focusPaneCanvas(pane);
 }
 
 function handleTerminalClipboardCapture(event: KeyboardEvent) {
@@ -5291,7 +5308,7 @@ function cancelPaneImeComposition(pane: TerminalPane, force: boolean): boolean {
 
 function sendPaneInput(pane: TerminalPane, data: string): boolean {
   if (!pane || !canConnectPanePty(pane)) {
-    activePane()?.term?.focus();
+    focusActivePaneCanvas();
     return false;
   }
   if (isInterruptInput(data) && pane.socket?.readyState === WebSocket.OPEN) {
@@ -5305,7 +5322,7 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
     return true;
   }
   if (!queuePaneInput(pane, data)) {
-    activePane()?.term?.focus();
+    focusActivePaneCanvas();
     return false;
   }
   if (pane.socket?.readyState !== WebSocket.CONNECTING && pane.socket?.readyState !== WebSocket.OPEN) {
@@ -5427,7 +5444,7 @@ async function pasteIntoPane(pane: TerminalPane | undefined, report: boolean): P
   if (settings.useResttyClipboard) {
     try {
       if (await pane.term.restty.pasteFromClipboard()) {
-        pane.term.focus();
+        focusPaneCanvas(pane);
         return true;
       }
     } catch (error) {
@@ -5484,7 +5501,7 @@ function sendClipboardImageIntoPane(
     imageUploadProgress.set(0.9);
     imageUploadProgress.finish();
     if (report) setGlobalStatus(tr("status.imageUploadDone"), "ok");
-    pane.term?.focus();
+    focusPaneCanvas(pane);
     return true;
   } catch (error) {
     imageUploadProgress.fail();
@@ -5497,7 +5514,7 @@ function sendClipboardImageIntoPane(
 function pasteTextIntoPane(pane: TerminalPane | undefined, text: string): boolean {
   if (!pane?.term?.restty || !text) return false;
   pane.term.restty.sendKeyInput(text);
-  pane.term.focus();
+  focusPaneCanvas(pane);
   return true;
 }
 

@@ -70,7 +70,7 @@ function paneMenuActionSupported(
   visiblePaneCount: (tab: TerminalTab) => number,
 ): boolean {
   if (!pane) return false;
-  if (pane.sessionBackend === "herdr" || pane.sessionBackend === "zellij") {
+  if (tabHasBackend(tab, "herdr") || pane.sessionBackend === "zellij") {
     return action === "split-right"
       || action === "split-down"
       || action === "copy-selection"
@@ -87,4 +87,8 @@ function paneMenuActionSupported(
     || action === "copy-selection"
     || action === "paste-clipboard"
     || action === "close-active-session";
+}
+
+function tabHasBackend(tab: TerminalTab | undefined, backend: TerminalPane["sessionBackend"]): boolean {
+  return Boolean(tab?.panes.some((pane) => pane.sessionBackend === backend));
 }
