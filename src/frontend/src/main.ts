@@ -1446,8 +1446,8 @@ function bindActions() {
   });
   elements.terminalStage.addEventListener("pointerdown", (event) => {
     if (!shouldFocusTerminalFromPointer(event)) return;
-    focusActivePaneCanvas({ force: true });
-    requestAnimationFrame(() => focusActivePaneCanvas({ force: true }));
+    focusActivePaneCanvas({ source: "terminal-pointer" });
+    requestAnimationFrame(() => focusActivePaneCanvas({ source: "terminal-pointer" }));
   });
   document.addEventListener("click", (event) => {
     if (event.target instanceof Node && !elements.instanceSwitcher.contains(event.target)) {
@@ -4208,7 +4208,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
         mobileTerminalGestures.trackSwipeStart(current.id, event);
         activatePane(current.tabId, id, { focus: false });
         if (shouldFocusTerminalFromPointer(event)) {
-          requestAnimationFrame(() => focusPaneCanvas(current, { force: true }));
+          requestAnimationFrame(() => focusPaneCanvas(current, { source: "terminal-pointer" }));
         }
       }
     },
@@ -5271,7 +5271,11 @@ function shouldFocusTerminalFromPointer(event: PointerEvent): boolean {
   return !isCoarseTouchPointer(event);
 }
 
-function focusActivePaneCanvas(options: { force?: boolean } = {}) {
+type TerminalFocusOptions = {
+  source?: "terminal-pointer";
+};
+
+function focusActivePaneCanvas(options: TerminalFocusOptions = {}) {
   focusPaneCanvas(activePane(), options);
 }
 
@@ -5285,9 +5289,9 @@ function focusActivePaneSystemKeyboard() {
   if (pane) focusPaneSystemKeyboard(pane);
 }
 
-function focusPaneCanvas(pane: TerminalPane | undefined, options: { force?: boolean } = {}) {
+function focusPaneCanvas(pane: TerminalPane | undefined, options: TerminalFocusOptions = {}) {
   if (!pane) return;
-  if (!options.force && shouldPreserveOverlayEditableFocus()) return;
+  if (options.source !== "terminal-pointer" && shouldPreserveOverlayEditableFocus()) return;
   if (!isCoarseTouchPointer() && focusPaneImeInput(pane)) return;
   if (isCoarseTouchPointer()) {
     const canvas = pane.term?.restty?.activePane()?.getRawPane().canvas;
