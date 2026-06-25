@@ -118,6 +118,7 @@ import {
   pluginDescription,
   pluginDisplayName,
   PUBLIC_TUNNEL_PLUGIN_ID,
+  TERMINAL_TRANSFER_PLUGIN_ID,
 } from "./plugin-utils";
 import { createAIChatController } from "./plugins/ai-chat/controller";
 import {
@@ -145,6 +146,14 @@ import {
   type TunnelProviderProfileSaveInput,
 } from "./plugins/public-tunnel/profile-presenter";
 import { renderPublicTunnelToolView } from "./plugins/public-tunnel/tool-view";
+import { createTerminalTransferController } from "./plugins/terminal-transfer/controller";
+import {
+  normalizeTerminalTransferProtocols,
+  serializeTerminalTransferProtocols,
+  TERMINAL_TRANSFER_PROTOCOLS_METADATA,
+  terminalTransferProtocolsFromMetadata,
+} from "./plugins/terminal-transfer/protocols";
+import { renderTerminalTransferToolView } from "./plugins/terminal-transfer/tool-view";
 import type {
   TunnelProviderProfileSummary,
 } from "./plugins/public-tunnel/types";
@@ -231,6 +240,7 @@ import type {
 import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorLabel } from "./utils";
 import {
   webshellOutputBufferMessage,
+  webshellHistoryRecordingMessage,
   webshellResizeMessage,
   webshellRestartPolicyMessage,
   webshellTerminalSocketUrl,
@@ -460,6 +470,17 @@ const lightosPortForward = createLightOsPortForwardController({
   onRender: renderPluginTools,
   onLocalUrl: (localUrl) => publicTunnel.setUpstreamIfEmpty(localUrl),
 });
+const terminalTransfer = createTerminalTransferController({
+  isEnabled: () => pluginIsEnabled(TERMINAL_TRANSFER_PLUGIN_ID),
+  enabledProtocols: currentTerminalTransferProtocols,
+  sendBytes: sendPaneBytes,
+  writeTerminalBytes,
+  writeTerminalText,
+  setHistoryRecording: sendHistoryRecording,
+  tr,
+  onStatus: setGlobalStatus,
+  onRender: renderPluginTools,
+});
 let activeAISettingsTab: AISettingsTab = "ai";
 let aiConfigDialog: AIConfigDialogState | undefined;
 let tunnelProfileDialog: TunnelProfileDialogState | undefined;
@@ -633,6 +654,16 @@ function bindSettings() {
       : null;
     if (input) {
       void configurePlugin(input.dataset.pluginToggle ?? "", input.checked);
+      return;
+    }
+    const terminalTransferProtocol = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-terminal-transfer-protocol]")
+      : null;
+    if (terminalTransferProtocol) {
+      void configureTerminalTransferProtocols(
+        terminalTransferProtocol.dataset.terminalTransferProtocol ?? "",
+        terminalTransferProtocol.checked,
+      );
       return;
     }
     const aiSetting = event.target instanceof Element
@@ -897,6 +928,15 @@ function bindSettings() {
       : null;
     if (pomodoroActionButton) {
       void pomodoro.runAction(pomodoroActionButton.dataset.pomodoroAction ?? "");
+      return;
+    }
+    const terminalTransferActionButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-terminal-transfer-action]")
+      : null;
+    if (terminalTransferActionButton) {
+      if (terminalTransferActionButton.dataset.terminalTransferAction === "cancel") {
+        terminalTransfer.cancel();
+      }
       return;
     }
     const aiSettingButton = event.target instanceof Element
@@ -2581,35 +2621,72 @@ function toggleTunnelTokenVisibility(button: HTMLButtonElement) {
   input.focus();
 }
 
-async function configurePlugin(pluginId: string, enabled: boolean) {
+type ConfigurePluginStatusMode = "toggle" | "settings";
+
+async function configurePlugin(
+  pluginId: string,
+  enabled: boolean,
+  metadata: Record<string, string> = {},
+  statusMode: ConfigurePluginStatusMode = "toggle",
+): Promise<boolean> {
   const plugin = plugins.find((item) => item.id === pluginId);
-  if (!plugin || pluginSaveInFlight.has(pluginId)) return;
+  if (!plugin || pluginSaveInFlight.has(pluginId)) return false;
   pluginSaveInFlight.add(pluginId);
   renderPlugins();
   try {
     const response = await capabilityClient.configurePlugin({
       pluginId,
       enabled,
-      metadata: {},
+      metadata,
     }, { timeoutMs: 10000 });
-    const updated = response.plugin ?? { ...plugin, enabled };
+    const updated = response.plugin ?? {
+      ...plugin,
+      enabled,
+      metadata: { ...plugin.metadata, ...metadata },
+    };
     plugins = plugins.map((item) => item.id === pluginId ? updated : item);
     if (pluginId === PUBLIC_TUNNEL_PLUGIN_ID) {
       syncPublicTunnelProviderSelection();
     }
+    if (pluginId === TERMINAL_TRANSFER_PLUGIN_ID && !updated.enabled) {
+      terminalTransfer.cancel();
+    }
     setPluginStatus(
-      tr(enabled ? "status.pluginEnabled" : "status.pluginDisabled", { name: pluginDisplayName(updated, tr) }),
+      statusMode === "settings"
+        ? tr("status.pluginSettingsSaved", { name: pluginDisplayName(updated, tr) })
+        : tr(enabled ? "status.pluginEnabled" : "status.pluginDisabled", { name: pluginDisplayName(updated, tr) }),
       "ok",
     );
+    return true;
   } catch (error) {
     setPluginStatus(
-      tr(enabled ? "status.pluginEnableFailed" : "status.pluginDisableFailed", { message: errorMessage(error) }),
+      statusMode === "settings"
+        ? tr("status.pluginSettingsSaveFailed", { message: errorMessage(error) })
+        : tr(enabled ? "status.pluginEnableFailed" : "status.pluginDisableFailed", { message: errorMessage(error) }),
       "error",
     );
+    return false;
   } finally {
     pluginSaveInFlight.delete(pluginId);
     renderPlugins();
   }
+}
+
+async function configureTerminalTransferProtocols(protocol: string, checked: boolean) {
+  const plugin = plugins.find((item) => item.id === TERMINAL_TRANSFER_PLUGIN_ID);
+  if (!plugin || pluginSaveInFlight.has(TERMINAL_TRANSFER_PLUGIN_ID)) return;
+  if (protocol !== "lrzsz" && protocol !== "trzsz") return;
+  const current = currentTerminalTransferProtocols();
+  const requested = protocol === "trzsz"
+    ? { ...current, trzsz: checked }
+    : { ...current, lrzsz: checked };
+  const next = normalizeTerminalTransferProtocols({
+    ...requested,
+  });
+  const saved = await configurePlugin(TERMINAL_TRANSFER_PLUGIN_ID, plugin.enabled, {
+    [TERMINAL_TRANSFER_PROTOCOLS_METADATA]: serializeTerminalTransferProtocols(next),
+  }, "settings");
+  if (saved) terminalTransfer.cancel();
 }
 
 function renderPlugins() {
@@ -2662,6 +2739,11 @@ function renderPluginSettings() {
       disabled: pluginsLoading || pluginSaveInFlight.has(PUBLIC_TUNNEL_PLUGIN_ID),
       tr,
     },
+    terminalTransfer: {
+      protocols: currentTerminalTransferProtocols(),
+      disabled: pluginsLoading || pluginSaveInFlight.has(TERMINAL_TRANSFER_PLUGIN_ID),
+      tr,
+    },
     tr,
   });
   updateIcons();
@@ -2696,6 +2778,8 @@ function renderPluginTools() {
           ? renderPomodoroTool(activePlugin)
           : activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID
             ? renderPublicTunnelTool(activePlugin)
+            : activePlugin?.id === TERMINAL_TRANSFER_PLUGIN_ID
+              ? renderTerminalTransferTool(activePlugin)
       : "";
   updateIcons();
   if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID) {
@@ -2790,6 +2874,16 @@ function renderPublicTunnelTool(plugin: PluginDescriptor): string {
     forwards: lightosPortForward.state().forwards,
     loading: state.loading,
     output: state.output,
+    tr,
+  });
+}
+
+function renderTerminalTransferTool(plugin: PluginDescriptor): string {
+  return renderTerminalTransferToolView({
+    disabled: pluginControlsDisabled(plugin),
+    activeBackend: activePane()?.sessionBackend,
+    protocols: currentTerminalTransferProtocols(),
+    state: terminalTransfer.viewState(),
     tr,
   });
 }
@@ -3041,6 +3135,14 @@ function aiDialogStringField(field: string): string {
 
 function pluginIsEnabled(pluginId: string): boolean {
   return plugins.find((plugin) => plugin.id === pluginId)?.enabled ?? false;
+}
+
+function terminalTransferPlugin(): PluginDescriptor | undefined {
+  return plugins.find((plugin) => plugin.id === TERMINAL_TRANSFER_PLUGIN_ID);
+}
+
+function currentTerminalTransferProtocols() {
+  return terminalTransferProtocolsFromMetadata(terminalTransferPlugin()?.metadata);
 }
 
 function aiAccessConfigured(): boolean {
@@ -3956,6 +4058,7 @@ async function restoreWorkspacePane(
 function preparePaneForFullReplay(pane: TerminalPane) {
   window.clearTimeout(pane.reconnectTimer);
   clearReplayInputLock(pane);
+  terminalTransfer.resetPane(pane);
   flushPaneDecoder(pane);
   disposePaneTerminalRuntime(pane);
   destroyPaneTransport(pane);
@@ -4330,6 +4433,7 @@ async function applyPaneShaderPlugin(pane: TerminalPane) {
 
 function handleTerminalResize(pane: TerminalPane, cols: number, rows: number) {
   updatePaneTerminalSize(pane, cols, rows);
+  terminalTransfer.resizePane(pane, pane.cols);
   updateActiveDetails();
 }
 
@@ -4407,6 +4511,7 @@ function openSocket(pane: TerminalPane) {
   });
   socket.addEventListener("close", () => {
     if (pane.socket !== socket) return;
+    terminalTransfer.resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
     flushPaneDecoder(pane);
     pane.transport?.notifyDisconnect();
@@ -4414,6 +4519,7 @@ function openSocket(pane: TerminalPane) {
   });
   socket.addEventListener("error", () => {
     if (pane.socket !== socket) return;
+    terminalTransfer.resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
     pane.transport?.notifyError(tr("status.socketError"));
     setPaneStatus(pane, tr("status.socketError"), "error");
@@ -4568,16 +4674,21 @@ async function persistHerdrOutputSequence(
 function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {
   if (pane.closing) return;
   if (event.data instanceof ArrayBuffer) {
-    writeTerminalBytes(pane, new Uint8Array(event.data));
+    handleTerminalBytes(pane, new Uint8Array(event.data));
     return;
   }
   if (event.data instanceof Blob) {
     event.data.arrayBuffer().then((buffer) => {
-      if (!pane.closing) writeTerminalBytes(pane, new Uint8Array(buffer));
+      if (!pane.closing) handleTerminalBytes(pane, new Uint8Array(buffer));
     });
     return;
   }
   handleServerText(pane, String(event.data));
+}
+
+function handleTerminalBytes(pane: TerminalPane, bytes: Uint8Array) {
+  if (terminalTransfer.consumePaneOutput(pane, bytes)) return;
+  writeTerminalBytes(pane, bytes);
 }
 
 function handleServerText(pane: TerminalPane, text: string) {
@@ -5306,10 +5417,25 @@ function cancelPaneImeComposition(pane: TerminalPane, force: boolean): boolean {
   return true;
 }
 
+function sendPaneBytes(pane: TerminalPane, bytes: Uint8Array): boolean {
+  if (!pane || !canConnectPanePty(pane)) return false;
+  if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying || pane.closing) return false;
+  pane.socket.send(bytes);
+  return true;
+}
+
+function sendHistoryRecording(pane: TerminalPane, enabled: boolean) {
+  if (pane.socket?.readyState !== WebSocket.OPEN || pane.closing) return;
+  pane.socket.send(webshellHistoryRecordingMessage(enabled));
+}
+
 function sendPaneInput(pane: TerminalPane, data: string): boolean {
   if (!pane || !canConnectPanePty(pane)) {
     focusActivePaneCanvas();
     return false;
+  }
+  if (terminalTransfer.consumePaneInput(pane, data)) {
+    return true;
   }
   if (isInterruptInput(data) && pane.socket?.readyState === WebSocket.OPEN) {
     clearPendingInput(pane);

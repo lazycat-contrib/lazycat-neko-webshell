@@ -22,7 +22,8 @@ use uuid::Uuid;
 
 use crate::agent_client::ensure_agent;
 use crate::agent_protocol::{
-    detach_frame, input_frame, read_agent_frame_async, resize_frame, write_agent_frame_async,
+    detach_frame, history_recording_frame, input_frame, read_agent_frame_async, resize_frame,
+    write_agent_frame_async,
 };
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
 use crate::lightos;
@@ -66,6 +67,7 @@ enum TerminalClientMessage {
     ClipboardImage { extension: String, size: usize },
     RestartPolicy { enabled: bool },
     OutputBuffer { limit: usize },
+    HistoryRecording { enabled: bool },
     Close,
 }
 
@@ -635,6 +637,10 @@ where
             *pending_clipboard_image = Some(PendingClipboardImage { extension, size });
             Ok(true)
         }
+        Ok(TerminalClientMessage::HistoryRecording { enabled }) => {
+            write_agent_frame_async(stdin, &history_recording_frame(enabled)).await?;
+            Ok(true)
+        }
         Ok(
             TerminalClientMessage::RestartPolicy { .. }
             | TerminalClientMessage::OutputBuffer { .. },
@@ -950,6 +956,10 @@ fn handle_terminal_control_message(
                 .sessions
                 .set_output_frame_limit(terminal.session_id(), limit)?;
             terminal.set_output_frame_limit(limit);
+            Ok(true)
+        }
+        Ok(TerminalClientMessage::HistoryRecording { enabled }) => {
+            terminal.set_history_recording(enabled);
             Ok(true)
         }
         Ok(TerminalClientMessage::Close) => Ok(false),

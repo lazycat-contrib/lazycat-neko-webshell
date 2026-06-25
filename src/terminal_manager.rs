@@ -9,6 +9,7 @@ use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySyste
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 
+use crate::agent_protocol::AGENT_PROTOCOL_VERSION;
 use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES};
 use crate::database::AppDatabase;
 use crate::validation::{normalize_output_frame_limit, validate_size};
@@ -246,6 +247,10 @@ impl ManagedTerminal {
         self.output.set_limit(limit);
     }
 
+    pub fn set_history_recording(&self, enabled: bool) {
+        self.output.set_recording(enabled);
+    }
+
     fn close(&self) {
         let _ = self.writer_tx.send(WriterCommand::Close);
         let Some(mut child_killer) = self.killer.lock().ok().and_then(|mut killer| killer.take())
@@ -344,6 +349,7 @@ pub struct OutputBuffer {
     history_lock: Mutex<()>,
     store: Option<OutputHistoryStore>,
     history_closed: AtomicBool,
+    recording: AtomicBool,
 }
 
 struct OutputBufferInner {
@@ -367,6 +373,7 @@ impl OutputBuffer {
             history_lock: Mutex::new(()),
             store: None,
             history_closed: AtomicBool::new(false),
+            recording: AtomicBool::new(true),
         }
     }
 
@@ -397,37 +404,52 @@ impl OutputBuffer {
             history_lock: Mutex::new(()),
             store: Some(store),
             history_closed: AtomicBool::new(false),
+            recording: AtomicBool::new(true),
         };
         output.compact_history();
         output
     }
 
     fn push(&self, data: Vec<u8>) -> OutputFrame {
+        self.push_recorded(data, self.recording.load(Ordering::Relaxed))
+    }
+
+    fn push_recorded(&self, data: Vec<u8>, record: bool) -> OutputFrame {
         let _history_guard = self
             .history_lock
             .lock()
             .expect("terminal output history lock poisoned");
         let (frame, first_retained_sequence) = {
             let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
-            inner.total_bytes = inner.total_bytes.saturating_add(data.len());
             inner.next_sequence = inner.next_sequence.saturating_add(1);
             let frame = OutputFrame {
                 sequence: inner.next_sequence,
                 data,
             };
-            inner.total_lines = inner
-                .total_lines
-                .saturating_add(output_history_line_count(&frame.data));
-            inner.frames.push_back(frame.clone());
-            prune_output_buffer(&mut inner);
-            let first_retained_sequence = inner
-                .frames
-                .front()
-                .map_or(frame.sequence, |frame| frame.sequence);
+            let first_retained_sequence = if record {
+                inner.total_bytes = inner.total_bytes.saturating_add(frame.data.len());
+                inner.total_lines = inner
+                    .total_lines
+                    .saturating_add(output_history_line_count(&frame.data));
+                inner.frames.push_back(frame.clone());
+                prune_output_buffer(&mut inner);
+                inner
+                    .frames
+                    .front()
+                    .map_or(frame.sequence, |frame| frame.sequence)
+            } else {
+                frame.sequence
+            };
             (frame, first_retained_sequence)
         };
-        self.append_history(&frame, first_retained_sequence);
+        if record {
+            self.append_history(&frame, first_retained_sequence);
+        }
         frame
+    }
+
+    pub fn set_recording(&self, enabled: bool) {
+        self.recording.store(enabled, Ordering::Relaxed);
     }
 
     pub fn set_limit(&self, max_frames: usize) {
@@ -450,7 +472,7 @@ impl OutputBuffer {
             inner
                 .frames
                 .back()
-                .map_or(inner.next_sequence, |frame| frame.sequence),
+                .map_or(inner.next_sequence, |_| inner.next_sequence),
         )
     }
 
@@ -553,6 +575,13 @@ struct LoadedHistory {
 
 impl OutputHistoryStore {
     fn load(&self) -> io::Result<LoadedHistory> {
+        let version = self
+            .database
+            .load_output_history_protocol_version(&self.session_id)?;
+        if version.as_deref() != Some(AGENT_PROTOCOL_VERSION) {
+            let _ = self.database.delete_output_history(&self.session_id);
+            return Ok(LoadedHistory::default());
+        }
         let frames = self.database.load_output_history(&self.session_id)?;
         let mut loaded = LoadedHistory::default();
         for frame in frames {
@@ -567,13 +596,17 @@ impl OutputHistoryStore {
     }
 
     fn append(&self, frame: &OutputFrame, first_retained_sequence: u64) -> io::Result<()> {
-        self.database
-            .append_output_frame(&self.session_id, frame, first_retained_sequence)
+        self.database.append_output_frame(
+            &self.session_id,
+            frame,
+            first_retained_sequence,
+            AGENT_PROTOCOL_VERSION,
+        )
     }
 
     fn compact(&self, frames: &[OutputFrame]) -> io::Result<()> {
         self.database
-            .replace_output_history(&self.session_id, frames)
+            .replace_output_history(&self.session_id, frames, AGENT_PROTOCOL_VERSION)
     }
 
     fn remove(&self) -> io::Result<()> {
@@ -646,6 +679,40 @@ mod tests {
     }
 
     #[test]
+    fn unrecorded_output_advances_sequence_without_replay_data() {
+        let output = OutputBuffer::new(128);
+        output.push(b"before".to_vec());
+        output.set_recording(false);
+        let live = output.push(b"binary".to_vec());
+        output.set_recording(true);
+        output.push(b"after".to_vec());
+
+        assert_eq!(live.sequence, 2);
+        let (frames, last_sequence) = output.snapshot_after(0);
+
+        assert_eq!(last_sequence, 3);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].sequence, 1);
+        assert_eq!(frames[0].data, b"before");
+        assert_eq!(frames[1].sequence, 3);
+        assert_eq!(frames[1].data, b"after");
+    }
+
+    #[test]
+    fn snapshot_reports_unrecorded_tail_sequence() {
+        let output = OutputBuffer::new(128);
+        output.push(b"before".to_vec());
+        output.set_recording(false);
+        output.push(b"binary".to_vec());
+
+        let (frames, last_sequence) = output.snapshot_after(0);
+
+        assert_eq!(last_sequence, 2);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].sequence, 1);
+    }
+
+    #[test]
     fn persistent_output_round_trips_history() {
         let database = temp_database();
         let output = OutputBuffer::persistent(128, "session-one".to_owned(), Arc::clone(&database));
@@ -682,6 +749,34 @@ mod tests {
         assert_eq!(frames.len(), 128);
         assert_eq!(frames[0].sequence, 3);
         assert_eq!(frames[0].data, vec![2]);
+    }
+
+    #[test]
+    fn persistent_output_drops_history_from_old_protocol() {
+        let database = temp_database();
+        database
+            .append_output_frame(
+                "session-one",
+                &crate::terminal_manager::OutputFrame {
+                    sequence: 1,
+                    data: b"old".to_vec(),
+                },
+                1,
+                "lazycat-neko-webshell-agent-v0",
+            )
+            .unwrap();
+
+        let output = OutputBuffer::persistent(128, "session-one".to_owned(), Arc::clone(&database));
+        let (frames, last_sequence) = output.snapshot_after(0);
+
+        assert!(frames.is_empty());
+        assert_eq!(last_sequence, 0);
+        assert!(
+            database
+                .load_output_history("session-one")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     fn temp_database() -> Arc<AppDatabase> {

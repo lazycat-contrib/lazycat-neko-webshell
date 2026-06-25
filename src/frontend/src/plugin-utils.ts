@@ -10,6 +10,7 @@ export const AI_CHAT_PLUGIN_ID = "ai-chat";
 export const LIGHTOS_PORT_FORWARD_PLUGIN_ID = "lightos-port-forward";
 export const POMODORO_PLUGIN_ID = "pomodoro";
 export const PUBLIC_TUNNEL_PLUGIN_ID = "public-tunnel";
+export const TERMINAL_TRANSFER_PLUGIN_ID = "terminal-transfer";
 
 export function downloadPluginPayload(payload: Uint8Array, name: string, contentType: string) {
   const bytes = new Uint8Array(payload);
@@ -39,6 +40,7 @@ export function pluginDisplayName(plugin: PluginDescriptor, tr: Translate): stri
   if (plugin.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID) return tr("plugin.lightosPortForward.name");
   if (plugin.id === POMODORO_PLUGIN_ID) return tr("plugin.pomodoro.name");
   if (plugin.id === PUBLIC_TUNNEL_PLUGIN_ID) return tr("plugin.publicTunnel.name");
+  if (plugin.id === TERMINAL_TRANSFER_PLUGIN_ID) return tr("plugin.terminalTransfer.name");
   return plugin.displayName || plugin.id;
 }
 
@@ -48,6 +50,7 @@ export function pluginIcon(pluginId: string): string {
   if (pluginId === LIGHTOS_PORT_FORWARD_PLUGIN_ID) return "waypoints";
   if (pluginId === POMODORO_PLUGIN_ID) return "timer";
   if (pluginId === PUBLIC_TUNNEL_PLUGIN_ID) return "radio-tower";
+  if (pluginId === TERMINAL_TRANSFER_PLUGIN_ID) return "arrow-left-right";
   return "plug";
 }
 
@@ -57,6 +60,7 @@ export function pluginDescription(plugin: PluginDescriptor, tr: Translate): stri
   if (plugin.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID) return tr("plugin.lightosPortForward.description");
   if (plugin.id === POMODORO_PLUGIN_ID) return tr("plugin.pomodoro.description");
   if (plugin.id === PUBLIC_TUNNEL_PLUGIN_ID) return tr("plugin.publicTunnel.description");
+  if (plugin.id === TERMINAL_TRANSFER_PLUGIN_ID) return tr("plugin.terminalTransfer.description");
   return plugin.description || plugin.kind || plugin.id;
 }
 

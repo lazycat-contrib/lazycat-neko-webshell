@@ -21,7 +21,7 @@ use crate::agent_protocol::{
 use crate::agent_workspace::{AgentPane, AgentPaneEvent, AgentWorkspace};
 use crate::config::{DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, MAX_COLS, MAX_ROWS};
 use crate::proto::lazycat::webshell::v1::{
-    AgentFrame, AgentFrameType, AgentRequest, AgentRequestType,
+    AgentControlType, AgentFrame, AgentFrameType, AgentRequest, AgentRequestType,
 };
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
@@ -399,8 +399,23 @@ fn read_attach_input_loop(stream: &mut UnixStream, pane: &AgentPane) {
                 }
             }
             Some(AgentFrameType::AGENT_FRAME_TYPE_DETACH) => break,
+            Some(AgentFrameType::AGENT_FRAME_TYPE_TEXT) if frame.control.is_set() => {
+                handle_attach_control_frame(frame, pane);
+            }
             _ => {}
         }
+    }
+}
+
+fn handle_attach_control_frame(frame: AgentFrame, pane: &AgentPane) {
+    let Some(control) = frame.control.into_option() else {
+        return;
+    };
+    if matches!(
+        control.r#type.as_ref().and_then(|kind| kind.as_known()),
+        Some(AgentControlType::AGENT_CONTROL_TYPE_HISTORY_RECORDING)
+    ) {
+        pane.set_history_recording(control.history_recording.unwrap_or(true));
     }
 }
 

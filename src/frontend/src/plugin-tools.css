@@ -1725,6 +1725,175 @@
   opacity: 0.62;
 }
 
+.terminal-transfer-tool {
+  display: grid;
+  gap: 12px;
+}
+
+.terminal-transfer-state {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--component-border);
+  border-radius: 6px;
+  background: var(--component-wash);
+  padding: 10px;
+}
+
+.terminal-transfer-state[data-status="complete"] {
+  border-color: color-mix(in srgb, var(--ok) 38%, var(--component-border));
+}
+
+.terminal-transfer-state[data-status="failed"] {
+  border-color: color-mix(in srgb, var(--danger) 44%, var(--component-border));
+}
+
+.terminal-transfer-state[data-status="cancelled"] {
+  border-color: color-mix(in srgb, var(--muted) 34%, var(--component-border));
+}
+
+.terminal-transfer-state-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  color: var(--accent-fg);
+  background: var(--surface);
+}
+
+.terminal-transfer-state-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.terminal-transfer-state strong,
+.terminal-transfer-state p {
+  min-width: 0;
+}
+
+.terminal-transfer-state strong {
+  display: block;
+  margin: 1px 0 3px;
+  font-size: 13px;
+}
+
+.terminal-transfer-state p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.terminal-transfer-details {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.terminal-transfer-details > div {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.terminal-transfer-details dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.terminal-transfer-details dd {
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-transfer-progress {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line-soft);
+}
+
+.terminal-transfer-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 160ms ease;
+}
+
+.terminal-transfer-progress-text {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.terminal-transfer-progress-text > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-transfer-settings {
+  margin-top: 10px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 10px;
+}
+
+.terminal-transfer-protocol-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.terminal-transfer-protocol-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--component-border);
+  border-radius: 6px;
+  background: var(--component-wash);
+  padding: 8px;
+}
+
+.terminal-transfer-protocol-option input {
+  margin-top: 2px;
+}
+
+.terminal-transfer-protocol-option span {
+  min-width: 0;
+}
+
+.terminal-transfer-protocol-option strong {
+  display: block;
+  font-size: 12px;
+}
+
+.terminal-transfer-protocol-option small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .network-actions {
   grid-column: 1 / -1;
   display: grid;

@@ -8,12 +8,17 @@ import {
   type PublicTunnelSettingsViewState,
 } from "./plugins/public-tunnel/settings-view";
 import {
+  renderTerminalTransferSettingsView,
+  type TerminalTransferSettingsViewState,
+} from "./plugins/terminal-transfer/settings-view";
+import {
   AI_CHAT_PLUGIN_ID,
   pluginDescription,
   pluginDisplayName,
   pluginIcon,
   pluginMetaLabel,
   PUBLIC_TUNNEL_PLUGIN_ID,
+  TERMINAL_TRANSFER_PLUGIN_ID,
 } from "./plugin-utils";
 import type { MessageKey } from "./i18n";
 import { escapeAttr, escapeHtml } from "./utils";
@@ -26,6 +31,7 @@ export type PluginSettingsViewState = {
   savingPluginIds: Set<string>;
   aiAccess: AIAccessSettingsViewState;
   publicTunnel: PublicTunnelSettingsViewState;
+  terminalTransfer: TerminalTransferSettingsViewState;
   tr: Translate;
 };
 
@@ -53,7 +59,13 @@ function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsView
         disabled: saving || state.pluginsLoading,
         tr: state.tr,
       })
-      : "";
+      : plugin.id === TERMINAL_TRANSFER_PLUGIN_ID
+        ? renderTerminalTransferSettingsView({
+          ...state.terminalTransfer,
+          disabled: saving || state.pluginsLoading,
+          tr: state.tr,
+        })
+        : "";
   return `
     <div class="plugin-item" role="listitem">
       <div class="plugin-content">

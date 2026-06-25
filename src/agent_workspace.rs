@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::thread;
 
@@ -31,6 +32,7 @@ pub struct AgentPane {
     status: Mutex<String>,
     pty: AgentPty,
     history: Mutex<AgentHistory>,
+    history_recording: AtomicBool,
     subscribers: Mutex<Vec<mpsc::Sender<AgentPaneEvent>>>,
 }
 
@@ -77,6 +79,7 @@ impl AgentPane {
             status: Mutex::new("running".to_owned()),
             pty,
             history: Mutex::new(AgentHistory::new(output_limit)),
+            history_recording: AtomicBool::new(true),
             subscribers: Mutex::new(Vec::new()),
         });
         spawn_pane_event_dispatcher(Arc::downgrade(&pane), event_rx);
@@ -115,6 +118,10 @@ impl AgentPane {
         if let Ok(mut history) = self.history.lock() {
             history.set_limit(output_limit);
         }
+    }
+
+    pub fn set_history_recording(&self, enabled: bool) {
+        self.history_recording.store(enabled, Ordering::Relaxed);
     }
 
     pub fn snapshot_after(&self, sequence: u64) -> (Vec<AgentHistoryFrame>, u64) {
@@ -167,11 +174,12 @@ impl AgentPane {
     }
 
     fn push_output(&self, data: Vec<u8>) {
+        let record = self.history_recording.load(Ordering::Relaxed);
         let frame = self
             .history
             .lock()
             .expect("agent pane history lock poisoned")
-            .push(data);
+            .push_recorded(data, record);
         self.broadcast(AgentPaneEvent::Output(frame));
     }
 

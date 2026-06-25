@@ -40,3 +40,7 @@ export function webshellOutputBufferMessage(limit: number): string {
 export function webshellRestartPolicyMessage(enabled: boolean): string {
   return JSON.stringify({ type: "restart-policy", enabled });
 }
+
+export function webshellHistoryRecordingMessage(enabled: boolean): string {
+  return JSON.stringify({ type: "history-recording", enabled });
+}

@@ -301,6 +301,7 @@ message AgentControl {
   int64 last_sequence = 6;
   int32 exit_code = 7;
   string message = 8;
+  bool history_recording = 9;
 }
 
 enum AgentControlType {
@@ -308,6 +309,7 @@ enum AgentControlType {
   AGENT_CONTROL_TYPE_REPLAY_START = 1;
   AGENT_CONTROL_TYPE_REPLAY_COMPLETE = 2;
   AGENT_CONTROL_TYPE_PROCESS_EXIT = 3;
+  AGENT_CONTROL_TYPE_HISTORY_RECORDING = 4;
 }
 
 message AgentResize {

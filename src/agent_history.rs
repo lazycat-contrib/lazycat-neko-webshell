@@ -30,15 +30,21 @@ impl AgentHistory {
     }
 
     pub fn push(&mut self, data: Vec<u8>) -> AgentHistoryFrame {
+        self.push_recorded(data, true)
+    }
+
+    pub fn push_recorded(&mut self, data: Vec<u8>, record: bool) -> AgentHistoryFrame {
         self.next_sequence = self.next_sequence.saturating_add(1);
-        self.total_bytes = self.total_bytes.saturating_add(data.len());
-        self.total_lines = self.total_lines.saturating_add(line_count(&data));
         let frame = AgentHistoryFrame {
             sequence: self.next_sequence,
             data,
         };
-        self.frames.push_back(frame.clone());
-        self.prune();
+        if record {
+            self.total_bytes = self.total_bytes.saturating_add(frame.data.len());
+            self.total_lines = self.total_lines.saturating_add(line_count(&frame.data));
+            self.frames.push_back(frame.clone());
+            self.prune();
+        }
         frame
     }
 
@@ -56,7 +62,7 @@ impl AgentHistory {
                 .collect(),
             self.frames
                 .back()
-                .map_or(self.next_sequence, |frame| frame.sequence),
+                .map_or(self.next_sequence, |_| self.next_sequence),
         )
     }
 
@@ -145,5 +151,44 @@ mod tests {
         assert_eq!(frames.len(), 128);
         assert_eq!(frames[0].sequence, 3);
         assert_eq!(frames[0].data, b"2\n");
+    }
+
+    #[test]
+    fn unrecorded_frames_advance_sequence_without_replay_data() {
+        let mut history = AgentHistory::new(128);
+        history.push(b"before".to_vec());
+        let live = history.push_recorded(b"binary".to_vec(), false);
+        history.push(b"after".to_vec());
+
+        assert_eq!(live.sequence, 2);
+        let (frames, last_sequence) = history.snapshot_after(0);
+
+        assert_eq!(last_sequence, 3);
+        assert_eq!(
+            frames,
+            vec![
+                AgentHistoryFrame {
+                    sequence: 1,
+                    data: b"before".to_vec(),
+                },
+                AgentHistoryFrame {
+                    sequence: 3,
+                    data: b"after".to_vec(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn snapshot_reports_skipped_tail_sequence() {
+        let mut history = AgentHistory::new(128);
+        history.push(b"before".to_vec());
+        history.push_recorded(b"binary".to_vec(), false);
+
+        let (frames, last_sequence) = history.snapshot_after(0);
+
+        assert_eq!(last_sequence, 2);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].sequence, 1);
     }
 }

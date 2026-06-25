@@ -108,6 +108,7 @@ export type MessageKey =
   | "action.unpinTab"
   | "action.useForTunnel"
   | "action.showToken"
+  | "action.zmodemCancel"
   | "app.title"
   | "backend.herdr"
   | "backend.webshell"
@@ -160,6 +161,11 @@ export type MessageKey =
   | "field.tunnelProvider"
   | "field.upstreamUrl"
   | "field.ngrokAuthtoken"
+  | "field.terminalTransferProtocol"
+  | "field.zmodemDestination"
+  | "field.zmodemDirection"
+  | "field.zmodemFile"
+  | "field.zmodemSize"
   | "fileKind.directory"
   | "fileKind.file"
   | "fileKind.hardlink"
@@ -222,6 +228,10 @@ export type MessageKey =
   | "plugin.publicTunnel.help"
   | "plugin.publicTunnel.name"
   | "plugin.publicTunnel.settingsHelp"
+  | "plugin.terminalTransfer.description"
+  | "plugin.terminalTransfer.help"
+  | "plugin.terminalTransfer.name"
+  | "plugin.terminalTransfer.output"
   | "pomodoro.completeHint"
   | "pomodoro.completeTitle"
   | "pomodoro.customMinutes"
@@ -373,6 +383,8 @@ export type MessageKey =
   | "status.pluginFileNoSession"
   | "status.pluginFileUploadDone"
   | "status.pluginLoadFailed"
+  | "status.pluginSettingsSaved"
+  | "status.pluginSettingsSaveFailed"
   | "status.portForwardReady"
   | "status.publicTunnelReady"
   | "status.quickPhraseRemoved"
@@ -392,6 +404,40 @@ export type MessageKey =
   | "status.terminalError"
   | "status.themeInvalid"
   | "status.urlCopied"
+  | "status.terminalTransferCancelled"
+  | "status.terminalTransferComplete"
+  | "status.terminalTransferDetecting"
+  | "status.terminalTransferFailed"
+  | "status.terminalTransferNoProtocol"
+  | "status.terminalTransferReady"
+  | "status.terminalTransferReadyLrzsz"
+  | "status.terminalTransferReadyTrzsz"
+  | "status.terminalTransferStarted"
+  | "status.terminalTransferUnsupportedBackend"
+  | "status.trzszDownloadDetected"
+  | "status.trzszProgressInTerminal"
+  | "status.trzszTransferring"
+  | "status.trzszUploadDetected"
+  | "status.zmodemCancelled"
+  | "status.zmodemChooseSaveLocation"
+  | "status.zmodemChooseSaveLocationShort"
+  | "status.zmodemChooseUploadFile"
+  | "status.zmodemComplete"
+  | "status.zmodemDetecting"
+  | "status.zmodemDownloadDetected"
+  | "status.zmodemFailed"
+  | "status.zmodemReady"
+  | "status.zmodemReceiving"
+  | "status.zmodemReceivingFallback"
+  | "status.zmodemTransferCancelled"
+  | "status.zmodemTransferComplete"
+  | "status.zmodemTransferFailed"
+  | "status.zmodemTransferStarted"
+  | "status.zmodemTransferring"
+  | "status.zmodemUnsupportedBackend"
+  | "status.zmodemUploadDetected"
+  | "status.zmodemUploadingTo"
+  | "status.zmodemUploadingToCurrentDirectory"
   | "status.themeRemoved"
   | "status.themeSaved"
   | "theme.builtIn"
@@ -402,6 +448,12 @@ export type MessageKey =
   | "touch.drag"
   | "touch.longPress"
   | "touch.off"
+  | "terminalTransfer.protocolLrzsz"
+  | "terminalTransfer.protocolLrzszHelp"
+  | "terminalTransfer.protocolTrzsz"
+  | "terminalTransfer.protocolTrzszHelp"
+  | "terminalTransfer.protocolsHelp"
+  | "terminalTransfer.protocolsTitle"
   | "validation.fontExtension"
   | "validation.fontMime"
   | "validation.fontSize"
@@ -420,7 +472,9 @@ export type MessageKey =
   | "validation.themeSource"
   | "validation.tunnelProfile"
   | "validation.tunnelProfileName"
-  | "validation.upstreamUrl";
+  | "validation.upstreamUrl"
+  | "zmodem.directionDownload"
+  | "zmodem.directionUpload";
 
 const messages: Record<Language, Record<MessageKey, string>> = {
   en: {
@@ -522,6 +576,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.unpinTab": "Unpin tab",
     "action.useForTunnel": "Use for tunnel",
     "action.showToken": "Show token",
+    "action.zmodemCancel": "Cancel transfer",
     "app.title": "Neko Webshell",
     "backend.herdr": "Herdr",
     "backend.webshell": "WebShell native",
@@ -574,6 +629,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.tunnelProvider": "Tunnel provider",
     "field.upstreamUrl": "Upstream URL",
     "field.ngrokAuthtoken": "Authentication token",
+    "field.terminalTransferProtocol": "Protocol",
+    "field.zmodemDestination": "Destination",
+    "field.zmodemDirection": "Direction",
+    "field.zmodemFile": "File",
+    "field.zmodemSize": "Size",
     "fileKind.directory": "Directory",
     "fileKind.file": "File",
     "fileKind.hardlink": "Hard link",
@@ -643,6 +703,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.publicTunnel.help": "Tunnel sessions stay alive while the WebShell backend is running. Use a LightOS forward URL for services inside the selected instance.",
     "plugin.publicTunnel.name": "Public tunnel",
     "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel works without authentication. Add tunnel authentication configs here for providers that need tokens.",
+    "plugin.terminalTransfer.description": "Automatically handles lrzsz (rz/sz) and trzsz (trz/tsz) transfers in native WebShell terminals.",
+    "plugin.terminalTransfer.help": "Run rz/trz to upload into the current terminal directory, or sz/tsz <file> to save remote files through the browser.",
+    "plugin.terminalTransfer.name": "Terminal transfer",
+    "plugin.terminalTransfer.output": "Terminal transfer progress",
     "pomodoro.completeHint": "The focus timer is complete. Take a short break before starting another round.",
     "pomodoro.completeTitle": "Time is up",
     "pomodoro.customMinutes": "Custom minutes",
@@ -794,6 +858,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginFileNoSession": "Open or select a terminal session first.",
     "status.pluginFileUploadDone": "Uploaded {name}",
     "status.pluginLoadFailed": "Plugin load failed: {message}",
+    "status.pluginSettingsSaved": "{name} settings saved",
+    "status.pluginSettingsSaveFailed": "Settings save failed: {message}",
     "status.portForwardReady": "{count} port forward(s) active",
     "status.publicTunnelReady": "{count} tunnel(s) active",
     "status.quickPhraseRemoved": "Phrase removed",
@@ -815,6 +881,40 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.themeRemoved": "{name} removed",
     "status.themeSaved": "{name} saved",
     "status.urlCopied": "URL copied",
+    "status.terminalTransferCancelled": "Terminal transfer cancelled",
+    "status.terminalTransferComplete": "{name} complete",
+    "status.terminalTransferDetecting": "Transfer detected",
+    "status.terminalTransferFailed": "Terminal transfer failed: {message}",
+    "status.terminalTransferNoProtocol": "No transfer protocol is enabled.",
+    "status.terminalTransferReady": "Ready for rz/sz and trz/tsz in the current terminal.",
+    "status.terminalTransferReadyLrzsz": "Ready for rz/sz in the current terminal.",
+    "status.terminalTransferReadyTrzsz": "Ready for trz/tsz in the current terminal.",
+    "status.terminalTransferStarted": "{protocol} transfer started",
+    "status.terminalTransferUnsupportedBackend": "Terminal transfer is only available in WebShell native terminal tabs.",
+    "status.trzszDownloadDetected": "trzsz remote download request detected.",
+    "status.trzszProgressInTerminal": "trzsz progress is shown in the terminal.",
+    "status.trzszTransferring": "trzsz transfer in progress.",
+    "status.trzszUploadDetected": "trzsz remote upload request detected.",
+    "status.zmodemCancelled": "Cancelled",
+    "status.zmodemChooseSaveLocation": "Choose where to save {name}.",
+    "status.zmodemChooseSaveLocationShort": "Choose save location",
+    "status.zmodemChooseUploadFile": "Choose local file",
+    "status.zmodemComplete": "Complete",
+    "status.zmodemDetecting": "ZMODEM detected",
+    "status.zmodemDownloadDetected": "Remote download request detected.",
+    "status.zmodemFailed": "Failed",
+    "status.zmodemReady": "Ready for rz/sz in the current terminal.",
+    "status.zmodemReceiving": "Receiving remote file.",
+    "status.zmodemReceivingFallback": "Receiving remote file; the browser will download it when complete.",
+    "status.zmodemTransferCancelled": "ZMODEM transfer cancelled",
+    "status.zmodemTransferComplete": "{name} complete",
+    "status.zmodemTransferFailed": "ZMODEM transfer failed: {message}",
+    "status.zmodemTransferStarted": "ZMODEM transfer started: {name}",
+    "status.zmodemTransferring": "Transferring",
+    "status.zmodemUnsupportedBackend": "ZMODEM is only available in WebShell terminal tabs.",
+    "status.zmodemUploadDetected": "Remote upload request detected.",
+    "status.zmodemUploadingTo": "Uploading into {path}.",
+    "status.zmodemUploadingToCurrentDirectory": "Uploading into the current terminal directory.",
     "theme.builtIn": "Built in",
     "theme.custom": "Custom",
     "theme.gallery": "Ghostty Style Gallery",
@@ -823,6 +923,12 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "touch.drag": "Drag to select",
     "touch.longPress": "Pan first, long-press select",
     "touch.off": "Touch selection off",
+    "terminalTransfer.protocolLrzsz": "lrzsz (rz/sz)",
+    "terminalTransfer.protocolLrzszHelp": "Handles classic rz upload and sz download through ZMODEM.",
+    "terminalTransfer.protocolTrzsz": "trzsz (trz/tsz)",
+    "terminalTransfer.protocolTrzszHelp": "Handles trz upload and tsz download through trzsz.js.",
+    "terminalTransfer.protocolsHelp": "Choose which terminal transfer protocols this plugin should intercept. At least one protocol stays enabled.",
+    "terminalTransfer.protocolsTitle": "Supported protocols",
     "validation.fontExtension": "only .woff, .woff2, .ttf, and .otf are allowed",
     "validation.fontMime": "unsupported font MIME type: {mimeType}",
     "validation.fontSize": "font must be between 1 byte and 10 MB",
@@ -842,6 +948,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.tunnelProfile": "select a configured tunnel profile",
     "validation.tunnelProfileName": "enter a profile name",
     "validation.upstreamUrl": "enter a local upstream URL",
+    "zmodem.directionDownload": "Download",
+    "zmodem.directionUpload": "Upload",
   },
   "zh-CN": {
     "about.description": "面向 LightOS 设备的浏览器终端。",
@@ -942,6 +1050,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.unpinTab": "取消固定标签",
     "action.useForTunnel": "用于 Tunnel",
     "action.showToken": "显示 token",
+    "action.zmodemCancel": "取消传输",
     "app.title": "小橘Web Shell",
     "backend.herdr": "Herdr",
     "backend.webshell": "WebShell 原生",
@@ -994,6 +1103,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.tunnelProvider": "Tunnel 服务",
     "field.upstreamUrl": "上游 URL",
     "field.ngrokAuthtoken": "认证 token",
+    "field.terminalTransferProtocol": "协议",
+    "field.zmodemDestination": "目标位置",
+    "field.zmodemDirection": "方向",
+    "field.zmodemFile": "文件",
+    "field.zmodemSize": "大小",
     "fileKind.directory": "目录",
     "fileKind.file": "文件",
     "fileKind.hardlink": "硬链接",
@@ -1063,6 +1177,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.publicTunnel.help": "Tunnel 租约会在 WebShell 后端运行期间保持。要发布实例内服务，请先选择 LightOS 转发得到的本地 URL。",
     "plugin.publicTunnel.name": "Public Tunnel",
     "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel 无需认证配置。需要 token 的 Tunnel 服务商，请先在这里添加认证配置。",
+    "plugin.terminalTransfer.description": "自动处理 WebShell 终端里的 lrzsz（rz/sz）和 trzsz（trz/tsz）传输。",
+    "plugin.terminalTransfer.help": "执行 rz/trz 会上传到当前目录；执行 sz/tsz <file> 会通过浏览器保存远端文件。",
+    "plugin.terminalTransfer.name": "终端传输",
+    "plugin.terminalTransfer.output": "终端传输进度",
     "pomodoro.completeHint": "本轮专注已经完成。休息一下，再开始下一轮。",
     "pomodoro.completeTitle": "番茄时间到了",
     "pomodoro.customMinutes": "自定义分钟",
@@ -1214,6 +1332,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginFileNoSession": "请先打开或选择一个终端会话。",
     "status.pluginFileUploadDone": "已上传 {name}",
     "status.pluginLoadFailed": "插件加载失败：{message}",
+    "status.pluginSettingsSaved": "{name} 设置已保存",
+    "status.pluginSettingsSaveFailed": "设置保存失败：{message}",
     "status.portForwardReady": "{count} 个端口转发正在运行",
     "status.publicTunnelReady": "{count} 个 Tunnel 正在运行",
     "status.quickPhraseRemoved": "快速短语已删除",
@@ -1235,6 +1355,40 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.themeRemoved": "{name} 已删除",
     "status.themeSaved": "{name} 已保存",
     "status.urlCopied": "URL 已复制",
+    "status.terminalTransferCancelled": "终端传输已取消",
+    "status.terminalTransferComplete": "{name} 已完成",
+    "status.terminalTransferDetecting": "检测到传输",
+    "status.terminalTransferFailed": "终端传输失败：{message}",
+    "status.terminalTransferNoProtocol": "未启用任何传输协议。",
+    "status.terminalTransferReady": "当前终端可使用 rz/sz 和 trz/tsz。",
+    "status.terminalTransferReadyLrzsz": "当前终端可使用 rz/sz。",
+    "status.terminalTransferReadyTrzsz": "当前终端可使用 trz/tsz。",
+    "status.terminalTransferStarted": "{protocol} 传输已开始",
+    "status.terminalTransferUnsupportedBackend": "终端传输仅支持 WebShell 原生终端标签。",
+    "status.trzszDownloadDetected": "检测到 trzsz 远端下载请求。",
+    "status.trzszProgressInTerminal": "trzsz 进度显示在终端内。",
+    "status.trzszTransferring": "trzsz 正在传输。",
+    "status.trzszUploadDetected": "检测到 trzsz 远端上传请求。",
+    "status.zmodemCancelled": "已取消",
+    "status.zmodemChooseSaveLocation": "选择 {name} 的保存位置。",
+    "status.zmodemChooseSaveLocationShort": "选择保存位置",
+    "status.zmodemChooseUploadFile": "选择本地文件",
+    "status.zmodemComplete": "已完成",
+    "status.zmodemDetecting": "检测到 ZMODEM",
+    "status.zmodemDownloadDetected": "检测到远端下载请求。",
+    "status.zmodemFailed": "失败",
+    "status.zmodemReady": "当前终端可使用 rz/sz。",
+    "status.zmodemReceiving": "正在接收远端文件。",
+    "status.zmodemReceivingFallback": "正在接收远端文件；完成后浏览器会下载它。",
+    "status.zmodemTransferCancelled": "ZMODEM 传输已取消",
+    "status.zmodemTransferComplete": "{name} 已完成",
+    "status.zmodemTransferFailed": "ZMODEM 传输失败：{message}",
+    "status.zmodemTransferStarted": "ZMODEM 传输已开始：{name}",
+    "status.zmodemTransferring": "传输中",
+    "status.zmodemUnsupportedBackend": "ZMODEM 仅支持 WebShell 终端标签。",
+    "status.zmodemUploadDetected": "检测到远端上传请求。",
+    "status.zmodemUploadingTo": "正在上传到 {path}。",
+    "status.zmodemUploadingToCurrentDirectory": "正在上传到当前终端目录。",
     "theme.builtIn": "内置",
     "theme.custom": "自定义",
     "theme.gallery": "Ghostty 主题库",
@@ -1243,6 +1397,12 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "touch.drag": "拖动选区",
     "touch.longPress": "滑动优先，长按选区",
     "touch.off": "关闭触控选区",
+    "terminalTransfer.protocolLrzsz": "lrzsz（rz/sz）",
+    "terminalTransfer.protocolLrzszHelp": "处理经典 rz 上传和 sz 下载，底层使用 ZMODEM。",
+    "terminalTransfer.protocolTrzsz": "trzsz（trz/tsz）",
+    "terminalTransfer.protocolTrzszHelp": "通过 trzsz.js 处理 trz 上传和 tsz 下载。",
+    "terminalTransfer.protocolsHelp": "选择这个插件需要拦截的终端传输协议，至少保留一种协议启用。",
+    "terminalTransfer.protocolsTitle": "支持的协议",
     "validation.fontExtension": "只允许 .woff、.woff2、.ttf 和 .otf",
     "validation.fontMime": "不支持的字体 MIME 类型：{mimeType}",
     "validation.fontSize": "字体大小必须在 1 字节到 10 MB 之间",
@@ -1262,6 +1422,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.tunnelProfile": "请选择已配置的 Tunnel 配置",
     "validation.tunnelProfileName": "请输入配置名称",
     "validation.upstreamUrl": "请输入本地上游 URL",
+    "zmodem.directionDownload": "下载",
+    "zmodem.directionUpload": "上传",
   },
 };
 

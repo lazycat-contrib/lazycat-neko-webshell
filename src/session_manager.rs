@@ -275,6 +275,7 @@ mod tests {
                     data: b"stale history".to_vec(),
                 },
                 1,
+                crate::agent_protocol::AGENT_PROTOCOL_VERSION,
             )
             .unwrap();
 
@@ -300,6 +301,7 @@ mod tests {
                     data: b"stale history".to_vec(),
                 },
                 1,
+                crate::agent_protocol::AGENT_PROTOCOL_VERSION,
             )
             .unwrap();
 
@@ -329,6 +331,7 @@ mod tests {
                     data: b"managed by herdr".to_vec(),
                 },
                 1,
+                crate::agent_protocol::AGENT_PROTOCOL_VERSION,
             )
             .unwrap();
 

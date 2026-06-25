@@ -5,6 +5,7 @@ import {
   LIGHTOS_PORT_FORWARD_PLUGIN_ID,
   POMODORO_PLUGIN_ID,
   PUBLIC_TUNNEL_PLUGIN_ID,
+  TERMINAL_TRANSFER_PLUGIN_ID,
 } from "../plugin-utils";
 
 const PLUGIN_TOOL_IDS = new Set([
@@ -13,6 +14,7 @@ const PLUGIN_TOOL_IDS = new Set([
   LIGHTOS_PORT_FORWARD_PLUGIN_ID,
   POMODORO_PLUGIN_ID,
   PUBLIC_TUNNEL_PLUGIN_ID,
+  TERMINAL_TRANSFER_PLUGIN_ID,
 ]);
 
 export function enabledPluginTools(plugins: PluginDescriptor[]): PluginDescriptor[] {

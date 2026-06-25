@@ -52,6 +52,12 @@ impl AppDatabase {
                 PRIMARY KEY (session_id, sequence)
             );
 
+            CREATE TABLE IF NOT EXISTS terminal_output_history_meta (
+                session_id TEXT NOT NULL PRIMARY KEY,
+                protocol_version TEXT NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+            );
+
             CREATE TABLE IF NOT EXISTS herdr_output_sequences (
                 session_id TEXT NOT NULL PRIMARY KEY,
                 sequence INTEGER NOT NULL,
@@ -142,11 +148,26 @@ impl AppDatabase {
         Ok(frames)
     }
 
+    pub fn load_output_history_protocol_version(
+        &self,
+        session_id: &str,
+    ) -> io::Result<Option<String>> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT protocol_version FROM terminal_output_history_meta WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(TO_IO_ERROR)
+    }
+
     pub fn append_output_frame(
         &self,
         session_id: &str,
         frame: &OutputFrame,
         first_retained_sequence: u64,
+        protocol_version: &str,
     ) -> io::Result<()> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(TO_IO_ERROR)?;
@@ -163,6 +184,7 @@ impl AppDatabase {
             params![session_id, i64_from_u64(first_retained_sequence)?],
         )
         .map_err(TO_IO_ERROR)?;
+        store_output_history_protocol_version_tx(&tx, session_id, protocol_version)?;
         tx.commit().map_err(TO_IO_ERROR)
     }
 
@@ -170,6 +192,7 @@ impl AppDatabase {
         &self,
         session_id: &str,
         frames: &[OutputFrame],
+        protocol_version: &str,
     ) -> io::Result<()> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(TO_IO_ERROR)?;
@@ -188,17 +211,24 @@ impl AppDatabase {
             )
             .map_err(TO_IO_ERROR)?;
         }
+        store_output_history_protocol_version_tx(&tx, session_id, protocol_version)?;
         tx.commit().map_err(TO_IO_ERROR)
     }
 
     pub fn delete_output_history(&self, session_id: &str) -> io::Result<()> {
-        let conn = self.lock()?;
-        conn.execute(
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(TO_IO_ERROR)?;
+        tx.execute(
             "DELETE FROM terminal_output_frames WHERE session_id = ?1",
             params![session_id],
         )
-        .map(|_| ())
-        .map_err(TO_IO_ERROR)
+        .map_err(TO_IO_ERROR)?;
+        tx.execute(
+            "DELETE FROM terminal_output_history_meta WHERE session_id = ?1",
+            params![session_id],
+        )
+        .map_err(TO_IO_ERROR)?;
+        tx.commit().map_err(TO_IO_ERROR)
     }
 
     pub fn load_herdr_output_sequence(&self, session_id: &str) -> io::Result<Option<u64>> {
@@ -498,6 +528,25 @@ fn u64_from_i64(value: i64) -> io::Result<u64> {
             "terminal output sequence must not be negative",
         )
     })
+}
+
+fn store_output_history_protocol_version_tx(
+    tx: &rusqlite::Transaction<'_>,
+    session_id: &str,
+    protocol_version: &str,
+) -> io::Result<()> {
+    tx.execute(
+        r"
+        INSERT INTO terminal_output_history_meta (session_id, protocol_version, updated_at)
+        VALUES (?1, ?2, unixepoch())
+        ON CONFLICT(session_id) DO UPDATE SET
+            protocol_version = excluded.protocol_version,
+            updated_at = excluded.updated_at
+        ",
+        params![session_id, protocol_version],
+    )
+    .map(|_| ())
+    .map_err(TO_IO_ERROR)
 }
 
 fn now_ms() -> u64 {

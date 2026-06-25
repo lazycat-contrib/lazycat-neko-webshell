@@ -828,6 +828,24 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             ]),
         },
         PluginRecord {
+            id: "terminal-transfer".to_owned(),
+            kind: "transfer".to_owned(),
+            display_name: "Terminal Transfer".to_owned(),
+            description: "Automatically handles lrzsz (rz/sz) and trzsz (trz/tsz) transfers in native WebShell terminals through the browser terminal stream.".to_owned(),
+            scopes: vec!["session".to_owned(), "transfer".to_owned()],
+            accepted_content_types: vec!["application/octet-stream".to_owned()],
+            produced_content_types: vec!["application/octet-stream".to_owned()],
+            input_schema_json: r#"{"operation":"rz|sz|trz|tsz","metadata":{"terminalBackend":"webshell","cwd":"current terminal directory","protocols":"lrzsz,trzsz"},"payload":"local file bytes for upload protocols"}"#.to_owned(),
+            output_schema_json: r#"{"status":"complete|failed|cancelled","name":"file name","size":"bytes when known"}"#.to_owned(),
+            enabled: false,
+            metadata: HashMap::from([
+                ("builtin".to_owned(), "true".to_owned()),
+                ("defaultEnabled".to_owned(), "false".to_owned()),
+                ("runtime".to_owned(), "browser-terminal".to_owned()),
+                ("protocols".to_owned(), "lrzsz,trzsz".to_owned()),
+            ]),
+        },
+        PluginRecord {
             id: "ai-chat".to_owned(),
             kind: "chat".to_owned(),
             display_name: "AI Chat".to_owned(),
@@ -1128,6 +1146,26 @@ mod tests {
         assert_eq!(
             control.metadata.get("builtin").map(String::as_str),
             Some("true")
+        );
+    }
+
+    #[test]
+    fn builtin_terminal_transfer_plugin_is_disabled_by_default() {
+        let plugins = builtin_plugins();
+        let plugin = plugins
+            .get("terminal-transfer")
+            .expect("terminal transfer builtin plugin");
+
+        assert!(!plugin.enabled);
+        assert_eq!(plugin.kind, "transfer");
+        assert!(plugin.scopes.contains(&"session".to_owned()));
+        assert_eq!(
+            plugin.metadata.get("runtime").map(String::as_str),
+            Some("browser-terminal")
+        );
+        assert_eq!(
+            plugin.metadata.get("protocols").map(String::as_str),
+            Some("lrzsz,trzsz")
         );
     }
 
