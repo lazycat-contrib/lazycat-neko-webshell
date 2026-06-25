@@ -1,6 +1,12 @@
 @media (hover: none) and (pointer: coarse), (max-width: 760px) {
   :root {
     --mobile-touch: 40px;
+    --mobile-overlay-gap: 10px;
+    --mobile-overlay-top-gap: max(24px, calc(var(--lzc-safe-area-inset-top) + 10px));
+    --mobile-overlay-bottom-gap: max(10px, var(--lzc-safe-area-inset-bottom));
+    --mobile-menu-top: max(52px, calc(var(--lzc-safe-area-inset-top) + 52px));
+    --mobile-menu-max-height: max(0px, calc(var(--app-viewport-height) - var(--mobile-menu-top) - var(--mobile-overlay-bottom-gap)));
+    --mobile-overlay-max-height: max(0px, calc(var(--app-viewport-height) - var(--mobile-overlay-top-gap) - var(--mobile-overlay-bottom-gap)));
   }
 
   .topbar {
@@ -243,60 +249,83 @@
 
   .switcher-menu {
     position: fixed;
-    top: 52px;
-    right: 8px;
-    left: 8px;
+    top: calc(var(--app-viewport-offset-top) + var(--mobile-menu-top));
+    right: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-right));
+    left: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-left));
     width: auto;
-    max-height: min(420px, calc(var(--app-viewport-height) - 64px));
+    max-height: min(420px, var(--mobile-menu-max-height));
   }
 
   .new-tab-menu {
-    max-height: min(420px, calc(var(--app-viewport-height) - 64px));
+    position: fixed;
+    top: calc(var(--app-viewport-offset-top) + var(--mobile-menu-top));
+    right: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-right));
+    left: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-left));
+    width: auto;
+    max-height: min(420px, var(--mobile-menu-max-height));
     overflow: auto;
   }
 
   .herdr-workspace-menu {
     position: fixed;
     width: auto;
-    max-height: min(420px, calc(var(--app-viewport-height) - 64px));
+    max-height: min(420px, var(--mobile-menu-max-height));
     overflow: auto;
   }
 
   .herdr-workspace-menu {
-    top: calc(var(--app-viewport-offset-top) + 52px);
-    right: max(8px, var(--lzc-safe-area-inset-right));
-    left: max(8px, var(--lzc-safe-area-inset-left));
+    top: calc(var(--app-viewport-offset-top) + var(--mobile-menu-top));
+    right: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-right));
+    left: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-left));
   }
 
   .settings-menu {
     position: fixed;
-    top: 52px;
-    right: 8px;
+    top: calc(var(--app-viewport-offset-top) + var(--mobile-menu-top));
+    right: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-right));
+    max-width: calc(var(--app-viewport-width) - var(--mobile-overlay-gap) - var(--mobile-overlay-gap));
+  }
+
+  .notifications-menu {
+    position: fixed;
+    top: calc(var(--app-viewport-offset-top) + var(--mobile-menu-top));
+    right: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-right));
+    left: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-left));
+    width: auto;
+    max-height: min(420px, var(--mobile-menu-max-height));
   }
 
   .webshell[data-tab-layout="vertical"] .switcher-menu,
+  .webshell[data-tab-layout="vertical"] .new-tab-menu,
   .webshell[data-tab-layout="vertical"] .herdr-workspace-menu,
+  .webshell[data-tab-layout="vertical"] .notifications-menu,
   .webshell[data-tab-layout="vertical"] .settings-menu {
     position: fixed;
     top: auto;
     right: auto;
     bottom: max(8px, var(--lzc-safe-area-inset-bottom));
     left: calc(var(--app-viewport-offset-left) + 56px);
-    max-height: min(420px, calc(var(--app-viewport-height) - 16px));
+    max-height: min(420px, calc(var(--app-viewport-height) - var(--mobile-overlay-bottom-gap) - var(--mobile-overlay-gap)));
   }
 
   .webshell[data-tab-layout="vertical"].has-named-tabs .switcher-menu,
+  .webshell[data-tab-layout="vertical"].has-named-tabs .new-tab-menu,
   .webshell[data-tab-layout="vertical"].has-named-tabs .herdr-workspace-menu,
+  .webshell[data-tab-layout="vertical"].has-named-tabs .notifications-menu,
   .webshell[data-tab-layout="vertical"].has-named-tabs .settings-menu {
     left: calc(var(--app-viewport-offset-left) + 164px);
   }
 
   .webshell[data-tab-layout="vertical"] .switcher-menu,
+  .webshell[data-tab-layout="vertical"] .new-tab-menu,
+  .webshell[data-tab-layout="vertical"] .notifications-menu,
   .webshell[data-tab-layout="vertical"] .herdr-workspace-menu {
     width: min(340px, calc(var(--app-viewport-width) - 64px));
   }
 
   .webshell[data-tab-layout="vertical"].has-named-tabs .switcher-menu,
+  .webshell[data-tab-layout="vertical"].has-named-tabs .new-tab-menu,
+  .webshell[data-tab-layout="vertical"].has-named-tabs .notifications-menu,
   .webshell[data-tab-layout="vertical"].has-named-tabs .herdr-workspace-menu {
     width: min(340px, calc(var(--app-viewport-width) - 178px));
   }
@@ -310,15 +339,56 @@
   }
 
   .settings-page {
-    padding: 10px;
+    top: var(--app-viewport-offset-top);
+    right: auto;
+    bottom: auto;
+    left: var(--app-viewport-offset-left);
+    place-items: stretch;
+    width: var(--app-viewport-width);
+    height: var(--app-viewport-height);
+    padding:
+      var(--mobile-overlay-top-gap)
+      max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-right))
+      var(--mobile-overlay-bottom-gap)
+      max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-left));
   }
 
   .settings-dialog {
-    width: min(100%, calc(100vw - 20px));
-    height: calc(var(--app-viewport-height) - 20px);
-    max-height: calc(var(--app-viewport-height) - 20px);
+    width: 100%;
+    height: var(--mobile-overlay-max-height);
+    max-height: var(--mobile-overlay-max-height);
     min-height: 0;
     padding: 14px;
+  }
+
+  .shortcut-help,
+  .about-dialog-shell,
+  .notification-modal {
+    top: var(--app-viewport-offset-top);
+    right: auto;
+    bottom: auto;
+    left: var(--app-viewport-offset-left);
+    place-items: stretch;
+    width: var(--app-viewport-width);
+    height: var(--app-viewport-height);
+    padding:
+      var(--mobile-overlay-top-gap)
+      max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-right))
+      var(--mobile-overlay-bottom-gap)
+      max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-left));
+  }
+
+  .shortcut-help-dialog,
+  .about-dialog,
+  .notification-modal-dialog {
+    width: 100%;
+    max-height: var(--mobile-overlay-max-height);
+  }
+
+  .shortcut-help-dialog,
+  .about-dialog,
+  .notification-modal-card {
+    overflow: auto;
   }
 
   .shortcut-help-grid {
@@ -337,10 +407,10 @@
   .plugin-sidebar {
     position: fixed;
     z-index: 92;
-    top: calc(var(--app-viewport-offset-top) + 8px);
-    right: max(8px, var(--lzc-safe-area-inset-right));
-    bottom: max(8px, var(--lzc-safe-area-inset-bottom), var(--app-keyboard-inset-bottom));
-    left: calc(var(--app-viewport-offset-left) + max(8px, var(--lzc-safe-area-inset-left)));
+    top: calc(var(--app-viewport-offset-top) + var(--mobile-overlay-top-gap));
+    right: max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-right));
+    bottom: max(var(--mobile-overlay-bottom-gap), var(--app-keyboard-inset-bottom));
+    left: calc(var(--app-viewport-offset-left) + max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-left)));
     grid-template-rows: 48px minmax(0, 1fr) auto;
     grid-template-columns: 44px minmax(0, 1fr);
     width: auto;
@@ -390,9 +460,9 @@
   }
 
   .ai-chat-tool {
-    flex: 1 1 auto;
-    grid-template-rows: auto minmax(0, 1fr);
-    height: 100%;
+    flex: 0 0 auto;
+    grid-template-rows: auto auto;
+    height: auto;
     min-height: 0;
   }
 
@@ -406,13 +476,15 @@
   }
 
   .ai-chat-box {
+    grid-template-rows: minmax(118px, auto) auto;
     min-height: 0;
     margin-top: 8px;
     overflow: hidden;
   }
 
   .ai-chat-history {
-    min-height: 0;
+    min-height: 118px;
+    max-height: min(42vh, 320px);
     padding: 10px;
   }
 
@@ -534,6 +606,42 @@
   .ai-config-modal-actions {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .ai-config-modal-backdrop {
+    top: var(--app-viewport-offset-top);
+    right: auto;
+    bottom: auto;
+    left: var(--app-viewport-offset-left);
+    place-items: stretch;
+    width: var(--app-viewport-width);
+    height: var(--app-viewport-height);
+    padding:
+      var(--mobile-overlay-top-gap)
+      max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-right))
+      var(--mobile-overlay-bottom-gap)
+      max(var(--mobile-overlay-gap), var(--lzc-safe-area-inset-left));
+  }
+
+  .ai-config-modal {
+    width: 100%;
+    height: var(--mobile-overlay-max-height);
+    max-height: var(--mobile-overlay-max-height);
+  }
+
+  .ai-provider-menu {
+    max-height: min(240px, var(--mobile-overlay-max-height));
+  }
+
+  .file-browser-context-menu {
+    max-width: calc(var(--app-viewport-width) - var(--mobile-overlay-gap) - var(--mobile-overlay-gap));
+    max-height: min(280px, var(--mobile-overlay-max-height));
+    overflow: auto;
+  }
+
+  .file-browser-context-menu button,
+  .file-browser-context-menu label {
+    min-height: 44px;
   }
 
   .pane-menu button {

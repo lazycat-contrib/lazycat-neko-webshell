@@ -24,7 +24,7 @@ import {
   validateGhosttyThemeSource,
   validateTerminalBackgroundFile,
 } from "./appearance-settings";
-import { updateViewportMetrics as applyViewportMetrics } from "./app-viewport";
+import { shouldUseMobileControls, updateViewportMetrics as applyViewportMetrics } from "./app-viewport";
 import { TerminalActionWSClient } from "./action-ws-client";
 import { appendAIContextText, recentAIContextText } from "./ai-context";
 import {
@@ -857,7 +857,12 @@ function bindSettings() {
       : null;
     if (!entryButton) return;
     event.preventDefault();
-    fileBrowser.openContextMenu(entryButton.dataset.fileEntry ?? "", event.clientX, event.clientY);
+    const point = clampFloatingPoint(event.clientX, event.clientY, {
+      width: 180,
+      height: 260,
+      margin: isMobileOverlayMode() ? 10 : 8,
+    });
+    fileBrowser.openContextMenu(entryButton.dataset.fileEntry ?? "", point.x, point.y);
     renderPluginTools();
   });
   elements.fontFamily.addEventListener("change", () => {
@@ -1825,6 +1830,9 @@ function renderMobileClockContent(timeText: string) {
 
 function toggleNotificationsMenu() {
   const open = elements.notificationsMenu.hidden;
+  if (open) {
+    prepareMobileOverlay();
+  }
   closeSettingsMenu();
   closeInstanceMenu();
   closeNewTabMenu();
@@ -1906,6 +1914,7 @@ function renderNotificationItem(notification: WebshellNotification): string {
 }
 
 function renderNotificationModal(notification: WebshellNotification) {
+  prepareMobileOverlay();
   activeNotificationModalId = notification.id;
   elements.notificationModalBody.innerHTML = `
     <article class="notification-modal-card" data-severity="${escapeAttr(notification.severity)}">
@@ -2143,6 +2152,7 @@ async function navigateLightOSHome() {
 }
 
 function openSettings() {
+  prepareMobileOverlay();
   elements.settingsPage.hidden = false;
   elements.webshell.classList.add("settings-open");
   setAppBackgroundInert(true);
@@ -2154,11 +2164,13 @@ function openSettings() {
   requestAnimationFrame(() => elements.closeSettings.focus());
 }
 
-function closeSettings() {
+function closeSettings(options: { restoreFocus?: boolean } = {}) {
   elements.settingsPage.hidden = true;
   elements.webshell.classList.remove("settings-open");
   setAppBackgroundInert(false);
-  activePane()?.term?.focus();
+  if (options.restoreFocus !== false) {
+    restoreTerminalFocusAfterOverlay();
+  }
 }
 
 function setAppBackgroundInert(inert: boolean) {
@@ -2172,6 +2184,9 @@ function setAppBackgroundInert(inert: boolean) {
 
 function toggleSettingsMenu() {
   const open = elements.settingsMenu.hidden;
+  if (open) {
+    prepareMobileOverlay();
+  }
   closeShortcutHelp();
   elements.settingsMenu.hidden = !open;
   elements.settingsButton.setAttribute("aria-expanded", String(open));
@@ -2191,11 +2206,14 @@ function togglePluginSidebar() {
 }
 
 function openPluginSidebar() {
+  prepareMobileOverlay();
   closeSettingsMenu();
   closeShortcutHelp();
   closeInstanceMenu();
   closePaneMenu();
-  closeSettings();
+  if (!elements.settingsPage.hidden) {
+    closeSettings({ restoreFocus: false });
+  }
   elements.pluginSidebar.hidden = false;
   elements.webshell.classList.add("plugins-open");
   elements.pluginsButton.setAttribute("aria-expanded", "true");
@@ -2206,15 +2224,20 @@ function openPluginSidebar() {
   }
 }
 
-function closePluginSidebar() {
+function closePluginSidebar(options: { restoreFocus?: boolean } = {}) {
   elements.pluginSidebar.hidden = true;
   elements.webshell.classList.remove("plugins-open");
   elements.pluginsButton.setAttribute("aria-expanded", "false");
-  activePane()?.term?.focus();
+  if (options.restoreFocus !== false) {
+    restoreTerminalFocusAfterOverlay();
+  }
 }
 
 function toggleShortcutHelp() {
   const open = elements.shortcutHelp.hidden;
+  if (open) {
+    prepareMobileOverlay();
+  }
   closeSettingsMenu();
   closeInstanceMenu();
   closePaneMenu();
@@ -2232,6 +2255,7 @@ function closeShortcutHelp() {
 }
 
 function openAboutDialog() {
+  prepareMobileOverlay();
   closeShortcutHelp();
   closeInstanceMenu();
   closePaneMenu();
@@ -2244,6 +2268,10 @@ function closeAboutDialog() {
 }
 
 async function toggleFullscreen() {
+  const mobileMode = isMobileOverlayMode();
+  if (mobileMode) {
+    closeMobileOverlaysBeforeViewportChange();
+  }
   try {
     if (document.fullscreenElement) {
       await document.exitFullscreen();
@@ -2251,12 +2279,96 @@ async function toggleFullscreen() {
       await elements.webshell.requestFullscreen();
     }
   } catch {
+    if (!mobileMode) {
+      activePane()?.term?.focus();
+    }
+  } finally {
+    handleViewportChange();
+  }
+}
+
+function closeMobileOverlaysBeforeViewportChange() {
+  blurActiveElement();
+  closeSettingsMenu();
+  closeInstanceMenu();
+  closeNewTabMenu();
+  closeHerdrWorkspaceMenu();
+  closeNotificationsMenu();
+  closePaneMenu();
+  closeShortcutHelp();
+  closeAboutDialog();
+  closeNotificationModal();
+  if (!elements.settingsPage.hidden) {
+    closeSettings({ restoreFocus: false });
+  }
+  if (!elements.pluginSidebar.hidden) {
+    closePluginSidebar({ restoreFocus: false });
+  }
+}
+
+function prepareMobileOverlay() {
+  if (isMobileOverlayMode()) {
+    blurActiveElement();
+  }
+}
+
+function restoreTerminalFocusAfterOverlay() {
+  if (!isMobileOverlayMode()) {
     activePane()?.term?.focus();
   }
 }
 
+function isMobileOverlayMode(): boolean {
+  const viewportWidth = Math.max(1, Math.floor(window.visualViewport?.width ?? (window.innerWidth || 0)));
+  return shouldUseMobileControls(viewportWidth);
+}
+
+function blurActiveElement() {
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active !== document.body) {
+    active.blur();
+  }
+}
+
+function floatingViewportBounds(margin: number) {
+  const viewport = window.visualViewport;
+  const offsetLeft = Math.max(0, Math.floor(viewport?.offsetLeft ?? 0));
+  const offsetTop = Math.max(0, Math.floor(viewport?.offsetTop ?? 0));
+  const width = Math.max(1, Math.floor(viewport?.width ?? (window.innerWidth || 0)));
+  const height = Math.max(1, Math.floor(viewport?.height ?? (window.innerHeight || 0)));
+  return {
+    minLeft: offsetLeft + margin,
+    minTop: offsetTop + margin,
+    maxLeft: offsetLeft + width - margin,
+    maxTop: offsetTop + height - margin,
+  };
+}
+
+function clampFloatingPoint(
+  clientX: number,
+  clientY: number,
+  options: { width?: number; height?: number; margin?: number } = {},
+) {
+  const bounds = floatingViewportBounds(options.margin ?? 8);
+  const width = Math.max(0, options.width ?? 0);
+  const height = Math.max(0, options.height ?? 0);
+  const maxLeft = Math.max(bounds.minLeft, bounds.maxLeft - width);
+  const maxTop = Math.max(bounds.minTop, bounds.maxTop - height);
+  return {
+    x: clamp(clientX, bounds.minLeft, maxLeft),
+    y: clamp(clientY, bounds.minTop, maxTop),
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
 function toggleInstanceMenu() {
   const open = elements.instanceMenu.hidden;
+  if (open) {
+    prepareMobileOverlay();
+  }
   closeSettingsMenu();
   elements.instanceMenu.hidden = !open;
   elements.instanceSwitcher.classList.toggle("is-open", open);
@@ -2270,6 +2382,7 @@ function closeInstanceMenu() {
 }
 
 function openPaneMenu(clientX: number, clientY: number, paneId: string) {
+  prepareMobileOverlay();
   contextPaneId = paneId;
   updatePaneMenuForPane(paneId);
   elements.paneMenu.hidden = false;
@@ -2277,12 +2390,15 @@ function openPaneMenu(clientX: number, clientY: number, paneId: string) {
   elements.paneMenu.style.top = "0";
   updateIcons();
   requestAnimationFrame(() => {
-    const margin = 8;
+    const margin = isMobileOverlayMode() ? 10 : 8;
     const rect = elements.paneMenu.getBoundingClientRect();
-    const left = Math.max(margin, Math.min(clientX, window.innerWidth - rect.width - margin));
-    const top = Math.max(margin, Math.min(clientY, window.innerHeight - rect.height - margin));
-    elements.paneMenu.style.left = `${left}px`;
-    elements.paneMenu.style.top = `${top}px`;
+    const point = clampFloatingPoint(clientX, clientY, {
+      width: rect.width,
+      height: rect.height,
+      margin,
+    });
+    elements.paneMenu.style.left = `${point.x}px`;
+    elements.paneMenu.style.top = `${point.y}px`;
   });
 }
 
@@ -5049,6 +5165,7 @@ function renderNewTabMenu() {
 
 function toggleNewTabMenu() {
   if (elements.newTabMenu.hidden) {
+    prepareMobileOverlay();
     renderNewTabMenu();
     elements.newTabMenu.hidden = false;
     positionNewTabMenu();
@@ -5061,24 +5178,30 @@ function toggleNewTabMenu() {
 function positionNewTabMenu() {
   elements.newTabMenu.style.left = "";
   elements.newTabMenu.style.top = "";
+  elements.newTabMenu.style.right = "";
+  elements.newTabMenu.style.bottom = "";
+  if (isMobileOverlayMode()) {
+    return;
+  }
   elements.newTabMenu.style.right = "auto";
   elements.newTabMenu.style.bottom = "auto";
   requestAnimationFrame(() => {
-    if (elements.newTabMenu.hidden) return;
+    if (elements.newTabMenu.hidden || isMobileOverlayMode()) return;
     const margin = 8;
     const buttonRect = elements.newTabButton.getBoundingClientRect();
     const menuRect = elements.newTabMenu.getBoundingClientRect();
+    const bounds = floatingViewportBounds(margin);
     const vertical = elements.webshell.dataset.tabLayout === "vertical";
     const preferredLeft = vertical
       ? buttonRect.right + 8
       : buttonRect.right - menuRect.width;
     const fallbackLeft = buttonRect.left - menuRect.width - 8;
-    const maxLeft = Math.max(margin, window.innerWidth - menuRect.width - margin);
-    const maxTop = Math.max(margin, window.innerHeight - menuRect.height - margin);
+    const maxLeft = Math.max(bounds.minLeft, bounds.maxLeft - menuRect.width);
+    const maxTop = Math.max(bounds.minTop, bounds.maxTop - menuRect.height);
     const unclampedLeft = vertical && preferredLeft > maxLeft ? fallbackLeft : preferredLeft;
     const top = vertical ? buttonRect.top : buttonRect.bottom + 8;
-    elements.newTabMenu.style.left = `${Math.min(Math.max(margin, unclampedLeft), maxLeft)}px`;
-    elements.newTabMenu.style.top = `${Math.min(Math.max(margin, top), maxTop)}px`;
+    elements.newTabMenu.style.left = `${clamp(unclampedLeft, bounds.minLeft, maxLeft)}px`;
+    elements.newTabMenu.style.top = `${clamp(top, bounds.minTop, maxTop)}px`;
   });
 }
 
@@ -5100,6 +5223,7 @@ async function toggleHerdrWorkspaceMenu() {
 }
 
 async function openHerdrWorkspaceMenu() {
+  prepareMobileOverlay();
   elements.herdrWorkspaceMenu.hidden = false;
   elements.herdrWorkspaceButton.setAttribute("aria-expanded", "true");
   renderHerdrWorkspaceMenu();
