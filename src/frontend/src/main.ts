@@ -159,7 +159,6 @@ import type {
 } from "./plugins/public-tunnel/types";
 import { enabledPluginTools, resolveActivePluginToolId } from "./plugins/tool-registry";
 import { renderPluginToolEmpty, renderPluginToolTabs } from "./plugins/tool-shell-view";
-import { activeEditableElementIn, isEditableElementTarget } from "./focus-guards";
 import { workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderFontFamilyOptions, renderThemeSelectOptions } from "./settings-options-view";
@@ -1446,8 +1445,8 @@ function bindActions() {
   });
   elements.terminalStage.addEventListener("pointerdown", (event) => {
     if (!shouldFocusTerminalFromPointer(event)) return;
-    focusActivePaneCanvas({ source: "terminal-pointer" });
-    requestAnimationFrame(() => focusActivePaneCanvas({ source: "terminal-pointer" }));
+    focusActivePaneCanvas();
+    requestAnimationFrame(() => focusActivePaneCanvas());
   });
   document.addEventListener("click", (event) => {
     if (event.target instanceof Node && !elements.instanceSwitcher.contains(event.target)) {
@@ -2225,7 +2224,8 @@ function handleFontZoomShortcut(event: KeyboardEvent): boolean {
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
-  return isEditableElementTarget(target);
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
 }
 
 function setTerminalFontSize(value: number) {
@@ -4218,7 +4218,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
         mobileTerminalGestures.trackSwipeStart(current.id, event);
         activatePane(current.tabId, id, { focus: false });
         if (shouldFocusTerminalFromPointer(event)) {
-          requestAnimationFrame(() => focusPaneCanvas(current, { source: "terminal-pointer" }));
+          requestAnimationFrame(() => focusPaneCanvas(current));
         }
       }
     },
@@ -5281,12 +5281,8 @@ function shouldFocusTerminalFromPointer(event: PointerEvent): boolean {
   return !isCoarseTouchPointer(event);
 }
 
-type TerminalFocusOptions = {
-  source?: "terminal-pointer";
-};
-
-function focusActivePaneCanvas(options: TerminalFocusOptions = {}) {
-  focusPaneCanvas(activePane(), options);
+function focusActivePaneCanvas() {
+  focusPaneCanvas(activePane());
 }
 
 function focusAfterMobileShortcut() {
@@ -5299,9 +5295,8 @@ function focusActivePaneSystemKeyboard() {
   if (pane) focusPaneSystemKeyboard(pane);
 }
 
-function focusPaneCanvas(pane: TerminalPane | undefined, options: TerminalFocusOptions = {}) {
+function focusPaneCanvas(pane: TerminalPane | undefined) {
   if (!pane) return;
-  if (options.source !== "terminal-pointer" && shouldPreserveOverlayEditableFocus()) return;
   if (!isCoarseTouchPointer() && focusPaneImeInput(pane)) return;
   if (isCoarseTouchPointer()) {
     const canvas = pane.term?.restty?.activePane()?.getRawPane().canvas;
@@ -5311,12 +5306,6 @@ function focusPaneCanvas(pane: TerminalPane | undefined, options: TerminalFocusO
     }
   }
   pane.term?.focus();
-}
-
-function shouldPreserveOverlayEditableFocus(): boolean {
-  return (!elements.pluginSidebar.hidden && activeEditableElementIn(elements.pluginSidebar))
-    || (!elements.settingsPage.hidden && activeEditableElementIn(elements.settingsPage))
-    || (!elements.notificationModal.hidden && activeEditableElementIn(elements.notificationModal));
 }
 
 function focusPaneSystemKeyboard(pane: TerminalPane) {
