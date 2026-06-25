@@ -1265,11 +1265,16 @@ textarea:focus-visible {
 }
 
 .notification-modal-card {
+  --notification-tone: var(--accent);
+  --notification-tone-border: color-mix(in srgb, var(--notification-tone) 24%, var(--dialog-border));
+  --notification-tone-wash: color-mix(in srgb, var(--notification-tone) 7%, transparent);
+  --notification-tone-action: color-mix(in srgb, var(--notification-tone) 72%, var(--text));
   display: grid;
   gap: 14px;
-  border: 1px solid var(--dialog-border);
+  border: 1px solid var(--notification-tone-border);
   border-radius: 12px;
   background:
+    linear-gradient(180deg, var(--notification-tone-wash), transparent 52%),
     linear-gradient(180deg, var(--dialog-wash-a), transparent 46%),
     var(--dialog-bg);
   color: var(--text);
@@ -1278,7 +1283,31 @@ textarea:focus-visible {
 }
 
 .notification-modal-card[data-severity="success"] {
-  border-color: color-mix(in srgb, var(--ok) 42%, var(--dialog-border));
+  --notification-tone: var(--ok);
+}
+
+.notification-modal-card[data-severity="warning"] {
+  --notification-tone: var(--warning);
+}
+
+.notification-modal-card[data-severity="error"] {
+  --notification-tone: var(--danger);
+}
+
+.notification-modal-card .command-button.primary {
+  border-color: color-mix(in srgb, var(--notification-tone) 34%, var(--line));
+  background:
+    var(--component-wash),
+    color-mix(in srgb, var(--notification-tone) 16%, var(--surface));
+  color: var(--notification-tone-action);
+  box-shadow: var(--shadow-inset-soft);
+}
+
+.notification-modal-card .command-button.primary:hover {
+  border-color: color-mix(in srgb, var(--notification-tone) 48%, var(--line-strong));
+  background:
+    var(--component-wash-hover),
+    color-mix(in srgb, var(--notification-tone) 22%, var(--surface-2));
 }
 
 .notification-modal-head {
