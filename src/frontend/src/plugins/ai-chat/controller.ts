@@ -111,10 +111,6 @@ export function createAIChatController(deps: AIChatControllerDeps) {
   return {
     isStreaming: () => store.streaming,
     modelOptions: () => store.modelOptions,
-    activeSessionId: () => store.activeSessionId,
-    setActiveSessionId(sessionId: string) {
-      store.activeSessionId = sessionId;
-    },
     clearModelOptions() {
       store.modelOptions = [];
     },
@@ -126,7 +122,9 @@ export function createAIChatController(deps: AIChatControllerDeps) {
     activeSession: () => store.activeSession(),
     ensureSession,
     modelValues: () => store.modelValues(deps.configuredModel(), deps.tr("action.aiFetchModels")),
-    sessionsForModel: (model: string) => store.sessionsForModel(model, activeTarget()),
+    removeSessionsForTerminalTargets(targets: AIChatTerminalTarget[]) {
+      return store.removeSessionsForTerminalTargets(targets);
+    },
     renderMessages,
     appendSystem,
     async fetchModels() {

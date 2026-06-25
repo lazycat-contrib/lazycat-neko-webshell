@@ -29,6 +29,10 @@ export type AIChatTerminalTargetResolverDeps = {
   tr: Translate;
 };
 
+export type AIChatTabTerminalTargetsOptions = Omit<AIChatTerminalTargetOptions, "pane"> & {
+  tab: TerminalTab;
+};
+
 export function createAIChatTerminalTargetResolver(
   deps: AIChatTerminalTargetResolverDeps,
 ): () => AIChatTerminalTarget | undefined {
@@ -43,6 +47,18 @@ export function createAIChatTerminalTargetResolver(
       tr: deps.tr,
     });
   };
+}
+
+export function buildAIChatTerminalTargetsForTab(options: AIChatTabTerminalTargetsOptions): AIChatTerminalTarget[] {
+  const targets = options.tab.panes
+    .map((pane) => buildAIChatTerminalTarget({ ...options, pane }))
+    .filter((target): target is AIChatTerminalTarget => Boolean(target));
+  const seen = new Set<string>();
+  return targets.filter((target) => {
+    if (seen.has(target.key)) return false;
+    seen.add(target.key);
+    return true;
+  });
 }
 
 export function buildAIChatTerminalTarget(options: AIChatTerminalTargetOptions): AIChatTerminalTarget | undefined {

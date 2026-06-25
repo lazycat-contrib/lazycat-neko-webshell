@@ -127,7 +127,11 @@ import {
   recentAIContext as recentAIContextForPane,
 } from "./plugins/ai-chat/context";
 import { resizeAIChatInput, scrollAIChatToBottom } from "./plugins/ai-chat/dom";
-import { createAIChatTerminalTargetResolver } from "./plugins/ai-chat/terminal-target";
+import {
+  buildAIChatTerminalTarget,
+  buildAIChatTerminalTargetsForTab,
+  createAIChatTerminalTargetResolver,
+} from "./plugins/ai-chat/terminal-target";
 import { renderAIChatToolView } from "./plugins/ai-chat/tool-view";
 import { createFileTransferController } from "./plugins/file-transfer/controller";
 import { setFileTransferOutput } from "./plugins/file-transfer/dom";
@@ -217,6 +221,7 @@ import { createUploadProgressController } from "./upload-progress";
 import { CUSTOM_THEME_PREFIX } from "./theme-registry";
 import { renderPluginSettingsView } from "./plugin-views";
 import type {
+  AIChatTerminalTarget,
   AiMcpServerSettings,
   AiProviderProfile,
   ClipboardImagePayload,
@@ -2854,8 +2859,6 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
     streaming: aiChat.isStreaming(),
     modelOptions: aiChat.modelValues(),
     selectedModel: aiChat.currentModel(),
-    sessionOptions: aiChat.sessionsForModel(session.model).map((item) => ({ value: item.id, label: item.title })),
-    selectedSessionId: aiChat.activeSessionId(),
     providerProfiles: settings.aiProviderProfiles,
     activeProviderProfileId: settings.aiActiveProviderProfileId,
     providerPickerOpen: aiProviderPickerOpen,
@@ -3101,8 +3104,6 @@ function updateAISetting(field: string, value: string) {
       model: value.trim(),
     });
     aiChat.selectSessionForCurrentModel();
-  } else if (field === "session") {
-    aiChat.setActiveSessionId(value);
   }
   saveSettings();
   renderPlugins();
@@ -3855,6 +3856,34 @@ function findPaneBySessionBackend(
 function activeHerdrTerminalPane(): TerminalPane | undefined {
   const tab = activeTab();
   return selectHerdrTerminalPane(tab, activePane(tab));
+}
+
+function aiChatTerminalTargetsForTab(tab: TerminalTab): AIChatTerminalTarget[] {
+  return buildAIChatTerminalTargetsForTab({
+    tab,
+    selectedSelector,
+    herdrState,
+    tabDisplayName,
+    tr,
+  });
+}
+
+function aiChatTerminalTargetForPane(tab: TerminalTab, pane: TerminalPane): AIChatTerminalTarget | undefined {
+  return buildAIChatTerminalTarget({
+    pane,
+    tab,
+    selectedSelector,
+    herdrState,
+    tabDisplayName,
+    tr,
+  });
+}
+
+function removeAIChatSessionsForTerminalTargets(targets: AIChatTerminalTarget[]) {
+  if (!targets.length) return;
+  if (aiChat.removeSessionsForTerminalTargets(targets) && activePluginToolId === AI_CHAT_PLUGIN_ID) {
+    renderPluginTools();
+  }
 }
 
 function renderNewTabMenu() {
@@ -5193,12 +5222,14 @@ async function requestCloseTab(tabId: string) {
 async function closeTab(tabId: string) {
   const tab = tabs.find((item) => item.id === tabId);
   if (!tab) return;
+  const aiTargets = aiChatTerminalTargetsForTab(tab);
   tab.closing = true;
   for (const pane of tab.panes) {
     pane.closing = true;
   }
   try {
     await runWorkspaceAction("close_tab", { selector: tab.selector, tabId });
+    removeAIChatSessionsForTerminalTargets(aiTargets);
   } catch (error) {
     tab.closing = false;
     for (const pane of tab.panes) {
@@ -5209,16 +5240,20 @@ async function closeTab(tabId: string) {
 }
 
 async function closeActiveSession(tab: TerminalTab, pane: TerminalPane) {
+  const aiTarget = aiChatTerminalTargetForPane(tab, pane);
   if (pane.sessionBackend === "herdr") {
     try {
       await closeHerdrPane(pane);
+      removeAIChatSessionsForTerminalTargets(aiTarget ? [aiTarget] : []);
     } catch (error) {
       setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
     }
     return;
   }
   if (pane.sessionBackend === "zellij") {
-    closeZellijPane(pane);
+    if (closeZellijPane(pane)) {
+      removeAIChatSessionsForTerminalTargets(aiTarget ? [aiTarget] : []);
+    }
     return;
   }
   if (visiblePanes(tab).length <= 1) {
@@ -5227,6 +5262,7 @@ async function closeActiveSession(tab: TerminalTab, pane: TerminalPane) {
   }
   try {
     await runWorkspaceAction("close_pane", { selector: tab.selector, tabId: tab.id, paneId: pane.id });
+    removeAIChatSessionsForTerminalTargets(aiTarget ? [aiTarget] : []);
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }

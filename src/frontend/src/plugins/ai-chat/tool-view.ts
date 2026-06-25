@@ -20,8 +20,6 @@ export type AIChatViewState = {
   streaming: boolean;
   modelOptions: SelectOption[];
   selectedModel: string;
-  sessionOptions: SelectOption[];
-  selectedSessionId: string;
   providerProfiles: AiProviderProfile[];
   activeProviderProfileId: string;
   providerPickerOpen: boolean;
@@ -74,13 +72,6 @@ export function renderAIChatToolView(state: AIChatViewState): string {
               label: tr("field.aiModel"),
               options: state.modelOptions,
               selected: state.selectedModel,
-              disabled: state.disabled,
-            })}
-            ${renderAIChatPicker({
-              field: "session",
-              label: tr("field.aiSession"),
-              options: state.sessionOptions,
-              selected: state.selectedSessionId,
               disabled: state.disabled,
             })}
             <button class="icon-button" type="button" data-ai-action="copy-output" aria-label="${escapeAttr(tr("action.aiCopy"))}" title="${escapeAttr(tr("action.aiCopy"))}" ${disabledAttr}>

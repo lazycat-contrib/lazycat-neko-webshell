@@ -129,7 +129,6 @@ export type MessageKey =
   | "field.aiProfileName"
   | "field.aiPrompt"
   | "field.aiProvider"
-  | "field.aiSession"
   | "field.aiTargetTerminal"
   | "field.defaultSessionBackend"
   | "field.herdrActiveBackgroundDark"
@@ -601,7 +600,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiProfileName": "Profile name",
     "field.aiPrompt": "Prompt",
     "field.aiProvider": "Provider",
-    "field.aiSession": "Chat",
     "field.aiTargetTerminal": "Target terminal",
     "field.defaultSessionBackend": "New tab backend",
     "field.herdrActiveBackgroundDark": "Dark highlight",
@@ -1079,7 +1077,6 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiProfileName": "配置名称",
     "field.aiPrompt": "输入",
     "field.aiProvider": "服务商",
-    "field.aiSession": "聊天",
     "field.aiTargetTerminal": "目标终端",
     "field.defaultSessionBackend": "新建入口后端",
     "field.herdrActiveBackgroundDark": "深色高亮",

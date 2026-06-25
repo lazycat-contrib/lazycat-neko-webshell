@@ -1160,7 +1160,7 @@
 }
 
 .ai-chat-model-row {
-  grid-template-columns: minmax(58px, 66px) minmax(92px, 0.82fr) minmax(0, 1fr) minmax(0, 1fr) 32px 32px;
+  grid-template-columns: minmax(58px, 66px) minmax(96px, 0.78fr) minmax(0, 1fr) 32px 32px;
 }
 
 .ai-chat-input-row {

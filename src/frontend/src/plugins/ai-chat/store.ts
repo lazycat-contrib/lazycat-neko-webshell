@@ -69,8 +69,17 @@ export class AIChatStore {
     return values.map((model) => ({ value: model, label: model }));
   }
 
-  sessionsForModel(model: string, target?: AIChatTerminalTarget): AIChatSession[] {
-    return this.sessions.filter((item) => item.model === model && sessionMatchesTarget(item, target));
+  removeSessionsForTerminalTargets(targets: AIChatTerminalTarget[]): boolean {
+    const targetKeys = new Set(targets.map((target) => target.key).filter(Boolean));
+    if (!targetKeys.size) return false;
+    const activeSessionId = this.activeSessionId;
+    const sessions = this.sessions.filter((session) => !session.terminalTargetKey || !targetKeys.has(session.terminalTargetKey));
+    if (sessions.length === this.sessions.length) return false;
+    this.sessions = sessions;
+    if (activeSessionId && !this.sessions.some((session) => session.id === activeSessionId)) {
+      this.activeSessionId = "";
+    }
+    return true;
   }
 
   removeModelListMessages(models: string[]) {
