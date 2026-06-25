@@ -377,17 +377,17 @@ const pomodoro = createPomodoroController({
   isEnabled: () => pluginIsEnabled(POMODORO_PLUGIN_ID),
   refreshNotifications: () => refreshNotifications({ showToast: false }),
   dismissNotification,
-  onRender: renderPluginTools,
+  onRender: renderPomodoroToolsIfActive,
   onComplete: () => setGlobalStatus(tr("pomodoro.completeTitle"), "ok"),
   onActionError: (error) => setPluginStatus(errorMessage(error), "error"),
   onRefreshError: (error) => {
-    if (activePluginToolId === POMODORO_PLUGIN_ID) {
+    if (pomodoroToolIsActive()) {
       setPluginStatus(errorMessage(error), "error");
     }
   },
 });
 const pomodoroTicker = createPomodoroTicker({
-  shouldRender: () => activePluginToolId === POMODORO_PLUGIN_ID
+  shouldRender: () => pomodoroToolIsActive()
     && pluginIsEnabled(POMODORO_PLUGIN_ID)
     && pomodoro.isRunning(),
   onRender: renderPluginTools,
@@ -397,10 +397,10 @@ const notificationController = createNotificationController({
   renderModal: (notification) => notificationDom.renderModal(notification, tr),
   closeModal: () => notificationDom.closeModal(),
   activeModalId: () => notificationDom.activeNotificationModalId(),
-  refreshPomodoro: () => pomodoro.refresh(true),
+  refreshPomodoro: () => pomodoro.refresh(pomodoroToolIsActive()),
   onToast: (notification) => setGlobalStatus(notificationDisplayTitle(notification, tr), notificationTone(notification)),
   onPomodoroNotification: () => {
-    void pomodoro.refresh(true);
+    void pomodoro.refresh(pomodoroToolIsActive());
   },
   onLoadError: (error) => setGlobalStatus(tr("status.notificationLoadFailed", { message: errorMessage(error) }), "error"),
   onActionError: (error) => setGlobalStatus(tr("status.notificationActionFailed", { message: errorMessage(error) }), "error"),
@@ -1679,10 +1679,20 @@ function renderMobileQuickPhraseSettings() {
   mobileQuickPhraseSettings.render();
 }
 
+function pomodoroToolIsActive(): boolean {
+  return activePluginToolId === POMODORO_PLUGIN_ID;
+}
+
+function renderPomodoroToolsIfActive() {
+  if (pomodoroToolIsActive()) {
+    renderPluginTools();
+  }
+}
+
 function startPomodoroPolling() {
   window.clearInterval(pomodoroPollingTimer);
   pomodoroPollingTimer = window.setInterval(() => {
-    void pomodoro.refresh(true);
+    void pomodoro.refresh(pomodoroToolIsActive());
   }, POMODORO_REFRESH_MS);
 }
 
