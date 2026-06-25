@@ -294,6 +294,7 @@ export type MessageKey =
   | "tab.fonts"
   | "tab.fontSettings"
   | "tab.fontUpload"
+  | "tab.terminalSession"
   | "tab.aiProvider"
   | "tab.mcp"
   | "tab.mobile"
@@ -714,6 +715,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.fonts": "Fonts",
     "tab.fontSettings": "Font settings",
     "tab.fontUpload": "Font upload",
+    "tab.terminalSession": "Terminal {index}",
     "tab.aiProvider": "AI provider",
     "tab.mcp": "MCP",
     "tab.mobile": "Mobile",
@@ -1133,6 +1135,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.fonts": "字体",
     "tab.fontSettings": "字体设置",
     "tab.fontUpload": "字体上传",
+    "tab.terminalSession": "终端 {index}",
     "tab.aiProvider": "AI 服务",
     "tab.mcp": "MCP",
     "tab.mobile": "移动端",

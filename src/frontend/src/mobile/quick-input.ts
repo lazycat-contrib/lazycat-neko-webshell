@@ -1,7 +1,7 @@
-import type { MessageKey } from "./i18n";
-import type { JsonRecord, MobileQuickPhrase } from "./types";
-import { recordField, stringField } from "./json-meta";
-import { escapeAttr, escapeHtml } from "./utils";
+import type { MessageKey } from "../i18n";
+import type { JsonRecord, MobileQuickPhrase } from "../types";
+import { recordField, stringField } from "../json-meta";
+import { escapeAttr, escapeHtml } from "../utils";
 
 export type MobileSymbolAgent =
   | "default"

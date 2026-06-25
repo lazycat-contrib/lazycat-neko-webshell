@@ -504,7 +504,9 @@ fn merge_optional_backend_tabs(
         .iter()
         .map(|tab| tab.id.clone())
         .collect::<HashSet<_>>();
-    workspace.tabs.extend(optional.tabs);
+    let mut tabs = optional.tabs;
+    tabs.extend(workspace.tabs);
+    workspace.tabs = tabs;
     if prefer_optional_active
         && optional
             .active_tab_id
@@ -2162,6 +2164,59 @@ mod tests {
 
         assert!(workspace.tabs[0].pinned);
         assert_eq!(workspace.tabs[0].pinned_order, Some(0));
+    }
+
+    #[test]
+    fn merge_keeps_existing_herdr_tab_before_new_webshell_tab() {
+        let state = test_app_state();
+        let herdr_tab_id = {
+            let mut sessions = state.sessions.write().unwrap();
+            let mut workspaces = state.workspaces.write().unwrap();
+            let defaults = WorkspaceTerminalDefaults::new(
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                DEFAULT_OUTPUT_FRAME_LIMIT,
+                false,
+                "",
+                SessionBackend::Herdr,
+            );
+            let workspace = workspaces
+                .entry("demo@owner".to_owned())
+                .or_insert_with(|| WorkspaceRecord::new("demo@owner"));
+            workspace.create_tab(&mut sessions, &defaults);
+            workspace.tabs[0].id.clone()
+        };
+        let agent_workspace = WorkspaceState {
+            selector: "demo@owner".to_owned(),
+            active_tab_id: Some("agent-tab".to_owned()),
+            tabs: vec![WorkspaceTabState {
+                id: "agent-tab".to_owned(),
+                label: "2".to_owned(),
+                custom_label: None,
+                pinned: false,
+                pinned_order: None,
+                active_pane_id: Some("agent-pane".to_owned()),
+                layout: Some(pane_layout_node("agent-pane")),
+                panes: vec![WorkspacePaneState {
+                    id: "agent-pane".to_owned(),
+                    session_id: "agent-session".to_owned(),
+                    status: "running".to_owned(),
+                    session_backend: "webshell".to_owned(),
+                    herdr_output_sequence: None,
+                    cols: DEFAULT_COLS,
+                    rows: DEFAULT_ROWS,
+                }],
+            }],
+        };
+
+        let merged = merge_optional_backend_tabs(&state, agent_workspace, false);
+        let tab_ids = merged
+            .tabs
+            .iter()
+            .map(|tab| tab.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(tab_ids, vec![herdr_tab_id.as_str(), "agent-tab"]);
     }
 
     #[test]

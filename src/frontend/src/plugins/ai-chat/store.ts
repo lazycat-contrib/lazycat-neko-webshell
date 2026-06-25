@@ -1,4 +1,4 @@
-import type { AIChatSession, Tone } from "./types";
+import type { AIChatSession, Tone } from "../../types";
 
 type CreateId = () => string;
 

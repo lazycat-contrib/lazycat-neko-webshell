@@ -1,5 +1,5 @@
-import { normalizeRemotePath } from "./remote-files";
-import type { FileBrowserContextMenu, FileBrowserEntry } from "./types";
+import { normalizeRemotePath } from "../../remote-files";
+import type { FileBrowserContextMenu, FileBrowserEntry } from "../../types";
 
 export class FileBrowserStore {
   path = "/";

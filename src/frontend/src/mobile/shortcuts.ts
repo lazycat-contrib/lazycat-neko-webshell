@@ -1,4 +1,4 @@
-import { encodeMobileShortcutKeyInput, encodeModifiedTextInput, type TerminalShortcutModifiers } from "./keyboard";
+import { encodeMobileShortcutKeyInput, encodeModifiedTextInput, type TerminalShortcutModifiers } from "../keyboard";
 
 export type MobileStickyModifier = "ctrl" | "alt" | "shift";
 

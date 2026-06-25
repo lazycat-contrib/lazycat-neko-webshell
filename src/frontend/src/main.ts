@@ -2,13 +2,12 @@ import "./styles.css";
 import "./plugin-tools.css";
 import "./webshell-themes.css";
 import "./terminal-themes.css";
-import "./mobile.css";
+import "./mobile/styles.css";
 
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
 import { createIcons, icons } from "lucide";
 
-import { AIChatStore } from "./ai-chat-store";
 import {
   deleteStoredFont,
   deleteTerminalBackgroundFile,
@@ -24,9 +23,9 @@ import {
   validateGhosttyThemeSource,
   validateTerminalBackgroundFile,
 } from "./appearance-settings";
-import { shouldUseMobileControls, updateViewportMetrics as applyViewportMetrics } from "./app-viewport";
+import { updateViewportMetrics as applyViewportMetrics } from "./app-viewport";
 import { TerminalActionWSClient } from "./action-ws-client";
-import { appendAIContextText, recentAIContextText } from "./ai-context";
+import { appendAIContextText } from "./ai-context";
 import {
   emptyAiMcpServer,
   headersFromText,
@@ -51,7 +50,7 @@ import {
   STATUS_REFRESH_MS,
 } from "./config";
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
-import { FileBrowserStore } from "./file-browser-store";
+import { clamp, clampFloatingPoint, floatingViewportBounds } from "./floating-position";
 import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
 import {
   herdrCurrentPaneId,
@@ -71,73 +70,81 @@ import {
 import { translate, type MessageKey } from "./i18n";
 import { renderInstanceListView } from "./instance-views";
 import {
-  base64ToBytes,
   boolField,
   metaString,
-  metaStringArray,
-  recordField,
   stringField,
 } from "./json-meta";
 import { resolveLightOSHomeUrl } from "./lightos-navigation";
 import {
-  clearMobileSticky as resetMobileSticky,
-  createMobileStickyState,
-  encodeMobileShortcutInput,
-  isMobileModifierShortcut,
-  mobileChordInput,
-  toggleMobileModifier,
-  transformMobileStickyInput as encodeMobileStickyTextInput,
-} from "./mobile-shortcuts";
-import {
-  MAX_MOBILE_QUICK_PHRASES,
-  makeMobileQuickPhrase,
   markMobileQuickPhraseUsed,
-  mobileSymbolAgentFromHerdrPane,
-  normalizeMobileQuickPhrases,
-  renderMobileQuickPhraseKeyboardPanel,
-  renderMobileQuickPhraseList,
-  renderMobileQuickPhrasePageButton,
-  renderMobileSymbolKeyboardPanel,
-  type MobileSymbolAgent,
-} from "./mobile-quick-input";
-import {
-  formatPomodoroRemaining,
-  idlePomodoroState,
-  POMODORO_DEFAULT_MINUTES,
-  POMODORO_DEFAULT_ROUNDS,
-  dismissPomodoroTask,
-  fetchPomodoroState,
-  nextPomodoroRound,
-  normalizePomodoroMinutes,
-  normalizePomodoroRounds,
-  remainingPomodoroMs,
-  startPomodoroTask,
-  stopPomodoroTask,
-  type PomodoroState,
-} from "./pomodoro";
+} from "./mobile/quick-input";
+import { createMobileQuickPhraseSettingsController } from "./mobile/quick-phrase-settings-controller";
+import { createMobileKeyboardController } from "./mobile/keyboard-controller";
+import { formatMobileClockTime } from "./mobile/clock";
+import { createMobileClockController } from "./mobile/clock-controller";
+import { blurActiveElement, isMobileOverlayMode, prepareMobileOverlay } from "./mobile/overlay";
+import { createMobileSymbolAgentController } from "./mobile/symbol-agent-controller";
+import { createMobileTerminalGestureController, isCoarseTouchPointer } from "./mobile/terminal-gestures";
 import {
   dismissNotification,
-  fetchNotifications,
-  markNotificationRead,
-  runNotificationAction,
-  type WebshellNotification,
 } from "./notifications-api";
+import { createNotificationController } from "./notifications/controller";
+import { createNotificationDom } from "./notifications/dom";
+import { notificationDisplayTitle, notificationTone } from "./notifications/presenter";
 import { renderNewTabMenuView, renderTabsView, type TabViewItem } from "./navigation-views";
 import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
+import {
+  allTabPanes,
+  findPaneById as findPaneByIdInTabs,
+  findPaneBySessionBackend as findSessionBackendPane,
+  selectActivePane,
+  selectActiveTab,
+  tabForPane as tabForPaneInTabs,
+  visibleTabPanes,
+} from "./pane-selection";
 import { createPaneTransport } from "./pane-transport";
+import { createPaneMenuController } from "./pane-menu-controller";
 import {
   AI_CHAT_PLUGIN_ID,
-  downloadPluginPayload,
   FILE_TRANSFER_PLUGIN_ID,
   LIGHTOS_PORT_FORWARD_PLUGIN_ID,
   POMODORO_PLUGIN_ID,
   pluginDescription,
   pluginDisplayName,
-  pluginIcon,
   PUBLIC_TUNNEL_PLUGIN_ID,
-  transferProgressText,
 } from "./plugin-utils";
-import { fileNameFromPath, normalizeRemotePath, parentRemotePath, parseFileBrowserEntries, uploadTargetPath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
+import { createAIChatController } from "./plugins/ai-chat/controller";
+import {
+  appendHerdrAIContext,
+  recentAIContext as recentAIContextForPane,
+} from "./plugins/ai-chat/context";
+import { resizeAIChatInput, scrollAIChatToBottom } from "./plugins/ai-chat/dom";
+import { renderAIChatToolView } from "./plugins/ai-chat/tool-view";
+import { createFileTransferController } from "./plugins/file-transfer/controller";
+import { setFileTransferOutput } from "./plugins/file-transfer/dom";
+import { renderFileTransferToolView } from "./plugins/file-transfer/tool-view";
+import { createPluginJsonInvoker } from "./plugins/invoke-json";
+import { createLightOsPortForwardController } from "./plugins/lightos-port-forward/controller";
+import { renderLightOsPortForwardToolView } from "./plugins/lightos-port-forward/tool-view";
+import { createPomodoroController } from "./plugins/pomodoro/controller";
+import { createPomodoroTicker } from "./plugins/pomodoro/ticker";
+import { pomodoroToolViewState } from "./plugins/pomodoro/tool-presenter";
+import { renderPomodoroToolView } from "./plugins/pomodoro/tool-view";
+import { createPublicTunnelController } from "./plugins/public-tunnel/controller";
+import {
+  parseTunnelProviderProfiles,
+  tunnelProfileEditor,
+  tunnelProfileSaveInputFromSummary,
+  type TunnelProfileDialogState,
+  type TunnelProviderProfileSaveInput,
+} from "./plugins/public-tunnel/profile-presenter";
+import { renderPublicTunnelToolView } from "./plugins/public-tunnel/tool-view";
+import type {
+  TunnelProviderProfileSummary,
+} from "./plugins/public-tunnel/types";
+import { enabledPluginTools, resolveActivePluginToolId } from "./plugins/tool-registry";
+import { renderPluginToolEmpty, renderPluginToolTabs } from "./plugins/tool-shell-view";
+import { workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderFontFamilyOptions, renderThemeSelectOptions } from "./settings-options-view";
 import { activateFontPanel, activateSettingsPanel, bindSettingsTabControls } from "./settings-tabs";
@@ -153,6 +160,16 @@ import {
 import { renderShell } from "./shell";
 import { paneLayoutNode } from "./split-layout";
 import { bindTabWheelSwitch } from "./tab-wheel-switch";
+import {
+  isHerdrTab,
+  defaultTabDisplayName as defaultDisplayNameForTab,
+  sortedPinnedTabs as sortPinnedTabs,
+  tabCurrentTitle as currentTabTitle,
+  tabDisplayName as displayNameForTab,
+  tabHasTextTitle as tabHasDisplayTextTitle,
+  tabPinnedGlyph as pinnedGlyphForTab,
+  tabTone as toneForTab,
+} from "./tab-labels";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
 import {
   normalizeFontHintTarget,
@@ -180,27 +197,11 @@ import {
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
 import { createUploadProgressController } from "./upload-progress";
 import { CUSTOM_THEME_PREFIX } from "./theme-registry";
-import {
-  aiChatTranscript,
-  renderAIChatMessages as renderAIChatMessagesView,
-  renderAIChatToolView,
-  renderFileTransferToolView,
-  renderLightOsPortForwardToolView,
-  renderPomodoroToolView,
-  renderPluginSettingsView,
-  renderPublicTunnelToolView,
-  type LightOsForwardInfo,
-  type PublicTunnelInfo,
-  type TunnelProviderProfileEditor,
-  type TunnelProviderProfileSummary,
-} from "./plugin-views";
+import { renderPluginSettingsView } from "./plugin-views";
 import type {
-  AIChatMessage,
-  AIChatSession,
   AiMcpServerSettings,
   AiProviderProfile,
   ClipboardImagePayload,
-  FileBrowserEntry,
   FontPreset,
   HerdrAction,
   HerdrBridgeState,
@@ -258,23 +259,15 @@ const HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS = 500;
 const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
-const MOBILE_TERMINAL_TAP_MOVE_THRESHOLD_PX = 18;
-const MOBILE_TERMINAL_DOUBLE_TAP_DISTANCE_PX = 32;
-const MOBILE_TERMINAL_DOUBLE_TAP_DELAY_MS = 420;
-const MOBILE_TERMINAL_TAB_SWIPE_DISTANCE_PX = 72;
-const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
-const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
 const MAX_AI_PROVIDER_PROFILES = 12;
 const AI_TERMINAL_CONTEXT_LINES = 40;
-const NETWORK_PLUGIN_TIMEOUT_MS = 70000;
 const POMODORO_REFRESH_MS = 5000;
 const NOTIFICATIONS_REFRESH_MS = 5000;
 const TUNNEL_PROVIDER_PROFILES_METADATA = "tunnelProviderProfiles";
 type AISettingsTab = "ai" | "mcp";
 type AIConfigDialogState = { type: "ai"; profileId?: string; isNew?: boolean } | { type: "mcp"; index: number };
-type TunnelProfileDialogState = { profileId: string; isNew: boolean };
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -283,6 +276,7 @@ const capabilityClient = createClient(
   }),
 );
 const actionClient = new TerminalActionWSClient();
+const invokePluginJson = createPluginJsonInvoker(capabilityClient);
 
 const params = new URLSearchParams(window.location.search);
 const initialSelector = normalizeSelector(params.get("name") ?? "");
@@ -290,6 +284,109 @@ const initialSelectorExplicit = params.has("name") && Boolean(initialSelector);
 
 const elements = renderShell(qs<HTMLDivElement>("#app"));
 const imageUploadProgress = createUploadProgressController(elements.webshell);
+const mobileKeyboard = createMobileKeyboardController({
+  root: elements.mobileShortcuts,
+  focusSystemKeyboard: focusActivePaneSystemKeyboard,
+  focusAfterShortcut: focusAfterMobileShortcut,
+  onKeyInput: sendActivePaneKeyInput,
+  onPasteShortcut: async () => {
+    await pasteIntoPane(activePane(), false);
+  },
+  onAction: runMobileAction,
+  onPhrase: runMobileQuickPhrase,
+});
+const mobileQuickPhraseSettings = createMobileQuickPhraseSettingsController({
+  elements,
+  phrases: () => settings.mobileQuickPhrases,
+  setPhrases: (phrases) => {
+    settings.mobileQuickPhrases = phrases;
+  },
+  tr,
+  saveSettings,
+  updateIcons,
+  onChanged: renderMobileQuickInput,
+});
+const mobileTerminalGestures = createMobileTerminalGestureController({
+  activateAdjacentTab,
+});
+const mobileClock = createMobileClockController({
+  elements: {
+    clock: elements.mobileShortcutClock,
+    enabled: elements.mobileClockEnabled,
+    use24Hour: elements.mobileClockUse24Hour,
+    showPeriod: elements.mobileClockShowPeriod,
+  },
+  settings: () => settings,
+  tr,
+});
+const paneMenuController = createPaneMenuController({
+  menu: elements.paneMenu,
+  prepareOverlay: prepareMobileOverlay,
+  isMobileOverlayMode,
+  updateIcons,
+  findPaneById,
+  tabForPane,
+  visiblePaneCount: (tab) => visiblePanes(tab).length,
+});
+const mobileSymbolAgent = createMobileSymbolAgentController({
+  activeHerdrPane: () => {
+    const pane = activePane();
+    if (!pane || pane.sessionBackend !== "herdr") return undefined;
+    const selector = normalizeSelector(pane.selector || selectedSelector);
+    if (!selector) return undefined;
+    return { selector, sessionId: pane.sessionId ?? "" };
+  },
+  ensureHerdrState: async (selector) => {
+    const stateMatches = herdrState?.available && normalizeSelector(herdrState.selector) === selector;
+    return stateMatches || await refreshHerdrState(selector);
+  },
+  readCurrentPane: async (selector) => {
+    const envelope = await runHerdrSocketRequest("pane.current", {}, {
+      selector,
+      id: "lazycat-webshell:mobile-symbol-agent",
+      mirrorNotification: false,
+    });
+    return envelope.result;
+  },
+  onChange: renderMobileQuickInput,
+});
+const notificationDom = createNotificationDom({
+  elements,
+  prepareOverlay: prepareMobileOverlay,
+  updateIcons,
+});
+const pomodoro = createPomodoroController({
+  isEnabled: () => pluginIsEnabled(POMODORO_PLUGIN_ID),
+  refreshNotifications: () => refreshNotifications({ showToast: false }),
+  dismissNotification,
+  onRender: renderPluginTools,
+  onComplete: () => setGlobalStatus(tr("pomodoro.completeTitle"), "ok"),
+  onActionError: (error) => setPluginStatus(errorMessage(error), "error"),
+  onRefreshError: (error) => {
+    if (activePluginToolId === POMODORO_PLUGIN_ID) {
+      setPluginStatus(errorMessage(error), "error");
+    }
+  },
+});
+const pomodoroTicker = createPomodoroTicker({
+  shouldRender: () => activePluginToolId === POMODORO_PLUGIN_ID
+    && pluginIsEnabled(POMODORO_PLUGIN_ID)
+    && pomodoro.isRunning(),
+  onRender: renderPluginTools,
+});
+const notificationController = createNotificationController({
+  render: (items) => notificationDom.render(items, tr, settings.locale),
+  renderModal: (notification) => notificationDom.renderModal(notification, tr),
+  closeModal: () => notificationDom.closeModal(),
+  activeModalId: () => notificationDom.activeNotificationModalId(),
+  refreshPomodoro: () => pomodoro.refresh(true),
+  onToast: (notification) => setGlobalStatus(notificationDisplayTitle(notification, tr), notificationTone(notification)),
+  onPomodoroNotification: () => {
+    void pomodoro.refresh(true);
+  },
+  onLoadError: (error) => setGlobalStatus(tr("status.notificationLoadFailed", { message: errorMessage(error) }), "error"),
+  onActionError: (error) => setGlobalStatus(tr("status.notificationActionFailed", { message: errorMessage(error) }), "error"),
+});
 
 let settings = loadLocalSettings();
 let instances: Instance[] = [];
@@ -312,24 +409,50 @@ let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
 let pluginsLoading = false;
 let activePluginToolId = "";
-const aiChat = new AIChatStore();
-const fileBrowser = new FileBrowserStore();
-const lightosPortForwardTool = {
-  remoteHost: "127.0.0.1",
-  remotePort: "3000",
-  forwards: [] as LightOsForwardInfo[],
-  loading: false,
-  loaded: false,
-  output: "",
-};
-const publicTunnelTool = {
-  provider: "cloudflare-quick",
-  upstreamUrl: "",
-  tunnels: [] as PublicTunnelInfo[],
-  loading: false,
-  loaded: false,
-  output: "",
-};
+const aiChat = createAIChatController({
+  isEnabled: () => pluginIsEnabled(AI_CHAT_PLUGIN_ID),
+  accessConfigured: aiAccessConfigured,
+  configuredModel: () => settings.aiModel,
+  activeProfileId: () => settings.aiActiveProviderProfileId || activeAiProviderProfile()?.id || "default",
+  setConfiguredModel: (model) => updateActiveAiProviderProfile({ model }),
+  saveSettings,
+  flushSettings,
+  terminalContext: terminalAIContext,
+  recentTerminalContext: () => recentAIContext(activePane()),
+  inputElement: () => document.querySelector<HTMLTextAreaElement>("#aiChatInput"),
+  actionClient,
+  tr,
+  createId: newId,
+  onStatus: setPluginStatus,
+  onRender: renderPluginTools,
+});
+const fileTransfer = createFileTransferController({
+  isEnabled: () => pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID),
+  activePane,
+  actionClient,
+  tr,
+  onOutput: setFileTransferOutput,
+  onStatus: setPluginStatus,
+  onRender: renderPluginTools,
+});
+const publicTunnel = createPublicTunnelController({
+  isEnabled: () => pluginIsEnabled(PUBLIC_TUNNEL_PLUGIN_ID),
+  sessionId: () => activePane()?.sessionId,
+  profiles: publicTunnelProfiles,
+  invokeJson: invokePluginJson,
+  tr,
+  onStatus: setPluginStatus,
+  onRender: renderPluginTools,
+});
+const lightosPortForward = createLightOsPortForwardController({
+  isEnabled: () => pluginIsEnabled(LIGHTOS_PORT_FORWARD_PLUGIN_ID),
+  sessionId: () => activePane()?.sessionId,
+  invokeJson: invokePluginJson,
+  tr,
+  onStatus: setPluginStatus,
+  onRender: renderPluginTools,
+  onLocalUrl: (localUrl) => publicTunnel.setUpstreamIfEmpty(localUrl),
+});
 let activeAISettingsTab: AISettingsTab = "ai";
 let aiConfigDialog: AIConfigDialogState | undefined;
 let tunnelProfileDialog: TunnelProfileDialogState | undefined;
@@ -337,40 +460,10 @@ let aiProviderPickerOpen = false;
 let tabs: TerminalTab[] = [];
 let activeTabId: string | undefined;
 let renamingTabId: string | undefined;
-let contextPaneId: string | undefined;
 let customFonts: FontPreset[] = [];
-const mobileSticky = createMobileStickyState();
-let mobileSymbolAgent: MobileSymbolAgent = "default";
-let mobileSymbolAgentRefreshKey = "";
-let mobileSymbolAgentRefreshTime = 0;
-let mobileSymbolAgentRequest = 0;
-let mobileQuickPhraseEditingId = "";
-let mobileClockTimer: number | undefined;
-let pomodoroState: PomodoroState = idlePomodoroState();
-let pomodoroDraftMinutes = pomodoroState.durationMinutes || POMODORO_DEFAULT_MINUTES;
-let pomodoroDraftRounds = pomodoroState.totalRounds || POMODORO_DEFAULT_ROUNDS;
 let pomodoroPollingTimer: number | undefined;
-let pomodoroLoading = false;
-let notifications: WebshellNotification[] = [];
 let notificationsPollingTimer: number | undefined;
-let notificationsLoading = false;
-let activeNotificationModalId = "";
-const seenNotificationIds = new Set<string>();
-const lastMobileTerminalTap = {
-  paneId: "",
-  time: 0,
-  x: 0,
-  y: 0,
-};
-const mobileTerminalSwipe = {
-  paneId: "",
-  x: 0,
-  y: 0,
-  time: 0,
-};
 const pluginSaveInFlight = new Set<string>();
-let mobileRepeatTimer: number | undefined;
-let mobileRepeatInterval: number | undefined;
 let terminalResizeTimers: number[] = [];
 
 updateViewportMetrics();
@@ -388,9 +481,10 @@ async function init() {
   void document.fonts?.ready.then(() => handleViewportChange()).catch(() => {});
   createIcons({ icons });
   setInterval(updateActiveDetails, STATUS_REFRESH_MS);
+  pomodoroTicker.start();
   startPomodoroPolling();
   startNotificationsPolling();
-  await refreshPomodoroState({ render: false });
+  await pomodoro.refresh(false);
   await refreshNotifications({ showToast: true });
   await loadInstances();
   if (selectedSelector) {
@@ -625,9 +719,9 @@ function bindSettings() {
     if (!aiButton) return;
     const action = aiButton.dataset.aiAction ?? "";
     if (action === "models") {
-      void fetchAIModels();
+      void aiChat.fetchModels();
     } else if (action === "test") {
-      void testAIAccess();
+      void aiChat.testAccess();
     }
   });
   elements.pluginToolTabs.addEventListener("click", (event) => {
@@ -650,14 +744,14 @@ function bindSettings() {
       ? event.target.closest<HTMLInputElement>("[data-port-forward-field]")
       : null;
     if (portField) {
-      updatePortForwardField(portField.dataset.portForwardField ?? "", portField.value);
+      lightosPortForward.updateField(portField.dataset.portForwardField ?? "", portField.value);
       return;
     }
     const tunnelField = event.target instanceof Element
       ? event.target.closest<HTMLInputElement>("[data-public-tunnel-field]")
       : null;
     if (tunnelField) {
-      updatePublicTunnelField(tunnelField.dataset.publicTunnelField ?? "", tunnelField.value);
+      publicTunnel.updateField(tunnelField.dataset.publicTunnelField ?? "", tunnelField.value);
     }
   });
   elements.pluginToolBody.addEventListener("change", (event) => {
@@ -667,7 +761,7 @@ function bindSettings() {
     if (upload) {
       const files = Array.from(upload.files ?? []);
       if (files.length) {
-        void uploadFileTransfer(files).finally(() => {
+        void fileTransfer.upload(files).finally(() => {
           upload.value = "";
         });
       }
@@ -677,7 +771,7 @@ function bindSettings() {
       ? event.target.closest<HTMLInputElement>("[data-pomodoro-minutes]")
       : null;
     if (pomodoroMinutes) {
-      pomodoroDraftMinutes = normalizePomodoroMinutes(pomodoroMinutes.value, pomodoroDraftMinutes);
+      pomodoro.setDraftMinutes(pomodoroMinutes.value);
       renderPluginTools();
       return;
     }
@@ -685,7 +779,7 @@ function bindSettings() {
       ? event.target.closest<HTMLInputElement>("[data-pomodoro-rounds]")
       : null;
     if (pomodoroRounds) {
-      pomodoroDraftRounds = normalizePomodoroRounds(pomodoroRounds.value, pomodoroDraftRounds);
+      pomodoro.setDraftRounds(pomodoroRounds.value);
       renderPluginTools();
       return;
     }
@@ -700,7 +794,7 @@ function bindSettings() {
       ? event.target.closest<HTMLSelectElement>("[data-public-tunnel-field]")
       : null;
     if (tunnelField) {
-      updatePublicTunnelField(tunnelField.dataset.publicTunnelField ?? "", tunnelField.value);
+      publicTunnel.updateField(tunnelField.dataset.publicTunnelField ?? "", tunnelField.value);
     }
   });
   elements.pluginToolBody.addEventListener("keydown", (event) => {
@@ -709,31 +803,29 @@ function bindSettings() {
       : null;
     if (!input || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
     event.preventDefault();
-    void runAIChat();
+    void aiChat.run();
   });
   elements.pluginToolBody.addEventListener("click", (event) => {
     const entryButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-file-entry]")
       : null;
     if (entryButton) {
-      void activateFileBrowserEntry(entryButton.dataset.fileEntry ?? "", event.detail > 1);
+      void fileTransfer.activateEntry(entryButton.dataset.fileEntry ?? "", event.detail > 1);
       return;
     }
     const menuButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-file-menu-action]")
       : null;
     if (menuButton) {
-      const path = menuButton.dataset.fileMenuPath ?? fileBrowser.selectedPath;
-      fileBrowser.selectPath(path);
-      fileBrowser.clearContextMenu();
-      void runFileTransfer(menuButton.dataset.fileMenuAction ?? "");
+      fileTransfer.selectMenuPath(menuButton.dataset.fileMenuPath ?? "");
+      void fileTransfer.runAction(menuButton.dataset.fileMenuAction ?? "");
       return;
     }
     const fileButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-file-transfer-action]")
       : null;
     if (fileButton) {
-      void runFileTransfer(fileButton.dataset.fileTransferAction ?? "");
+      void fileTransfer.runAction(fileButton.dataset.fileTransferAction ?? "");
       return;
     }
     const copyButton = event.target instanceof Element
@@ -747,14 +839,14 @@ function bindSettings() {
       ? event.target.closest<HTMLButtonElement>("[data-port-forward-action]")
       : null;
     if (portActionButton) {
-      void runPortForward(portActionButton.dataset.portForwardAction ?? "");
+      void lightosPortForward.runAction(portActionButton.dataset.portForwardAction ?? "");
       return;
     }
     const releaseForwardButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-port-forward-release]")
       : null;
     if (releaseForwardButton) {
-      void releasePortForward(releaseForwardButton.dataset.portForwardRelease ?? "");
+      void lightosPortForward.release(releaseForwardButton.dataset.portForwardRelease ?? "");
       return;
     }
     const useForwardButton = event.target instanceof Element
@@ -768,29 +860,28 @@ function bindSettings() {
       ? event.target.closest<HTMLButtonElement>("[data-public-tunnel-upstream]")
       : null;
     if (tunnelUpstreamButton) {
-      publicTunnelTool.upstreamUrl = tunnelUpstreamButton.dataset.publicTunnelUpstream ?? "";
-      renderPluginTools();
+      publicTunnel.useUpstreamUrl(tunnelUpstreamButton.dataset.publicTunnelUpstream ?? "");
       return;
     }
     const tunnelActionButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-public-tunnel-action]")
       : null;
     if (tunnelActionButton) {
-      void runPublicTunnel(tunnelActionButton.dataset.publicTunnelAction ?? "");
+      void publicTunnel.runAction(tunnelActionButton.dataset.publicTunnelAction ?? "");
       return;
     }
     const stopTunnelButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-public-tunnel-stop]")
       : null;
     if (stopTunnelButton) {
-      void stopPublicTunnel(stopTunnelButton.dataset.publicTunnelStop ?? "");
+      void publicTunnel.stop(stopTunnelButton.dataset.publicTunnelStop ?? "");
       return;
     }
     const pomodoroPresetButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-pomodoro-preset]")
       : null;
     if (pomodoroPresetButton) {
-      pomodoroDraftMinutes = normalizePomodoroMinutes(pomodoroPresetButton.dataset.pomodoroPreset, pomodoroDraftMinutes);
+      pomodoro.setDraftMinutes(pomodoroPresetButton.dataset.pomodoroPreset);
       renderPluginTools();
       return;
     }
@@ -798,7 +889,7 @@ function bindSettings() {
       ? event.target.closest<HTMLButtonElement>("[data-pomodoro-action]")
       : null;
     if (pomodoroActionButton) {
-      void runPomodoroAction(pomodoroActionButton.dataset.pomodoroAction ?? "");
+      void pomodoro.runAction(pomodoroActionButton.dataset.pomodoroAction ?? "");
       return;
     }
     const aiSettingButton = event.target instanceof Element
@@ -827,28 +918,28 @@ function bindSettings() {
     }
     const action = aiButton.dataset.aiAction ?? "";
     if (action === "send-chat") {
-      void runAIChat();
+      void aiChat.run();
     } else if (action === "copy-output") {
-      void copyAIOutput();
+      aiChat.copyOutput();
     } else if (action === "copy-message") {
-      void copyAIMessage(Number(aiButton.dataset.aiMessageIndex));
+      aiChat.copyMessage(Number(aiButton.dataset.aiMessageIndex));
     } else if (action === "copy-code") {
-      void copyAICodeBlock(aiButton);
+      aiChat.copyCodeBlock(aiButton);
     } else if (action === "clear-output") {
-      clearAIOutput();
+      aiChat.clearOutput();
     } else if (action === "new-chat") {
-      newAIChatSession();
+      aiChat.newSession();
     } else if (action === "export-chat") {
-      exportAIChat();
+      aiChat.export();
     } else if (action === "models") {
-      void fetchAIModels();
+      void aiChat.fetchModels();
     } else if (action === "test") {
-      void testAIAccess();
+      void aiChat.testAccess();
     } else if (action === "toggle-provider-menu") {
       aiProviderPickerOpen = !aiProviderPickerOpen;
       renderPluginTools();
     } else if (action === "toggle-terminal-context") {
-      toggleAIChatTerminalContext();
+      aiChat.toggleTerminalContext();
     }
   });
   elements.pluginToolBody.addEventListener("contextmenu", (event) => {
@@ -862,8 +953,7 @@ function bindSettings() {
       height: 260,
       margin: isMobileOverlayMode() ? 10 : 8,
     });
-    fileBrowser.openContextMenu(entryButton.dataset.fileEntry ?? "", point.x, point.y);
-    renderPluginTools();
+    fileTransfer.openContextMenu(entryButton.dataset.fileEntry ?? "", point.x, point.y);
   });
   elements.fontFamily.addEventListener("change", () => {
     settings.fontFamilyId = elements.fontFamily.value;
@@ -986,38 +1076,38 @@ function bindSettings() {
   });
   elements.mobileClockEnabled.addEventListener("change", () => {
     settings.mobileClockEnabled = elements.mobileClockEnabled.checked;
-    updateMobileClockSettingsState();
+    mobileClock.updateSettingsState();
     saveSettings();
-    updateMobileClock();
+    mobileClock.update();
   });
   elements.mobileClockUse24Hour.addEventListener("change", () => {
     settings.mobileClockUse24Hour = elements.mobileClockUse24Hour.checked;
-    updateMobileClockSettingsState();
+    mobileClock.updateSettingsState();
     saveSettings();
-    updateMobileClock();
+    mobileClock.update();
   });
   elements.mobileClockShowPeriod.addEventListener("change", () => {
     settings.mobileClockShowPeriod = elements.mobileClockShowPeriod.checked;
     saveSettings();
-    updateMobileClock();
+    mobileClock.update();
   });
   elements.mobileQuickPhraseList.addEventListener("click", (event) => {
     const removeButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-quick-phrase-remove]")
       : null;
     if (removeButton) {
-      removeMobileQuickPhrase(removeButton.dataset.quickPhraseRemove ?? "");
+      mobileQuickPhraseSettings.remove(removeButton.dataset.quickPhraseRemove ?? "");
       return;
     }
     const editButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-quick-phrase-edit]")
       : null;
     if (editButton) {
-      beginMobileQuickPhraseEdit(editButton.dataset.quickPhraseEdit ?? "");
+      mobileQuickPhraseSettings.beginEdit(editButton.dataset.quickPhraseEdit ?? "");
     }
   });
-  elements.mobileQuickPhraseSave.addEventListener("click", () => saveMobileQuickPhrase());
-  elements.mobileQuickPhraseCancel.addEventListener("click", () => resetMobileQuickPhraseEditor());
+  elements.mobileQuickPhraseSave.addEventListener("click", () => mobileQuickPhraseSettings.save());
+  elements.mobileQuickPhraseCancel.addEventListener("click", () => mobileQuickPhraseSettings.reset());
   elements.autoRestartSessions.addEventListener("change", () => {
     settings.autoRestartSessions = elements.autoRestartSessions.checked;
     saveSettings();
@@ -1228,7 +1318,7 @@ function bindActions() {
     const link = target?.closest<HTMLAnchorElement>("[data-notification-link]");
     if (link) {
       const id = link.dataset.notificationId ?? "";
-      if (id) void markNotificationRead(id).then(() => refreshNotifications({ showToast: false })).catch(() => {});
+      if (id) void notificationController.markRead(id).catch(() => {});
     }
   });
   elements.notificationModal.addEventListener("click", (event) => {
@@ -1330,15 +1420,14 @@ function bindActions() {
       closeShortcutHelp();
     }
     if (event.target instanceof Node && !elements.paneMenu.contains(event.target)) {
-      closePaneMenu();
+      paneMenuController.close();
     }
     if (
-      fileBrowser.contextMenu
+      fileTransfer.hasContextMenu()
       && event.target instanceof Element
       && !event.target.closest(".file-browser-context-menu")
     ) {
-      fileBrowser.clearContextMenu();
-      renderPluginTools();
+      if (fileTransfer.clearContextMenu()) renderPluginTools();
     }
   });
   elements.paneMenu.addEventListener("click", (event) => {
@@ -1356,8 +1445,8 @@ function bindActions() {
       closeNotificationModal();
       closeShortcutHelp();
       closeAboutDialog();
-      closePaneMenu();
-      fileBrowser.clearContextMenu();
+      paneMenuController.close();
+      fileTransfer.clearContextMenu();
       closeSettings();
       closePluginSidebar();
       renderPluginTools();
@@ -1450,92 +1539,7 @@ function handleViewportChange() {
 }
 
 function bindMobileShortcuts() {
-  elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-mobile-shortcut]")
-      : null;
-    if (!button || button.dataset.mobileRepeat === "true") return;
-    event.preventDefault();
-    void runMobileShortcut(button.dataset.mobileShortcut ?? "");
-  });
-
-  elements.mobileShortcuts.addEventListener("click", (event) => {
-    if (
-      event.target instanceof Element
-      && event.target.closest("[data-mobile-shortcut], [data-mobile-action], [data-mobile-chord], [data-mobile-page], [data-mobile-phrase]")
-    ) {
-      event.preventDefault();
-    }
-  });
-
-  elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
-    const chordButton = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-mobile-chord]")
-      : null;
-    if (chordButton) {
-      event.preventDefault();
-      runMobileChord(chordButton.dataset.mobileChord ?? "");
-      return;
-    }
-    const actionButton = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-mobile-action]")
-      : null;
-    if (!actionButton) return;
-    event.preventDefault();
-    void runMobileAction(actionButton.dataset.mobileAction ?? "");
-  });
-
-  elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-mobile-phrase]")
-      : null;
-    if (!button) return;
-    event.preventDefault();
-    void runMobileQuickPhrase(button.dataset.mobilePhrase ?? "");
-  });
-
-  elements.mobileShortcuts.addEventListener("pointerdown", (event) => {
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-mobile-page]")
-      : null;
-    if (!button) return;
-    event.preventDefault();
-    activateMobileKeyboardPage(button.dataset.mobilePage ?? "");
-  });
-
-  elements.mobileShortcuts.querySelectorAll<HTMLButtonElement>("[data-mobile-repeat='true']").forEach((button) => {
-    button.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      button.setPointerCapture?.(event.pointerId);
-      const shortcut = button.dataset.mobileShortcut ?? "";
-      void runMobileShortcut(shortcut, { keepModifiers: true });
-      window.clearTimeout(mobileRepeatTimer);
-      window.clearInterval(mobileRepeatInterval);
-      mobileRepeatTimer = window.setTimeout(() => {
-        mobileRepeatInterval = window.setInterval(() => void runMobileShortcut(shortcut, { keepModifiers: true }), 86);
-      }, 360);
-    });
-    const stopRepeat = () => {
-      stopMobileShortcutRepeat();
-      clearMobileSticky();
-    };
-    button.addEventListener("pointerup", stopRepeat);
-    button.addEventListener("pointercancel", stopRepeat);
-    button.addEventListener("lostpointercapture", stopRepeat);
-  });
-  updateMobileShortcutState();
-}
-
-function activateMobileKeyboardPage(page: string) {
-  if (!page) return;
-  elements.mobileShortcuts.querySelectorAll<HTMLButtonElement>("[data-mobile-page]").forEach((button) => {
-    const active = button.dataset.mobilePage === page;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
-  elements.mobileShortcuts.querySelectorAll<HTMLElement>("[data-mobile-panel]").forEach((panel) => {
-    panel.hidden = panel.dataset.mobilePanel !== page;
-  });
+  mobileKeyboard.bind();
 }
 
 function bindSettingsTabs() {
@@ -1556,38 +1560,6 @@ function activateFontTab(tabId: string) {
   activateFontPanel(elements, tabId);
 }
 
-function stopMobileShortcutRepeat() {
-  window.clearTimeout(mobileRepeatTimer);
-  window.clearInterval(mobileRepeatInterval);
-  mobileRepeatTimer = undefined;
-  mobileRepeatInterval = undefined;
-}
-
-async function runMobileShortcut(shortcut: string, options: { keepModifiers?: boolean } = {}) {
-  if (isMobileModifierShortcut(shortcut)) {
-    toggleMobileModifier(mobileSticky, shortcut);
-    updateMobileShortcutState();
-    focusActivePaneSystemKeyboard();
-    return;
-  }
-
-  if (shortcut === "paste") {
-    await pasteIntoPane(activePane(), false);
-    clearMobileSticky();
-    focusAfterMobileShortcut();
-    return;
-  }
-
-  const data = encodeMobileShortcutInput(shortcut, mobileSticky);
-  if (data) {
-    sendActivePaneKeyInput(data);
-  }
-  if (!options.keepModifiers) {
-    clearMobileSticky();
-  }
-  focusAfterMobileShortcut();
-}
-
 async function runMobileQuickPhrase(id: string) {
   const phrase = settings.mobileQuickPhrases.find((item) => item.id === id);
   if (!phrase?.text) return;
@@ -1600,15 +1572,6 @@ async function runMobileQuickPhrase(id: string) {
   settings.mobileQuickPhrases = markMobileQuickPhraseUsed(settings.mobileQuickPhrases, id);
   saveSettings();
   renderMobileQuickInput();
-  focusAfterMobileShortcut();
-}
-
-function runMobileChord(chord: string) {
-  const data = mobileChordInput(chord);
-  if (data) {
-    sendActivePaneKeyInput(data);
-  }
-  clearMobileSticky();
   focusAfterMobileShortcut();
 }
 
@@ -1640,152 +1603,37 @@ async function runMobileAction(action: string) {
   } else if (action === "pane-menu") {
     openActivePaneMenu();
   }
-  clearMobileSticky();
+  mobileKeyboard.clearSticky();
   if (action !== "pane-menu") {
     focusAfterMobileShortcut();
   }
 }
 
 function transformMobileStickyInput(text: string, source: string): string | undefined {
-  const encoded = encodeMobileStickyTextInput(mobileSticky, text, source);
-  if (encoded) updateMobileShortcutState();
-  return encoded;
-}
-
-function clearMobileSticky() {
-  resetMobileSticky(mobileSticky);
-  updateMobileShortcutState();
-}
-
-function updateMobileShortcutState() {
-  elements.mobileShortcuts.querySelectorAll<HTMLButtonElement>("[data-mobile-modifier]").forEach((button) => {
-    const modifier = button.dataset.mobileModifier;
-    const active = modifier === "ctrl" || modifier === "alt" || modifier === "shift" ? mobileSticky[modifier] : false;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
+  return mobileKeyboard.encodeStickyInput(text, source);
 }
 
 function renderMobileQuickInput() {
-  const pages = elements.mobileShortcuts.querySelector<HTMLElement>(".mobile-keyboard-pages");
-  const pageTabs = elements.mobileShortcuts.querySelector<HTMLElement>(".mobile-keyboard-page-tabs");
-  const symPanel = elements.mobileShortcuts.querySelector<HTMLElement>("[data-mobile-panel='sym']");
-  const phrasePanel = elements.mobileShortcuts.querySelector<HTMLElement>("[data-mobile-panel='phrases']");
-  if (!pages || !pageTabs || !symPanel || !phrasePanel) return;
-  const activePage = activeMobileKeyboardPage();
-
-  const phraseButton = pages.querySelector<HTMLElement>("[data-mobile-page='phrases']");
-  phraseButton?.remove();
-  const phrases = normalizeMobileQuickPhrases(settings.mobileQuickPhrases);
+  const phrases = mobileKeyboard.renderQuickInput({
+    phrases: settings.mobileQuickPhrases,
+    symbolAgent: mobileSymbolAgent.current(),
+    tr,
+  });
   if (phrases !== settings.mobileQuickPhrases) {
     settings.mobileQuickPhrases = phrases;
   }
-  const phraseButtonHtml = renderMobileQuickPhrasePageButton(phrases, tr);
-  if (phraseButtonHtml) {
-    pageTabs.insertAdjacentHTML("beforeend", phraseButtonHtml);
-  } else if (!phrasePanel.hidden) {
-    activateMobileKeyboardPage("sym");
-  }
-
-  symPanel.innerHTML = renderMobileSymbolKeyboardPanel(mobileSymbolAgent);
-  phrasePanel.innerHTML = renderMobileQuickPhraseKeyboardPanel(phrases);
-  activateMobileKeyboardPage(activePage === "phrases" && !phrases.length ? "sym" : activePage);
   renderMobileQuickPhraseSettings();
-  updateMobileClock();
-}
-
-function activeMobileKeyboardPage(): string {
-  return elements.mobileShortcuts.querySelector<HTMLButtonElement>("[data-mobile-page].active")?.dataset.mobilePage ?? "main";
+  mobileClock.update();
 }
 
 function renderMobileQuickPhraseSettings() {
-  elements.mobileQuickPhraseList.innerHTML = renderMobileQuickPhraseList(settings.mobileQuickPhrases, tr);
-  elements.mobileQuickPhraseSave.textContent = mobileQuickPhraseEditingId
-    ? tr("action.quickPhraseSave")
-    : tr("action.quickPhraseAdd");
-  elements.mobileQuickPhraseCancel.hidden = !mobileQuickPhraseEditingId;
-  updateIcons();
-}
-
-function beginMobileQuickPhraseEdit(id: string) {
-  const phrase = settings.mobileQuickPhrases.find((item) => item.id === id);
-  if (!phrase) return;
-  mobileQuickPhraseEditingId = phrase.id;
-  elements.mobileQuickPhraseLabel.value = phrase.label;
-  elements.mobileQuickPhraseText.value = phrase.text;
-  elements.mobileQuickPhraseStatus.textContent = "";
-  renderMobileQuickPhraseSettings();
-  elements.mobileQuickPhraseText.focus();
-}
-
-function resetMobileQuickPhraseEditor() {
-  mobileQuickPhraseEditingId = "";
-  elements.mobileQuickPhraseLabel.value = "";
-  elements.mobileQuickPhraseText.value = "";
-  elements.mobileQuickPhraseStatus.textContent = "";
-  renderMobileQuickPhraseSettings();
-}
-
-function saveMobileQuickPhrase() {
-  const text = elements.mobileQuickPhraseText.value.trim();
-  if (!text) {
-    setMobileQuickPhraseStatus(tr("validation.quickPhraseText"), "error");
-    return;
-  }
-  const existingIndex = settings.mobileQuickPhrases.findIndex((phrase) => phrase.id === mobileQuickPhraseEditingId);
-  const phrase = makeMobileQuickPhrase({
-    id: existingIndex >= 0 ? mobileQuickPhraseEditingId : undefined,
-    label: elements.mobileQuickPhraseLabel.value,
-    text,
-  }, settings.mobileQuickPhrases);
-  const current = existingIndex >= 0 ? settings.mobileQuickPhrases[existingIndex] : undefined;
-  const next = {
-    ...phrase,
-    useCount: current?.useCount ?? 0,
-    lastUsedAt: current?.lastUsedAt ?? 0,
-  };
-  if (existingIndex >= 0) {
-    settings.mobileQuickPhrases = settings.mobileQuickPhrases.map((item) => item.id === mobileQuickPhraseEditingId ? next : item);
-  } else if (settings.mobileQuickPhrases.length >= MAX_MOBILE_QUICK_PHRASES) {
-    setMobileQuickPhraseStatus(tr("validation.quickPhraseLimit", { count: MAX_MOBILE_QUICK_PHRASES }), "error");
-    return;
-  } else {
-    settings.mobileQuickPhrases = [...settings.mobileQuickPhrases, next];
-  }
-  settings.mobileQuickPhrases = normalizeMobileQuickPhrases(settings.mobileQuickPhrases);
-  saveSettings();
-  resetMobileQuickPhraseEditor();
-  renderMobileQuickInput();
-  setMobileQuickPhraseStatus(tr("status.quickPhraseSaved"), "ok");
-}
-
-function removeMobileQuickPhrase(id: string) {
-  const before = settings.mobileQuickPhrases.length;
-  settings.mobileQuickPhrases = settings.mobileQuickPhrases.filter((phrase) => phrase.id !== id);
-  if (settings.mobileQuickPhrases.length === before) return;
-  if (mobileQuickPhraseEditingId === id) {
-    resetMobileQuickPhraseEditor();
-  }
-  saveSettings();
-  renderMobileQuickInput();
-  setMobileQuickPhraseStatus(tr("status.quickPhraseRemoved"));
-}
-
-function setMobileQuickPhraseStatus(message: string, tone: Tone = "neutral") {
-  elements.mobileQuickPhraseStatus.textContent = message;
-  elements.mobileQuickPhraseStatus.dataset.tone = tone;
-}
-
-function startMobileClock() {
-  updateMobileClock();
-  window.clearInterval(mobileClockTimer);
-  mobileClockTimer = window.setInterval(updateMobileClock, 1000);
+  mobileQuickPhraseSettings.render();
 }
 
 function startPomodoroPolling() {
   window.clearInterval(pomodoroPollingTimer);
   pomodoroPollingTimer = window.setInterval(() => {
-    void refreshPomodoroState({ render: true });
+    void pomodoro.refresh(true);
   }, POMODORO_REFRESH_MS);
 }
 
@@ -1794,53 +1642,6 @@ function startNotificationsPolling() {
   notificationsPollingTimer = window.setInterval(() => {
     void refreshNotifications({ showToast: true });
   }, NOTIFICATIONS_REFRESH_MS);
-}
-
-function updateMobileClock() {
-  updatePomodoroCountdown();
-  elements.mobileShortcutClock.hidden = !settings.mobileClockEnabled;
-  if (!settings.mobileClockEnabled) {
-    elements.mobileShortcutClock.replaceChildren();
-    return;
-  }
-  const now = new Date();
-  const hasPhrases = settings.mobileQuickPhrases.length > 0;
-  const showPeriod = !settings.mobileClockUse24Hour && settings.mobileClockShowPeriod;
-  const timeText = formatMobileClockTime(now, {
-    hour12: !settings.mobileClockUse24Hour,
-    showPeriod,
-    showSeconds: !hasPhrases,
-  });
-  renderMobileClockContent(timeText);
-  elements.mobileShortcutClock.dataset.compact = String(hasPhrases);
-  elements.mobileShortcutClock.dataset.period = String(showPeriod);
-  delete elements.mobileShortcutClock.dataset.pomodoro;
-  elements.mobileShortcutClock.setAttribute("aria-label", `${tr("label.currentTime")} ${timeText}`);
-}
-
-function updatePomodoroCountdown() {
-  if (
-    activePluginToolId === POMODORO_PLUGIN_ID
-    && pluginIsEnabled(POMODORO_PLUGIN_ID)
-    && pomodoroState.status === "running"
-  ) {
-    renderPluginTools();
-  }
-}
-
-function updateMobileClockSettingsState() {
-  elements.mobileClockEnabled.checked = settings.mobileClockEnabled;
-  elements.mobileClockUse24Hour.checked = settings.mobileClockUse24Hour;
-  elements.mobileClockUse24Hour.disabled = !settings.mobileClockEnabled;
-  elements.mobileClockShowPeriod.checked = settings.mobileClockShowPeriod;
-  elements.mobileClockShowPeriod.disabled = !settings.mobileClockEnabled || settings.mobileClockUse24Hour;
-}
-
-function renderMobileClockContent(timeText: string) {
-  const text = document.createElement("span");
-  text.className = "mobile-clock-text";
-  text.textContent = timeText;
-  elements.mobileShortcutClock.replaceChildren(text);
 }
 
 function toggleNotificationsMenu() {
@@ -1860,300 +1661,34 @@ function toggleNotificationsMenu() {
 }
 
 function closeNotificationsMenu() {
-  elements.notificationsMenu.hidden = true;
-  elements.notificationsButton.setAttribute("aria-expanded", "false");
+  notificationDom.closeMenu();
 }
 
 function renderNotifications() {
-  const hasNotifications = notifications.length > 0;
-  const unreadCount = notifications.filter((notification) => notification.state === "unread").length;
-  elements.notificationsShell.hidden = !hasNotifications;
-  if (!hasNotifications) {
-    closeNotificationsMenu();
-  }
-  elements.notificationCount.hidden = unreadCount === 0;
-  elements.notificationCount.textContent = unreadCount === 0 ? "" : unreadCount > 9 ? "9+" : String(unreadCount);
-  elements.notificationsButton.classList.toggle("has-unread", unreadCount > 0);
-  elements.notificationList.innerHTML = notifications.length
-    ? notifications.map(renderNotificationItem).join("")
-    : `<p class="notification-empty">${escapeHtml(tr("status.noNotifications"))}</p>`;
-  if (activeNotificationModalId) {
-    const modalNotification = notifications.find((notification) => notification.id === activeNotificationModalId);
-    if (modalNotification && modalNotification.state !== "dismissed") {
-      renderNotificationModal(modalNotification);
-    } else {
-      closeNotificationModal();
-    }
-  }
-  updateIcons();
-}
-
-function renderNotificationItem(notification: WebshellNotification): string {
-  const title = notificationDisplayTitle(notification);
-  const body = notificationDisplayBody(notification);
-  const time = notification.createdAtMs > 0
-    ? formatNotificationTime(notification.createdAtMs)
-    : "";
-  const actions = notification.state === "actioned"
-    ? ""
-    : notification.actions.map((action) => `
-      <button class="command-button ${action.style === "primary" ? "primary" : action.style === "danger" ? "danger" : ""}" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-action="${escapeAttr(action.id)}">
-        ${escapeHtml(notificationActionLabel(notification, action))}
-      </button>
-    `).join("");
-  const link = notification.url
-    ? `<a class="notification-link" href="${escapeAttr(notification.url)}" target="_blank" rel="noreferrer" data-notification-id="${escapeAttr(notification.id)}" data-notification-link>
-        <i data-lucide="external-link"></i>
-        <span>${escapeHtml(tr("action.openNotificationLink"))}</span>
-      </a>`
-    : "";
-  return `
-    <article class="notification-item" data-state="${escapeAttr(notification.state)}" data-severity="${escapeAttr(notification.severity)}" role="listitem">
-      <div class="notification-item-head">
-        <strong>${escapeHtml(title)}</strong>
-        ${time ? `<time>${escapeHtml(time)}</time>` : ""}
-      </div>
-      ${body ? `<p>${escapeHtml(body)}</p>` : ""}
-      ${link}
-      <div class="notification-actions">
-        ${actions}
-        <button class="command-button" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-command="read" ${notification.state !== "unread" ? "hidden" : ""}>
-          ${escapeHtml(tr("action.markNotificationRead"))}
-        </button>
-        <button class="command-button" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-command="dismiss">
-          ${escapeHtml(tr("action.dismissNotification"))}
-        </button>
-      </div>
-    </article>
-  `;
-}
-
-function renderNotificationModal(notification: WebshellNotification) {
-  prepareMobileOverlay();
-  activeNotificationModalId = notification.id;
-  elements.notificationModalBody.innerHTML = `
-    <article class="notification-modal-card" data-severity="${escapeAttr(notification.severity)}">
-      <div class="notification-modal-head">
-        <div>
-          <strong>${escapeHtml(notificationDisplayTitle(notification))}</strong>
-          <p>${escapeHtml(notificationDisplayBody(notification))}</p>
-        </div>
-        <button class="icon-button" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-command="read" aria-label="${escapeAttr(tr("action.close"))}" title="${escapeAttr(tr("action.close"))}">
-          <i data-lucide="x"></i>
-        </button>
-      </div>
-      <div class="notification-actions">
-        ${notification.actions.map((action) => `
-          <button class="command-button ${action.style === "primary" ? "primary" : action.style === "danger" ? "danger" : ""}" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-action="${escapeAttr(action.id)}">
-            ${escapeHtml(notificationActionLabel(notification, action))}
-          </button>
-        `).join("")}
-        <button class="command-button" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-command="dismiss">
-          ${escapeHtml(tr("action.dismissNotification"))}
-        </button>
-      </div>
-    </article>
-  `;
-  elements.notificationModal.hidden = false;
-  updateIcons();
+  notificationController.renderCurrent();
 }
 
 function closeNotificationModal() {
-  activeNotificationModalId = "";
-  elements.notificationModal.hidden = true;
-  elements.notificationModalBody.replaceChildren();
+  notificationDom.closeModal();
 }
 
 async function runNotificationCommand(command: string, id: string) {
-  if (!id) return;
-  try {
-    if (command === "read") {
-      await markNotificationRead(id);
-      if (activeNotificationModalId === id) closeNotificationModal();
-    } else if (command === "dismiss") {
-      await dismissNotification(id);
-      if (activeNotificationModalId === id) closeNotificationModal();
-    }
-    await Promise.all([
-      refreshNotifications({ showToast: false }),
-      refreshPomodoroState({ render: true }),
-    ]);
-  } catch (error) {
-    setGlobalStatus(tr("status.notificationActionFailed", { message: errorMessage(error) }), "error");
-  }
+  await notificationController.runCommand(command, id);
 }
 
 async function runNotificationActionFromButton(button: HTMLButtonElement) {
   const id = button.dataset.notificationId ?? "";
   const actionId = button.dataset.notificationAction ?? "";
-  if (!id || !actionId) return;
-  try {
-    await runNotificationAction(id, actionId);
-    if (activeNotificationModalId === id) closeNotificationModal();
-    await Promise.all([
-      refreshNotifications({ showToast: false }),
-      refreshPomodoroState({ render: true }),
-    ]);
-  } catch (error) {
-    setGlobalStatus(tr("status.notificationActionFailed", { message: errorMessage(error) }), "error");
-  }
-}
-
-function notificationDisplayTitle(notification: WebshellNotification): string {
-  if (notification.sourceKind === "pomodoro") return tr("pomodoro.completeTitle");
-  return notification.title || tr("section.notifications");
-}
-
-function notificationDisplayBody(notification: WebshellNotification): string {
-  if (notification.sourceKind === "pomodoro") return tr("pomodoro.completeHint");
-  return notification.body;
-}
-
-function notificationActionLabel(
-  notification: WebshellNotification,
-  action: { id: string; label: string; payload?: unknown },
-): string {
-  if (notification.sourceKind === "pomodoro") {
-    if (action.id === "pomodoro.again") {
-      return notificationPomodoroNextRound(action) > 1
-        ? tr("action.pomodoroNextRound")
-        : tr("action.pomodoroAgain");
-    }
-    if (action.id === "pomodoro.dismiss") return tr("action.pomodoroDismiss");
-  }
-  return action.label;
-}
-
-function notificationPomodoroNextRound(action: { payload?: unknown }): number {
-  if (!action.payload || typeof action.payload !== "object") return 1;
-  const value = (action.payload as Record<string, unknown>).nextRound;
-  const round = Number(value);
-  return Number.isFinite(round) && round > 0 ? Math.round(round) : 1;
-}
-
-function notificationTone(notification: WebshellNotification): Tone {
-  if (notification.severity === "error") return "error";
-  if (notification.severity === "success") return "ok";
-  return "neutral";
-}
-
-function formatNotificationTime(timestamp: number): string {
-  return new Intl.DateTimeFormat(settings.locale === "auto" ? undefined : settings.locale, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
-}
-
-async function refreshPomodoroState(options: { render?: boolean } = {}) {
-  if (pomodoroLoading) return;
-  pomodoroLoading = true;
-  try {
-    setPomodoroState(await fetchPomodoroState(), { render: options.render ?? true });
-  } catch (error) {
-    if (activePluginToolId === POMODORO_PLUGIN_ID) {
-      setPluginStatus(errorMessage(error), "error");
-    }
-  } finally {
-    pomodoroLoading = false;
-  }
+  await notificationController.runAction(id, actionId);
 }
 
 async function refreshNotifications(options: { showToast?: boolean } = {}) {
-  if (notificationsLoading) return;
-  notificationsLoading = true;
-  try {
-    const next = await fetchNotifications();
-    notifications = next;
-    renderNotifications();
-    if (options.showToast) {
-      showNewNotificationToasts(next);
-    } else {
-      for (const notification of next) {
-        seenNotificationIds.add(notification.id);
-      }
-    }
-  } catch (error) {
-    setGlobalStatus(tr("status.notificationLoadFailed", { message: errorMessage(error) }), "error");
-  } finally {
-    notificationsLoading = false;
-  }
-}
-
-function showNewNotificationToasts(next: WebshellNotification[]) {
-  for (const notification of next) {
-    if (seenNotificationIds.has(notification.id)) continue;
-    seenNotificationIds.add(notification.id);
-    if (notification.state !== "unread" || notification.presentationHint === "center") continue;
-    if (notification.presentationHint === "modal") {
-      renderNotificationModal(notification);
-    } else {
-      setGlobalStatus(notificationDisplayTitle(notification), notificationTone(notification));
-    }
-    if (notification.sourceKind === "pomodoro") {
-      void refreshPomodoroState({ render: true });
-    }
-  }
-}
-
-async function runPomodoroAction(action: string) {
-  if (!pluginIsEnabled(POMODORO_PLUGIN_ID)) return;
-  try {
-    if (action === "start") {
-      setPomodoroState(await startPomodoroTask(pomodoroDraftMinutes, pomodoroDraftRounds));
-    } else if (action === "stop") {
-      setPomodoroState(await stopPomodoroTask());
-    } else if (action === "dismiss") {
-      setPomodoroState(await dismissPomodoroTask());
-      await refreshNotifications({ showToast: false });
-    } else if (action === "again") {
-      const minutes = pomodoroState.durationMinutes || pomodoroDraftMinutes || POMODORO_DEFAULT_MINUTES;
-      const rounds = pomodoroState.totalRounds || pomodoroDraftRounds || POMODORO_DEFAULT_ROUNDS;
-      const previousNotificationId = pomodoroState.notificationId;
-      setPomodoroState(await startPomodoroTask(minutes, rounds, nextPomodoroRound(pomodoroState)));
-      if (previousNotificationId) {
-        await dismissNotification(previousNotificationId);
-      }
-      await refreshNotifications({ showToast: false });
-    }
-  } catch (error) {
-    setPluginStatus(errorMessage(error), "error");
-  }
-}
-
-function setPomodoroState(state: PomodoroState, options: { render?: boolean } = {}) {
-  const previousStatus = pomodoroState.status;
-  pomodoroState = state;
-  pomodoroDraftMinutes = normalizePomodoroMinutes(pomodoroState.durationMinutes || pomodoroDraftMinutes);
-  pomodoroDraftRounds = normalizePomodoroRounds(pomodoroState.totalRounds || pomodoroDraftRounds);
-  if (previousStatus === "running" && pomodoroState.status === "completed") {
-    setGlobalStatus(tr("pomodoro.completeTitle"), "ok");
-  }
-  if (options.render !== false) {
-    renderPluginTools();
-  }
-}
-
-function formatMobileClockTime(date: Date, options: { hour12: boolean; showPeriod: boolean; showSeconds: boolean }): string {
-  const formatOptions: Intl.DateTimeFormatOptions = {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: options.showSeconds ? "2-digit" : undefined,
-    hour12: options.hour12,
-  };
-  const formatter = new Intl.DateTimeFormat(settings.locale === "auto" ? undefined : settings.locale, formatOptions);
-  if (!options.hour12 || options.showPeriod) {
-    return formatter.format(date);
-  }
-  return formatter.formatToParts(date)
-    .filter((part) => part.type !== "dayPeriod")
-    .map((part) => part.value)
-    .join("")
-    .trim();
+  await notificationController.refresh(options);
 }
 
 async function navigateLightOSHome() {
   closeInstanceMenu();
-  closePaneMenu();
+  paneMenuController.close();
   closeSettingsMenu();
   elements.homeButton.disabled = true;
   setGlobalStatus(tr("status.lightosHomeLoading"));
@@ -2225,7 +1760,7 @@ function openPluginSidebar() {
   closeSettingsMenu();
   closeShortcutHelp();
   closeInstanceMenu();
-  closePaneMenu();
+  paneMenuController.close();
   if (!elements.settingsPage.hidden) {
     closeSettings({ restoreFocus: false });
   }
@@ -2255,7 +1790,7 @@ function toggleShortcutHelp() {
   }
   closeSettingsMenu();
   closeInstanceMenu();
-  closePaneMenu();
+  paneMenuController.close();
   closeAboutDialog();
   elements.shortcutHelp.hidden = !open;
   elements.shortcutHelpButton.setAttribute("aria-expanded", String(open));
@@ -2273,7 +1808,7 @@ function openAboutDialog() {
   prepareMobileOverlay();
   closeShortcutHelp();
   closeInstanceMenu();
-  closePaneMenu();
+  paneMenuController.close();
   elements.aboutDialog.hidden = false;
   requestAnimationFrame(() => elements.aboutClose.focus());
 }
@@ -2309,7 +1844,7 @@ function closeMobileOverlaysBeforeViewportChange() {
   closeNewTabMenu();
   closeHerdrWorkspaceMenu();
   closeNotificationsMenu();
-  closePaneMenu();
+  paneMenuController.close();
   closeShortcutHelp();
   closeAboutDialog();
   closeNotificationModal();
@@ -2321,62 +1856,10 @@ function closeMobileOverlaysBeforeViewportChange() {
   }
 }
 
-function prepareMobileOverlay() {
-  if (isMobileOverlayMode()) {
-    blurActiveElement();
-  }
-}
-
 function restoreTerminalFocusAfterOverlay() {
   if (!isMobileOverlayMode()) {
     activePane()?.term?.focus();
   }
-}
-
-function isMobileOverlayMode(): boolean {
-  const viewportWidth = Math.max(1, Math.floor(window.visualViewport?.width ?? (window.innerWidth || 0)));
-  return shouldUseMobileControls(viewportWidth);
-}
-
-function blurActiveElement() {
-  const active = document.activeElement;
-  if (active instanceof HTMLElement && active !== document.body) {
-    active.blur();
-  }
-}
-
-function floatingViewportBounds(margin: number) {
-  const viewport = window.visualViewport;
-  const offsetLeft = Math.max(0, Math.floor(viewport?.offsetLeft ?? 0));
-  const offsetTop = Math.max(0, Math.floor(viewport?.offsetTop ?? 0));
-  const width = Math.max(1, Math.floor(viewport?.width ?? (window.innerWidth || 0)));
-  const height = Math.max(1, Math.floor(viewport?.height ?? (window.innerHeight || 0)));
-  return {
-    minLeft: offsetLeft + margin,
-    minTop: offsetTop + margin,
-    maxLeft: offsetLeft + width - margin,
-    maxTop: offsetTop + height - margin,
-  };
-}
-
-function clampFloatingPoint(
-  clientX: number,
-  clientY: number,
-  options: { width?: number; height?: number; margin?: number } = {},
-) {
-  const bounds = floatingViewportBounds(options.margin ?? 8);
-  const width = Math.max(0, options.width ?? 0);
-  const height = Math.max(0, options.height ?? 0);
-  const maxLeft = Math.max(bounds.minLeft, bounds.maxLeft - width);
-  const maxTop = Math.max(bounds.minTop, bounds.maxTop - height);
-  return {
-    x: clamp(clientX, bounds.minLeft, maxLeft),
-    y: clamp(clientY, bounds.minTop, maxTop),
-  };
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 function toggleInstanceMenu() {
@@ -2396,82 +1879,16 @@ function closeInstanceMenu() {
   elements.instanceButton.setAttribute("aria-expanded", "false");
 }
 
-function openPaneMenu(clientX: number, clientY: number, paneId: string) {
-  prepareMobileOverlay();
-  contextPaneId = paneId;
-  updatePaneMenuForPane(paneId);
-  elements.paneMenu.hidden = false;
-  elements.paneMenu.style.left = "0";
-  elements.paneMenu.style.top = "0";
-  updateIcons();
-  requestAnimationFrame(() => {
-    const margin = isMobileOverlayMode() ? 10 : 8;
-    const rect = elements.paneMenu.getBoundingClientRect();
-    const point = clampFloatingPoint(clientX, clientY, {
-      width: rect.width,
-      height: rect.height,
-      margin,
-    });
-    elements.paneMenu.style.left = `${point.x}px`;
-    elements.paneMenu.style.top = `${point.y}px`;
-  });
-}
-
 function openActivePaneMenu() {
   const pane = activePane();
   if (!pane) return;
-  const rect = pane.mount.getBoundingClientRect();
-  openPaneMenu(
-    rect.left + rect.width / 2,
-    Math.min(rect.bottom - 12, window.innerHeight - 12),
-    pane.id,
-  );
-}
-
-function updatePaneMenuForPane(paneId: string) {
-  const pane = findPaneById(paneId);
-  const tab = pane ? tabForPane(pane) : undefined;
-  elements.paneMenu.querySelectorAll<HTMLButtonElement>("[data-pane-action]").forEach((button) => {
-    button.hidden = !paneMenuActionSupported(button.dataset.paneAction ?? "", pane, tab);
-  });
-}
-
-function paneMenuActionSupported(
-  action: string,
-  pane: TerminalPane | undefined,
-  tab: TerminalTab | undefined,
-): boolean {
-  if (!pane) return false;
-  if (pane.sessionBackend === "herdr" || pane.sessionBackend === "zellij") {
-    return action === "split-right"
-      || action === "split-down"
-      || action === "copy-selection"
-      || action === "paste-clipboard"
-      || action === "close-active-session";
-  }
-  if (action === "promote-session-to-tab") {
-    return Boolean(tab && visiblePanes(tab).length > 1);
-  }
-  return action === "split-up"
-    || action === "split-down"
-    || action === "split-left"
-    || action === "split-right"
-    || action === "copy-selection"
-    || action === "paste-clipboard"
-    || action === "close-active-session";
-}
-
-function closePaneMenu() {
-  elements.paneMenu.hidden = true;
-  elements.paneMenu.style.left = "";
-  elements.paneMenu.style.top = "";
-  contextPaneId = undefined;
+  paneMenuController.openForPane(pane);
 }
 
 async function runPaneMenuAction(action: string) {
-  const pane = contextPaneId ? findPaneById(contextPaneId) : activePane();
+  const pane = paneMenuController.targetPane(activePane());
   const tab = pane ? tabForPane(pane) : undefined;
-  closePaneMenu();
+  paneMenuController.close();
   if (tab && pane) {
     activatePane(tab.id, pane.id);
   }
@@ -2686,47 +2103,6 @@ async function currentHerdrPaneId(selector: string): Promise<string> {
   throw new Error("Herdr pane not found");
 }
 
-async function refreshMobileSymbolAgentForActivePane() {
-  const pane = activePane();
-  if (!pane || pane.sessionBackend !== "herdr") {
-    setMobileSymbolAgent("default");
-    return;
-  }
-  const selector = normalizeSelector(pane.selector || selectedSelector);
-  if (!selector) {
-    setMobileSymbolAgent("default");
-    return;
-  }
-  const refreshKey = `${selector}:${pane.sessionId ?? ""}`;
-  const now = Date.now();
-  if (mobileSymbolAgentRefreshKey === refreshKey && now - mobileSymbolAgentRefreshTime < 5000) return;
-  mobileSymbolAgentRefreshKey = refreshKey;
-  mobileSymbolAgentRefreshTime = now;
-  const request = ++mobileSymbolAgentRequest;
-  try {
-    const stateMatches = herdrState?.available && normalizeSelector(herdrState.selector) === selector;
-    if (!stateMatches && !await refreshHerdrState(selector)) {
-      setMobileSymbolAgent("default");
-      return;
-    }
-    const envelope = await runHerdrSocketRequest("pane.current", {}, {
-      selector,
-      id: "lazycat-webshell:mobile-symbol-agent",
-      mirrorNotification: false,
-    });
-    if (request !== mobileSymbolAgentRequest) return;
-    setMobileSymbolAgent(mobileSymbolAgentFromHerdrPane(envelope.result));
-  } catch {
-    if (request === mobileSymbolAgentRequest) setMobileSymbolAgent("default");
-  }
-}
-
-function setMobileSymbolAgent(agent: MobileSymbolAgent) {
-  if (mobileSymbolAgent === agent) return;
-  mobileSymbolAgent = agent;
-  renderMobileQuickInput();
-}
-
 function splitZellijPane(pane: TerminalPane, placement: SplitPlacement): boolean {
   const key = zellijSplitKey(placement);
   if (!key) {
@@ -2845,7 +2221,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.copyOnSelect.checked = settings.copyOnSelect;
   elements.useResttyClipboard.checked = settings.useResttyClipboard;
   elements.touchSelectionMode.value = settings.touchSelectionMode;
-  updateMobileClockSettingsState();
+  mobileClock.updateSettingsState();
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;
   updateSessionBackendSettings();
@@ -2863,7 +2239,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   }
   renderTabs();
   updateActiveDetails();
-  startMobileClock();
+  mobileClock.start();
 }
 
 function currentTheme(): TerminalTheme {
@@ -3105,88 +2481,12 @@ function publicTunnelPlugin(): PluginDescriptor | undefined {
 }
 
 function publicTunnelProfiles(): TunnelProviderProfileSummary[] {
-  const raw = publicTunnelPlugin()?.metadata[TUNNEL_PROVIDER_PROFILES_METADATA];
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((item): TunnelProviderProfileSummary | undefined => {
-      if (!item || typeof item !== "object" || Array.isArray(item)) return undefined;
-      const record = item as JsonRecord;
-      const id = stringValue(record, "id");
-      const provider = stringValue(record, "provider");
-      const name = stringValue(record, "name");
-      if (!id || provider !== "ngrok" || !name) return undefined;
-      return {
-        id,
-        provider,
-        name,
-        enabled: boolValue(record, "enabled"),
-        configured: boolValue(record, "configured"),
-        createdAtMs: numberValue(record, "createdAtMs"),
-        updatedAtMs: numberValue(record, "updatedAtMs"),
-        lastUsedAtMs: numberValue(record, "lastUsedAtMs"),
-      };
-    }).filter((profile): profile is TunnelProviderProfileSummary => Boolean(profile));
-  } catch {
-    return [];
-  }
-}
-
-function tunnelProfileEditor(
-  dialog: TunnelProfileDialogState,
-  profiles: TunnelProviderProfileSummary[],
-): TunnelProviderProfileEditor {
-  if (dialog.isNew) {
-    return {
-      id: dialog.profileId,
-      provider: "ngrok",
-      name: "",
-      enabled: true,
-      configured: false,
-      authtoken: "",
-    };
-  }
-  const profile = profiles.find((item) => item.id === dialog.profileId);
-  return {
-    id: dialog.profileId,
-    provider: "ngrok",
-    name: profile?.name ?? "",
-    enabled: profile?.enabled ?? true,
-    configured: profile?.configured ?? false,
-    authtoken: "",
-  };
+  return parseTunnelProviderProfiles(publicTunnelPlugin()?.metadata[TUNNEL_PROVIDER_PROFILES_METADATA]);
 }
 
 function syncPublicTunnelProviderSelection() {
-  if (!publicTunnelTool.provider.startsWith("ngrok:")) return;
-  const profileId = publicTunnelTool.provider.slice("ngrok:".length);
-  const available = publicTunnelProfiles().some((profile) => profile.id === profileId && profile.enabled && profile.configured);
-  if (!available) {
-    publicTunnelTool.provider = "cloudflare-quick";
-  }
+  publicTunnel.syncProviderSelection();
 }
-
-function publicTunnelProviderMetadata(): Record<string, string> | undefined {
-  if (!publicTunnelTool.provider.startsWith("ngrok:")) {
-    return { provider: "cloudflare-quick" };
-  }
-  const profileId = publicTunnelTool.provider.slice("ngrok:".length);
-  const profile = publicTunnelProfiles().find((item) => item.id === profileId && item.enabled && item.configured);
-  if (!profile) return undefined;
-  return {
-    provider: "ngrok",
-    ngrokProfileId: profile.id,
-  };
-}
-
-type TunnelProviderProfileSaveInput = {
-  id: string;
-  provider: string;
-  name: string;
-  enabled: boolean;
-  authtoken: string;
-};
 
 async function saveTunnelProfileDialog() {
   if (!tunnelProfileDialog) return;
@@ -3220,8 +2520,8 @@ async function removeTunnelProfile(profileId: string) {
   const profiles = publicTunnelProfiles()
     .filter((profile) => profile.id !== profileId)
     .map(tunnelProfileSaveInputFromSummary);
-  if (publicTunnelTool.provider === `ngrok:${profileId}`) {
-    publicTunnelTool.provider = "cloudflare-quick";
+  if (publicTunnel.currentProvider() === `ngrok:${profileId}`) {
+    publicTunnel.setProvider("cloudflare-quick");
   }
   await saveTunnelProviderProfiles(profiles, "status.tunnelProfileRemoved");
 }
@@ -3253,16 +2553,6 @@ async function saveTunnelProviderProfiles(
     pluginSaveInFlight.delete(PUBLIC_TUNNEL_PLUGIN_ID);
     renderPlugins();
   }
-}
-
-function tunnelProfileSaveInputFromSummary(profile: TunnelProviderProfileSummary): TunnelProviderProfileSaveInput {
-  return {
-    id: profile.id,
-    provider: profile.provider,
-    name: profile.name,
-    enabled: profile.enabled,
-    authtoken: "",
-  };
 }
 
 function tunnelProfileField<T extends HTMLInputElement>(field: string): T | null {
@@ -3333,7 +2623,7 @@ function renderPluginSettings() {
       baseUrl: settings.aiBaseUrl,
       apiKey: settings.aiApiKey,
       model: settings.aiModel,
-      modelOptions: aiChat.modelOptions,
+      modelOptions: aiChat.modelOptions(),
       profiles: settings.aiProviderProfiles,
       activeProfileId: settings.aiActiveProviderProfileId,
       mcpServers,
@@ -3375,32 +2665,19 @@ function pluginControlsDisabled(plugin: PluginDescriptor): boolean {
 }
 
 function renderPluginTools() {
-  const tools = plugins.filter((plugin) => plugin.enabled && (
-    plugin.id === FILE_TRANSFER_PLUGIN_ID
-    || plugin.id === AI_CHAT_PLUGIN_ID
-    || plugin.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID
-    || plugin.id === POMODORO_PLUGIN_ID
-    || plugin.id === PUBLIC_TUNNEL_PLUGIN_ID
-  ));
+  const tools = enabledPluginTools(plugins);
   if (!tools.length) {
     activePluginToolId = "";
     elements.pluginToolTabs.innerHTML = "";
-    elements.pluginToolBody.innerHTML = `<div class="empty">${escapeHtml(pluginsLoading ? tr("status.pluginsLoading") : tr("status.noPlugins"))}</div>`;
+    elements.pluginToolBody.innerHTML = renderPluginToolEmpty(pluginsLoading, tr);
     updateIcons();
     return;
   }
-  if (!tools.some((plugin) => plugin.id === activePluginToolId)) {
-    activePluginToolId = tools[0]?.id ?? "";
-  }
-  elements.pluginToolTabs.innerHTML = tools.map((plugin) => `
-    <button type="button" role="tab" data-plugin-tool="${escapeAttr(plugin.id)}" aria-selected="${plugin.id === activePluginToolId}" aria-label="${escapeAttr(pluginDisplayName(plugin, tr))}" title="${escapeAttr(pluginDisplayName(plugin, tr))}">
-      <i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i>
-      <span class="tool-tip">${escapeHtml(pluginDisplayName(plugin, tr))}</span>
-    </button>
-  `).join("");
+  activePluginToolId = resolveActivePluginToolId(tools, activePluginToolId);
+  elements.pluginToolTabs.innerHTML = renderPluginToolTabs(tools, activePluginToolId, tr);
   const activePlugin = tools.find((plugin) => plugin.id === activePluginToolId);
   if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID) {
-    syncFileBrowserPathWithActivePane();
+    fileTransfer.syncPathWithPane();
   }
   elements.pluginToolBody.innerHTML = activePlugin?.id === FILE_TRANSFER_PLUGIN_ID
     ? renderFileTransferTool(activePlugin)
@@ -3414,47 +2691,46 @@ function renderPluginTools() {
             ? renderPublicTunnelTool(activePlugin)
       : "";
   updateIcons();
-  if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID && !fileBrowser.loading && fileBrowser.loadedPath !== normalizeRemotePath(fileBrowser.path)) {
-    void loadFileBrowserDirectory(fileBrowser.path);
+  if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID) {
+    void fileTransfer.loadCurrentDirectoryIfStale();
   }
   if (activePlugin?.id === AI_CHAT_PLUGIN_ID) {
     scrollAIChatToBottom();
   }
-  if (activePlugin?.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID && !lightosPortForwardTool.loaded && !lightosPortForwardTool.loading) {
-    void listPortForwards();
+  const portForwardState = lightosPortForward.state();
+  if (activePlugin?.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID && !portForwardState.loaded && !portForwardState.loading) {
+    void lightosPortForward.list();
   }
-  if (activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID && !publicTunnelTool.loaded && !publicTunnelTool.loading) {
-    void listPublicTunnels();
+  const tunnelState = publicTunnel.state();
+  if (activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID && !tunnelState.loaded && !tunnelState.loading) {
+    void publicTunnel.list();
   }
 }
 
 function renderFileTransferTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
+  const state = fileTransfer.viewState();
   return renderFileTransferToolView({
     disabled,
-    fileBrowserPath: fileBrowser.path,
-    selectedFileBrowserPath: fileBrowser.selectedPath,
-    fileBrowserEntries: fileBrowser.entries,
-    fileBrowserLoading: fileBrowser.loading,
-    fileBrowserContextMenu: fileBrowser.contextMenu,
+    ...state,
     tr,
   });
 }
 
 function renderAIChatTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
-  const session = ensureAIChatSession(currentAIChatModelKey());
+  const session = aiChat.ensureSession();
   return renderAIChatToolView({
     disabled,
     title: tr("plugin.aiChat.name"),
     description: pluginDescription(plugin, tr),
     session,
     messages: session.messages,
-    streaming: aiChat.streaming,
-    modelOptions: aiModelValues(),
-    selectedModel: currentAIModel(),
-    sessionOptions: aiChatSessionsForModel(session.model).map((item) => ({ value: item.id, label: item.title })),
-    selectedSessionId: aiChat.activeSessionId,
+    streaming: aiChat.isStreaming(),
+    modelOptions: aiChat.modelValues(),
+    selectedModel: aiChat.currentModel(),
+    sessionOptions: aiChat.sessionsForModel(session.model).map((item) => ({ value: item.id, label: item.title })),
+    selectedSessionId: aiChat.activeSessionId(),
     providerProfiles: settings.aiProviderProfiles,
     activeProviderProfileId: settings.aiActiveProviderProfileId,
     providerPickerOpen: aiProviderPickerOpen,
@@ -3466,282 +2742,55 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
 
 function renderPomodoroTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
-  const remainingText = pomodoroState.status === "running"
-    ? formatPomodoroRemaining(remainingPomodoroMs(pomodoroState))
-    : pomodoroState.status === "completed"
-      ? "00:00"
-      : formatPomodoroRemaining(pomodoroDraftMinutes * 60_000);
-  const endTimeText = pomodoroState.deadlineMs > 0
-    ? formatMobileClockTime(new Date(pomodoroState.deadlineMs), {
+  const viewState = pomodoro.viewState();
+  return renderPomodoroToolView(pomodoroToolViewState({
+    disabled,
+    state: viewState.state,
+    draftMinutes: viewState.draftMinutes,
+    draftRounds: viewState.draftRounds,
+    tr,
+    formatDeadline: (date) => formatMobileClockTime(date, {
+      locale: settings.locale,
       hour12: !settings.mobileClockUse24Hour,
       showPeriod: !settings.mobileClockUse24Hour && settings.mobileClockShowPeriod,
       showSeconds: false,
-    })
-    : "";
-  const currentRound = pomodoroState.status === "idle" ? 0 : pomodoroState.currentRound;
-  return renderPomodoroToolView({
-    disabled,
-    state: pomodoroState,
-    draftMinutes: pomodoroDraftMinutes,
-    draftRounds: pomodoroDraftRounds,
-    roundText: currentRound > 0
-      ? tr("pomodoro.roundProgress", { current: currentRound, total: pomodoroState.totalRounds })
-      : tr("pomodoro.roundSetup", { total: pomodoroDraftRounds }),
-    remainingText,
-    endTimeText,
-    tr,
-  });
+    }),
+  }));
 }
 
 function renderLightOsPortForwardTool(plugin: PluginDescriptor): string {
+  const state = lightosPortForward.state();
   return renderLightOsPortForwardToolView({
     disabled: pluginControlsDisabled(plugin),
-    remoteHost: lightosPortForwardTool.remoteHost,
-    remotePort: lightosPortForwardTool.remotePort,
-    forwards: lightosPortForwardTool.forwards,
-    loading: lightosPortForwardTool.loading,
-    output: lightosPortForwardTool.output,
+    remoteHost: state.remoteHost,
+    remotePort: state.remotePort,
+    forwards: state.forwards,
+    loading: state.loading,
+    output: state.output,
     tr,
   });
 }
 
 function renderPublicTunnelTool(plugin: PluginDescriptor): string {
-  syncPublicTunnelProviderSelection();
+  publicTunnel.syncProviderSelection();
+  const state = publicTunnel.state();
   return renderPublicTunnelToolView({
     disabled: pluginControlsDisabled(plugin),
-    provider: publicTunnelTool.provider,
-    upstreamUrl: publicTunnelTool.upstreamUrl,
+    provider: state.provider,
+    upstreamUrl: state.upstreamUrl,
     ngrokProfiles: publicTunnelProfiles(),
-    tunnels: publicTunnelTool.tunnels,
-    forwards: lightosPortForwardTool.forwards,
-    loading: publicTunnelTool.loading,
-    output: publicTunnelTool.output,
+    tunnels: state.tunnels,
+    forwards: lightosPortForward.state().forwards,
+    loading: state.loading,
+    output: state.output,
     tr,
   });
 }
 
-function updatePortForwardField(field: string, value: string) {
-  if (field === "remoteHost") {
-    lightosPortForwardTool.remoteHost = value;
-  } else if (field === "remotePort") {
-    lightosPortForwardTool.remotePort = value;
-  }
-}
-
-function updatePublicTunnelField(field: string, value: string) {
-  if (field === "provider") {
-    publicTunnelTool.provider = value.startsWith("ngrok:") ? value : "cloudflare-quick";
-  } else if (field === "upstreamUrl") {
-    publicTunnelTool.upstreamUrl = value;
-  }
-}
-
-async function runPortForward(action: string) {
-  if (!pluginIsEnabled(LIGHTOS_PORT_FORWARD_PLUGIN_ID)) return;
-  if (action === "list" || action === "default" || action === "status") {
-    await listPortForwards();
-    return;
-  }
-  if (action !== "acquire") return;
-  const remotePort = Number(lightosPortForwardTool.remotePort);
-  if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535) {
-    setPortForwardOutput(tr("validation.port"), "error");
-    return;
-  }
-  await invokePortForward("acquire", {
-    remoteHost: lightosPortForwardTool.remoteHost || "127.0.0.1",
-    remotePort: String(remotePort),
-  });
-}
-
-async function listPortForwards() {
-  if (!pluginIsEnabled(LIGHTOS_PORT_FORWARD_PLUGIN_ID)) return;
-  await invokePortForward("list", {});
-}
-
-async function releasePortForward(forwardId: string) {
-  if (!forwardId || !pluginIsEnabled(LIGHTOS_PORT_FORWARD_PLUGIN_ID)) return;
-  await invokePortForward("release", { forwardId });
-}
-
-async function invokePortForward(operation: string, metadata: Record<string, string>) {
-  const sessionId = activePane()?.sessionId;
-  if (!sessionId) {
-    setPortForwardOutput(tr("status.pluginFileNoSession"), "error");
-    return;
-  }
-  lightosPortForwardTool.loading = true;
-  renderPluginTools();
-  try {
-    const payload = await invokePluginJson(LIGHTOS_PORT_FORWARD_PLUGIN_ID, sessionId, operation, metadata);
-    lightosPortForwardTool.forwards = parseLightOsForwards(payload);
-    lightosPortForwardTool.loaded = true;
-    const forward = recordValue(payload, "forward");
-    const localUrl = stringValue(forward, "localUrl");
-    if (localUrl) {
-      lightosPortForwardTool.output = localUrl;
-      publicTunnelTool.upstreamUrl ||= localUrl;
-    } else {
-      lightosPortForwardTool.output = tr("status.portForwardReady", { count: lightosPortForwardTool.forwards.length });
-    }
-    setPluginStatus(tr("status.portForwardReady", { count: lightosPortForwardTool.forwards.length }), "ok");
-  } catch (error) {
-    setPortForwardOutput(errorMessage(error), "error");
-    setPluginStatus(errorMessage(error), "error");
-  } finally {
-    lightosPortForwardTool.loading = false;
-    renderPluginTools();
-  }
-}
-
 function useForwardForTunnel(localUrl: string) {
   if (!localUrl) return;
-  publicTunnelTool.upstreamUrl = localUrl;
+  publicTunnel.useUpstreamUrl(localUrl);
   activePluginToolId = PUBLIC_TUNNEL_PLUGIN_ID;
-  renderPluginTools();
-}
-
-async function runPublicTunnel(action: string) {
-  if (!pluginIsEnabled(PUBLIC_TUNNEL_PLUGIN_ID)) return;
-  if (action === "list" || action === "default" || action === "status") {
-    await listPublicTunnels();
-    return;
-  }
-  if (action !== "start") return;
-  const upstreamUrl = publicTunnelTool.upstreamUrl.trim();
-  if (!upstreamUrl) {
-    setPublicTunnelOutput(tr("validation.upstreamUrl"), "error");
-    return;
-  }
-  const provider = publicTunnelProviderMetadata();
-  if (!provider) {
-    setPublicTunnelOutput(tr("validation.tunnelProfile"), "error");
-    return;
-  }
-  const metadata: Record<string, string> = { ...provider, upstreamUrl };
-  await invokePublicTunnel("start", metadata);
-}
-
-async function listPublicTunnels() {
-  if (!pluginIsEnabled(PUBLIC_TUNNEL_PLUGIN_ID)) return;
-  await invokePublicTunnel("list", {});
-}
-
-async function stopPublicTunnel(tunnelId: string) {
-  if (!tunnelId || !pluginIsEnabled(PUBLIC_TUNNEL_PLUGIN_ID)) return;
-  await invokePublicTunnel("stop", { tunnelId });
-}
-
-async function invokePublicTunnel(operation: string, metadata: Record<string, string>) {
-  const sessionId = activePane()?.sessionId;
-  if (!sessionId) {
-    setPublicTunnelOutput(tr("status.pluginFileNoSession"), "error");
-    return;
-  }
-  publicTunnelTool.loading = true;
-  renderPluginTools();
-  try {
-    const payload = await invokePluginJson(PUBLIC_TUNNEL_PLUGIN_ID, sessionId, operation, metadata);
-    publicTunnelTool.tunnels = parsePublicTunnels(payload);
-    publicTunnelTool.loaded = true;
-    const session = recordValue(payload, "session");
-    const publicUrl = stringValue(session, "publicUrl");
-    publicTunnelTool.output = publicUrl || tr("status.publicTunnelReady", { count: publicTunnelTool.tunnels.length });
-    setPluginStatus(tr("status.publicTunnelReady", { count: publicTunnelTool.tunnels.length }), "ok");
-  } catch (error) {
-    setPublicTunnelOutput(errorMessage(error), "error");
-    setPluginStatus(errorMessage(error), "error");
-  } finally {
-    publicTunnelTool.loading = false;
-    renderPluginTools();
-  }
-}
-
-async function invokePluginJson(
-  pluginId: string,
-  sessionId: string,
-  operation: string,
-  metadata: Record<string, string>,
-): Promise<JsonRecord> {
-  const response = await capabilityClient.invokePlugin({
-    pluginId,
-    sessionId,
-    operation,
-    contentType: "application/json",
-    metadata,
-  }, { timeoutMs: NETWORK_PLUGIN_TIMEOUT_MS });
-  const text = new TextDecoder().decode(response.payload);
-  if (!text.trim()) return {};
-  const parsed = JSON.parse(text) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("plugin returned invalid JSON");
-  }
-  return parsed as JsonRecord;
-}
-
-function parseLightOsForwards(payload: JsonRecord): LightOsForwardInfo[] {
-  return recordArray(payload, "forwards").map((item) => ({
-    id: stringValue(item, "id"),
-    selector: stringValue(item, "selector"),
-    localHost: stringValue(item, "localHost") || "127.0.0.1",
-    localPort: numberValue(item, "localPort"),
-    localUrl: stringValue(item, "localUrl"),
-    remoteHost: stringValue(item, "remoteHost") || "127.0.0.1",
-    remotePort: numberValue(item, "remotePort"),
-    status: stringValue(item, "status") || "unknown",
-    createdAtMs: numberValue(item, "createdAtMs"),
-  })).filter((item) => item.id && item.localUrl);
-}
-
-function parsePublicTunnels(payload: JsonRecord): PublicTunnelInfo[] {
-  return recordArray(payload, "sessions").map((item) => ({
-    id: stringValue(item, "id"),
-    provider: stringValue(item, "provider"),
-    publicUrl: stringValue(item, "publicUrl"),
-    upstreamUrl: stringValue(item, "upstreamUrl"),
-    status: stringValue(item, "status") || "unknown",
-    createdAtMs: numberValue(item, "createdAtMs"),
-  })).filter((item) => item.id && item.publicUrl);
-}
-
-function recordArray(record: JsonRecord, key: string): JsonRecord[] {
-  const value = record[key];
-  return Array.isArray(value)
-    ? value.filter((item): item is JsonRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item))
-    : [];
-}
-
-function recordValue(record: JsonRecord, key: string): JsonRecord | undefined {
-  const value = record[key];
-  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : undefined;
-}
-
-function stringValue(record: JsonRecord | undefined, key: string): string {
-  const value = record?.[key];
-  return typeof value === "string" ? value : "";
-}
-
-function numberValue(record: JsonRecord | undefined, key: string): number {
-  const value = record?.[key];
-  return typeof value === "number" ? value : Number(value || 0);
-}
-
-function boolValue(record: JsonRecord | undefined, key: string): boolean {
-  const value = record?.[key];
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") return value === "true";
-  return Boolean(value);
-}
-
-function setPortForwardOutput(message: string, tone: Tone = "neutral") {
-  lightosPortForwardTool.output = message;
-  setPluginStatus(message, tone);
-  renderPluginTools();
-}
-
-function setPublicTunnelOutput(message: string, tone: Tone = "neutral") {
-  publicTunnelTool.output = message;
-  setPluginStatus(message, tone);
   renderPluginTools();
 }
 
@@ -3756,107 +2805,6 @@ async function copyNetworkUrl(url: string) {
     setPluginStatus(tr("status.urlCopied"), "ok");
   } catch (error) {
     setPluginStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
-  }
-}
-
-async function runFileTransfer(action: string) {
-  if (!pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID)) return;
-  if (action === "home") {
-    await loadFileBrowserDirectory("/");
-    return;
-  }
-  if (action === "sync-cwd") {
-    syncFileBrowserPathWithActivePane(true);
-    await loadFileBrowserDirectory(fileBrowser.path);
-    return;
-  }
-  if (action === "parent") {
-    await loadFileBrowserDirectory(parentRemotePath(fileBrowser.path));
-    return;
-  }
-  if (action === "refresh" || action === "list") {
-    await loadFileBrowserDirectory(fileBrowser.path);
-    return;
-  }
-  if (action === "open") {
-    const entry = selectedFileBrowserEntry();
-    if (entry?.kind === "directory" || entry?.kind === "symlink") {
-      await loadFileBrowserDirectory(entry.path);
-    }
-    return;
-  }
-  if (action !== "read" && action !== "stat" && action !== "download") return;
-  const path = fileBrowser.selectedPath || fileBrowser.path;
-  if (!path) {
-    setFileTransferOutput(tr("validation.pluginPath"), "error");
-    return;
-  }
-  const pane = activePane();
-  if (!pane?.sessionId) {
-    setFileTransferOutput(tr("status.pluginFileNoSession"), "error");
-    return;
-  }
-  setFileTransferOutput("");
-  try {
-    let stream = "";
-    const done = await actionClient.send("transfer", action, {
-      sessionId: pane.sessionId,
-      path,
-    }, {
-      onStream: (chunk) => {
-        stream += chunk;
-        setFileTransferOutput(stream, "ok");
-      },
-      onProgress: (meta) => setFileTransferOutput(transferProgressText(meta), "neutral"),
-    });
-    if (action === "download") {
-      const data = metaString(done.meta, "data");
-      if (data) {
-        downloadPluginPayload(
-          base64ToBytes(data),
-          metaString(done.meta, "name") || fileNameFromPath(path),
-          metaString(done.meta, "contentType") || "application/octet-stream",
-        );
-      }
-    } else if (!stream) {
-      const content = metaString(done.meta, "content");
-      if (content) setFileTransferOutput(content, "ok");
-    }
-    setPluginStatus(tr("status.pluginFileDone", { operation: action }), "ok");
-  } catch (error) {
-    setFileTransferOutput(errorMessage(error), "error");
-    setPluginStatus(errorMessage(error), "error");
-  }
-}
-
-async function uploadFileTransfer(files: File[]) {
-  if (!pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID) || !files.length) return;
-  const pane = activePane();
-  if (!pane?.sessionId) {
-    setFileTransferOutput(tr("status.pluginFileNoSession"), "error");
-    return;
-  }
-  const directory = fileUploadDirectory();
-  if (!directory) {
-    setFileTransferOutput(tr("validation.pluginPath"), "error");
-    return;
-  }
-  setFileTransferOutput("");
-  try {
-    let lastMessage = "";
-    for (const file of files) {
-      const targetPath = uploadTargetPath(directory, file.name);
-      const done = await actionClient.uploadFile(file, pane.sessionId, targetPath, {
-        onProgress: (meta) => setFileTransferOutput(transferProgressText(meta), "neutral"),
-      });
-      lastMessage = metaString(done.meta, "content") || transferProgressText(done.meta);
-      setFileTransferOutput(lastMessage, "ok");
-    }
-    await loadFileBrowserDirectory(directory);
-    setPluginStatus(tr("status.pluginFileUploadDone", { name: files.length === 1 ? files[0]?.name ?? "" : String(files.length) }), "ok");
-  } catch (error) {
-    setFileTransferOutput(errorMessage(error), "error");
-    setPluginStatus(errorMessage(error), "error");
   }
 }
 
@@ -3967,19 +2915,19 @@ function aiProviderConnectionChanged(previous: AiProviderProfile, next: AiProvid
 }
 
 function selectAiProviderProfile(profileId: string) {
-  if (aiChat.streaming) return;
+  if (aiChat.isStreaming()) return;
   if (!aiProviderProfileById(profileId)) return;
   settings.aiActiveProviderProfileId = profileId;
   syncActiveAiProviderProfile();
   aiProviderPickerOpen = false;
-  aiChat.modelOptions = [];
-  aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
+  aiChat.clearModelOptions();
+  aiChat.selectSessionForCurrentModel();
   saveSettings();
   renderPlugins();
 }
 
 function removeAiProviderProfile(profileId: string) {
-  if (aiChat.streaming || settings.aiProviderProfiles.length <= 1) return;
+  if (aiChat.isStreaming() || settings.aiProviderProfiles.length <= 1) return;
   const nextProfiles = settings.aiProviderProfiles.filter((profile) => profile.id !== profileId);
   if (nextProfiles.length === settings.aiProviderProfiles.length) return;
   settings.aiProviderProfiles = nextProfiles;
@@ -3989,8 +2937,8 @@ function removeAiProviderProfile(profileId: string) {
   syncActiveAiProviderProfile();
   aiConfigDialog = undefined;
   aiProviderPickerOpen = false;
-  aiChat.modelOptions = [];
-  aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
+  aiChat.clearModelOptions();
+  aiChat.selectSessionForCurrentModel();
   saveSettings();
   setPluginStatus(tr("status.aiConfigSaved"), "ok");
   renderPlugins();
@@ -4001,24 +2949,24 @@ function updateAISetting(field: string, value: string) {
     updateActiveAiProviderProfile({
       provider: normalizeAiProviderValue(value),
     });
-    aiChat.modelOptions = [];
+    aiChat.clearModelOptions();
   } else if (field === "baseUrl") {
     updateActiveAiProviderProfile({
       baseUrl: value.trim(),
     });
-    aiChat.modelOptions = [];
+    aiChat.clearModelOptions();
   } else if (field === "apiKey") {
     updateActiveAiProviderProfile({
       apiKey: value,
     });
-    aiChat.modelOptions = [];
+    aiChat.clearModelOptions();
   } else if (field === "model") {
     updateActiveAiProviderProfile({
       model: value.trim(),
     });
-    aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
+    aiChat.selectSessionForCurrentModel();
   } else if (field === "session") {
-    aiChat.activeSessionId = value;
+    aiChat.setActiveSessionId(value);
   }
   saveSettings();
   renderPlugins();
@@ -4034,9 +2982,9 @@ function saveAIConfigDialog(type: string) {
     const profile = readAiProviderProfileFromDialog(existing, Boolean(dialog.isNew));
     upsertAiProviderProfile(profile);
     if (!existing || aiProviderConnectionChanged(existing, profile)) {
-      aiChat.modelOptions = [];
+      aiChat.clearModelOptions();
     }
-    aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
+    aiChat.selectSessionForCurrentModel();
     setPluginStatus(tr("status.aiConfigSaved"), "ok");
   } else {
     const url = aiDialogStringField("mcpUrl").trim();
@@ -4084,252 +3032,6 @@ function aiDialogStringField(field: string): string {
   return input?.value ?? "";
 }
 
-async function fetchAIModels() {
-  if (!pluginIsEnabled(AI_CHAT_PLUGIN_ID)) return;
-  if (!aiAccessConfigured()) {
-    appendAIChatSystem(tr("validation.aiAccess"), "error");
-    return;
-  }
-  try {
-    await flushSettings();
-    const done = await actionClient.send("ai", "models", {});
-    const models = metaStringArray(done.meta, "models");
-    aiChat.modelOptions = models;
-    if (!settings.aiModel && models[0]) {
-      updateActiveAiProviderProfile({ model: models[0] });
-      aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
-      saveSettings();
-    }
-    removeAIModelListMessages(models);
-    renderPlugins();
-    setPluginStatus(tr("status.aiModelsReady", { count: models.length }), "ok");
-  } catch (error) {
-    appendAIChatSystem(errorMessage(error), "error");
-    setPluginStatus(errorMessage(error), "error");
-  }
-}
-
-async function testAIAccess() {
-  if (!pluginIsEnabled(AI_CHAT_PLUGIN_ID)) return;
-  if (!aiAccessConfigured()) {
-    appendAIChatSystem(tr("validation.aiAccess"), "error");
-    return;
-  }
-  try {
-    await flushSettings();
-    const done = await actionClient.send("ai", "test", {});
-    const models = metaStringArray(done.meta, "models");
-    if (models.length) {
-      aiChat.modelOptions = models;
-      if (!settings.aiModel && models[0]) {
-        updateActiveAiProviderProfile({ model: models[0] });
-        aiChat.activeSessionId = ensureAIChatSession(currentAIChatModelKey()).id;
-        saveSettings();
-      }
-      renderPlugins();
-    }
-    const message = metaString(done.meta, "message") || tr("status.aiTestOk");
-    const content = metaString(done.meta, "content");
-    appendAIChatSystem([message, content].filter(Boolean).join("\n"), "ok");
-    setPluginStatus(tr("status.aiTestOk"), "ok");
-  } catch (error) {
-    appendAIChatSystem(errorMessage(error), "error");
-    setPluginStatus(errorMessage(error), "error");
-  }
-}
-
-async function runAIChat() {
-  if (!pluginIsEnabled(AI_CHAT_PLUGIN_ID) || aiChat.streaming) return;
-  if (!aiAccessConfigured()) {
-    appendAIChatSystem(tr("validation.aiAccess"), "error");
-    return;
-  }
-  const input = document.querySelector<HTMLTextAreaElement>("#aiChatInput");
-  const prompt = input?.value.trim() ?? "";
-  if (!prompt) {
-    appendAIChatSystem(tr("validation.aiPrompt"), "error");
-    return;
-  }
-  const model = currentAIModel();
-  if (!model) {
-    appendAIChatSystem(tr("action.aiFetchModels"), "error");
-    return;
-  }
-  await flushSettings();
-  const session = ensureAIChatSession(currentAIChatModelKey());
-  const contextSnapshot = await terminalAIContext(session.sendTerminalContext);
-  input!.value = "";
-  resizeAIChatInput(input!);
-  session.messages.push({ role: "user", content: prompt });
-  const assistant: AIChatMessage = { role: "assistant", content: "" };
-  session.messages.push(assistant);
-  aiChat.streaming = true;
-  renderPluginTools();
-  try {
-    await actionClient.send("ai", "chat", {
-      input: prompt,
-      ctx: contextSnapshot,
-      conversation: session.messages.slice(0, -1).slice(-12),
-    }, {
-      onStream: (chunk) => {
-        assistant.content += chunk;
-        renderAIChatMessagesIntoDom();
-      },
-    });
-    if (!assistant.content.trim()) {
-      assistant.content = tr("status.aiNoOutput");
-      assistant.tone = "neutral";
-    }
-    setPluginStatus(tr("status.aiTestOk"), "ok");
-  } catch (error) {
-    assistant.content = errorMessage(error);
-    assistant.tone = "error";
-    setPluginStatus(errorMessage(error), "error");
-  } finally {
-    aiChat.streaming = false;
-    renderPluginTools();
-  }
-}
-
-async function copyAIOutput() {
-  const session = activeAIChatSession();
-  const output = session ? aiChatTranscript(session) : "";
-  if (!output) {
-    appendAIChatSystem(tr("status.aiNoOutput"), "error");
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(output);
-    setPluginStatus(tr("status.selectionCopied"), "ok");
-  } catch (error) {
-    setPluginStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
-  }
-}
-
-async function copyAIMessage(index: number) {
-  const session = activeAIChatSession();
-  const message = Number.isInteger(index) ? session?.messages[index] : undefined;
-  const output = message?.content.trim() ?? "";
-  if (!output) {
-    appendAIChatSystem(tr("status.aiNoOutput"), "error");
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(output);
-    setPluginStatus(tr("status.selectionCopied"), "ok");
-  } catch (error) {
-    setPluginStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
-  }
-}
-
-async function copyAICodeBlock(button: HTMLElement) {
-  const code = button.closest(".ai-code-block")?.querySelector<HTMLElement>("code");
-  const output = code?.textContent ?? "";
-  if (!output.trim()) {
-    appendAIChatSystem(tr("status.aiNoOutput"), "error");
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(output);
-    setPluginStatus(tr("status.selectionCopied"), "ok");
-  } catch (error) {
-    setPluginStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
-  }
-}
-
-function clearAIOutput() {
-  const session = activeAIChatSession();
-  if (!session) return;
-  session.messages = [];
-  renderPluginTools();
-}
-
-function currentAIModel(): string {
-  return aiChat.currentModel(settings.aiModel);
-}
-
-function currentAIChatModelKey(): string {
-  const profileId = settings.aiActiveProviderProfileId || activeAiProviderProfile()?.id || "default";
-  const model = currentAIModel() || "default";
-  return `${profileId}:${model}`;
-}
-
-function activeAIChatSession(): AIChatSession | undefined {
-  return aiChat.activeSession();
-}
-
-function ensureAIChatSession(model: string): AIChatSession {
-  return aiChat.ensureSession(model, tr("plugin.aiChat.block"), newId);
-}
-
-function newAIChatSession() {
-  const model = currentAIChatModelKey();
-  aiChat.newSession(model, tr("plugin.aiChat.block"), newId);
-  renderPluginTools();
-}
-
-function toggleAIChatTerminalContext() {
-  if (aiChat.streaming) return;
-  const session = ensureAIChatSession(currentAIChatModelKey());
-  session.sendTerminalContext = !session.sendTerminalContext;
-  renderPluginTools();
-}
-
-function appendAIChatSystem(content: string, tone: Tone = "neutral") {
-  aiChat.appendSystem(content, tone, currentAIChatModelKey(), tr("plugin.aiChat.block"), newId);
-  renderPluginTools();
-}
-
-function aiModelValues(): Array<{ value: string; label: string }> {
-  return aiChat.modelValues(settings.aiModel, tr("action.aiFetchModels"));
-}
-
-function aiChatSessionsForModel(model: string): AIChatSession[] {
-  return aiChat.sessionsForModel(model);
-}
-
-function removeAIModelListMessages(models: string[]) {
-  aiChat.removeModelListMessages(models);
-}
-
-function renderAIChatMessages(): string {
-  const session = ensureAIChatSession(currentAIChatModelKey());
-  return renderAIChatMessagesView({
-    messages: session.messages,
-    streaming: aiChat.streaming,
-    sendTerminalContext: session.sendTerminalContext,
-    terminalContextPreview: session.sendTerminalContext ? recentAIContext(activePane()) : "",
-    tr,
-  });
-}
-
-function renderAIChatMessagesIntoDom() {
-  const history = document.querySelector<HTMLElement>("#aiChatHistory");
-  if (!history) return;
-  history.innerHTML = renderAIChatMessages();
-  scrollAIChatToBottom();
-}
-
-function scrollAIChatToBottom() {
-  const history = document.querySelector<HTMLElement>("#aiChatHistory");
-  if (history) history.scrollTop = history.scrollHeight;
-}
-
-function resizeAIChatInput(input: HTMLTextAreaElement) {
-  input.style.height = "auto";
-  input.style.height = `${Math.min(Math.max(input.scrollHeight, 40), 140)}px`;
-}
-
-function exportAIChat() {
-  const session = activeAIChatSession();
-  if (!session || !session.messages.length) {
-    appendAIChatSystem(tr("status.aiNoOutput"), "error");
-    return;
-  }
-  const bytes = new TextEncoder().encode(aiChatTranscript(session));
-  downloadPluginPayload(bytes, `${session.title.replace(/[^\w.-]+/g, "-").toLowerCase() || "ai-chat"}.md`, "text/markdown;charset=utf-8");
-}
-
 function pluginIsEnabled(pluginId: string): boolean {
   return plugins.find((plugin) => plugin.id === pluginId)?.enabled ?? false;
 }
@@ -4356,114 +3058,20 @@ async function terminalAIContext(includeTerminalContext: boolean): Promise<Recor
   context.context_lines = AI_TERMINAL_CONTEXT_LINES;
   context.context_source = pane.sessionBackend === "herdr" ? "herdr.sockapi" : "terminal.buffer";
   if (pane.sessionBackend === "herdr") {
-    await appendHerdrAIContext(context, pane);
+    await appendHerdrAIContext(context, pane, {
+      lines: AI_TERMINAL_CONTEXT_LINES,
+      ensureHerdrSocketReady,
+      currentHerdrPaneId,
+      runHerdrSocketRequest,
+    });
   } else {
     context.recent_output = recentAIContext(pane);
   }
   return context;
 }
 
-async function appendHerdrAIContext(context: Record<string, unknown>, pane: TerminalPane) {
-  const fallbackOutput = recentAIContext(pane);
-  try {
-    const selector = await ensureHerdrSocketReady(pane);
-    const paneId = await currentHerdrPaneId(selector);
-    context.herdr_pane_id = paneId;
-    const [processInfo, paneRead] = await Promise.allSettled([
-      runHerdrSocketRequest("pane.process_info", { pane_id: paneId }, {
-        selector,
-        id: "lazycat-webshell:ai-context:process-info",
-        mirrorNotification: false,
-      }),
-      runHerdrSocketRequest("pane.read", {
-        pane_id: paneId,
-        source: "recent",
-        lines: AI_TERMINAL_CONTEXT_LINES,
-      }, {
-        selector,
-        id: "lazycat-webshell:ai-context:pane-read",
-        mirrorNotification: false,
-      }),
-    ]);
-    if (processInfo.status === "fulfilled") {
-      applyHerdrProcessInfoToAIContext(context, processInfo.value.result);
-    }
-    const readText = paneRead.status === "fulfilled" ? herdrPaneReadText(paneRead.value.result) : "";
-    context.recent_output = readText || fallbackOutput;
-    if (paneRead.status === "rejected" || processInfo.status === "rejected") {
-      context.context_warning = "Herdr sockapi context was partially unavailable; local terminal buffer may be used as fallback.";
-    }
-  } catch (error) {
-    context.context_source = "terminal.buffer";
-    context.context_warning = `Herdr sockapi context unavailable: ${errorMessage(error)}`;
-    context.recent_output = fallbackOutput;
-  }
-}
-
-function applyHerdrProcessInfoToAIContext(context: Record<string, unknown>, result: JsonRecord | undefined) {
-  const process = recordField(result, "process")
-    ?? recordField(result, "process_info")
-    ?? recordField(result, "info")
-    ?? result;
-  const cwd = stringField(process, "cwd")
-    || stringField(process, "current_working_directory")
-    || stringField(process, "working_directory");
-  const shell = stringField(process, "shell");
-  const command = stringField(process, "command")
-    || stringField(process, "cmd")
-    || stringField(process, "name")
-    || herdrStringArrayField(process, "argv").join(" ");
-  if (cwd) context.cwd = cwd;
-  if (shell) context.shell = shell;
-  if (command) context.last_command = command;
-  const safeInfo = safeHerdrProcessInfo(process);
-  if (Object.keys(safeInfo).length) {
-    context.process_info = safeInfo;
-  }
-}
-
-function safeHerdrProcessInfo(process: JsonRecord | undefined): JsonRecord {
-  const safe: JsonRecord = {};
-  for (const key of ["pane_id", "pid", "ppid", "name", "command", "cmd", "cwd", "working_directory", "current_working_directory", "shell"]) {
-    const value = process?.[key];
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-      safe[key] = value;
-    }
-  }
-  const argv = herdrStringArrayField(process, "argv");
-  if (argv.length) safe.argv = argv;
-  return safe;
-}
-
-function herdrPaneReadText(result: JsonRecord | undefined): string {
-  const direct = stringField(result, "text")
-    || stringField(result, "content")
-    || stringField(result, "output")
-    || stringField(result, "data");
-  if (direct) return recentAIContextText(direct, AI_TERMINAL_CONTEXT_LINES);
-  const pane = recordField(result, "pane");
-  const nested = stringField(pane, "text")
-    || stringField(pane, "content")
-    || stringField(pane, "output")
-    || stringField(pane, "data");
-  if (nested) return recentAIContextText(nested, AI_TERMINAL_CONTEXT_LINES);
-  const lines = herdrStringArrayField(result, "lines")
-    .concat(herdrStringArrayField(pane, "lines"));
-  return recentAIContextText(lines.join("\n"), AI_TERMINAL_CONTEXT_LINES);
-}
-
-function herdrStringArrayField(record: JsonRecord | undefined, key: string): string[] {
-  const value = record?.[key];
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function recentAIContext(pane: TerminalPane | undefined): string {
-  if (!pane) return "";
-  return recentAIContextText(pane.aiContextText, AI_TERMINAL_CONTEXT_LINES);
+  return recentAIContextForPane(pane, AI_TERMINAL_CONTEXT_LINES);
 }
 
 function appendAIContext(pane: TerminalPane, text: string) {
@@ -4478,7 +3086,7 @@ function appendAIContext(pane: TerminalPane, text: string) {
 function updateAIContextLcd(pane: TerminalPane) {
   if (activePluginToolId !== AI_CHAT_PLUGIN_ID) return;
   if (pane.id !== activePane()?.id) return;
-  const session = activeAIChatSession();
+  const session = aiChat.activeSession();
   if (!session?.sendTerminalContext) return;
   const preview = document.querySelector<HTMLElement>(".ai-context-lcd pre");
   if (!preview) return;
@@ -4486,76 +3094,14 @@ function updateAIContextLcd(pane: TerminalPane) {
   preview.scrollTop = preview.scrollHeight;
 }
 
-async function activateFileBrowserEntry(path: string, open = false) {
-  const entry = fileBrowser.entries.find((item) => item.path === path);
-  if (!entry) return;
-  fileBrowser.selectPath(entry.path);
-  fileBrowser.clearContextMenu();
-  if (open && (entry.kind === "directory" || entry.kind === "symlink")) {
-    await loadFileBrowserDirectory(entry.path);
-    return;
-  }
-  renderPluginTools();
-}
-
-async function loadFileBrowserDirectory(path: string) {
-  if (!pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID)) return;
-  const pane = activePane();
-  if (!pane?.sessionId) {
-    setFileTransferOutput(tr("status.pluginFileNoSession"), "error");
-    return;
-  }
-  const directory = fileBrowser.beginDirectoryLoad(path);
-  renderPluginTools();
-  try {
-    let stream = "";
-    await actionClient.send("transfer", "list", {
-      sessionId: pane.sessionId,
-      path: directory,
-    }, {
-      onStream: (chunk) => {
-        stream += chunk;
-      },
-    });
-    fileBrowser.finishDirectoryLoad(directory, parseFileBrowserEntries(directory, stream));
-    setFileTransferOutput("");
-  } catch (error) {
-    fileBrowser.failDirectoryLoad();
-    setFileTransferOutput(errorMessage(error), "error");
-  } finally {
-    fileBrowser.finishDirectoryLoadWithoutChanges();
-    renderPluginTools();
-  }
-}
-
-function selectedFileBrowserEntry(): FileBrowserEntry | undefined {
-  return fileBrowser.selectedEntry();
-}
-
-function fileUploadDirectory(): string {
-  return fileBrowser.uploadDirectory();
-}
-
-function syncFileBrowserPathWithActivePane(force = false) {
-  const pane = activePane();
-  fileBrowser.syncPathWithPane(pane?.id ?? "", pane?.workingDirectory || "", force);
-}
-
 function observeWorkingDirectory(pane: TerminalPane, text: string) {
   const fromOsc = workingDirectoryFromOsc7(text);
   const fromPrompt = fromOsc || workingDirectoryFromPrompt(text);
   if (!fromPrompt) return;
   pane.workingDirectory = fromPrompt;
-  if (pane.id === activePane()?.id && activePluginToolId === FILE_TRANSFER_PLUGIN_ID && !fileBrowser.loadedPath) {
-    syncFileBrowserPathWithActivePane();
+  if (pane.id === activePane()?.id && activePluginToolId === FILE_TRANSFER_PLUGIN_ID) {
+    fileTransfer.syncObservedPane(pane.id);
   }
-}
-
-function setFileTransferOutput(message: string, tone: Tone = "neutral") {
-  const output = document.querySelector<HTMLElement>("#fileTransferOutput");
-  if (!output) return;
-  output.textContent = message;
-  output.dataset.tone = tone;
 }
 
 function setPluginStatus(message: string, tone: Tone = "neutral") {
@@ -5011,8 +3557,8 @@ function handleHerdrEventMessage(raw: unknown) {
     setGlobalStatus(message, herdrEventTone(event, data));
   }
   if (event === "pane.agent_detected" || event === "pane.agent_status_changed") {
-    mobileSymbolAgentRefreshTime = 0;
-    void refreshMobileSymbolAgentForActivePane();
+    mobileSymbolAgent.invalidate();
+    void mobileSymbolAgent.refresh();
   }
   if (herdrEventChangesDock(event)) {
     scheduleHerdrEventRefresh();
@@ -5155,17 +3701,7 @@ function findPaneBySessionBackend(
   selector: string,
   mode: SessionMode,
 ): { tab: TerminalTab; pane: TerminalPane } | undefined {
-  const normalizedSelector = normalizeSelector(selector);
-  const sameSelectorTabs = tabs.filter((tab) => normalizeSelector(tab.selector) === normalizedSelector);
-  for (const tab of sameSelectorTabs) {
-    const pane = activePane(tab);
-    if (pane?.sessionBackend === mode) return { tab, pane };
-  }
-  for (const tab of sameSelectorTabs) {
-    const pane = tab.panes.find((item) => item.sessionBackend === mode);
-    if (pane) return { tab, pane };
-  }
-  return undefined;
+  return findSessionBackendPane(tabs, selector, mode);
 }
 
 function renderNewTabMenu() {
@@ -5360,16 +3896,29 @@ async function restoreWorkspacePane(
   existing?: TerminalPane,
   options: ApplyWorkspaceOptions = {},
 ): Promise<TerminalPane> {
-  const pane = existing ?? makePane(tab, paneState.id);
-  if (existing && options.replayFromStart) {
-    preparePaneForFullReplay(pane);
+  const nextBackend = normalizeSessionMode(paneState.session_backend);
+  let pane: TerminalPane;
+  if (
+    existing
+    && existing.sessionId === paneState.session_id
+    && existing.sessionBackend === nextBackend
+  ) {
+    pane = existing;
+    if (options.replayFromStart) {
+      preparePaneForFullReplay(pane);
+    }
+  } else {
+    if (existing) {
+      disposePaneLocal(existing);
+    }
+    pane = makePane(tab, paneState.id);
   }
   pane.tabId = tab.id;
   pane.selector = tab.selector;
   pane.label = tab.label;
   pane.sessionId = paneState.session_id;
   pane.sessionStatus = paneState.status;
-  pane.sessionBackend = normalizeSessionMode(paneState.session_backend);
+  pane.sessionBackend = nextBackend;
   restoreHerdrOutputSequence(pane, paneState.herdr_output_sequence);
   pane.cols = paneState.cols || INITIAL_COLS;
   pane.rows = paneState.rows || INITIAL_ROWS;
@@ -5541,7 +4090,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     onPointerDown: (event) => {
       const current = findPaneById(id);
       if (current) {
-        trackMobileTerminalSwipeStart(current, event);
+        mobileTerminalGestures.trackSwipeStart(current.id, event);
         activatePane(current.tabId, id, { focus: false });
         if (shouldFocusTerminalFromPointer(event)) {
           requestAnimationFrame(() => focusPaneCanvas(current));
@@ -5551,21 +4100,21 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     onPointerUp: (event) => {
       if (event.pointerType !== "touch") return;
       const current = findPaneById(id);
-      const gesture = current ? readMobileTerminalGesture(current, event) : undefined;
-      if (current && gesture && runMobileTerminalSwipe(gesture)) {
-        clearMobileTerminalGesture();
+      const gesture = current ? mobileTerminalGestures.readGesture(current.id, event) : undefined;
+      if (current && gesture && mobileTerminalGestures.runSwipe(gesture)) {
+        mobileTerminalGestures.clearGesture();
         event.preventDefault();
         return;
       }
-      clearMobileTerminalGesture();
-      if (current && gesture && isMobileTerminalTapGesture(gesture) && isDoubleTerminalTap(current, event)) {
+      mobileTerminalGestures.clearGesture();
+      if (current && gesture && mobileTerminalGestures.isTapGesture(gesture) && mobileTerminalGestures.isDoubleTap(current.id, event)) {
         event.preventDefault();
         focusPaneSystemKeyboard(current);
       }
     },
     onPointerCancel: (event) => {
-      if (event.pointerType === "touch" && mobileTerminalSwipe.paneId === id) {
-        clearMobileTerminalGesture();
+      if (event.pointerType === "touch") {
+        mobileTerminalGestures.clearGesture();
       }
     },
     onDoubleClick: (event) => {
@@ -5580,7 +4129,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
       const current = findPaneById(id);
       if (!current) return;
       activatePane(current.tabId, id);
-      openPaneMenu(event.clientX, event.clientY, id);
+      paneMenuController.open(event.clientX, event.clientY, id);
     },
     onMouseUp: () => {
       if (settings.copyOnSelect) {
@@ -6219,7 +4768,7 @@ function activateAdjacentPane(direction: -1 | 1) {
 
 function refreshAIContextPreviewForActivePane() {
   if (activePluginToolId !== AI_CHAT_PLUGIN_ID) return;
-  if (!activeAIChatSession()?.sendTerminalContext) return;
+  if (!aiChat.activeSession()?.sendTerminalContext) return;
   renderPluginTools();
 }
 
@@ -6277,32 +4826,19 @@ function updateTabChrome() {
 }
 
 function tabDisplayName(tab: TerminalTab): string {
-  return (isHerdrTab(tab) ? herdrWorkspaceLabelForTab(tab) : "")
-    || tab.customTitle?.trim()
-    || herdrWorkspaceLabelForTab(tab)
-    || String(tabs.findIndex((item) => item.id === tab.id) + 1);
+  return displayNameForTab(tab, tabs, tr, herdrWorkspaceLabelForTab);
 }
 
 function tabHasTextTitle(tab: TerminalTab, displayName = tabDisplayName(tab)): boolean {
-  return Boolean(tab.customTitle?.trim()) || !/^\d+$/.test(displayName.trim());
+  return tabHasDisplayTextTitle(tab, displayName);
 }
 
 function tabPinnedGlyph(tab: TerminalTab, displayName = tabDisplayName(tab)): string {
-  const source = displayName.trim() || tab.label.trim() || "T";
-  const match = Array.from(source).find((char) => /[\p{Letter}\p{Number}]/u.test(char));
-  return (match || source[0] || "T").toLocaleUpperCase();
+  return pinnedGlyphForTab(tab, displayName);
 }
 
 function sortedPinnedTabs(): TerminalTab[] {
-  return tabs
-    .filter((tab) => tab.pinned)
-    .map((tab, index) => ({ tab, index }))
-    .sort((left, right) => {
-      const leftOrder = left.tab.pinnedOrder ?? Number.MAX_SAFE_INTEGER;
-      const rightOrder = right.tab.pinnedOrder ?? Number.MAX_SAFE_INTEGER;
-      return leftOrder - rightOrder || left.index - right.index;
-    })
-    .map((entry) => entry.tab);
+  return sortPinnedTabs(tabs);
 }
 
 function herdrWorkspaceLabelForTab(tab: TerminalTab): string {
@@ -6312,10 +4848,6 @@ function herdrWorkspaceLabelForTab(tab: TerminalTab): string {
   }
   const workspace = focusedHerdrWorkspace();
   return workspace?.label.trim() || tr("backend.herdr");
-}
-
-function isHerdrTab(tab: TerminalTab): boolean {
-  return tab.panes.some((pane) => pane.sessionBackend === "herdr");
 }
 
 function startRenamingTab(tabId: string) {
@@ -6343,7 +4875,7 @@ async function commitTabRename(tabId: string, value: string) {
     return;
   }
   const trimmed = value.trim();
-  const defaultName = String(tabs.findIndex((item) => item.id === tab.id) + 1);
+  const defaultName = defaultDisplayNameForTab(tab, tabs, tr);
   if (isHerdrTab(tab)) {
     tab.customTitle = undefined;
     renderTabs();
@@ -6495,9 +5027,17 @@ async function requestCloseTab(tabId: string) {
 async function closeTab(tabId: string) {
   const tab = tabs.find((item) => item.id === tabId);
   if (!tab) return;
+  tab.closing = true;
+  for (const pane of tab.panes) {
+    pane.closing = true;
+  }
   try {
     await runWorkspaceAction("close_tab", { selector: tab.selector, tabId });
   } catch (error) {
+    tab.closing = false;
+    for (const pane of tab.panes) {
+      pane.closing = false;
+    }
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
 }
@@ -6543,6 +5083,7 @@ function disposePaneLocal(pane: TerminalPane) {
   pane.closing = true;
   window.clearTimeout(pane.reconnectTimer);
   clearReplayInputLock(pane);
+  pane.transport?.destroy();
   pane.socket?.close();
   pane.socket = undefined;
   flushPaneDecoder(pane);
@@ -6568,7 +5109,7 @@ function updateActiveDetails() {
     elements.instanceStatusDot.dataset.status = selectedInstance()?.status ?? "unknown";
     setGlobalStatus(tr("status.idle"));
     document.title = tr("app.title");
-    setMobileSymbolAgent("default");
+    mobileSymbolAgent.reset();
     return;
   }
 
@@ -6577,7 +5118,7 @@ function updateActiveDetails() {
   elements.instanceStatusDot.dataset.status = instanceForSelector(tab.selector)?.status ?? "running";
   setGlobalStatus(pane.status, pane.tone);
   document.title = `${tabCurrentTitle(tab)} - ${tr("app.title")}`;
-  void refreshMobileSymbolAgentForActivePane();
+  void mobileSymbolAgent.refresh();
 }
 
 function setPaneStatus(pane: TerminalPane, message: string, tone: Tone = "neutral") {
@@ -6600,11 +5141,6 @@ function sendActivePaneKeyInput(data: string): boolean {
   if (!pane?.term?.restty || !data) return false;
   pane.term.restty.sendKeyInput(data);
   return true;
-}
-
-function isCoarseTouchPointer(event?: PointerEvent): boolean {
-  return event?.pointerType === "touch"
-    || window.matchMedia("(hover: none) and (pointer: coarse)").matches;
 }
 
 function shouldFocusTerminalFromPointer(event: PointerEvent): boolean {
@@ -6646,57 +5182,6 @@ function focusPaneSystemKeyboard(pane: TerminalPane) {
     pane.term?.focus();
   }
   handleViewportChange();
-}
-
-function isDoubleTerminalTap(pane: TerminalPane, event: PointerEvent): boolean {
-  const now = performance.now();
-  const dx = event.clientX - lastMobileTerminalTap.x;
-  const dy = event.clientY - lastMobileTerminalTap.y;
-  const samePane = lastMobileTerminalTap.paneId === pane.id;
-  const close = dx * dx + dy * dy <= MOBILE_TERMINAL_DOUBLE_TAP_DISTANCE_PX * MOBILE_TERMINAL_DOUBLE_TAP_DISTANCE_PX;
-  const fast = now - lastMobileTerminalTap.time <= MOBILE_TERMINAL_DOUBLE_TAP_DELAY_MS;
-  lastMobileTerminalTap.paneId = pane.id;
-  lastMobileTerminalTap.time = now;
-  lastMobileTerminalTap.x = event.clientX;
-  lastMobileTerminalTap.y = event.clientY;
-  return samePane && close && fast;
-}
-
-function trackMobileTerminalSwipeStart(pane: TerminalPane, event: PointerEvent) {
-  if (event.pointerType !== "touch") return;
-  mobileTerminalSwipe.paneId = pane.id;
-  mobileTerminalSwipe.x = event.clientX;
-  mobileTerminalSwipe.y = event.clientY;
-  mobileTerminalSwipe.time = performance.now();
-}
-
-function readMobileTerminalGesture(pane: TerminalPane, event: PointerEvent): { dx: number; dy: number; elapsed: number } | undefined {
-  if (event.pointerType !== "touch" || mobileTerminalSwipe.paneId !== pane.id) return undefined;
-  return {
-    dx: event.clientX - mobileTerminalSwipe.x,
-    dy: event.clientY - mobileTerminalSwipe.y,
-    elapsed: performance.now() - mobileTerminalSwipe.time,
-  };
-}
-
-function clearMobileTerminalGesture() {
-  mobileTerminalSwipe.paneId = "";
-}
-
-function runMobileTerminalSwipe(gesture: { dx: number; dy: number; elapsed: number }): boolean {
-  if (
-    gesture.elapsed > MOBILE_TERMINAL_TAB_SWIPE_MAX_MS
-    || Math.abs(gesture.dx) < MOBILE_TERMINAL_TAB_SWIPE_DISTANCE_PX
-    || Math.abs(gesture.dx) < Math.abs(gesture.dy) * MOBILE_TERMINAL_TAB_SWIPE_RATIO
-  ) {
-    return false;
-  }
-  activateAdjacentTab(gesture.dx < 0 ? 1 : -1);
-  return true;
-}
-
-function isMobileTerminalTapGesture(gesture: { dx: number; dy: number }): boolean {
-  return Math.hypot(gesture.dx, gesture.dy) <= MOBILE_TERMINAL_TAP_MOVE_THRESHOLD_PX;
 }
 
 function handleTerminalInterruptCapture(event: KeyboardEvent) {
@@ -6868,28 +5353,27 @@ function clearPendingInput(pane: TerminalPane) {
 }
 
 function activeTab(): TerminalTab | undefined {
-  return tabs.find((tab) => tab.id === activeTabId);
+  return selectActiveTab(tabs, activeTabId);
 }
 
 function activePane(tab = activeTab()): TerminalPane | undefined {
-  if (!tab) return undefined;
-  return tab.panes.find((pane) => pane.id === tab.activePaneId) ?? tab.panes[0];
+  return selectActivePane(tab);
 }
 
 function allPanes(): TerminalPane[] {
-  return tabs.flatMap((tab) => tab.panes);
+  return allTabPanes(tabs);
 }
 
 function visiblePanes(tab: TerminalTab): TerminalPane[] {
-  return tab.panes.filter((pane) => !pane.closing);
+  return visibleTabPanes(tab);
 }
 
 function findPaneById(id: string): TerminalPane | undefined {
-  return allPanes().find((pane) => pane.id === id);
+  return findPaneByIdInTabs(tabs, id);
 }
 
 function tabForPane(pane: TerminalPane): TerminalTab | undefined {
-  return tabs.find((tab) => tab.id === pane.tabId);
+  return tabForPaneInTabs(tabs, pane);
 }
 
 function scheduleCopySelection() {
@@ -7030,12 +5514,11 @@ function fallbackCopyText(text: string) {
 }
 
 function tabTone(tab: TerminalTab): Tone {
-  if (tab.panes.some((pane) => pane.tone === "error")) return "error";
-  return activePane(tab)?.tone ?? "neutral";
+  return toneForTab(tab, activePane(tab));
 }
 
 function tabCurrentTitle(tab: TerminalTab): string {
-  return activePane(tab)?.title || tab.label;
+  return currentTabTitle(tab, activePane(tab));
 }
 
 function selectedInstance(): Instance | undefined {

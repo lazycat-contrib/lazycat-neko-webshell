@@ -1,3 +1,18 @@
+:root {
+  --mobile-shortcuts-bg: var(--chrome);
+  --mobile-shortcuts-height: 104px;
+  --mobile-shortcuts-bottom-offset: var(--lzc-safe-area-inset-bottom);
+}
+
+body.mobile-keyboard-visible {
+  --mobile-shortcuts-bottom-offset: var(--app-keyboard-inset-bottom);
+}
+
+.mobile-shortcuts,
+.field.mobile-only-setting {
+  display: none;
+}
+
 @media (hover: none) and (pointer: coarse), (max-width: 760px) {
   :root {
     --mobile-touch: 40px;
@@ -104,6 +119,10 @@
   .tab-close svg {
     width: 16px;
     height: 16px;
+  }
+
+  .tab-pin-actions {
+    display: none;
   }
 
   .tab:not(.active) .tab-close {
