@@ -875,9 +875,9 @@
 
 .ai-context-lcd {
   display: grid;
-  flex: 0 1 min(178px, 42vw);
-  width: min(178px, 42vw);
-  height: 28px;
+  flex: 0 1 min(132px, 34vw);
+  width: min(132px, 34vw);
+  height: 24px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--line));
   border-radius: 5px;
@@ -897,10 +897,10 @@
   margin: 0;
   overflow: auto;
   color: var(--accent-fg);
-  padding: 3px 5px;
+  padding: 2px 4px;
   font-family: var(--font-mono);
-  font-size: 9px;
-  line-height: 1.15;
+  font-size: 8.5px;
+  line-height: 1.08;
   scrollbar-width: none;
   white-space: pre;
 }
@@ -1160,7 +1160,7 @@
 }
 
 .ai-chat-model-row {
-  grid-template-columns: minmax(112px, 0.92fr) minmax(92px, 0.82fr) minmax(0, 1fr) minmax(0, 1fr) 32px 32px;
+  grid-template-columns: minmax(58px, 66px) minmax(92px, 0.82fr) minmax(0, 1fr) minmax(0, 1fr) 32px 32px;
 }
 
 .ai-chat-input-row {
@@ -1173,30 +1173,27 @@
   resize: none;
 }
 
-.ai-target-terminal {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+.ai-target-lcd {
+  grid-template-columns: 12px minmax(0, 1fr);
   align-items: center;
   align-self: end;
-  gap: 7px;
+  gap: 4px;
   min-width: 0;
-  min-height: 32px;
-  border: 1px solid var(--input-border);
-  border-radius: 7px;
-  background: var(--component-wash);
-  color: var(--text);
-  padding: 0 8px;
-  font-size: 12px;
+  width: 100%;
+  height: 30px;
+  padding: 0 5px;
+  color: var(--accent-fg);
+  font-size: 10px;
   font-weight: 600;
 }
 
-.ai-target-terminal svg {
-  width: 15px;
-  height: 15px;
+.ai-target-lcd svg {
+  width: 12px;
+  height: 12px;
   color: var(--accent-fg);
 }
 
-.ai-target-terminal span {
+.ai-target-lcd span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

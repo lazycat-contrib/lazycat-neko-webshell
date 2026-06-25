@@ -146,7 +146,7 @@ export function aiChatTranscript(session: AIChatSession): string {
 function renderAITargetTerminal(state: AIChatViewState): string {
   const label = state.targetTerminalLabel.trim() || state.tr("status.noTarget");
   return `
-    <div class="ai-target-terminal" title="${escapeAttr(label)}" aria-label="${escapeAttr(state.tr("field.aiTargetTerminal"))}">
+    <div class="ai-context-lcd ai-target-lcd" title="${escapeAttr(label)}" aria-label="${escapeAttr(state.tr("field.aiTargetTerminal"))}">
       <i data-lucide="terminal"></i>
       <span>${escapeHtml(label)}</span>
     </div>
