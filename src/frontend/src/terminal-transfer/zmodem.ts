@@ -244,8 +244,7 @@ export function createZmodemTerminalTransfer(options: ZmodemTransferOptions) {
         name: file.name,
         size: file.size,
         mtime: file.lastModified ? new Date(file.lastModified) : undefined,
-        files_remaining: files.length - index - 1,
-        bytes_remaining: Math.max(0, totalBytes - transferredTotal - file.size),
+        ...remainingOfferParams(files, index, totalBytes, transferredTotal, file.size),
       });
       if (!transfer) {
         transferredTotal += file.size;
@@ -462,6 +461,21 @@ function uploadDestinationMessage(pane: TerminalPane, tr: ZmodemTransferOptions[
   return pane.workingDirectory
     ? tr("status.zmodemUploadingTo", { path: pane.workingDirectory })
     : tr("status.zmodemUploadingToCurrentDirectory");
+}
+
+function remainingOfferParams(
+  files: File[],
+  index: number,
+  totalBytes: number,
+  transferredTotal: number,
+  fileSize: number,
+): { files_remaining?: number; bytes_remaining?: number } {
+  const filesRemaining = files.length - index - 1;
+  if (filesRemaining <= 0) return {};
+  return {
+    files_remaining: filesRemaining,
+    bytes_remaining: Math.max(0, totalBytes - transferredTotal - fileSize),
+  };
 }
 
 async function selectFiles(): Promise<File[]> {
