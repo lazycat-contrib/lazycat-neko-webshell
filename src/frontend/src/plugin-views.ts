@@ -544,6 +544,27 @@ export function renderPomodoroToolView(state: PomodoroViewState): string {
   const againLabel = mode === "completed" && currentRound < totalRounds
     ? state.tr("action.pomodoroNextRound")
     : state.tr("action.pomodoroAgain");
+  const againIcon = mode === "completed" && currentRound < totalRounds ? "skip-forward" : "rotate-ccw";
+  const actionButton = (
+    action: string,
+    label: string,
+    icon: string,
+    tone: "default" | "primary" | "danger",
+    hidden: boolean,
+  ) => `
+    <button
+      class="command-button icon-only-large pomodoro-action-button ${tone === "primary" ? "primary" : tone === "danger" ? "danger" : ""}"
+      type="button"
+      data-pomodoro-action="${escapeAttr(action)}"
+      aria-label="${escapeAttr(label)}"
+      title="${escapeAttr(label)}"
+      ${disabledAttr}
+      ${hidden ? "hidden" : ""}
+    >
+      <i data-lucide="${escapeAttr(icon)}" aria-hidden="true"></i>
+      <span class="pomodoro-action-tip" aria-hidden="true">${escapeHtml(label)}</span>
+    </button>
+  `;
   const roundDots = Array.from({ length: totalRounds }, (_, index) => {
     const round = index + 1;
     const dotState = currentRound > round ? "done" : currentRound === round ? "active" : "pending";
@@ -608,18 +629,10 @@ export function renderPomodoroToolView(state: PomodoroViewState): string {
         />
       </label>
       <div class="pomodoro-actions">
-        <button class="command-button danger" type="button" data-pomodoro-action="stop" ${disabledAttr} ${mode !== "running" ? "hidden" : ""}>
-          ${escapeHtml(state.tr("action.pomodoroStop"))}
-        </button>
-        <button class="command-button" type="button" data-pomodoro-action="dismiss" ${disabledAttr} ${mode !== "completed" ? "hidden" : ""}>
-          ${escapeHtml(state.tr("action.pomodoroDismiss"))}
-        </button>
-        <button class="command-button primary" type="button" data-pomodoro-action="again" ${disabledAttr} ${mode !== "completed" ? "hidden" : ""}>
-          ${escapeHtml(againLabel)}
-        </button>
-        <button class="command-button primary" type="button" data-pomodoro-action="start" ${disabledAttr} ${mode !== "idle" ? "hidden" : ""}>
-          ${escapeHtml(state.tr("action.pomodoroStart"))}
-        </button>
+        ${actionButton("stop", state.tr("action.pomodoroStop"), "square", "danger", mode !== "running")}
+        ${actionButton("dismiss", state.tr("action.pomodoroDismiss"), "check", "default", mode !== "completed")}
+        ${actionButton("again", againLabel, againIcon, "primary", mode !== "completed")}
+        ${actionButton("start", state.tr("action.pomodoroStart"), "play", "primary", mode !== "idle")}
       </div>
     </div>
   `;

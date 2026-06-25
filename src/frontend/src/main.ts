@@ -1842,7 +1842,12 @@ function closeNotificationsMenu() {
 }
 
 function renderNotifications() {
+  const hasNotifications = notifications.length > 0;
   const unreadCount = notifications.filter((notification) => notification.state === "unread").length;
+  elements.notificationsShell.hidden = !hasNotifications;
+  if (!hasNotifications) {
+    closeNotificationsMenu();
+  }
   elements.notificationCount.hidden = unreadCount === 0;
   elements.notificationCount.textContent = unreadCount === 0 ? "" : unreadCount > 9 ? "9+" : String(unreadCount);
   elements.notificationsButton.classList.toggle("has-unread", unreadCount > 0);

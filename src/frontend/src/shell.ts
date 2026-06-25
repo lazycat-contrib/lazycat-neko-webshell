@@ -43,6 +43,7 @@ export type ShellElements = {
   openPluginsItem: HTMLButtonElement;
   openShortcutHelpItem: HTMLButtonElement;
   fitTerminalItem: HTMLButtonElement;
+  notificationsShell: HTMLDivElement;
   notificationsButton: HTMLButtonElement;
   notificationCount: HTMLSpanElement;
   notificationsMenu: HTMLDivElement;
@@ -209,7 +210,7 @@ export function renderShell(app: HTMLElement): ShellElements {
               </div>
             </div>
           </div>
-          <div class="notifications-shell" id="notificationsShell">
+          <div class="notifications-shell" id="notificationsShell" hidden>
             <button class="icon-button notification-button" id="notificationsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Notifications" title="Notifications" data-i18n-aria="section.notifications" data-i18n-title="section.notifications">
               <i data-lucide="bell"></i>
               <span class="notification-count" id="notificationCount" hidden></span>
@@ -755,6 +756,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     openPluginsItem: qs<HTMLButtonElement>("#openPluginsItem"),
     openShortcutHelpItem: qs<HTMLButtonElement>("#openShortcutHelpItem"),
     fitTerminalItem: qs<HTMLButtonElement>("#fitTerminalItem"),
+    notificationsShell: qs<HTMLDivElement>("#notificationsShell"),
     notificationsButton: qs<HTMLButtonElement>("#notificationsButton"),
     notificationCount: qs<HTMLSpanElement>("#notificationCount"),
     notificationsMenu: qs<HTMLDivElement>("#notificationsMenu"),

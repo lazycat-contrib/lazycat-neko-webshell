@@ -415,21 +415,56 @@
 }
 
 .pomodoro-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
 }
 
-.pomodoro-actions .command-button {
-  min-height: 38px;
+.pomodoro-actions .pomodoro-action-button {
+  position: relative;
+  width: 44px;
+  min-width: 44px;
+  height: 42px;
+  min-height: 42px;
+  padding: 0;
 }
 
-.pomodoro-actions .command-button[hidden] {
+.pomodoro-actions .pomodoro-action-button[hidden] {
   display: none;
 }
 
-.pomodoro-tool[data-pomodoro-state="idle"] .pomodoro-actions {
-  grid-template-columns: 1fr;
+.pomodoro-actions .pomodoro-action-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.pomodoro-action-tip {
+  position: absolute;
+  z-index: 3;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translate(-50%, 4px);
+  max-width: 180px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: var(--shadow-raised);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.pomodoro-action-button:hover .pomodoro-action-tip,
+.pomodoro-action-button:focus-visible .pomodoro-action-tip {
+  transform: translate(-50%, 0);
+  opacity: 1;
 }
 
 .file-browser-shell {

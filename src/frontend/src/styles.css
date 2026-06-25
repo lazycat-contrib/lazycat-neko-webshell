@@ -982,6 +982,10 @@ textarea:focus-visible {
   position: relative;
 }
 
+.notifications-shell[hidden] {
+  display: none;
+}
+
 .status-icon {
   position: relative;
 }
