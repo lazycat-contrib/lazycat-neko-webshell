@@ -25,6 +25,7 @@ use crate::validation::{normalize_output_frame_limit, validate_selector};
 const AGENT_INSTALL_PATH: &str = "/usr/local/bin/lazycat-neko-webshell-agent";
 const AGENT_MANIFEST_PATH: &str = "/usr/local/lib/lazycat-neko-webshell/agent.sha256";
 const AGENT_READY_MARKER: &str = "lazycat-neko-webshell-agent-ready";
+const AGENT_LOG_TAIL_LINES: usize = 80;
 
 #[derive(Clone, Debug)]
 pub struct AgentClient {
@@ -222,7 +223,12 @@ async fn wait_for_agent(client: &AgentClient) -> anyhow::Result<()> {
         }
         sleep(Duration::from_millis(120)).await;
     }
-    Err(last_error.unwrap_or_else(|| anyhow!("agent did not become ready")))
+    let log_tail = read_agent_log_tail(client, AGENT_LOG_TAIL_LINES).await;
+    Err(agent_startup_timeout_error(
+        client,
+        last_error.as_ref(),
+        &log_tail,
+    ))
 }
 
 async fn run_agent_request(
@@ -372,14 +378,82 @@ printf '%s\n' {}
         stop_script,
         shell_quote(AGENT_READY_MARKER),
     );
-    let output = run_target_shell(&client.selector, &script, None, Duration::from_secs(10)).await?;
+    let output = run_target_shell(&client.selector, &script, None, Duration::from_secs(10))
+        .await
+        .with_context(|| {
+            format!(
+                "agent start command failed: {}",
+                agent_runtime_context(client)
+            )
+        })?;
     if String::from_utf8_lossy(&output.stdout).trim() != AGENT_READY_MARKER {
         bail!(
-            "agent start did not complete: {}",
-            command_output_detail(&output)
+            "{}",
+            agent_start_failure_message(client, &command_output_detail(&output))
         );
     }
     Ok(())
+}
+
+async fn read_agent_log_tail(client: &AgentClient, lines: usize) -> String {
+    let lines = lines.max(1);
+    let script = format!(
+        "tail -n {} {} 2>/dev/null || true",
+        lines,
+        shell_quote(&scoped_log_path(&client.selector)),
+    );
+    match run_target_shell(&client.selector, &script, None, Duration::from_secs(5)).await {
+        Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        Err(_) => String::new(),
+    }
+}
+
+fn agent_startup_timeout_error(
+    client: &AgentClient,
+    last_error: Option<&anyhow::Error>,
+    log_tail: &str,
+) -> anyhow::Error {
+    anyhow!(agent_startup_timeout_message(client, last_error, log_tail))
+}
+
+fn agent_startup_timeout_message(
+    client: &AgentClient,
+    last_error: Option<&anyhow::Error>,
+    log_tail: &str,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut message = format!(
+        "agent did not become ready: {}",
+        agent_runtime_context(client)
+    );
+    if let Some(error) = last_error {
+        let _ = write!(message, "\nlast ping error: {error}");
+    }
+    let log_tail = log_tail.trim();
+    if !log_tail.is_empty() {
+        let _ = write!(message, "\nagent log tail:\n{log_tail}");
+    }
+    message
+}
+
+fn agent_start_failure_message(client: &AgentClient, output_detail: &str) -> String {
+    let context = agent_runtime_context(client);
+    let output_detail = output_detail.trim();
+    if output_detail.is_empty() {
+        return format!("agent start did not complete: {context}");
+    }
+    format!("agent start did not complete: {context}; output={output_detail:?}")
+}
+
+fn agent_runtime_context(client: &AgentClient) -> String {
+    format!(
+        "selector={} username={} socket={} log={}",
+        client.selector,
+        client.username,
+        client.socket_path,
+        scoped_log_path(&client.selector),
+    )
 }
 
 async fn run_target_shell(
@@ -560,6 +634,47 @@ mod tests {
     #[test]
     fn quote_handles_single_quotes() {
         assert_eq!(shell_quote("dev'user"), "'dev'\"'\"'user'");
+    }
+
+    #[test]
+    fn startup_timeout_message_reports_runtime_context() {
+        let selector = "demo@owner";
+        let client = AgentClient {
+            selector: selector.to_owned(),
+            username: "alice".to_owned(),
+            socket_path: scoped_socket_path(selector),
+        };
+        let last_error = anyhow!("agent request timed out");
+
+        let message = agent_startup_timeout_message(
+            &client,
+            Some(&last_error),
+            "listen tcp: too many open files",
+        );
+
+        assert!(message.contains("agent did not become ready"));
+        assert!(message.contains("selector=demo@owner"));
+        assert!(message.contains("username=alice"));
+        assert!(message.contains("socket=/tmp/lazycat-neko-webshell-agent-"));
+        assert!(message.contains("log=/tmp/lazycat-neko-webshell-agent-"));
+        assert!(message.contains("last ping error: agent request timed out"));
+        assert!(message.contains("agent log tail:\nlisten tcp: too many open files"));
+    }
+
+    #[test]
+    fn start_failure_message_reports_context_and_output() {
+        let selector = "demo@owner";
+        let client = AgentClient {
+            selector: selector.to_owned(),
+            username: "alice".to_owned(),
+            socket_path: scoped_socket_path(selector),
+        };
+
+        let message = agent_start_failure_message(&client, "unexpected output");
+        assert!(message.contains("agent start did not complete"));
+        assert!(message.contains("selector=demo@owner"));
+        assert!(message.contains("socket=/tmp/lazycat-neko-webshell-agent-"));
+        assert!(message.contains("output=\"unexpected output\""));
     }
 
     #[test]
