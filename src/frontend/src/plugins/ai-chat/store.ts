@@ -1,4 +1,4 @@
-import type { AIChatSession, Tone } from "../../types";
+import type { AIChatSession, AIChatTerminalTarget, Tone } from "../../types";
 
 type CreateId = () => string;
 
@@ -16,30 +16,47 @@ export class AIChatStore {
     return this.sessions.find((session) => session.id === this.activeSessionId);
   }
 
-  ensureSession(model: string, titlePrefix: string, createId: CreateId): AIChatSession {
+  ensureSession(
+    model: string,
+    titlePrefix: string,
+    createId: CreateId,
+    target?: AIChatTerminalTarget,
+  ): AIChatSession {
     const normalizedModel = model.trim() || "default";
     const active = this.activeSession();
-    if (active?.model === normalizedModel) return active;
-    const existing = this.sessions.find((session) => session.model === normalizedModel);
+    if (active?.model === normalizedModel && sessionMatchesTarget(active, target)) return active;
+    const existing = this.sessions.find((session) => session.model === normalizedModel && sessionMatchesTarget(session, target));
     if (existing) {
       this.activeSessionId = existing.id;
       return existing;
     }
-    const session = this.createSession(normalizedModel, titlePrefix, createId);
+    const session = this.createSession(normalizedModel, titlePrefix, createId, target);
     this.sessions = [...this.sessions, session];
     this.activeSessionId = session.id;
     return session;
   }
 
-  newSession(model: string, titlePrefix: string, createId: CreateId): AIChatSession {
-    const session = this.createSession(model.trim() || "default", titlePrefix, createId);
+  newSession(
+    model: string,
+    titlePrefix: string,
+    createId: CreateId,
+    target?: AIChatTerminalTarget,
+  ): AIChatSession {
+    const session = this.createSession(model.trim() || "default", titlePrefix, createId, target);
     this.sessions = [...this.sessions, session];
     this.activeSessionId = session.id;
     return session;
   }
 
-  appendSystem(content: string, tone: Tone, model: string, titlePrefix: string, createId: CreateId): AIChatSession {
-    const session = this.ensureSession(model, titlePrefix, createId);
+  appendSystem(
+    content: string,
+    tone: Tone,
+    model: string,
+    titlePrefix: string,
+    createId: CreateId,
+    target?: AIChatTerminalTarget,
+  ): AIChatSession {
+    const session = this.ensureSession(model, titlePrefix, createId, target);
     session.messages.push({ role: "system", content, tone });
     return session;
   }
@@ -52,8 +69,8 @@ export class AIChatStore {
     return values.map((model) => ({ value: model, label: model }));
   }
 
-  sessionsForModel(model: string): AIChatSession[] {
-    return this.sessions.filter((item) => item.model === model);
+  sessionsForModel(model: string, target?: AIChatTerminalTarget): AIChatSession[] {
+    return this.sessions.filter((item) => item.model === model && sessionMatchesTarget(item, target));
   }
 
   removeModelListMessages(models: string[]) {
@@ -68,14 +85,26 @@ export class AIChatStore {
     }
   }
 
-  private createSession(model: string, titlePrefix: string, createId: CreateId): AIChatSession {
-    const count = this.sessions.filter((session) => session.model === model).length + 1;
+  private createSession(
+    model: string,
+    titlePrefix: string,
+    createId: CreateId,
+    target?: AIChatTerminalTarget,
+  ): AIChatSession {
+    const count = this.sessions.filter((session) => session.model === model && sessionMatchesTarget(session, target)).length + 1;
     return {
       id: createId(),
       model,
       title: `${titlePrefix} ${count}`,
+      terminalTargetKey: target?.key,
+      terminalTargetLabel: target?.label,
       sendTerminalContext: false,
       messages: [],
     };
   }
+}
+
+function sessionMatchesTarget(session: AIChatSession, target?: AIChatTerminalTarget): boolean {
+  if (!target) return !session.terminalTargetKey;
+  return session.terminalTargetKey === target.key;
 }

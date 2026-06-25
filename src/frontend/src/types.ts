@@ -150,8 +150,15 @@ export type AIChatSession = {
   id: string;
   model: string;
   title: string;
+  terminalTargetKey?: string;
+  terminalTargetLabel?: string;
   sendTerminalContext: boolean;
   messages: AIChatMessage[];
+};
+
+export type AIChatTerminalTarget = {
+  key: string;
+  label: string;
 };
 
 export type AiMcpServerSettings = {

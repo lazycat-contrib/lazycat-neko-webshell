@@ -31,6 +31,7 @@ export type MessageKey =
   | "action.aiProviderRemove"
   | "action.aiProviderSelect"
   | "action.aiSend"
+  | "action.aiSendToTerminal"
   | "action.aiTest"
   | "action.cancel"
   | "action.close"
@@ -129,6 +130,7 @@ export type MessageKey =
   | "field.aiPrompt"
   | "field.aiProvider"
   | "field.aiSession"
+  | "field.aiTargetTerminal"
   | "field.defaultSessionBackend"
   | "field.herdrActiveBackgroundDark"
   | "field.herdrActiveBackgroundLight"
@@ -371,7 +373,9 @@ export type MessageKey =
   | "status.pasteFailed"
   | "status.aiConfigSaved"
   | "status.aiModelsReady"
+  | "status.aiNoTerminalTarget"
   | "status.aiNoOutput"
+  | "status.aiSentToTerminal"
   | "status.aiTestOk"
   | "status.aiWorking"
   | "status.pluginDisableFailed"
@@ -499,6 +503,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiProviderRemove": "Remove provider",
     "action.aiProviderSelect": "Switch provider",
     "action.aiSend": "Send",
+    "action.aiSendToTerminal": "Send to terminal",
     "action.aiTest": "Test",
     "action.cancel": "Cancel",
     "action.close": "Close",
@@ -597,6 +602,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiPrompt": "Prompt",
     "field.aiProvider": "Provider",
     "field.aiSession": "Chat",
+    "field.aiTargetTerminal": "Target terminal",
     "field.defaultSessionBackend": "New tab backend",
     "field.herdrActiveBackgroundDark": "Dark highlight",
     "field.herdrActiveBackgroundLight": "Light highlight",
@@ -846,7 +852,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pasteFailed": "Paste failed: {message}",
     "status.aiConfigSaved": "AI settings saved",
     "status.aiModelsReady": "{count} model(s) loaded",
+    "status.aiNoTerminalTarget": "Open or select a terminal first.",
     "status.aiNoOutput": "No AI output",
+    "status.aiSentToTerminal": "Sent to {target}",
     "status.aiTestOk": "AI test passed",
     "status.aiWorking": "AI request running...",
     "status.pluginDisableFailed": "Disable failed: {message}",
@@ -973,6 +981,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiProviderRemove": "删除服务",
     "action.aiProviderSelect": "切换服务",
     "action.aiSend": "发送",
+    "action.aiSendToTerminal": "发送到终端",
     "action.aiTest": "测试",
     "action.cancel": "取消",
     "action.close": "关闭",
@@ -1071,6 +1080,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiPrompt": "输入",
     "field.aiProvider": "服务商",
     "field.aiSession": "聊天",
+    "field.aiTargetTerminal": "目标终端",
     "field.defaultSessionBackend": "新建入口后端",
     "field.herdrActiveBackgroundDark": "深色高亮",
     "field.herdrActiveBackgroundLight": "浅色高亮",
@@ -1320,7 +1330,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pasteFailed": "粘贴失败：{message}",
     "status.aiConfigSaved": "AI 设置已保存",
     "status.aiModelsReady": "已加载 {count} 个模型",
+    "status.aiNoTerminalTarget": "请先打开或选择一个终端。",
     "status.aiNoOutput": "没有 AI 输出",
+    "status.aiSentToTerminal": "已发送到 {target}",
     "status.aiTestOk": "AI 测试通过",
     "status.aiWorking": "AI 请求中...",
     "status.pluginDisableFailed": "关闭失败：{message}",

@@ -7,12 +7,14 @@ type Fence = {
 
 type ChatMarkdownOptions = {
   copyLabel?: string;
+  sendLabel?: string;
 };
 
 export function renderChatMarkdown(source: string, options: ChatMarkdownOptions = {}): string {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
   const blocks: string[] = [];
   const copyLabel = options.copyLabel ?? "Copy";
+  const sendLabel = options.sendLabel ?? "Send to terminal";
   let index = 0;
 
   while (index < lines.length) {
@@ -31,7 +33,7 @@ export function renderChatMarkdown(source: string, options: ChatMarkdownOptions 
         index += 1;
       }
       if (index < lines.length) index += 1;
-      blocks.push(renderCodeBlock(codeLines, fence.language, copyLabel));
+      blocks.push(renderCodeBlock(codeLines, fence.language, copyLabel, sendLabel));
       continue;
     }
 
@@ -111,14 +113,20 @@ function shouldContinueParagraph(line: string): boolean {
   return !/^(#{1,4})\s+(.+)$/.test(line);
 }
 
-function renderCodeBlock(lines: string[], language: string, copyLabel: string): string {
+function renderCodeBlock(lines: string[], language: string, copyLabel: string, sendLabel: string): string {
   const languageClass = language ? ` class="language-${escapeAttr(language)}"` : "";
   const safeCopyLabel = escapeAttr(copyLabel);
+  const safeSendLabel = escapeAttr(sendLabel);
   return `
     <div class="ai-code-block">
-      <button class="ai-code-copy" type="button" data-ai-action="copy-code" aria-label="${safeCopyLabel}" title="${safeCopyLabel}">
-        <i data-lucide="copy"></i>
-      </button>
+      <div class="ai-code-actions">
+        <button class="ai-code-action" type="button" data-ai-action="send-code-to-terminal" aria-label="${safeSendLabel}" title="${safeSendLabel}">
+          <i data-lucide="terminal"></i>
+        </button>
+        <button class="ai-code-action" type="button" data-ai-action="copy-code" aria-label="${safeCopyLabel}" title="${safeCopyLabel}">
+          <i data-lucide="copy"></i>
+        </button>
+      </div>
       <pre><code${languageClass}>${escapeHtml(lines.join("\n"))}</code></pre>
     </div>
   `;

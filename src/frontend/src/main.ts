@@ -121,11 +121,13 @@ import {
   TERMINAL_TRANSFER_PLUGIN_ID,
 } from "./plugin-utils";
 import { createAIChatController } from "./plugins/ai-chat/controller";
+import { sendAIChatCodeToTerminal } from "./plugins/ai-chat/code-actions";
 import {
   appendHerdrAIContext,
   recentAIContext as recentAIContextForPane,
 } from "./plugins/ai-chat/context";
 import { resizeAIChatInput, scrollAIChatToBottom } from "./plugins/ai-chat/dom";
+import { createAIChatTerminalTargetResolver } from "./plugins/ai-chat/terminal-target";
 import { renderAIChatToolView } from "./plugins/ai-chat/tool-view";
 import { createFileTransferController } from "./plugins/file-transfer/controller";
 import { setFileTransferOutput } from "./plugins/file-transfer/dom";
@@ -426,6 +428,15 @@ let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
 let pluginsLoading = false;
 let activePluginToolId = "";
+const activeAIChatTerminalPane = () => activeHerdrTerminalPane() ?? activePane();
+const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
+  pane: activeAIChatTerminalPane,
+  tab: (pane) => pane ? tabForPane(pane) ?? activeTab() : activeTab(),
+  selectedSelector: () => selectedSelector,
+  herdrState: () => herdrState,
+  tabDisplayName,
+  tr,
+});
 const aiChat = createAIChatController({
   isEnabled: () => pluginIsEnabled(AI_CHAT_PLUGIN_ID),
   accessConfigured: aiAccessConfigured,
@@ -435,7 +446,8 @@ const aiChat = createAIChatController({
   saveSettings,
   flushSettings,
   terminalContext: terminalAIContext,
-  recentTerminalContext: () => recentAIContext(activePane()),
+  recentTerminalContext: () => recentAIContext(activeAIChatTerminalPane()),
+  activeTerminalTarget: activeAIChatTerminalTarget,
   inputElement: () => document.querySelector<HTMLTextAreaElement>("#aiChatInput"),
   actionClient,
   tr,
@@ -972,6 +984,16 @@ function bindSettings() {
       aiChat.copyMessage(Number(aiButton.dataset.aiMessageIndex));
     } else if (action === "copy-code") {
       aiChat.copyCodeBlock(aiButton);
+    } else if (action === "send-code-to-terminal") {
+      void sendAIChatCodeToTerminal(aiButton, {
+        activePane: activeAIChatTerminalPane,
+        sendText: (pane, text) => pane.sessionBackend === "herdr"
+          ? pasteTextIntoHerdrPane(pane, text, true)
+          : pasteTextIntoPane(pane, text),
+        targetLabel: (pane) => aiChat.activeTerminalTarget()?.label || pane.title || tr("tab.terminal"),
+        onStatus: setPluginStatus,
+        tr,
+      });
     } else if (action === "clear-output") {
       aiChat.clearOutput();
     } else if (action === "new-chat") {
@@ -2820,7 +2842,9 @@ function renderFileTransferTool(plugin: PluginDescriptor): string {
 
 function renderAIChatTool(plugin: PluginDescriptor): string {
   const disabled = pluginControlsDisabled(plugin);
+  aiChat.syncSessionForActiveTarget();
   const session = aiChat.ensureSession();
+  const target = aiChat.activeTerminalTarget();
   return renderAIChatToolView({
     disabled,
     title: tr("plugin.aiChat.name"),
@@ -2835,8 +2859,9 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
     providerProfiles: settings.aiProviderProfiles,
     activeProviderProfileId: settings.aiActiveProviderProfileId,
     providerPickerOpen: aiProviderPickerOpen,
+    targetTerminalLabel: target?.label ?? tr("status.noTarget"),
     sendTerminalContext: session.sendTerminalContext,
-    terminalContextPreview: session.sendTerminalContext ? recentAIContext(activePane()) : "",
+    terminalContextPreview: session.sendTerminalContext ? recentAIContext(activeAIChatTerminalPane()) : "",
     tr,
   });
 }
@@ -3490,6 +3515,7 @@ async function runHerdrAction(
     herdrState = state;
     renderHerdrDock();
     refreshHerdrTerminalAfterAction(selector, action);
+    syncAIChatForActiveTerminal();
     focusActivePaneCanvas();
   } catch (error) {
     elements.herdrStatus.textContent = tr("status.herdrActionFailed", { message: errorMessage(error) });
@@ -3710,7 +3736,7 @@ function scheduleHerdrEventRefresh() {
   window.clearTimeout(herdrEventRefreshTimer);
   herdrEventRefreshTimer = window.setTimeout(() => {
     if (!selectedSelector) return;
-    void refreshHerdrState(selectedSelector);
+    void refreshHerdrState(selectedSelector).then(() => syncAIChatForActiveTerminal());
     void syncHerdrEventBridge({ force: true });
   }, 300);
 }
@@ -4853,7 +4879,7 @@ function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: 
   renderTabs();
   updateActiveDetails();
   renderHerdrDock();
-  refreshAIContextPreviewForActivePane();
+  syncAIChatForActiveTerminal();
   focusActivePaneCanvas();
   if (options.updateLocation !== false) {
     rememberActiveTab();
@@ -4882,7 +4908,7 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   renderTabs();
   updateActiveDetails();
   renderHerdrDock();
-  refreshAIContextPreviewForActivePane();
+  syncAIChatForActiveTerminal();
   if (options.focus !== false) {
     focusPaneCanvas(activePane(tab));
   }
@@ -4904,10 +4930,12 @@ function activateAdjacentPane(direction: -1 | 1) {
   }
 }
 
-function refreshAIContextPreviewForActivePane() {
+function syncAIChatForActiveTerminal() {
   if (activePluginToolId !== AI_CHAT_PLUGIN_ID) return;
-  if (!aiChat.activeSession()?.sendTerminalContext) return;
-  renderPluginTools();
+  const changed = aiChat.syncSessionForActiveTarget();
+  if (changed || aiChat.activeSession()?.sendTerminalContext) {
+    renderPluginTools();
+  }
 }
 
 function renderTabs() {

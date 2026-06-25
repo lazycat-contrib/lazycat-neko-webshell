@@ -25,6 +25,7 @@ export type AIChatViewState = {
   providerProfiles: AiProviderProfile[];
   activeProviderProfileId: string;
   providerPickerOpen: boolean;
+  targetTerminalLabel: string;
   sendTerminalContext: boolean;
   terminalContextPreview: string;
   tr: Translate;
@@ -66,6 +67,7 @@ export function renderAIChatToolView(state: AIChatViewState): string {
         </div>
         <div class="ai-chat-composer">
           <div class="ai-chat-model-row">
+            ${renderAITargetTerminal(state)}
             ${renderAIProviderPicker(state)}
             ${renderAIChatPicker({
               field: "model",
@@ -112,7 +114,10 @@ export function renderAIChatMessages(
     const markdown = !thinking && message.role !== "user";
     const content = thinking
       ? `<div class="ai-thinking" role="status" aria-label="${escapeAttr(state.tr("status.aiWorking"))}"><span class="ai-thinking-leds" aria-hidden="true"><i></i><i></i><i></i><i></i></span></div>`
-      : markdown ? renderChatMarkdown(message.content, { copyLabel: state.tr("action.aiCopy") }) : escapeHtml(message.content);
+      : markdown ? renderChatMarkdown(message.content, {
+        copyLabel: state.tr("action.aiCopy"),
+        sendLabel: state.tr("action.aiSendToTerminal"),
+      }) : escapeHtml(message.content);
     const contentClass = [
       "ai-chat-message-content",
       thinking ? "is-thinking" : "",
@@ -136,6 +141,16 @@ export function aiChatTranscript(session: AIChatSession): string {
   return session.messages
     .map((message) => `## ${aiChatRoleLabel(message.role)}\n\n${message.content}`)
     .join("\n\n");
+}
+
+function renderAITargetTerminal(state: AIChatViewState): string {
+  const label = state.targetTerminalLabel.trim() || state.tr("status.noTarget");
+  return `
+    <div class="ai-target-terminal" title="${escapeAttr(label)}" aria-label="${escapeAttr(state.tr("field.aiTargetTerminal"))}">
+      <i data-lucide="terminal"></i>
+      <span>${escapeHtml(label)}</span>
+    </div>
+  `;
 }
 
 function renderAIProviderPicker(state: AIChatViewState): string {

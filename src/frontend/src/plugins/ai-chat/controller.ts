@@ -2,7 +2,7 @@ import type { TerminalActionWSClient } from "../../action-ws-client";
 import type { MessageKey } from "../../i18n";
 import { metaString, metaStringArray } from "../../json-meta";
 import { downloadPluginPayload } from "../../plugin-utils";
-import type { AIChatMessage, AIChatSession, Tone } from "../../types";
+import type { AIChatMessage, AIChatSession, AIChatTerminalTarget, Tone } from "../../types";
 import { errorMessage } from "../../utils";
 import { replaceAIChatHistory, resizeAIChatInput } from "./dom";
 import { AIChatStore } from "./store";
@@ -23,6 +23,7 @@ type AIChatControllerDeps = {
   flushSettings: () => Promise<void>;
   terminalContext: (includeTerminalContext: boolean) => Promise<Record<string, unknown>>;
   recentTerminalContext: () => string;
+  activeTerminalTarget: () => AIChatTerminalTarget | undefined;
   inputElement: () => HTMLTextAreaElement | null;
   actionClient: Pick<TerminalActionWSClient, "send">;
   tr: Translate;
@@ -44,17 +45,32 @@ export function createAIChatController(deps: AIChatControllerDeps) {
     return `${profileId}:${model}`;
   }
 
+  function activeTarget(): AIChatTerminalTarget | undefined {
+    return deps.activeTerminalTarget();
+  }
+
   function ensureSession(model = currentModelKey()): AIChatSession {
-    return store.ensureSession(model, deps.tr("plugin.aiChat.block"), deps.createId);
+    if (store.streaming) {
+      const active = store.activeSession();
+      if (active) return active;
+    }
+    return store.ensureSession(model, deps.tr("plugin.aiChat.block"), deps.createId, activeTarget());
   }
 
   function appendSystem(content: string, tone: Tone = "neutral") {
-    store.appendSystem(content, tone, currentModelKey(), deps.tr("plugin.aiChat.block"), deps.createId);
+    store.appendSystem(content, tone, currentModelKey(), deps.tr("plugin.aiChat.block"), deps.createId, activeTarget());
     deps.onRender();
   }
 
   function selectSessionForCurrentModel() {
     store.activeSessionId = ensureSession(currentModelKey()).id;
+  }
+
+  function syncSessionForActiveTarget(): boolean {
+    if (store.streaming) return false;
+    const before = store.activeSessionId;
+    store.activeSessionId = ensureSession(currentModelKey()).id;
+    return store.activeSessionId !== before;
   }
 
   function renderMessages(): string {
@@ -103,12 +119,14 @@ export function createAIChatController(deps: AIChatControllerDeps) {
       store.modelOptions = [];
     },
     selectSessionForCurrentModel,
+    syncSessionForActiveTarget,
     currentModel,
     currentModelKey,
+    activeTerminalTarget: activeTarget,
     activeSession: () => store.activeSession(),
     ensureSession,
     modelValues: () => store.modelValues(deps.configuredModel(), deps.tr("action.aiFetchModels")),
-    sessionsForModel: (model: string) => store.sessionsForModel(model),
+    sessionsForModel: (model: string) => store.sessionsForModel(model, activeTarget()),
     renderMessages,
     appendSystem,
     async fetchModels() {
@@ -221,7 +239,7 @@ export function createAIChatController(deps: AIChatControllerDeps) {
       deps.onRender();
     },
     newSession() {
-      store.newSession(currentModelKey(), deps.tr("plugin.aiChat.block"), deps.createId);
+      store.newSession(currentModelKey(), deps.tr("plugin.aiChat.block"), deps.createId, activeTarget());
       deps.onRender();
     },
     toggleTerminalContext() {
