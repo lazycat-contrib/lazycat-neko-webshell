@@ -15,21 +15,11 @@ export function preparePaneImeForKeyboardEvent(
   pane: TerminalPane | undefined,
   event: KeyboardEvent,
 ): boolean {
-  if (!pane || !shouldFocusImeForKeyboardEvent(event)) return false;
+  if (!pane || !isPlainPrintableKeyEvent(event)) return false;
   return focusPaneImeInput(pane);
-}
-
-function shouldFocusImeForKeyboardEvent(event: KeyboardEvent): boolean {
-  return isPlainPrintableKeyEvent(event) || isImeProcessKeyEvent(event);
 }
 
 function isPlainPrintableKeyEvent(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return false;
   return event.key.length === 1;
-}
-
-function isImeProcessKeyEvent(event: KeyboardEvent): boolean {
-  if (event.defaultPrevented) return false;
-  const legacyEvent = event as KeyboardEvent & { which?: number };
-  return event.key === "Process" || event.keyCode === 229 || legacyEvent.which === 229;
 }
