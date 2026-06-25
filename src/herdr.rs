@@ -24,7 +24,7 @@ const HERDR_API_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_HERDR_SOCKET_REQUEST_BYTES: usize = 1024 * 1024;
 const HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS: u64 = 5;
 const SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 14;
-const SUPPORTED_HERDR_SOURCE_VERSION: &str = "0.7.0";
+const SUPPORTED_HERDR_SOURCE_VERSION: &str = "0.7.1";
 
 type HerdrSocketSender = SplitSink<WebSocket, Message>;
 
@@ -1102,7 +1102,7 @@ mod tests {
     #[test]
     fn herdr_socket_allowlist_covers_documented_methods() {
         assert_eq!(SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
-        assert_eq!(SUPPORTED_HERDR_SOURCE_VERSION, "0.7.0");
+        assert_eq!(SUPPORTED_HERDR_SOURCE_VERSION, "0.7.1");
         assert!(ALLOWED_HERDR_METHODS.len() > 60);
         for method in ALLOWED_HERDR_METHODS {
             assert!(

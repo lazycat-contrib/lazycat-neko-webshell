@@ -40,15 +40,20 @@ export function herdrFocusedOrFirstPaneId(result: JsonRecord | undefined): strin
 export function herdrEventSubscriptions(paneIds: string[]): JsonRecord[] {
   const subscriptions: JsonRecord[] = [
     { type: "workspace.created" },
+    { type: "workspace.updated" },
     { type: "workspace.renamed" },
     { type: "workspace.closed" },
     { type: "workspace.focused" },
+    { type: "worktree.created" },
+    { type: "worktree.opened" },
+    { type: "worktree.removed" },
     { type: "tab.created" },
     { type: "tab.closed" },
     { type: "tab.focused" },
     { type: "tab.renamed" },
     { type: "pane.created" },
     { type: "pane.closed" },
+    { type: "pane.focused" },
     { type: "pane.moved" },
     { type: "pane.exited" },
     { type: "pane.agent_detected" },
@@ -69,6 +74,7 @@ export function herdrEventTone(event: string, data: JsonRecord): Tone {
 
 export function herdrEventChangesDock(event: string): boolean {
   return event.startsWith("workspace.")
+    || event.startsWith("worktree.")
     || event.startsWith("tab.")
     || event === "pane.created"
     || event === "pane.closed"

@@ -245,6 +245,7 @@ const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
 const HERDR_REPLAY_TAIL_FRAMES = 80;
 const HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS = 500;
+const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
 const MOBILE_TERMINAL_TAP_MOVE_THRESHOLD_PX = 18;
@@ -4446,9 +4447,39 @@ async function runHerdrAction(
     }
     herdrState = state;
     renderHerdrDock();
+    refreshHerdrTerminalAfterAction(selector, action);
     activePane()?.term?.focus();
   } catch (error) {
     elements.herdrStatus.textContent = tr("status.herdrActionFailed", { message: errorMessage(error) });
+  }
+}
+
+function refreshHerdrTerminalAfterAction(selector: string, action: HerdrAction) {
+  if (!herdrActionChangesVisibleScreen(action)) return;
+  const match = findPaneBySessionBackend(selector, "herdr");
+  if (!match) return;
+  refreshHerdrPaneTerminal(match.pane);
+  for (const delay of HERDR_FOCUS_REFRESH_DELAYS_MS) {
+    window.setTimeout(() => refreshHerdrPaneTerminal(match.pane), delay);
+  }
+}
+
+function herdrActionChangesVisibleScreen(action: HerdrAction): boolean {
+  return action === "focus_workspace"
+    || action === "focus_tab"
+    || action === "create_workspace"
+    || action === "create_tab"
+    || action === "close_workspace";
+}
+
+function refreshHerdrPaneTerminal(pane: TerminalPane) {
+  if (!isHerdrTerminalPane(pane) || !canConnectPanePty(pane)) return;
+  if (pane.socket?.readyState === WebSocket.OPEN) {
+    refreshPaneTerminalSize(pane);
+    return;
+  }
+  if (pane.socket?.readyState !== WebSocket.CONNECTING) {
+    connectPanePty(pane);
   }
 }
 
@@ -4996,15 +5027,31 @@ function restoreHerdrOutputSequence(pane: TerminalPane, sequence: unknown) {
 }
 
 function shouldConnectRestoredPane(pane: TerminalPane): boolean {
-  if (!pane.sessionId || pane.sessionStatus === "exited") return false;
+  if (!pane.sessionId) return false;
+  if (pane.sessionStatus === "closed") return false;
+  if (isHerdrTerminalPane(pane)) return true;
+  if (pane.sessionStatus === "exited") return false;
   if (pane.sessionStatus === "running" || pane.sessionStatus === "starting") return true;
   if (pane.sessionStatus === "stopped") return true;
   return settings.autoRestartSessions;
 }
 
+function isHerdrTerminalPane(pane: TerminalPane): boolean {
+  return pane.sessionBackend === "herdr";
+}
+
+function canConnectPanePty(pane: TerminalPane): boolean {
+  if (pane.closing || !pane.sessionId) return false;
+  return !pane.exited || shouldConnectRestoredPane(pane);
+}
+
+function shouldRestartSessionOnConnect(pane: TerminalPane): boolean {
+  return settings.autoRestartSessions || isHerdrTerminalPane(pane);
+}
+
 async function connectRestoredPanes() {
   for (const pane of allPanes()) {
-    if (pane.closing || pane.exited || !pane.sessionId) continue;
+    if (!canConnectPanePty(pane)) continue;
     if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) continue;
     if (!shouldConnectRestoredPane(pane)) {
       setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
@@ -5356,7 +5403,7 @@ function sendPaneResize(pane: TerminalPane, cols: number, rows: number): boolean
 }
 
 function connectPanePty(pane: TerminalPane) {
-  if (pane.closing || pane.exited || !pane.sessionId) return;
+  if (!canConnectPanePty(pane)) return;
   const restty = pane.term?.restty;
   if (restty) {
     restty.connectPty("");
@@ -5377,7 +5424,7 @@ function openSocket(pane: TerminalPane) {
     sessionBackend: pane.sessionBackend,
     cols: pane.cols || pane.term?.cols || INITIAL_COLS,
     rows: pane.rows || pane.term?.rows || INITIAL_ROWS,
-    restart: settings.autoRestartSessions,
+    restart: shouldRestartSessionOnConnect(pane),
     after: replayAfter,
     outputLimit: settings.outputBufferLimit,
   });
@@ -5671,8 +5718,8 @@ function observeTerminalTitle(pane: TerminalPane, text: string) {
 }
 
 function scheduleReconnect(pane: TerminalPane) {
-  if (pane.closing || pane.exited || !pane.sessionId) return;
-  if (pane.sessionStatus !== "running" && !settings.autoRestartSessions) {
+  if (!canConnectPanePty(pane)) return;
+  if (pane.sessionStatus !== "running" && !settings.autoRestartSessions && !isHerdrTerminalPane(pane)) {
     setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
     return;
   }
@@ -6291,7 +6338,7 @@ function cancelPaneImeComposition(pane: TerminalPane, force: boolean): boolean {
 }
 
 function sendPaneInput(pane: TerminalPane, data: string): boolean {
-  if (!pane || pane.closing || pane.exited || !pane.sessionId) {
+  if (!pane || !canConnectPanePty(pane)) {
     activePane()?.term?.focus();
     return false;
   }
