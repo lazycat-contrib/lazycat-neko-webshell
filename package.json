@@ -1,9 +1,10 @@
 {
   "name": "lazycat-neko-webshell",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/patch-restty-ime.mjs",
     "proto:ts": "buf generate",
     "typecheck": "tsc --noEmit",
     "build": "npm run proto:ts && npm run typecheck && vite build",
