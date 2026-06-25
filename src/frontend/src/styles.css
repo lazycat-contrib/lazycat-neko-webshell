@@ -1138,6 +1138,10 @@ textarea:focus-visible {
   line-height: 1;
 }
 
+.notification-count[hidden] {
+  display: none;
+}
+
 .notification-list {
   display: grid;
   gap: 8px;
