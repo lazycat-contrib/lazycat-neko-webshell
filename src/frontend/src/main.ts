@@ -101,19 +101,27 @@ import {
   type MobileSymbolAgent,
 } from "./mobile-quick-input";
 import {
-  formatMobilePomodoroRemaining,
-  idleMobilePomodoroState,
-  loadMobilePomodoroState,
-  MOBILE_POMODORO_DEFAULT_MINUTES,
-  MOBILE_POMODORO_MAX_MINUTES,
-  MOBILE_POMODORO_MIN_MINUTES,
-  normalizeMobilePomodoroMinutes,
-  reconcileMobilePomodoroState,
-  remainingMobilePomodoroMs,
-  startMobilePomodoro,
-  storeMobilePomodoroState,
-  type MobilePomodoroState,
-} from "./mobile-pomodoro";
+  formatPomodoroRemaining,
+  idlePomodoroState,
+  POMODORO_DEFAULT_MINUTES,
+  POMODORO_DEFAULT_ROUNDS,
+  dismissPomodoroTask,
+  fetchPomodoroState,
+  nextPomodoroRound,
+  normalizePomodoroMinutes,
+  normalizePomodoroRounds,
+  remainingPomodoroMs,
+  startPomodoroTask,
+  stopPomodoroTask,
+  type PomodoroState,
+} from "./pomodoro";
+import {
+  dismissNotification,
+  fetchNotifications,
+  markNotificationRead,
+  runNotificationAction,
+  type WebshellNotification,
+} from "./notifications-api";
 import { renderNewTabMenuView, renderTabsView, type TabViewItem } from "./navigation-views";
 import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
 import { createPaneTransport } from "./pane-transport";
@@ -122,6 +130,7 @@ import {
   downloadPluginPayload,
   FILE_TRANSFER_PLUGIN_ID,
   LIGHTOS_PORT_FORWARD_PLUGIN_ID,
+  POMODORO_PLUGIN_ID,
   pluginDescription,
   pluginDisplayName,
   pluginIcon,
@@ -177,6 +186,7 @@ import {
   renderAIChatToolView,
   renderFileTransferToolView,
   renderLightOsPortForwardToolView,
+  renderPomodoroToolView,
   renderPluginSettingsView,
   renderPublicTunnelToolView,
   type LightOsForwardInfo,
@@ -256,11 +266,11 @@ const MOBILE_TERMINAL_TAB_SWIPE_RATIO = 1.6;
 const MOBILE_TERMINAL_TAB_SWIPE_MAX_MS = 700;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
-const MOBILE_POMODORO_LONG_PRESS_MS = 600;
-const MOBILE_POMODORO_LONG_PRESS_MOVE_PX = 12;
 const MAX_AI_PROVIDER_PROFILES = 12;
 const AI_TERMINAL_CONTEXT_LINES = 40;
 const NETWORK_PLUGIN_TIMEOUT_MS = 70000;
+const POMODORO_REFRESH_MS = 5000;
+const NOTIFICATIONS_REFRESH_MS = 5000;
 const TUNNEL_PROVIDER_PROFILES_METADATA = "tunnelProviderProfiles";
 type AISettingsTab = "ai" | "mcp";
 type AIConfigDialogState = { type: "ai"; profileId?: string; isNew?: boolean } | { type: "mcp"; index: number };
@@ -336,13 +346,16 @@ let mobileSymbolAgentRefreshTime = 0;
 let mobileSymbolAgentRequest = 0;
 let mobileQuickPhraseEditingId = "";
 let mobileClockTimer: number | undefined;
-let mobilePomodoroState: MobilePomodoroState = loadMobilePomodoroState();
-let mobilePomodoroCompletionPromptShown = mobilePomodoroState.status !== "completed";
-let mobilePomodoroLongPressTimer: number | undefined;
-let mobilePomodoroLongPressPointerId: number | undefined;
-let mobilePomodoroLongPressStartX = 0;
-let mobilePomodoroLongPressStartY = 0;
-let mobilePomodoroLongPressFired = false;
+let pomodoroState: PomodoroState = idlePomodoroState();
+let pomodoroDraftMinutes = pomodoroState.durationMinutes || POMODORO_DEFAULT_MINUTES;
+let pomodoroDraftRounds = pomodoroState.totalRounds || POMODORO_DEFAULT_ROUNDS;
+let pomodoroPollingTimer: number | undefined;
+let pomodoroLoading = false;
+let notifications: WebshellNotification[] = [];
+let notificationsPollingTimer: number | undefined;
+let notificationsLoading = false;
+let activeNotificationModalId = "";
+const seenNotificationIds = new Set<string>();
 const lastMobileTerminalTap = {
   paneId: "",
   time: 0,
@@ -375,6 +388,10 @@ async function init() {
   void document.fonts?.ready.then(() => handleViewportChange()).catch(() => {});
   createIcons({ icons });
   setInterval(updateActiveDetails, STATUS_REFRESH_MS);
+  startPomodoroPolling();
+  startNotificationsPolling();
+  await refreshPomodoroState({ render: false });
+  await refreshNotifications({ showToast: true });
   await loadInstances();
   if (selectedSelector) {
     await loadWorkspace(selectedSelector);
@@ -656,6 +673,22 @@ function bindSettings() {
       }
       return;
     }
+    const pomodoroMinutes = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-pomodoro-minutes]")
+      : null;
+    if (pomodoroMinutes) {
+      pomodoroDraftMinutes = normalizePomodoroMinutes(pomodoroMinutes.value, pomodoroDraftMinutes);
+      renderPluginTools();
+      return;
+    }
+    const pomodoroRounds = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-pomodoro-rounds]")
+      : null;
+    if (pomodoroRounds) {
+      pomodoroDraftRounds = normalizePomodoroRounds(pomodoroRounds.value, pomodoroDraftRounds);
+      renderPluginTools();
+      return;
+    }
     const aiSetting = event.target instanceof Element
       ? event.target.closest<HTMLSelectElement>("[data-ai-chat-setting]")
       : null;
@@ -751,6 +784,21 @@ function bindSettings() {
       : null;
     if (stopTunnelButton) {
       void stopPublicTunnel(stopTunnelButton.dataset.publicTunnelStop ?? "");
+      return;
+    }
+    const pomodoroPresetButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-pomodoro-preset]")
+      : null;
+    if (pomodoroPresetButton) {
+      pomodoroDraftMinutes = normalizePomodoroMinutes(pomodoroPresetButton.dataset.pomodoroPreset, pomodoroDraftMinutes);
+      renderPluginTools();
+      return;
+    }
+    const pomodoroActionButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-pomodoro-action]")
+      : null;
+    if (pomodoroActionButton) {
+      void runPomodoroAction(pomodoroActionButton.dataset.pomodoroAction ?? "");
       return;
     }
     const aiSettingButton = event.target instanceof Element
@@ -934,9 +982,6 @@ function bindSettings() {
   elements.mobileClockEnabled.addEventListener("change", () => {
     settings.mobileClockEnabled = elements.mobileClockEnabled.checked;
     updateMobileClockSettingsState();
-    if (!settings.mobileClockEnabled) {
-      closeMobilePomodoroDialog();
-    }
     saveSettings();
     updateMobileClock();
   });
@@ -1144,6 +1189,46 @@ function bindActions() {
       closeShortcutHelp();
     }
   });
+  elements.notificationsButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleNotificationsMenu();
+  });
+  elements.notificationList.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const actionButton = target?.closest<HTMLButtonElement>("[data-notification-action]");
+    if (actionButton) {
+      void runNotificationActionFromButton(actionButton);
+      return;
+    }
+    const commandButton = target?.closest<HTMLButtonElement>("[data-notification-command]");
+    if (commandButton) {
+      void runNotificationCommand(commandButton.dataset.notificationCommand ?? "", commandButton.dataset.notificationId ?? "");
+      return;
+    }
+    const link = target?.closest<HTMLAnchorElement>("[data-notification-link]");
+    if (link) {
+      const id = link.dataset.notificationId ?? "";
+      if (id) void markNotificationRead(id).then(() => refreshNotifications({ showToast: false })).catch(() => {});
+    }
+  });
+  elements.notificationModal.addEventListener("click", (event) => {
+    if (event.target === elements.notificationModal) {
+      closeNotificationModal();
+    }
+  });
+  elements.notificationModalBody.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const actionButton = target?.closest<HTMLButtonElement>("[data-notification-action]");
+    if (actionButton) {
+      void runNotificationActionFromButton(actionButton);
+      return;
+    }
+    const commandButton = target?.closest<HTMLButtonElement>("[data-notification-command]");
+    if (commandButton) {
+      void runNotificationCommand(commandButton.dataset.notificationCommand ?? "", commandButton.dataset.notificationId ?? "");
+      return;
+    }
+  });
   elements.pluginsButton.addEventListener("click", (event) => {
     event.stopPropagation();
     togglePluginSidebar();
@@ -1193,7 +1278,6 @@ function bindActions() {
   bindSettingsTabs();
   bindLifecycleEvents();
   bindMobileShortcuts();
-  bindMobilePomodoro();
   document.addEventListener("keydown", handleTerminalInterruptCapture, true);
   document.addEventListener("keydown", handleTerminalClipboardCapture, true);
   document.addEventListener("paste", handleTerminalPasteEvent, true);
@@ -1218,6 +1302,9 @@ function bindActions() {
     }
     if (event.target instanceof Node && !elements.herdrWorkspaceSwitcher.contains(event.target)) {
       closeHerdrWorkspaceMenu();
+    }
+    if (event.target instanceof Node && !elements.notificationsMenu.contains(event.target) && event.target !== elements.notificationsButton) {
+      closeNotificationsMenu();
     }
     if (event.target instanceof Node && !elements.shortcutHelp.contains(event.target) && event.target !== elements.shortcutHelpButton) {
       closeShortcutHelp();
@@ -1245,6 +1332,8 @@ function bindActions() {
       closeSettingsMenu();
       closeNewTabMenu();
       closeHerdrWorkspaceMenu();
+      closeNotificationsMenu();
+      closeNotificationModal();
       closeShortcutHelp();
       closeAboutDialog();
       closePaneMenu();
@@ -1415,91 +1504,6 @@ function bindMobileShortcuts() {
     button.addEventListener("lostpointercapture", stopRepeat);
   });
   updateMobileShortcutState();
-}
-
-function bindMobilePomodoro() {
-  elements.mobileShortcutClock.addEventListener("pointerdown", (event) => {
-    if (!settings.mobileClockEnabled || event.button !== 0) return;
-    event.preventDefault();
-    mobilePomodoroLongPressPointerId = event.pointerId;
-    mobilePomodoroLongPressStartX = event.clientX;
-    mobilePomodoroLongPressStartY = event.clientY;
-    mobilePomodoroLongPressFired = false;
-    elements.mobileShortcutClock.setPointerCapture?.(event.pointerId);
-    window.clearTimeout(mobilePomodoroLongPressTimer);
-    mobilePomodoroLongPressTimer = window.setTimeout(() => {
-      mobilePomodoroLongPressFired = true;
-      openMobilePomodoroDialog();
-    }, MOBILE_POMODORO_LONG_PRESS_MS);
-  });
-  elements.mobileShortcutClock.addEventListener("pointermove", (event) => {
-    if (event.pointerId !== mobilePomodoroLongPressPointerId) return;
-    const dx = event.clientX - mobilePomodoroLongPressStartX;
-    const dy = event.clientY - mobilePomodoroLongPressStartY;
-    if (Math.hypot(dx, dy) > MOBILE_POMODORO_LONG_PRESS_MOVE_PX) {
-      cancelMobilePomodoroLongPress();
-    }
-  });
-  const finishPointer = () => cancelMobilePomodoroLongPress();
-  elements.mobileShortcutClock.addEventListener("pointerup", finishPointer);
-  elements.mobileShortcutClock.addEventListener("pointercancel", finishPointer);
-  elements.mobileShortcutClock.addEventListener("lostpointercapture", finishPointer);
-  elements.mobileShortcutClock.addEventListener("click", (event) => {
-    if (!mobilePomodoroLongPressFired) return;
-    event.preventDefault();
-    mobilePomodoroLongPressFired = false;
-  });
-  elements.mobileShortcutClock.addEventListener("contextmenu", (event) => event.preventDefault());
-  elements.mobileShortcutClock.addEventListener("keydown", (event) => {
-    if (!settings.mobileClockEnabled || (event.key !== "Enter" && event.key !== " ")) return;
-    event.preventDefault();
-    openMobilePomodoroDialog();
-  });
-
-  elements.mobilePomodoroDialog.addEventListener("click", (event) => {
-    if (event.target === elements.mobilePomodoroDialog) {
-      closeMobilePomodoroDialog();
-    }
-  });
-  elements.mobilePomodoroDialog.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      closeMobilePomodoroDialog();
-    }
-  });
-  elements.mobilePomodoroClose.addEventListener("click", () => closeMobilePomodoroDialog());
-  elements.mobilePomodoroStart.addEventListener("click", () => {
-    setMobilePomodoroState(startMobilePomodoro(elements.mobilePomodoroMinutes.value));
-    closeMobilePomodoroDialog();
-  });
-  elements.mobilePomodoroStop.addEventListener("click", () => {
-    setMobilePomodoroState(idleMobilePomodoroState());
-    closeMobilePomodoroDialog();
-  });
-  elements.mobilePomodoroDismiss.addEventListener("click", () => {
-    setMobilePomodoroState(idleMobilePomodoroState());
-    closeMobilePomodoroDialog();
-  });
-  elements.mobilePomodoroAgain.addEventListener("click", () => {
-    setMobilePomodoroState(startMobilePomodoro(mobilePomodoroState.durationMinutes || MOBILE_POMODORO_DEFAULT_MINUTES));
-    closeMobilePomodoroDialog();
-  });
-  elements.mobilePomodoroMinutes.addEventListener("change", () => {
-    elements.mobilePomodoroMinutes.value = String(normalizeMobilePomodoroMinutes(elements.mobilePomodoroMinutes.value));
-    renderMobilePomodoroDialog();
-  });
-  elements.mobilePomodoroDialog.querySelectorAll<HTMLButtonElement>("[data-pomodoro-preset]").forEach((button) => {
-    button.addEventListener("click", () => {
-      elements.mobilePomodoroMinutes.value = String(normalizeMobilePomodoroMinutes(button.dataset.pomodoroPreset));
-      renderMobilePomodoroDialog();
-    });
-  });
-}
-
-function cancelMobilePomodoroLongPress() {
-  window.clearTimeout(mobilePomodoroLongPressTimer);
-  mobilePomodoroLongPressTimer = undefined;
-  mobilePomodoroLongPressPointerId = undefined;
 }
 
 function activateMobileKeyboardPage(page: string) {
@@ -1758,16 +1762,22 @@ function startMobileClock() {
   mobileClockTimer = window.setInterval(updateMobileClock, 1000);
 }
 
+function startPomodoroPolling() {
+  window.clearInterval(pomodoroPollingTimer);
+  pomodoroPollingTimer = window.setInterval(() => {
+    void refreshPomodoroState({ render: true });
+  }, POMODORO_REFRESH_MS);
+}
+
+function startNotificationsPolling() {
+  window.clearInterval(notificationsPollingTimer);
+  notificationsPollingTimer = window.setInterval(() => {
+    void refreshNotifications({ showToast: true });
+  }, NOTIFICATIONS_REFRESH_MS);
+}
+
 function updateMobileClock() {
-  const beforePomodoroStatus = mobilePomodoroState.status;
-  mobilePomodoroState = reconcileMobilePomodoroState(mobilePomodoroState);
-  if (mobilePomodoroState.status !== beforePomodoroStatus) {
-    storeMobilePomodoroState(mobilePomodoroState);
-    if (beforePomodoroStatus === "running" && mobilePomodoroState.status === "completed" && settings.mobileClockEnabled) {
-      mobilePomodoroCompletionPromptShown = true;
-      openMobilePomodoroDialog();
-    }
-  }
+  updatePomodoroCountdown();
   elements.mobileShortcutClock.hidden = !settings.mobileClockEnabled;
   if (!settings.mobileClockEnabled) {
     elements.mobileShortcutClock.replaceChildren();
@@ -1784,26 +1794,17 @@ function updateMobileClock() {
   renderMobileClockContent(timeText);
   elements.mobileShortcutClock.dataset.compact = String(hasPhrases);
   elements.mobileShortcutClock.dataset.period = String(showPeriod);
-  elements.mobileShortcutClock.dataset.pomodoro = mobilePomodoroState.status;
-  if (mobilePomodoroState.status === "running") {
-    elements.mobileShortcutClock.setAttribute(
-      "aria-label",
-      tr("pomodoro.clockRunning", {
-        time: timeText,
-        remaining: formatMobilePomodoroRemaining(remainingMobilePomodoroMs(mobilePomodoroState)),
-      }),
-    );
-  } else if (mobilePomodoroState.status === "completed") {
-    elements.mobileShortcutClock.setAttribute("aria-label", tr("pomodoro.clockComplete", { time: timeText }));
-    if (!mobilePomodoroCompletionPromptShown) {
-      mobilePomodoroCompletionPromptShown = true;
-      openMobilePomodoroDialog();
-    }
-  } else {
-    elements.mobileShortcutClock.setAttribute("aria-label", tr("label.currentTime"));
-  }
-  if (!elements.mobilePomodoroDialog.hidden) {
-    renderMobilePomodoroDialog();
+  delete elements.mobileShortcutClock.dataset.pomodoro;
+  elements.mobileShortcutClock.setAttribute("aria-label", `${tr("label.currentTime")} ${timeText}`);
+}
+
+function updatePomodoroCountdown() {
+  if (
+    activePluginToolId === POMODORO_PLUGIN_ID
+    && pluginIsEnabled(POMODORO_PLUGIN_ID)
+    && pomodoroState.status === "running"
+  ) {
+    renderPluginTools();
   }
 }
 
@@ -1819,85 +1820,288 @@ function renderMobileClockContent(timeText: string) {
   const text = document.createElement("span");
   text.className = "mobile-clock-text";
   text.textContent = timeText;
-  if (mobilePomodoroState.status !== "running") {
-    elements.mobileShortcutClock.replaceChildren(text);
-    return;
+  elements.mobileShortcutClock.replaceChildren(text);
+}
+
+function toggleNotificationsMenu() {
+  const open = elements.notificationsMenu.hidden;
+  closeSettingsMenu();
+  closeInstanceMenu();
+  closeNewTabMenu();
+  closeHerdrWorkspaceMenu();
+  elements.notificationsMenu.hidden = !open;
+  elements.notificationsButton.setAttribute("aria-expanded", String(open));
+  if (open) {
+    void refreshNotifications({ showToast: false });
   }
-  const mark = document.createElement("span");
-  mark.className = "mobile-pomodoro-mark";
-  mark.setAttribute("aria-hidden", "true");
-  elements.mobileShortcutClock.replaceChildren(mark, text);
 }
 
-function setMobilePomodoroState(state: MobilePomodoroState) {
-  mobilePomodoroState = reconcileMobilePomodoroState(state);
-  mobilePomodoroCompletionPromptShown = mobilePomodoroState.status !== "running" && mobilePomodoroState.status !== "completed";
-  storeMobilePomodoroState(mobilePomodoroState);
-  renderMobilePomodoroDialog();
-  updateMobileClock();
+function closeNotificationsMenu() {
+  elements.notificationsMenu.hidden = true;
+  elements.notificationsButton.setAttribute("aria-expanded", "false");
 }
 
-function openMobilePomodoroDialog() {
-  if (!settings.mobileClockEnabled) return;
-  cancelMobilePomodoroLongPress();
-  renderMobilePomodoroDialog();
-  elements.mobilePomodoroDialog.hidden = false;
-  const focusTarget = mobilePomodoroState.status === "running"
-    ? elements.mobilePomodoroStop
-    : mobilePomodoroState.status === "completed"
-      ? elements.mobilePomodoroDismiss
-      : elements.mobilePomodoroStart;
-  requestAnimationFrame(() => focusTarget.focus());
-}
-
-function closeMobilePomodoroDialog() {
-  elements.mobilePomodoroDialog.hidden = true;
-}
-
-function renderMobilePomodoroDialog() {
-  mobilePomodoroState = reconcileMobilePomodoroState(mobilePomodoroState);
-  const state = mobilePomodoroState.status;
-  elements.mobilePomodoroDialog.dataset.state = state;
-  const inputMinutes = state === "idle"
-    ? normalizeMobilePomodoroMinutes(elements.mobilePomodoroMinutes.value || mobilePomodoroState.durationMinutes)
-    : mobilePomodoroState.durationMinutes;
-  elements.mobilePomodoroMinutes.min = String(MOBILE_POMODORO_MIN_MINUTES);
-  elements.mobilePomodoroMinutes.max = String(MOBILE_POMODORO_MAX_MINUTES);
-  elements.mobilePomodoroMinutes.value = String(inputMinutes);
-  elements.mobilePomodoroMinutes.disabled = state !== "idle";
-  elements.mobilePomodoroRemaining.textContent = state === "running"
-    ? formatMobilePomodoroRemaining(remainingMobilePomodoroMs(mobilePomodoroState))
-    : state === "completed"
-      ? "00:00"
-      : formatMobilePomodoroRemaining(inputMinutes * 60_000);
-
-  if (state === "running") {
-    elements.mobilePomodoroTitle.textContent = tr("pomodoro.runningTitle");
-    elements.mobilePomodoroStatus.textContent = tr("pomodoro.runningHint", {
-      time: formatMobileClockTime(new Date(mobilePomodoroState.deadline), {
-        hour12: !settings.mobileClockUse24Hour,
-        showPeriod: !settings.mobileClockUse24Hour && settings.mobileClockShowPeriod,
-        showSeconds: false,
-      }),
-    });
-  } else if (state === "completed") {
-    elements.mobilePomodoroTitle.textContent = tr("pomodoro.completeTitle");
-    elements.mobilePomodoroStatus.textContent = tr("pomodoro.completeHint");
-  } else {
-    elements.mobilePomodoroTitle.textContent = tr("pomodoro.title");
-    elements.mobilePomodoroStatus.textContent = tr("pomodoro.setupHint");
+function renderNotifications() {
+  const unreadCount = notifications.filter((notification) => notification.state === "unread").length;
+  elements.notificationCount.hidden = unreadCount === 0;
+  elements.notificationCount.textContent = unreadCount > 9 ? "9+" : String(unreadCount);
+  elements.notificationsButton.classList.toggle("has-unread", unreadCount > 0);
+  elements.notificationList.innerHTML = notifications.length
+    ? notifications.map(renderNotificationItem).join("")
+    : `<p class="notification-empty">${escapeHtml(tr("status.noNotifications"))}</p>`;
+  if (activeNotificationModalId) {
+    const modalNotification = notifications.find((notification) => notification.id === activeNotificationModalId);
+    if (modalNotification && modalNotification.state !== "dismissed") {
+      renderNotificationModal(modalNotification);
+    } else {
+      closeNotificationModal();
+    }
   }
+  updateIcons();
+}
 
-  elements.mobilePomodoroDialog.querySelectorAll<HTMLButtonElement>("[data-pomodoro-preset]").forEach((button) => {
-    const active = normalizeMobilePomodoroMinutes(button.dataset.pomodoroPreset) === inputMinutes;
-    button.disabled = state !== "idle";
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
-  elements.mobilePomodoroStart.hidden = state !== "idle";
-  elements.mobilePomodoroStop.hidden = state !== "running";
-  elements.mobilePomodoroDismiss.hidden = state !== "completed";
-  elements.mobilePomodoroAgain.hidden = state !== "completed";
+function renderNotificationItem(notification: WebshellNotification): string {
+  const title = notificationDisplayTitle(notification);
+  const body = notificationDisplayBody(notification);
+  const time = notification.createdAtMs > 0
+    ? formatNotificationTime(notification.createdAtMs)
+    : "";
+  const actions = notification.state === "actioned"
+    ? ""
+    : notification.actions.map((action) => `
+      <button class="command-button ${action.style === "primary" ? "primary" : action.style === "danger" ? "danger" : ""}" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-action="${escapeAttr(action.id)}">
+        ${escapeHtml(notificationActionLabel(notification, action))}
+      </button>
+    `).join("");
+  const link = notification.url
+    ? `<a class="notification-link" href="${escapeAttr(notification.url)}" target="_blank" rel="noreferrer" data-notification-id="${escapeAttr(notification.id)}" data-notification-link>
+        <i data-lucide="external-link"></i>
+        <span>${escapeHtml(tr("action.openNotificationLink"))}</span>
+      </a>`
+    : "";
+  return `
+    <article class="notification-item" data-state="${escapeAttr(notification.state)}" data-severity="${escapeAttr(notification.severity)}" role="listitem">
+      <div class="notification-item-head">
+        <strong>${escapeHtml(title)}</strong>
+        ${time ? `<time>${escapeHtml(time)}</time>` : ""}
+      </div>
+      ${body ? `<p>${escapeHtml(body)}</p>` : ""}
+      ${link}
+      <div class="notification-actions">
+        ${actions}
+        <button class="command-button" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-command="read" ${notification.state !== "unread" ? "hidden" : ""}>
+          ${escapeHtml(tr("action.markNotificationRead"))}
+        </button>
+        <button class="command-button" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-command="dismiss">
+          ${escapeHtml(tr("action.dismissNotification"))}
+        </button>
+      </div>
+    </article>
+  `;
+}
+
+function renderNotificationModal(notification: WebshellNotification) {
+  activeNotificationModalId = notification.id;
+  elements.notificationModalBody.innerHTML = `
+    <article class="notification-modal-card" data-severity="${escapeAttr(notification.severity)}">
+      <div class="notification-modal-head">
+        <div>
+          <strong>${escapeHtml(notificationDisplayTitle(notification))}</strong>
+          <p>${escapeHtml(notificationDisplayBody(notification))}</p>
+        </div>
+        <button class="icon-button" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-command="read" aria-label="${escapeAttr(tr("action.close"))}" title="${escapeAttr(tr("action.close"))}">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div class="notification-actions">
+        ${notification.actions.map((action) => `
+          <button class="command-button ${action.style === "primary" ? "primary" : action.style === "danger" ? "danger" : ""}" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-action="${escapeAttr(action.id)}">
+            ${escapeHtml(notificationActionLabel(notification, action))}
+          </button>
+        `).join("")}
+        <button class="command-button" type="button" data-notification-id="${escapeAttr(notification.id)}" data-notification-command="dismiss">
+          ${escapeHtml(tr("action.dismissNotification"))}
+        </button>
+      </div>
+    </article>
+  `;
+  elements.notificationModal.hidden = false;
+  updateIcons();
+}
+
+function closeNotificationModal() {
+  activeNotificationModalId = "";
+  elements.notificationModal.hidden = true;
+  elements.notificationModalBody.replaceChildren();
+}
+
+async function runNotificationCommand(command: string, id: string) {
+  if (!id) return;
+  try {
+    if (command === "read") {
+      await markNotificationRead(id);
+      if (activeNotificationModalId === id) closeNotificationModal();
+    } else if (command === "dismiss") {
+      await dismissNotification(id);
+      if (activeNotificationModalId === id) closeNotificationModal();
+    }
+    await Promise.all([
+      refreshNotifications({ showToast: false }),
+      refreshPomodoroState({ render: true }),
+    ]);
+  } catch (error) {
+    setGlobalStatus(tr("status.notificationActionFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+async function runNotificationActionFromButton(button: HTMLButtonElement) {
+  const id = button.dataset.notificationId ?? "";
+  const actionId = button.dataset.notificationAction ?? "";
+  if (!id || !actionId) return;
+  try {
+    await runNotificationAction(id, actionId);
+    if (activeNotificationModalId === id) closeNotificationModal();
+    await Promise.all([
+      refreshNotifications({ showToast: false }),
+      refreshPomodoroState({ render: true }),
+    ]);
+  } catch (error) {
+    setGlobalStatus(tr("status.notificationActionFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+function notificationDisplayTitle(notification: WebshellNotification): string {
+  if (notification.sourceKind === "pomodoro") return tr("pomodoro.completeTitle");
+  return notification.title || tr("section.notifications");
+}
+
+function notificationDisplayBody(notification: WebshellNotification): string {
+  if (notification.sourceKind === "pomodoro") return tr("pomodoro.completeHint");
+  return notification.body;
+}
+
+function notificationActionLabel(
+  notification: WebshellNotification,
+  action: { id: string; label: string; payload?: unknown },
+): string {
+  if (notification.sourceKind === "pomodoro") {
+    if (action.id === "pomodoro.again") {
+      return notificationPomodoroNextRound(action) > 1
+        ? tr("action.pomodoroNextRound")
+        : tr("action.pomodoroAgain");
+    }
+    if (action.id === "pomodoro.dismiss") return tr("action.pomodoroDismiss");
+  }
+  return action.label;
+}
+
+function notificationPomodoroNextRound(action: { payload?: unknown }): number {
+  if (!action.payload || typeof action.payload !== "object") return 1;
+  const value = (action.payload as Record<string, unknown>).nextRound;
+  const round = Number(value);
+  return Number.isFinite(round) && round > 0 ? Math.round(round) : 1;
+}
+
+function notificationTone(notification: WebshellNotification): Tone {
+  if (notification.severity === "error") return "error";
+  if (notification.severity === "success") return "ok";
+  return "neutral";
+}
+
+function formatNotificationTime(timestamp: number): string {
+  return new Intl.DateTimeFormat(settings.locale === "auto" ? undefined : settings.locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
+}
+
+async function refreshPomodoroState(options: { render?: boolean } = {}) {
+  if (pomodoroLoading) return;
+  pomodoroLoading = true;
+  try {
+    setPomodoroState(await fetchPomodoroState(), { render: options.render ?? true });
+  } catch (error) {
+    if (activePluginToolId === POMODORO_PLUGIN_ID) {
+      setPluginStatus(errorMessage(error), "error");
+    }
+  } finally {
+    pomodoroLoading = false;
+  }
+}
+
+async function refreshNotifications(options: { showToast?: boolean } = {}) {
+  if (notificationsLoading) return;
+  notificationsLoading = true;
+  try {
+    const next = await fetchNotifications();
+    notifications = next;
+    renderNotifications();
+    if (options.showToast) {
+      showNewNotificationToasts(next);
+    } else {
+      for (const notification of next) {
+        seenNotificationIds.add(notification.id);
+      }
+    }
+  } catch (error) {
+    setGlobalStatus(tr("status.notificationLoadFailed", { message: errorMessage(error) }), "error");
+  } finally {
+    notificationsLoading = false;
+  }
+}
+
+function showNewNotificationToasts(next: WebshellNotification[]) {
+  for (const notification of next) {
+    if (seenNotificationIds.has(notification.id)) continue;
+    seenNotificationIds.add(notification.id);
+    if (notification.state !== "unread" || notification.presentationHint === "center") continue;
+    if (notification.presentationHint === "modal") {
+      renderNotificationModal(notification);
+    } else {
+      setGlobalStatus(notificationDisplayTitle(notification), notificationTone(notification));
+    }
+    if (notification.sourceKind === "pomodoro") {
+      void refreshPomodoroState({ render: true });
+    }
+  }
+}
+
+async function runPomodoroAction(action: string) {
+  if (!pluginIsEnabled(POMODORO_PLUGIN_ID)) return;
+  try {
+    if (action === "start") {
+      setPomodoroState(await startPomodoroTask(pomodoroDraftMinutes, pomodoroDraftRounds));
+    } else if (action === "stop") {
+      setPomodoroState(await stopPomodoroTask());
+    } else if (action === "dismiss") {
+      setPomodoroState(await dismissPomodoroTask());
+      await refreshNotifications({ showToast: false });
+    } else if (action === "again") {
+      const minutes = pomodoroState.durationMinutes || pomodoroDraftMinutes || POMODORO_DEFAULT_MINUTES;
+      const rounds = pomodoroState.totalRounds || pomodoroDraftRounds || POMODORO_DEFAULT_ROUNDS;
+      const previousNotificationId = pomodoroState.notificationId;
+      setPomodoroState(await startPomodoroTask(minutes, rounds, nextPomodoroRound(pomodoroState)));
+      if (previousNotificationId) {
+        await dismissNotification(previousNotificationId);
+      }
+      await refreshNotifications({ showToast: false });
+    }
+  } catch (error) {
+    setPluginStatus(errorMessage(error), "error");
+  }
+}
+
+function setPomodoroState(state: PomodoroState, options: { render?: boolean } = {}) {
+  const previousStatus = pomodoroState.status;
+  pomodoroState = state;
+  pomodoroDraftMinutes = normalizePomodoroMinutes(pomodoroState.durationMinutes || pomodoroDraftMinutes);
+  pomodoroDraftRounds = normalizePomodoroRounds(pomodoroState.totalRounds || pomodoroDraftRounds);
+  if (previousStatus === "running" && pomodoroState.status === "completed") {
+    setGlobalStatus(tr("pomodoro.completeTitle"), "ok");
+  }
+  if (options.render !== false) {
+    renderPluginTools();
+  }
 }
 
 function formatMobileClockTime(date: Date, options: { hour12: boolean; showPeriod: boolean; showSeconds: boolean }): string {
@@ -2511,6 +2715,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   updateSessionBackendSettings();
   renderMobileQuickInput();
   renderPlugins();
+  renderNotifications();
 
   for (const pane of allPanes()) {
     applyTerminalAppearance(pane, appearance, reportFontLoadError);
@@ -3038,6 +3243,7 @@ function renderPluginTools() {
     plugin.id === FILE_TRANSFER_PLUGIN_ID
     || plugin.id === AI_CHAT_PLUGIN_ID
     || plugin.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID
+    || plugin.id === POMODORO_PLUGIN_ID
     || plugin.id === PUBLIC_TUNNEL_PLUGIN_ID
   ));
   if (!tools.length) {
@@ -3066,8 +3272,10 @@ function renderPluginTools() {
       ? renderAIChatTool(activePlugin)
       : activePlugin?.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID
         ? renderLightOsPortForwardTool(activePlugin)
-        : activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID
-          ? renderPublicTunnelTool(activePlugin)
+        : activePlugin?.id === POMODORO_PLUGIN_ID
+          ? renderPomodoroTool(activePlugin)
+          : activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID
+            ? renderPublicTunnelTool(activePlugin)
       : "";
   updateIcons();
   if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID && !fileBrowser.loading && fileBrowser.loadedPath !== normalizeRemotePath(fileBrowser.path)) {
@@ -3116,6 +3324,35 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
     providerPickerOpen: aiProviderPickerOpen,
     sendTerminalContext: session.sendTerminalContext,
     terminalContextPreview: session.sendTerminalContext ? recentAIContext(activePane()) : "",
+    tr,
+  });
+}
+
+function renderPomodoroTool(plugin: PluginDescriptor): string {
+  const disabled = pluginControlsDisabled(plugin);
+  const remainingText = pomodoroState.status === "running"
+    ? formatPomodoroRemaining(remainingPomodoroMs(pomodoroState))
+    : pomodoroState.status === "completed"
+      ? "00:00"
+      : formatPomodoroRemaining(pomodoroDraftMinutes * 60_000);
+  const endTimeText = pomodoroState.deadlineMs > 0
+    ? formatMobileClockTime(new Date(pomodoroState.deadlineMs), {
+      hour12: !settings.mobileClockUse24Hour,
+      showPeriod: !settings.mobileClockUse24Hour && settings.mobileClockShowPeriod,
+      showSeconds: false,
+    })
+    : "";
+  const currentRound = pomodoroState.status === "idle" ? 0 : pomodoroState.currentRound;
+  return renderPomodoroToolView({
+    disabled,
+    state: pomodoroState,
+    draftMinutes: pomodoroDraftMinutes,
+    draftRounds: pomodoroDraftRounds,
+    roundText: currentRound > 0
+      ? tr("pomodoro.roundProgress", { current: currentRound, total: pomodoroState.totalRounds })
+      : tr("pomodoro.roundSetup", { total: pomodoroDraftRounds }),
+    remainingText,
+    endTimeText,
     tr,
   });
 }

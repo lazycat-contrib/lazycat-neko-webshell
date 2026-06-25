@@ -977,7 +977,8 @@ textarea:focus-visible {
   max-width: min(220px, 38vw);
 }
 
-.settings-menu-shell {
+.settings-menu-shell,
+.notifications-shell {
   position: relative;
 }
 
@@ -1067,8 +1068,10 @@ textarea:focus-visible {
 .switcher-menu[hidden],
 .new-tab-menu[hidden],
 .herdr-workspace-menu[hidden],
+.notifications-menu[hidden],
 .settings-menu[hidden],
 .settings-page[hidden],
+.notification-modal[hidden],
 .pane-menu[hidden] {
   display: none;
 }
@@ -1095,8 +1098,206 @@ textarea:focus-visible {
   min-width: 180px;
 }
 
+.notifications-menu {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(360px, calc(100vw - 20px));
+  max-height: min(520px, calc(var(--app-viewport-height) - 56px));
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--menu-border);
+  border-radius: 12px;
+  background:
+    var(--menu-wash),
+    var(--menu-bg);
+  box-shadow: var(--shadow-raised);
+  backdrop-filter: blur(16px);
+}
+
+.notification-button.has-unread {
+  color: var(--accent-fg);
+}
+
+.notification-count {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 15px;
+  height: 15px;
+  border: 1px solid var(--surface-raised);
+  border-radius: 999px;
+  background: var(--danger);
+  color: var(--danger-fg);
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.notification-list {
+  display: grid;
+  gap: 8px;
+}
+
+.notification-empty {
+  margin: 0;
+  color: var(--menu-muted);
+  padding: 12px 8px;
+  font-size: 12px;
+}
+
+.notification-item {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--component-border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background:
+    var(--component-wash),
+    var(--surface);
+  padding: 10px;
+}
+
+.notification-item[data-state="unread"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--component-border));
+}
+
+.notification-item[data-severity="success"] {
+  border-left-color: var(--ok);
+}
+
+.notification-item[data-severity="warning"] {
+  border-left-color: var(--warning);
+}
+
+.notification-item[data-severity="error"] {
+  border-left-color: var(--danger);
+}
+
+.notification-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.notification-item-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notification-item-head time {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.notification-item p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.notification-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  color: var(--accent-fg);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.notification-link svg {
+  width: 13px;
+  height: 13px;
+}
+
+.notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.notification-actions .command-button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.notification-actions .command-button[hidden] {
+  display: none;
+}
+
+.notification-modal {
+  position: fixed;
+  z-index: 96;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(16px, var(--lzc-safe-area-inset-top)) max(16px, var(--lzc-safe-area-inset-right)) max(16px, var(--lzc-safe-area-inset-bottom)) max(16px, var(--lzc-safe-area-inset-left));
+  background:
+    var(--overlay-wash),
+    color-mix(in srgb, var(--overlay-scrim) 64%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.notification-modal-dialog {
+  width: min(420px, calc(var(--app-viewport-width) - 32px));
+}
+
+.notification-modal-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--dialog-border);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, var(--dialog-wash-a), transparent 46%),
+    var(--dialog-bg);
+  color: var(--text);
+  box-shadow: var(--shadow-deep);
+  padding: 16px;
+}
+
+.notification-modal-card[data-severity="success"] {
+  border-color: color-mix(in srgb, var(--ok) 42%, var(--dialog-border));
+}
+
+.notification-modal-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.notification-modal-head strong {
+  display: block;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.notification-modal-head p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .webshell[data-tab-layout="vertical"] .switcher-menu,
 .webshell[data-tab-layout="vertical"] .herdr-workspace-menu,
+.webshell[data-tab-layout="vertical"] .notifications-menu,
 .webshell[data-tab-layout="vertical"] .settings-menu {
   top: auto;
   right: auto;
@@ -1106,12 +1307,14 @@ textarea:focus-visible {
 }
 
 .webshell[data-tab-layout="vertical"] .switcher-menu,
-.webshell[data-tab-layout="vertical"] .herdr-workspace-menu {
+.webshell[data-tab-layout="vertical"] .herdr-workspace-menu,
+.webshell[data-tab-layout="vertical"] .notifications-menu {
   width: min(340px, calc(var(--app-viewport-width) - 64px));
 }
 
 .webshell[data-tab-layout="vertical"].has-named-tabs .switcher-menu,
-.webshell[data-tab-layout="vertical"].has-named-tabs .herdr-workspace-menu {
+.webshell[data-tab-layout="vertical"].has-named-tabs .herdr-workspace-menu,
+.webshell[data-tab-layout="vertical"].has-named-tabs .notifications-menu {
   width: min(340px, calc(var(--app-viewport-width) - 178px));
 }
 

@@ -40,16 +40,19 @@ export type MessageKey =
   | "action.closeSettings"
   | "action.copySelection"
   | "action.copyUrl"
+  | "action.dismissNotification"
   | "action.focusTerminal"
   | "action.fullscreen"
   | "action.hideToken"
   | "action.lightosHome"
+  | "action.markNotificationRead"
   | "action.mcpAdd"
   | "action.mcpEdit"
   | "action.mcpRemove"
   | "action.newHerdrSpace"
   | "action.newHerdrTab"
   | "action.newTab"
+  | "action.openNotificationLink"
   | "action.pasteClipboard"
   | "action.pluginFileDownload"
   | "action.pluginFileHome"
@@ -65,6 +68,7 @@ export type MessageKey =
   | "action.portForwardRelease"
   | "action.pomodoroAgain"
   | "action.pomodoroDismiss"
+  | "action.pomodoroNextRound"
   | "action.pomodoroStart"
   | "action.pomodoroStop"
   | "action.promoteSessionToTab"
@@ -204,15 +208,16 @@ export type MessageKey =
   | "plugin.meta.filesystem"
   | "plugin.meta.lightos"
   | "plugin.meta.network"
+  | "plugin.meta.productivity"
   | "plugin.meta.session"
   | "plugin.meta.tunnel"
   | "plugin.meta.transfer"
+  | "plugin.pomodoro.description"
+  | "plugin.pomodoro.name"
   | "plugin.publicTunnel.description"
   | "plugin.publicTunnel.help"
   | "plugin.publicTunnel.name"
   | "plugin.publicTunnel.settingsHelp"
-  | "pomodoro.clockComplete"
-  | "pomodoro.clockRunning"
   | "pomodoro.completeHint"
   | "pomodoro.completeTitle"
   | "pomodoro.customMinutes"
@@ -221,6 +226,9 @@ export type MessageKey =
   | "pomodoro.preset15"
   | "pomodoro.preset25"
   | "pomodoro.remaining"
+  | "pomodoro.roundProgress"
+  | "pomodoro.roundSetup"
+  | "pomodoro.rounds"
   | "pomodoro.runningHint"
   | "pomodoro.runningTitle"
   | "pomodoro.setupHint"
@@ -238,6 +246,7 @@ export type MessageKey =
   | "section.mobileClock"
   | "section.mobileQuickInput"
   | "section.mobileShortcuts"
+  | "section.notifications"
   | "section.sessionBackend"
   | "section.shortcuts"
   | "section.terminalBackground"
@@ -332,6 +341,7 @@ export type MessageKey =
   | "status.mcpServerSaved"
   | "status.noInstances"
   | "status.noInstancesVisible"
+  | "status.noNotifications"
   | "status.noPlugins"
   | "status.noPortForwards"
   | "status.noPublicTunnels"
@@ -341,6 +351,8 @@ export type MessageKey =
   | "status.noSessions"
   | "status.noTarget"
   | "status.notConfigured"
+  | "status.notificationActionFailed"
+  | "status.notificationLoadFailed"
   | "status.pasteFailed"
   | "status.aiConfigSaved"
   | "status.aiModelsReady"
@@ -437,16 +449,19 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closeSettings": "Close settings",
     "action.copySelection": "Copy selection",
     "action.copyUrl": "Copy URL",
+    "action.dismissNotification": "Dismiss",
     "action.focusTerminal": "Focus terminal",
     "action.fullscreen": "Full screen",
     "action.hideToken": "Hide token",
     "action.lightosHome": "LightOS home",
+    "action.markNotificationRead": "Mark read",
     "action.mcpAdd": "Add MCP server",
     "action.mcpEdit": "Edit MCP server",
     "action.mcpRemove": "Remove MCP server",
     "action.newHerdrSpace": "New Herdr space",
     "action.newHerdrTab": "New Herdr tab",
     "action.newTab": "New terminal tab",
+    "action.openNotificationLink": "Open link",
     "action.pasteClipboard": "Paste",
     "action.pluginFileDownload": "Download",
     "action.pluginFileHome": "Home",
@@ -462,6 +477,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.portForwardRelease": "Stop forward",
     "action.pomodoroAgain": "Start another",
     "action.pomodoroDismiss": "Done",
+    "action.pomodoroNextRound": "Next round",
     "action.pomodoroStart": "Start",
     "action.pomodoroStop": "End",
     "action.promoteSessionToTab": "Move session to new tab",
@@ -608,15 +624,16 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.meta.filesystem": "Filesystem",
     "plugin.meta.lightos": "LightOS",
     "plugin.meta.network": "Network",
+    "plugin.meta.productivity": "Productivity",
     "plugin.meta.session": "Session",
     "plugin.meta.tunnel": "Tunnel",
     "plugin.meta.transfer": "Transfer",
+    "plugin.pomodoro.description": "Focus timer for short work sessions inside the plugin panel.",
+    "plugin.pomodoro.name": "Pomodoro",
     "plugin.publicTunnel.description": "Publish a local HTTP URL through Cloudflare Quick Tunnel or ngrok.",
     "plugin.publicTunnel.help": "Tunnel sessions stay alive while the WebShell backend is running. Use a LightOS forward URL for services inside the selected instance.",
     "plugin.publicTunnel.name": "Public tunnel",
     "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel works without authentication. Add tunnel authentication configs here for providers that need tokens.",
-    "pomodoro.clockComplete": "Current time {time}. Pomodoro complete.",
-    "pomodoro.clockRunning": "Current time {time}. Pomodoro remaining {remaining}.",
     "pomodoro.completeHint": "The focus timer is complete. Take a short break before starting another round.",
     "pomodoro.completeTitle": "Time is up",
     "pomodoro.customMinutes": "Custom minutes",
@@ -625,6 +642,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "pomodoro.preset15": "15 min",
     "pomodoro.preset25": "25 min",
     "pomodoro.remaining": "Remaining",
+    "pomodoro.roundProgress": "Round {current} of {total}",
+    "pomodoro.roundSetup": "{total} round(s)",
+    "pomodoro.rounds": "Rounds",
     "pomodoro.runningHint": "Focus ends at {time}.",
     "pomodoro.runningTitle": "Focus running",
     "pomodoro.setupHint": "Choose a focus length and keep the terminal in view.",
@@ -641,6 +661,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.mobileClock": "Mobile clock",
     "section.mobileQuickInput": "Mobile quick input",
     "section.mobileShortcuts": "Mobile",
+    "section.notifications": "Notifications",
     "section.plugins": "Plugins",
     "section.sessionBackend": "Session backend",
     "section.shortcuts": "Shortcuts",
@@ -736,6 +757,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.mcpServerSaved": "MCP server saved",
     "status.noInstances": "No instances returned",
     "status.noInstancesVisible": "No LightOS instances visible.",
+    "status.noNotifications": "No notifications",
     "status.noPlugins": "No plugins returned",
     "status.noPortForwards": "No active port forwards",
     "status.noPublicTunnels": "No active public tunnels",
@@ -745,6 +767,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noSessions": "No sessions",
     "status.noTarget": "No instance selected",
     "status.notConfigured": "Not configured",
+    "status.notificationActionFailed": "Notification action failed: {message}",
+    "status.notificationLoadFailed": "Notification load failed: {message}",
     "status.pasteFailed": "Paste failed: {message}",
     "status.aiConfigSaved": "AI settings saved",
     "status.aiModelsReady": "{count} model(s) loaded",
@@ -840,16 +864,19 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.closeSettings": "关闭设置",
     "action.copySelection": "复制选区",
     "action.copyUrl": "复制 URL",
+    "action.dismissNotification": "关闭",
     "action.focusTerminal": "聚焦终端",
     "action.fullscreen": "全屏",
     "action.hideToken": "隐藏 token",
     "action.lightosHome": "LightOS 首页",
+    "action.markNotificationRead": "标为已读",
     "action.mcpAdd": "添加 MCP 服务",
     "action.mcpEdit": "编辑 MCP 服务",
     "action.mcpRemove": "移除 MCP 服务",
     "action.newHerdrSpace": "新建 Herdr Space",
     "action.newHerdrTab": "新建 Herdr 标签",
     "action.newTab": "新建终端标签",
+    "action.openNotificationLink": "打开链接",
     "action.pasteClipboard": "粘贴",
     "action.pluginFileDownload": "下载",
     "action.pluginFileHome": "根目录",
@@ -865,6 +892,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.portForwardRelease": "停止转发",
     "action.pomodoroAgain": "再来一轮",
     "action.pomodoroDismiss": "知道了",
+    "action.pomodoroNextRound": "下一轮",
     "action.pomodoroStart": "开始",
     "action.pomodoroStop": "结束番茄",
     "action.promoteSessionToTab": "将会话提升为新标签",
@@ -1011,15 +1039,16 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.meta.filesystem": "文件系统",
     "plugin.meta.lightos": "LightOS",
     "plugin.meta.network": "网络",
+    "plugin.meta.productivity": "效率",
     "plugin.meta.session": "会话",
     "plugin.meta.tunnel": "Tunnel",
     "plugin.meta.transfer": "传输",
+    "plugin.pomodoro.description": "插件面板里的专注计时器，用于短时间工作节奏。",
+    "plugin.pomodoro.name": "番茄时钟",
     "plugin.publicTunnel.description": "通过 Cloudflare Quick Tunnel 或 ngrok 发布本地 HTTP URL。",
     "plugin.publicTunnel.help": "Tunnel 租约会在 WebShell 后端运行期间保持。要发布实例内服务，请先选择 LightOS 转发得到的本地 URL。",
     "plugin.publicTunnel.name": "Public Tunnel",
     "plugin.publicTunnel.settingsHelp": "Cloudflare Quick Tunnel 无需认证配置。需要 token 的 Tunnel 服务商，请先在这里添加认证配置。",
-    "pomodoro.clockComplete": "当前时间 {time}。番茄时间到了。",
-    "pomodoro.clockRunning": "当前时间 {time}。番茄剩余 {remaining}。",
     "pomodoro.completeHint": "本轮专注已经完成。休息一下，再开始下一轮。",
     "pomodoro.completeTitle": "番茄时间到了",
     "pomodoro.customMinutes": "自定义分钟",
@@ -1028,6 +1057,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "pomodoro.preset15": "15 分钟",
     "pomodoro.preset25": "25 分钟",
     "pomodoro.remaining": "剩余时间",
+    "pomodoro.roundProgress": "第 {current}/{total} 轮",
+    "pomodoro.roundSetup": "共 {total} 轮",
+    "pomodoro.rounds": "轮次",
     "pomodoro.runningHint": "本轮将在 {time} 结束。",
     "pomodoro.runningTitle": "番茄进行中",
     "pomodoro.setupHint": "选择一个专注时长，终端保持可见。",
@@ -1044,6 +1076,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.mobileClock": "移动端时间显示",
     "section.mobileQuickInput": "移动端快速输入",
     "section.mobileShortcuts": "移动端",
+    "section.notifications": "通知",
     "section.plugins": "插件",
     "section.sessionBackend": "会话后端",
     "section.shortcuts": "快捷键",
@@ -1139,6 +1172,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.mcpServerSaved": "MCP 服务已保存",
     "status.noInstances": "没有返回实例",
     "status.noInstancesVisible": "没有可见的 LightOS 实例。",
+    "status.noNotifications": "暂无通知",
     "status.noPlugins": "没有返回插件",
     "status.noPortForwards": "暂无活动端口转发",
     "status.noPublicTunnels": "暂无活动 Public Tunnel",
@@ -1148,6 +1182,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.noSessions": "没有会话",
     "status.noTarget": "未选择实例",
     "status.notConfigured": "未配置",
+    "status.notificationActionFailed": "通知操作失败：{message}",
+    "status.notificationLoadFailed": "通知加载失败：{message}",
     "status.pasteFailed": "粘贴失败：{message}",
     "status.aiConfigSaved": "AI 设置已保存",
     "status.aiModelsReady": "已加载 {count} 个模型",

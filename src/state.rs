@@ -14,8 +14,10 @@ use crate::database::remove_database_file;
 use crate::database::{
     AppDatabase, KV_KEY_PLUGINS, KV_KEY_SESSIONS, KV_NAMESPACE_STATE, database_path,
 };
+use crate::notifications::NotificationHub;
 use crate::plugins::lightos_port_forward::LightOsPortForwardManager;
 use crate::plugins::tunnel::TunnelManager;
+use crate::pomodoro::PomodoroManager;
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
 use crate::session_manager::SessionManager;
 use crate::terminal_manager::{OutputBuffer, TerminalSpec};
@@ -34,6 +36,8 @@ pub struct AppState {
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
     pub lightos_port_forwards: Arc<LightOsPortForwardManager>,
     pub public_tunnels: Arc<TunnelManager>,
+    pub notifications: Arc<NotificationHub>,
+    pub pomodoro: Arc<PomodoroManager>,
     pub workspaces: Arc<RwLock<HashMap<String, WorkspaceRecord>>>,
     database: Arc<AppDatabase>,
     workspace_store: Arc<WorkspaceStore>,
@@ -44,6 +48,11 @@ impl AppState {
         let database = Arc::new(AppDatabase::open(database_path())?);
         let session_store = Arc::new(SessionStore::new(Arc::clone(&database)));
         let workspace_store = Arc::new(default_workspace_store(Arc::clone(&database)));
+        let notifications = Arc::new(NotificationHub::new(Arc::clone(&database)));
+        let pomodoro = Arc::new(PomodoroManager::new(
+            Arc::clone(&database),
+            Arc::clone(&notifications),
+        ));
         let workspaces = workspace_store.load().unwrap_or_else(|err| {
             warn!(error = %err, "failed to load persisted terminal workspaces");
             HashMap::new()
@@ -78,6 +87,8 @@ impl AppState {
             plugins: Arc::new(RwLock::new(plugins)),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
             public_tunnels: Arc::new(TunnelManager::default()),
+            notifications,
+            pomodoro,
             workspaces: Arc::new(RwLock::new(workspaces)),
             database,
             workspace_store,
@@ -117,6 +128,11 @@ impl AppState {
     pub(crate) fn new_for_test(database_path: PathBuf) -> Self {
         let _ = remove_database_file(&database_path);
         let database = Arc::new(AppDatabase::open(database_path).expect("test database"));
+        let notifications = Arc::new(NotificationHub::new(Arc::clone(&database)));
+        let pomodoro = Arc::new(PomodoroManager::new(
+            Arc::clone(&database),
+            Arc::clone(&notifications),
+        ));
         Self {
             sessions: Arc::new(SessionManager::new(
                 HashMap::new(),
@@ -126,6 +142,8 @@ impl AppState {
             plugins: Arc::new(RwLock::new(HashMap::new())),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
             public_tunnels: Arc::new(TunnelManager::default()),
+            notifications,
+            pomodoro,
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             database: Arc::clone(&database),
             workspace_store: Arc::new(WorkspaceStore::new(database)),
@@ -823,6 +841,22 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             metadata: HashMap::from([
                 ("builtin".to_owned(), "true".to_owned()),
                 ("defaultEnabled".to_owned(), "false".to_owned()),
+            ]),
+        },
+        PluginRecord {
+            id: "pomodoro".to_owned(),
+            kind: "productivity".to_owned(),
+            display_name: "Pomodoro".to_owned(),
+            description: "Focus timer for short work sessions inside the WebShell plugin panel.".to_owned(),
+            scopes: vec!["productivity".to_owned()],
+            accepted_content_types: vec![],
+            produced_content_types: vec![],
+            input_schema_json: r#"{"operation":"state|start|stop|dismiss","metadata":{"minutes":"1..180 for start","rounds":"1..8 optional","currentRound":"1..rounds optional"}}"#.to_owned(),
+            output_schema_json: r#"{"status":"idle|running|completed","durationMinutes":25,"totalRounds":4,"currentRound":1,"startedAtMs":0,"deadlineMs":0,"notificationId":"optional"}"#.to_owned(),
+            enabled: true,
+            metadata: HashMap::from([
+                ("builtin".to_owned(), "true".to_owned()),
+                ("runtime".to_owned(), "backend-task".to_owned()),
             ]),
         },
         PluginRecord {

@@ -17,6 +17,11 @@ use crate::herdr::{
     get_herdr_state, herdr_ws, post_herdr_action, post_herdr_output_sequence, post_herdr_socket,
 };
 use crate::lightos::{self, AdminInfo};
+use crate::notifications::{get_notifications, post_notification_dismiss, post_notification_read};
+use crate::pomodoro::{
+    get_pomodoro_state, post_notification_action, post_pomodoro_dismiss, post_pomodoro_start,
+    post_pomodoro_stop,
+};
 use crate::preferences::{get_settings, put_settings};
 use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
 use crate::service::CapabilityServiceImpl;
@@ -47,6 +52,23 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
         .route("/api/herdr/socket", post(post_herdr_socket))
         .route("/api/herdr/output-sequence", post(post_herdr_output_sequence))
+        .route("/api/notifications", get(get_notifications))
+        .route("/api/notifications/{id}/read", post(post_notification_read))
+        .route(
+            "/api/notifications/{id}/dismiss",
+            post(post_notification_dismiss),
+        )
+        .route(
+            "/api/notifications/{id}/actions/{action_id}",
+            post(post_notification_action),
+        )
+        .route("/api/tasks/pomodoro", get(get_pomodoro_state))
+        .route("/api/tasks/pomodoro/start", post(post_pomodoro_start))
+        .route("/api/tasks/pomodoro/stop", post(post_pomodoro_stop))
+        .route(
+            "/api/tasks/pomodoro/dismiss",
+            post(post_pomodoro_dismiss),
+        )
         .route("/api/clipboard-image", post(upload_clipboard_image))
         .route("/api/fonts", get(list_fonts).post(upload_font))
         .route("/api/fonts/{id}", delete(delete_font))
