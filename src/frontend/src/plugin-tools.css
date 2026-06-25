@@ -546,12 +546,35 @@
 
 .ai-chat-actions .ai-context-toggle {
   position: relative;
-  width: 32px;
-  min-width: 32px;
-  min-height: 32px;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
   grid-template-columns: 1fr;
   place-items: center;
+  border-color: transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--control-fg);
   padding: 0;
+}
+
+.ai-chat-actions .ai-context-toggle:hover {
+  border-color: var(--control-hover-border);
+  background: var(--control-hover-bg);
+  color: var(--control-fg-hover);
+}
+
+.ai-chat-actions .ai-context-toggle[aria-pressed="true"] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+}
+
+.ai-chat-actions .ai-context-toggle svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
 }
 
 .ai-chat-actions .ai-context-toggle-label {
@@ -1332,6 +1355,7 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(560px, 100%);
+  height: min(680px, calc(var(--app-viewport-height) - 24px));
   max-height: min(680px, calc(var(--app-viewport-height) - 24px));
   border: 1px solid var(--dialog-border);
   border-radius: 8px;

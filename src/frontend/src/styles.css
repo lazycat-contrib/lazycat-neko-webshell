@@ -1596,6 +1596,7 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   width: min(760px, calc(100vw - 28px));
+  height: min(760px, calc(var(--app-viewport-height) - 28px));
   max-height: min(760px, calc(var(--app-viewport-height) - 28px));
   min-height: 0;
   overflow: hidden;
