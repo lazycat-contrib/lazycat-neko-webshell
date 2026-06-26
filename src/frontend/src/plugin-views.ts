@@ -12,6 +12,10 @@ import {
   type TerminalTransferSettingsViewState,
 } from "./plugins/terminal-transfer/settings-view";
 import {
+  renderWhiteNoiseSettingsView,
+  type WhiteNoiseSettingsViewState,
+} from "./plugins/white-noise/settings-view";
+import {
   AI_CHAT_PLUGIN_ID,
   pluginDescription,
   pluginDisplayName,
@@ -19,6 +23,7 @@ import {
   pluginMetaLabel,
   PUBLIC_TUNNEL_PLUGIN_ID,
   TERMINAL_TRANSFER_PLUGIN_ID,
+  WHITE_NOISE_PLUGIN_ID,
 } from "./plugin-utils";
 import type { MessageKey } from "./i18n";
 import { escapeAttr, escapeHtml } from "./utils";
@@ -32,6 +37,7 @@ export type PluginSettingsViewState = {
   aiAccess: AIAccessSettingsViewState;
   publicTunnel: PublicTunnelSettingsViewState;
   terminalTransfer: TerminalTransferSettingsViewState;
+  whiteNoise: WhiteNoiseSettingsViewState;
   tr: Translate;
 };
 
@@ -60,12 +66,18 @@ function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsView
         tr: state.tr,
       })
       : plugin.id === TERMINAL_TRANSFER_PLUGIN_ID
-        ? renderTerminalTransferSettingsView({
-          ...state.terminalTransfer,
-          disabled: saving || state.pluginsLoading,
-          tr: state.tr,
-        })
-        : "";
+      ? renderTerminalTransferSettingsView({
+        ...state.terminalTransfer,
+        disabled: saving || state.pluginsLoading,
+        tr: state.tr,
+      })
+        : plugin.id === WHITE_NOISE_PLUGIN_ID
+          ? renderWhiteNoiseSettingsView({
+            ...state.whiteNoise,
+            disabled: saving || state.pluginsLoading,
+            tr: state.tr,
+          })
+          : "";
   return `
     <div class="plugin-item" role="listitem">
       <div class="plugin-content">

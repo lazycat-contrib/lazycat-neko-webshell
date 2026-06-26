@@ -119,6 +119,7 @@ import {
   pluginDisplayName,
   PUBLIC_TUNNEL_PLUGIN_ID,
   TERMINAL_TRANSFER_PLUGIN_ID,
+  WHITE_NOISE_PLUGIN_ID,
 } from "./plugin-utils";
 import { createAIChatController } from "./plugins/ai-chat/controller";
 import { sendAIChatCodeToTerminal } from "./plugins/ai-chat/code-actions";
@@ -160,6 +161,18 @@ import {
   terminalTransferProtocolsFromMetadata,
 } from "./plugins/terminal-transfer/protocols";
 import { renderTerminalTransferToolView } from "./plugins/terminal-transfer/tool-view";
+import { createWhiteNoiseController } from "./plugins/white-noise/controller";
+import {
+  WHITE_NOISE_FLOATING_CONTROLS_METADATA,
+  whiteNoiseFloatingControlsEnabled,
+} from "./plugins/white-noise/settings-view";
+import {
+  findWhiteNoisePlugin,
+  renderWhiteNoiseFloatingSurfaceView,
+  renderWhiteNoiseToolSurface,
+  runWhiteNoiseAction,
+  runWhiteNoiseFloatingAction,
+} from "./plugins/white-noise/runtime";
 import type {
   TunnelProviderProfileSummary,
 } from "./plugins/public-tunnel/types";
@@ -536,6 +549,12 @@ const terminalTransfer = createTerminalTransferController({
   onStatus: setGlobalStatus,
   onRender: renderPluginTools,
 });
+const whiteNoise = createWhiteNoiseController({
+  isEnabled: () => pluginIsEnabled(WHITE_NOISE_PLUGIN_ID),
+  tr,
+  onStatus: setPluginStatus,
+  onRender: renderWhiteNoiseSurfaces,
+});
 let activeAISettingsTab: AISettingsTab = "ai";
 let aiConfigDialog: AIConfigDialogState | undefined;
 let tunnelProfileDialog: TunnelProfileDialogState | undefined;
@@ -794,6 +813,16 @@ function bindSettings() {
       );
       return;
     }
+    const whiteNoiseSetting = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-white-noise-setting]")
+      : null;
+    if (whiteNoiseSetting) {
+      void configureWhiteNoiseSetting(
+        whiteNoiseSetting.dataset.whiteNoiseSetting ?? "",
+        whiteNoiseSetting.checked,
+      );
+      return;
+    }
     const aiSetting = event.target instanceof Element
       ? event.target.closest<HTMLInputElement | HTMLSelectElement>("[data-ai-setting]")
       : null;
@@ -898,6 +927,13 @@ function bindSettings() {
     activePluginToolId = button.dataset.pluginTool ?? "";
     renderPluginTools();
   });
+  elements.whiteNoiseFloatingControls.addEventListener("click", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-white-noise-floating-action]")
+      : null;
+    if (!button) return;
+    void runWhiteNoiseFloatingAction(whiteNoise, button.dataset.whiteNoiseFloatingAction ?? "");
+  });
   elements.pluginToolBody.addEventListener("input", (event) => {
     const aiInput = event.target instanceof Element
       ? event.target.closest<HTMLTextAreaElement>("#aiChatInput")
@@ -918,6 +954,23 @@ function bindSettings() {
       : null;
     if (tunnelField) {
       publicTunnel.updateField(tunnelField.dataset.publicTunnelField ?? "", tunnelField.value);
+      return;
+    }
+    const whiteNoiseMasterVolume = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-white-noise-master-volume]")
+      : null;
+    if (whiteNoiseMasterVolume) {
+      whiteNoise.setMasterVolume(whiteNoiseMasterVolume.value);
+      return;
+    }
+    const whiteNoiseTrackVolume = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-white-noise-track-volume]")
+      : null;
+    if (whiteNoiseTrackVolume) {
+      whiteNoise.setTrackVolume(
+        whiteNoiseTrackVolume.dataset.whiteNoiseTrackVolume ?? "",
+        whiteNoiseTrackVolume.value,
+      );
     }
   });
   elements.pluginToolBody.addEventListener("change", (event) => {
@@ -1065,6 +1118,27 @@ function bindSettings() {
       if (terminalTransferActionButton.dataset.terminalTransferAction === "cancel") {
         terminalTransfer.cancel();
       }
+      return;
+    }
+    const whiteNoiseHelpButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-white-noise-help]")
+      : null;
+    if (whiteNoiseHelpButton) {
+      whiteNoise.toggleHelp();
+      return;
+    }
+    const whiteNoiseActionButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-white-noise-action]")
+      : null;
+    if (whiteNoiseActionButton) {
+      void runWhiteNoiseAction(whiteNoise, whiteNoiseActionButton.dataset.whiteNoiseAction ?? "");
+      return;
+    }
+    const whiteNoiseTrackButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-white-noise-track-toggle]")
+      : null;
+    if (whiteNoiseTrackButton) {
+      void whiteNoise.toggleTrack(whiteNoiseTrackButton.dataset.whiteNoiseTrackToggle ?? "");
       return;
     }
     const aiSettingButton = event.target instanceof Element
@@ -2816,6 +2890,10 @@ async function configurePlugin(
     if (pluginId === TERMINAL_TRANSFER_PLUGIN_ID && !updated.enabled) {
       terminalTransfer.cancel();
     }
+    if (pluginId === WHITE_NOISE_PLUGIN_ID && !updated.enabled) {
+      whiteNoise.pause();
+    }
+    renderWhiteNoiseFloatingSurface();
     setPluginStatus(
       statusMode === "settings"
         ? tr("status.pluginSettingsSaved", { name: pluginDisplayName(updated, tr) })
@@ -2852,6 +2930,15 @@ async function configureTerminalTransferProtocols(protocol: string, checked: boo
     [TERMINAL_TRANSFER_PROTOCOLS_METADATA]: serializeTerminalTransferProtocols(next),
   }, "settings");
   if (saved) terminalTransfer.cancel();
+}
+
+async function configureWhiteNoiseSetting(setting: string, checked: boolean) {
+  const plugin = findWhiteNoisePlugin(plugins);
+  if (!plugin || pluginSaveInFlight.has(WHITE_NOISE_PLUGIN_ID)) return;
+  if (setting !== "floatingControls") return;
+  await configurePlugin(WHITE_NOISE_PLUGIN_ID, plugin.enabled, {
+    [WHITE_NOISE_FLOATING_CONTROLS_METADATA]: String(checked),
+  }, "settings");
 }
 
 function renderPlugins() {
@@ -2909,6 +2996,11 @@ function renderPluginSettings() {
       disabled: pluginsLoading || pluginSaveInFlight.has(TERMINAL_TRANSFER_PLUGIN_ID),
       tr,
     },
+    whiteNoise: {
+      floatingControls: whiteNoiseFloatingControlsEnabled(findWhiteNoisePlugin(plugins)?.metadata ?? {}),
+      disabled: pluginsLoading || pluginSaveInFlight.has(WHITE_NOISE_PLUGIN_ID),
+      tr,
+    },
     tr,
   });
   updateIcons();
@@ -2924,6 +3016,7 @@ function renderPluginTools() {
     activePluginToolId = "";
     elements.pluginToolTabs.innerHTML = "";
     elements.pluginToolBody.innerHTML = renderPluginToolEmpty(pluginsLoading, tr);
+    renderWhiteNoiseFloatingSurface();
     updateIcons();
     return;
   }
@@ -2945,7 +3038,10 @@ function renderPluginTools() {
             ? renderPublicTunnelTool(activePlugin)
             : activePlugin?.id === TERMINAL_TRANSFER_PLUGIN_ID
               ? renderTerminalTransferTool(activePlugin)
+              : activePlugin?.id === WHITE_NOISE_PLUGIN_ID
+                ? renderWhiteNoiseTool(activePlugin)
       : "";
+  renderWhiteNoiseFloatingSurface();
   updateIcons();
   if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID) {
     void fileTransfer.loadCurrentDirectoryIfStale();
@@ -2960,6 +3056,10 @@ function renderPluginTools() {
   const tunnelState = publicTunnel.state();
   if (activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID && !tunnelState.loaded && !tunnelState.loading) {
     void publicTunnel.list();
+  }
+  const whiteNoiseState = whiteNoise.viewState();
+  if (activePlugin?.id === WHITE_NOISE_PLUGIN_ID && !whiteNoiseState.loading && !whiteNoiseState.tracks.length && !whiteNoiseState.error) {
+    void whiteNoise.ensureLoaded();
   }
 }
 
@@ -3052,6 +3152,33 @@ function renderTerminalTransferTool(plugin: PluginDescriptor): string {
     state: terminalTransfer.viewState(),
     tr,
   });
+}
+
+function renderWhiteNoiseTool(plugin: PluginDescriptor): string {
+  return renderWhiteNoiseToolSurface(plugin, whiteNoise, pluginControlsDisabled(plugin), tr);
+}
+
+function renderWhiteNoiseSurfaces() {
+  if (activePluginToolId === WHITE_NOISE_PLUGIN_ID) {
+    renderPluginTools();
+    return;
+  }
+  renderWhiteNoiseFloatingSurface();
+}
+
+function renderWhiteNoiseFloatingSurface() {
+  const plugin = findWhiteNoisePlugin(plugins);
+  const shouldLoad = renderWhiteNoiseFloatingSurfaceView({
+    container: elements.whiteNoiseFloatingControls,
+    plugin,
+    controller: whiteNoise,
+    disabled: !plugin || pluginControlsDisabled(plugin),
+    tr,
+    updateIcons,
+  });
+  if (shouldLoad) {
+    void whiteNoise.ensureLoaded();
+  }
 }
 
 function useForwardForTunnel(localUrl: string) {

@@ -2,7 +2,7 @@
 
 [English](./README.en.md)
 
-当前版本：`0.5.6`
+当前版本：`0.5.7`
 
 Neko Webshell 是浏览器里的 WebShell 工作台。它默认面向 LazyCat / LightOS 的应用实例，也可以关闭 LightOS 初始化后作为通用 WebShell 使用，并通过 SSH profile 管理远程终端目标。
 
@@ -19,6 +19,7 @@ Neko Webshell 是浏览器里的 WebShell 工作台。它默认面向 LazyCat / 
 - 使用 AI Chat 分析最近输出、整理命令思路、生成排查步骤。
 - 通过 LightOS 端口转发预览实例内 HTTP 服务。
 - 通过 Cloudflare Quick Tunnel 或带认证配置的 Tunnel 服务，把本地 HTTP 预览地址临时公开出去。
+- 播放设备本地的白噪音和环境音，声音文件放在 `/lzcapp/var/sounds`。
 - 添加 SSH profile，把远程主机作为一等终端目标打开。
 - 如果设备里安装了 Herdr，可以在同一个界面里切换 Herdr 的空间和标签。
 
@@ -130,6 +131,35 @@ Tunnel 认证配置保存在 WebShell 后端数据库里。工具面板只选择
 
 这些能力是 WebShell 内置工具，不是独立分发的第三方插件。当前不支持外部插件市场、插件包安装或热加载。
 
+## 白噪音和本地声音
+
+白噪音工具不会把音频文件打包进前端。后端会从 `/lzcapp/var/sounds` 读取音频，第一层目录会作为分类显示。默认资源包：
+
+```text
+https://share.pushcat.eu.org/sounds.zip
+```
+
+压缩包顶层需要包含 `sounds/` 目录，例如：
+
+```text
+sounds/
+  rain/
+    light-rain.mp3
+  noise/
+    white-noise.wav
+  custom/
+    my-focus-sound.ogg
+```
+
+在设备上解压：
+
+```bash
+curl -L -o /tmp/sounds.zip https://share.pushcat.eu.org/sounds.zip
+unzip -o /tmp/sounds.zip -d /lzcapp/var
+```
+
+最终文件路径应该类似 `/lzcapp/var/sounds/noise/white-noise.wav`。支持 `.mp3`、`.wav`、`.ogg`、`.flac`、`.m4a`、`.webm`。自定义音频只要按目录放进 `sounds/` 下，再在工具里刷新即可。
+
 ## 外观和设置
 
 设置里可以调整：
@@ -171,7 +201,7 @@ cargo test
 cargo run
 ```
 
-通用 WebShell 部署时使用 `NEKO_WEBSHELL_TTY_INIT=generic`。可选值包括 `lightos` 和 `generic`；未设置时默认 `lightos`。SSH 托管密钥目录可以通过 `NEKO_WEBSHELL_SSH_KEY_DIR` 覆盖，OpenSSH config 文件可以通过 `NEKO_WEBSHELL_SSH_CONFIG_FILE` 覆盖。
+通用 WebShell 部署时使用 `NEKO_WEBSHELL_TTY_INIT=generic`。可选值包括 `lightos` 和 `generic`；未设置时默认 `lightos`。白噪音目录可以通过 `NEKO_WEBSHELL_SOUNDS_DIR` 覆盖。SSH 托管密钥目录可以通过 `NEKO_WEBSHELL_SSH_KEY_DIR` 覆盖，OpenSSH config 文件可以通过 `NEKO_WEBSHELL_SSH_CONFIG_FILE` 覆盖。
 
 开发前端界面：
 

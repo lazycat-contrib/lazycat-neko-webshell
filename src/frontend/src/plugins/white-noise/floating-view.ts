@@ -1,0 +1,34 @@
+import type { MessageKey } from "../../i18n";
+import { escapeAttr, escapeHtml } from "../../utils";
+import type { WhiteNoiseViewState } from "./controller";
+
+type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
+
+export type WhiteNoiseFloatingViewState = {
+  visible: boolean;
+  disabled: boolean;
+  playback: Pick<WhiteNoiseViewState, "playing" | "loading" | "tracks" | "masterVolume">;
+  tr: Translate;
+};
+
+export function renderWhiteNoiseFloatingControls(state: WhiteNoiseFloatingViewState): string {
+  if (!state.visible) return "";
+  const playLabel = state.playback.playing ? state.tr("action.whiteNoisePause") : state.tr("action.whiteNoisePlay");
+  const disabled = state.disabled || state.playback.loading || !state.playback.tracks.length ? "disabled" : "";
+  return `
+    <div class="white-noise-floating-controls" role="toolbar" aria-label="${escapeAttr(state.tr("plugin.whiteNoise.name"))}">
+      ${floatingButton("toggle", state.playback.playing ? "pause" : "play", playLabel, disabled)}
+      ${floatingButton("volume-down", "volume-1", state.tr("action.whiteNoiseVolumeDown"), disabled || state.playback.masterVolume <= 0 ? "disabled" : "")}
+      ${floatingButton("volume-up", "volume-2", state.tr("action.whiteNoiseVolumeUp"), disabled || state.playback.masterVolume >= 1 ? "disabled" : "")}
+    </div>
+  `;
+}
+
+function floatingButton(action: string, icon: string, label: string, disabled: string): string {
+  return `
+    <button type="button" data-white-noise-floating-action="${escapeAttr(action)}" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}" ${disabled}>
+      <i data-lucide="${escapeAttr(icon)}" aria-hidden="true"></i>
+      <span>${escapeHtml(label)}</span>
+    </button>
+  `;
+}

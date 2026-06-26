@@ -2,7 +2,7 @@
 
 [中文](./README.md)
 
-Current version: `0.5.6`
+Current version: `0.5.7`
 
 Neko Webshell is a browser WebShell workbench. It defaults to LazyCat / LightOS app instances, but it can also run as a generic WebShell with LightOS initialization disabled and manage remote terminal targets through SSH profiles.
 
@@ -20,6 +20,7 @@ It works as a remote workbench you can reach from a browser. On desktop, it is c
 - Use AI Chat to analyze recent output, organize command ideas, or draft troubleshooting steps.
 - Preview HTTP services inside a LightOS instance through port forwarding.
 - Publish a local HTTP preview URL through Cloudflare Quick Tunnel or a tunnel provider with saved authentication.
+- Play local white-noise and ambient sound files from `/lzcapp/var/sounds`.
 - Add SSH profiles and open remote hosts as first-class terminal targets.
 - If Herdr is installed on the target device, switch Herdr spaces and tabs from the same WebShell interface.
 
@@ -131,6 +132,35 @@ Tunnel authentication configs are stored in the WebShell backend database. The t
 
 These features are built-in WebShell tools, not a third-party plugin distribution system. External plugin marketplaces, installable plugin packages, and hot-loaded third-party tools are not supported.
 
+## White Noise And Local Sounds
+
+The white-noise tool does not bundle audio files into the frontend. The backend reads audio from `/lzcapp/var/sounds`, and the first directory level under `sounds/` becomes the category list. Default package:
+
+```text
+https://share.pushcat.eu.org/sounds.zip
+```
+
+The zip archive root must contain a `sounds/` directory, for example:
+
+```text
+sounds/
+  rain/
+    light-rain.mp3
+  noise/
+    white-noise.wav
+  custom/
+    my-focus-sound.ogg
+```
+
+Extract it on the device:
+
+```bash
+curl -L -o /tmp/sounds.zip https://share.pushcat.eu.org/sounds.zip
+unzip -o /tmp/sounds.zip -d /lzcapp/var
+```
+
+The final files should look like `/lzcapp/var/sounds/noise/white-noise.wav`. Supported formats are `.mp3`, `.wav`, `.ogg`, `.flac`, `.m4a`, and `.webm`. To add custom sounds, place your own folders and audio files under `sounds/`, then refresh the tool.
+
 ## Appearance And Settings
 
 Settings include:
@@ -180,7 +210,7 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Vite forwards API requests to the local backend.
 
-For generic WebShell deployment, use `NEKO_WEBSHELL_TTY_INIT=generic`. Supported values include `lightos` and `generic`; the default is `lightos`. The managed SSH key directory can be overridden with `NEKO_WEBSHELL_SSH_KEY_DIR`, and the OpenSSH config file can be overridden with `NEKO_WEBSHELL_SSH_CONFIG_FILE`.
+For generic WebShell deployment, use `NEKO_WEBSHELL_TTY_INIT=generic`. Supported values include `lightos` and `generic`; the default is `lightos`. The white-noise directory can be overridden with `NEKO_WEBSHELL_SOUNDS_DIR`. The managed SSH key directory can be overridden with `NEKO_WEBSHELL_SSH_KEY_DIR`, and the OpenSSH config file can be overridden with `NEKO_WEBSHELL_SSH_CONFIG_FILE`.
 
 Build the LazyCat LPK:
 

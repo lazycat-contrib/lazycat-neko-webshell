@@ -11,6 +11,7 @@ export const LIGHTOS_PORT_FORWARD_PLUGIN_ID = "lightos-port-forward";
 export const POMODORO_PLUGIN_ID = "pomodoro";
 export const PUBLIC_TUNNEL_PLUGIN_ID = "public-tunnel";
 export const TERMINAL_TRANSFER_PLUGIN_ID = "terminal-transfer";
+export const WHITE_NOISE_PLUGIN_ID = "white-noise";
 
 export function downloadPluginPayload(payload: Uint8Array, name: string, contentType: string) {
   const bytes = new Uint8Array(payload);
@@ -41,6 +42,7 @@ export function pluginDisplayName(plugin: PluginDescriptor, tr: Translate): stri
   if (plugin.id === POMODORO_PLUGIN_ID) return tr("plugin.pomodoro.name");
   if (plugin.id === PUBLIC_TUNNEL_PLUGIN_ID) return tr("plugin.publicTunnel.name");
   if (plugin.id === TERMINAL_TRANSFER_PLUGIN_ID) return tr("plugin.terminalTransfer.name");
+  if (plugin.id === WHITE_NOISE_PLUGIN_ID) return tr("plugin.whiteNoise.name");
   return plugin.displayName || plugin.id;
 }
 
@@ -51,6 +53,7 @@ export function pluginIcon(pluginId: string): string {
   if (pluginId === POMODORO_PLUGIN_ID) return "timer";
   if (pluginId === PUBLIC_TUNNEL_PLUGIN_ID) return "radio-tower";
   if (pluginId === TERMINAL_TRANSFER_PLUGIN_ID) return "arrow-left-right";
+  if (pluginId === WHITE_NOISE_PLUGIN_ID) return "waves";
   return "plug";
 }
 
@@ -61,6 +64,7 @@ export function pluginDescription(plugin: PluginDescriptor, tr: Translate): stri
   if (plugin.id === POMODORO_PLUGIN_ID) return tr("plugin.pomodoro.description");
   if (plugin.id === PUBLIC_TUNNEL_PLUGIN_ID) return tr("plugin.publicTunnel.description");
   if (plugin.id === TERMINAL_TRANSFER_PLUGIN_ID) return tr("plugin.terminalTransfer.description");
+  if (plugin.id === WHITE_NOISE_PLUGIN_ID) return tr("plugin.whiteNoise.description");
   return plugin.description || plugin.kind || plugin.id;
 }
 
@@ -71,6 +75,7 @@ export function pluginMetaLabel(value: string, tr: Translate): string {
   if (value === "network") return tr("plugin.meta.network");
   if (value === "productivity") return tr("plugin.meta.productivity");
   if (value === "session") return tr("plugin.meta.session");
+  if (value === "sound") return tr("plugin.meta.sound");
   if (value === "tunnel") return tr("plugin.meta.tunnel");
   if (value === "transfer") return tr("plugin.meta.transfer");
   return value;

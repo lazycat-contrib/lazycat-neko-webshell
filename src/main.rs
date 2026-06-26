@@ -30,6 +30,7 @@ mod router;
 mod service;
 mod session_backend;
 mod session_manager;
+mod sounds;
 mod ssh_backend;
 mod ssh_config;
 mod state;

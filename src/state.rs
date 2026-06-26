@@ -869,6 +869,23 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             ]),
         },
         PluginRecord {
+            id: "white-noise".to_owned(),
+            kind: "sound".to_owned(),
+            display_name: "White Noise".to_owned(),
+            description: "Play local focus sounds from the provider sounds directory without bundling audio in the frontend.".to_owned(),
+            scopes: vec!["productivity".to_owned(), "sound".to_owned()],
+            accepted_content_types: vec![],
+            produced_content_types: vec![],
+            input_schema_json: r#"{"operation":"catalog|playback","metadata":{"soundsDir":"/lzcapp/var/sounds","formats":"mp3,wav,ogg,flac,m4a,webm"}}"#.to_owned(),
+            output_schema_json: r#"{"rootPath":"string","exists":true,"files":[{"id":"string","category":"string","url":"/sounds/..."}]}"#.to_owned(),
+            enabled: true,
+            metadata: HashMap::from([
+                ("builtin".to_owned(), "true".to_owned()),
+                ("runtime".to_owned(), "browser-audio".to_owned()),
+                ("floatingControls".to_owned(), "true".to_owned()),
+            ]),
+        },
+        PluginRecord {
             id: crate::plugins::lightos_port_forward::PLUGIN_ID.to_owned(),
             kind: "network".to_owned(),
             display_name: "LightOS Port Forward".to_owned(),

@@ -58,6 +58,7 @@ export type ShellElements = {
   pluginToolTabs: HTMLDivElement;
   pluginToolBody: HTMLDivElement;
   pluginToolStatus: HTMLElement;
+  whiteNoiseFloatingControls: HTMLDivElement;
   closeSettings: HTMLButtonElement;
   settingsPage: HTMLElement;
   settingsTabs: HTMLDivElement;
@@ -312,6 +313,8 @@ export function renderShell(app: HTMLElement): ShellElements {
         <div class="plugin-tool-body" id="pluginToolBody"></div>
         <p id="pluginToolStatus" class="field-status"></p>
       </aside>
+
+      <div id="whiteNoiseFloatingControls" hidden></div>
 
       <section class="settings-page" id="settingsPage" hidden aria-label="Settings" data-i18n-aria="action.settings">
         <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
@@ -658,6 +661,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     pluginToolTabs: qs<HTMLDivElement>("#pluginToolTabs"),
     pluginToolBody: qs<HTMLDivElement>("#pluginToolBody"),
     pluginToolStatus: qs<HTMLElement>("#pluginToolStatus"),
+    whiteNoiseFloatingControls: qs<HTMLDivElement>("#whiteNoiseFloatingControls"),
     closeSettings: qs<HTMLButtonElement>("#closeSettings"),
     settingsPage: qs<HTMLElement>("#settingsPage"),
     settingsTabs: qs<HTMLDivElement>("#settingsTabs"),

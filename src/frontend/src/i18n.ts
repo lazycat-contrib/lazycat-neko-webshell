@@ -72,6 +72,12 @@ export type MessageKey =
   | "action.pomodoroNextRound"
   | "action.pomodoroStart"
   | "action.pomodoroStop"
+  | "action.whiteNoiseHelp"
+  | "action.whiteNoisePause"
+  | "action.whiteNoisePlay"
+  | "action.whiteNoiseStop"
+  | "action.whiteNoiseVolumeDown"
+  | "action.whiteNoiseVolumeUp"
   | "action.promoteSessionToTab"
   | "action.quickPhraseAdd"
   | "action.quickPhraseCancel"
@@ -223,6 +229,7 @@ export type MessageKey =
   | "plugin.meta.network"
   | "plugin.meta.productivity"
   | "plugin.meta.session"
+  | "plugin.meta.sound"
   | "plugin.meta.tunnel"
   | "plugin.meta.transfer"
   | "plugin.pomodoro.description"
@@ -235,6 +242,9 @@ export type MessageKey =
   | "plugin.terminalTransfer.help"
   | "plugin.terminalTransfer.name"
   | "plugin.terminalTransfer.output"
+  | "plugin.whiteNoise.description"
+  | "plugin.whiteNoise.help"
+  | "plugin.whiteNoise.name"
   | "pomodoro.completeHint"
   | "pomodoro.completeTitle"
   | "pomodoro.customMinutes"
@@ -250,6 +260,27 @@ export type MessageKey =
   | "pomodoro.runningTitle"
   | "pomodoro.setupHint"
   | "pomodoro.title"
+  | "whiteNoise.categoryCount"
+  | "whiteNoise.dirMissing"
+  | "whiteNoise.disabled"
+  | "whiteNoise.enabled"
+  | "whiteNoise.helpCustom"
+  | "whiteNoise.helpFormats"
+  | "whiteNoise.helpRemotePackage"
+  | "whiteNoise.helpRoot"
+  | "whiteNoise.helpTitle"
+  | "whiteNoise.helpUnzip"
+  | "whiteNoise.helpZipTitle"
+  | "whiteNoise.idle"
+  | "whiteNoise.loadError"
+  | "whiteNoise.loading"
+  | "whiteNoise.masterVolume"
+  | "whiteNoise.noFiles"
+  | "whiteNoise.openHelp"
+  | "whiteNoise.playing"
+  | "whiteNoise.soundMix"
+  | "whiteNoise.toggleTrack"
+  | "whiteNoise.trackVolume"
   | "section.appearance"
   | "section.aiAccess"
   | "section.fileTransfer"
@@ -286,6 +317,8 @@ export type MessageKey =
   | "setting.mobileQuickInputHelp"
   | "setting.pluginDisabled"
   | "setting.pluginEnabled"
+  | "setting.whiteNoiseFloatingControls"
+  | "setting.whiteNoiseFloatingControlsHelp"
   | "setting.terminalBackground"
   | "setting.terminalShaderHelp"
   | "setting.useResttyClipboard"
@@ -520,6 +553,13 @@ export type MessageKey =
   | "status.pluginLoadFailed"
   | "status.pluginSettingsSaved"
   | "status.pluginSettingsSaveFailed"
+  | "status.whiteNoiseAudioError"
+  | "status.whiteNoiseLoaded"
+  | "status.whiteNoiseLoadFailed"
+  | "status.whiteNoiseNoSounds"
+  | "status.whiteNoisePlayFailed"
+  | "status.whiteNoisePlaying"
+  | "status.whiteNoiseStopped"
   | "status.portForwardReady"
   | "status.publicTunnelReady"
   | "status.quickPhraseRemoved"
@@ -677,6 +717,12 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.pomodoroNextRound": "Next round",
     "action.pomodoroStart": "Start",
     "action.pomodoroStop": "End",
+    "action.whiteNoiseHelp": "Sound setup help",
+    "action.whiteNoisePause": "Pause",
+    "action.whiteNoisePlay": "Play",
+    "action.whiteNoiseStop": "Stop",
+    "action.whiteNoiseVolumeDown": "Volume down",
+    "action.whiteNoiseVolumeUp": "Volume up",
     "action.promoteSessionToTab": "Move session to new tab",
     "action.quickPhraseAdd": "Add phrase",
     "action.quickPhraseCancel": "Cancel",
@@ -835,6 +881,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.meta.network": "Network",
     "plugin.meta.productivity": "Productivity",
     "plugin.meta.session": "Session",
+    "plugin.meta.sound": "Sound",
     "plugin.meta.tunnel": "Tunnel",
     "plugin.meta.transfer": "Transfer",
     "plugin.pomodoro.description": "Focus timer for short work sessions inside the tool panel.",
@@ -847,6 +894,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.terminalTransfer.help": "Run rz/trz to upload into the current terminal directory, or sz/tsz <file> to save remote files through the browser.",
     "plugin.terminalTransfer.name": "Terminal transfer",
     "plugin.terminalTransfer.output": "Terminal transfer progress",
+    "plugin.whiteNoise.description": "Play local focus sounds from /lzcapp/var/sounds.",
+    "plugin.whiteNoise.help": "Mix local sounds from the provider sounds directory. Use ? for package and directory setup.",
+    "plugin.whiteNoise.name": "White noise",
     "pomodoro.completeHint": "The focus timer is complete. Take a short break before starting another round.",
     "pomodoro.completeTitle": "Time is up",
     "pomodoro.customMinutes": "Custom minutes",
@@ -862,6 +912,27 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "pomodoro.runningTitle": "Focus running",
     "pomodoro.setupHint": "Choose a focus length and keep the terminal in view.",
     "pomodoro.title": "Pomodoro",
+    "whiteNoise.categoryCount": "{count} sound(s)",
+    "whiteNoise.dirMissing": "Sound directory is not ready",
+    "whiteNoise.disabled": "Off",
+    "whiteNoise.enabled": "On",
+    "whiteNoise.helpCustom": "You can add your own category folders and audio files under sounds/. Click refresh after changing files.",
+    "whiteNoise.helpFormats": "Supported audio formats: {formats}.",
+    "whiteNoise.helpRemotePackage": "Default remote package",
+    "whiteNoise.helpRoot": "Audio files are read from {path}. Categories come from the first directory under sounds/.",
+    "whiteNoise.helpTitle": "How to add sounds",
+    "whiteNoise.helpUnzip": "Download and extract on the device",
+    "whiteNoise.helpZipTitle": "Zip package directory structure",
+    "whiteNoise.idle": "Idle",
+    "whiteNoise.loadError": "Failed to load sound catalog",
+    "whiteNoise.loading": "Loading sounds...",
+    "whiteNoise.masterVolume": "Master volume",
+    "whiteNoise.noFiles": "No supported audio files found",
+    "whiteNoise.openHelp": "Click ? to see the default package, directory structure, and supported formats.",
+    "whiteNoise.playing": "Playing",
+    "whiteNoise.soundMix": "Sound mix",
+    "whiteNoise.toggleTrack": "Toggle {name}",
+    "whiteNoise.trackVolume": "{name} volume",
     "section.appearance": "Appearance",
     "section.aiAccess": "AI access",
     "section.fileTransfer": "File transfer",
@@ -898,6 +969,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.mobileQuickInputHelp": "Save personal phrases for the mobile shortcut bar. They appear after Sym and are sorted by usage.",
     "setting.pluginDisabled": "Disabled",
     "setting.pluginEnabled": "Enabled",
+    "setting.whiteNoiseFloatingControls": "Show left playback controls",
+    "setting.whiteNoiseFloatingControlsHelp": "When white noise is enabled, show a left-side floating bar with play/pause and volume buttons.",
     "setting.terminalBackground": "Use background image",
     "setting.terminalShaderHelp": "GPU effects are off by default. Enable them only when you want extra terminal feedback.",
     "setting.useResttyClipboard": "Use restty clipboard",
@@ -1132,6 +1205,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginLoadFailed": "Tool load failed: {message}",
     "status.pluginSettingsSaved": "{name} settings saved",
     "status.pluginSettingsSaveFailed": "Settings save failed: {message}",
+    "status.whiteNoiseAudioError": "Cannot load sound: {name}",
+    "status.whiteNoiseLoaded": "{count} sound(s) loaded",
+    "status.whiteNoiseLoadFailed": "Sound catalog load failed: {message}",
+    "status.whiteNoiseNoSounds": "Add audio files before playing sounds.",
+    "status.whiteNoisePlayFailed": "Playback failed: {message}",
+    "status.whiteNoisePlaying": "White noise is playing",
+    "status.whiteNoiseStopped": "White noise stopped",
     "status.portForwardReady": "{count} port forward(s) active",
     "status.publicTunnelReady": "{count} tunnel(s) active",
     "status.quickPhraseRemoved": "Phrase removed",
@@ -1288,6 +1368,12 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.pomodoroNextRound": "下一轮",
     "action.pomodoroStart": "开始",
     "action.pomodoroStop": "结束番茄",
+    "action.whiteNoiseHelp": "声音配置帮助",
+    "action.whiteNoisePause": "暂停",
+    "action.whiteNoisePlay": "播放",
+    "action.whiteNoiseStop": "停止",
+    "action.whiteNoiseVolumeDown": "音量减",
+    "action.whiteNoiseVolumeUp": "音量加",
     "action.promoteSessionToTab": "将会话提升为新标签",
     "action.quickPhraseAdd": "添加短语",
     "action.quickPhraseCancel": "取消",
@@ -1446,6 +1532,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.meta.network": "网络",
     "plugin.meta.productivity": "效率",
     "plugin.meta.session": "会话",
+    "plugin.meta.sound": "声音",
     "plugin.meta.tunnel": "Tunnel",
     "plugin.meta.transfer": "传输",
     "plugin.pomodoro.description": "工具面板里的专注计时器，用于短时间工作节奏。",
@@ -1458,6 +1545,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.terminalTransfer.help": "执行 rz/trz 会上传到当前目录；执行 sz/tsz <file> 会通过浏览器保存远端文件。",
     "plugin.terminalTransfer.name": "终端传输",
     "plugin.terminalTransfer.output": "终端传输进度",
+    "plugin.whiteNoise.description": "从 /lzcapp/var/sounds 播放本地专注声音。",
+    "plugin.whiteNoise.help": "混合播放设备 sounds 目录里的本地音频。点击 ? 查看资源包和目录结构。",
+    "plugin.whiteNoise.name": "白噪音",
     "pomodoro.completeHint": "本轮专注已经完成。休息一下，再开始下一轮。",
     "pomodoro.completeTitle": "番茄时间到了",
     "pomodoro.customMinutes": "自定义分钟",
@@ -1473,6 +1563,27 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "pomodoro.runningTitle": "番茄进行中",
     "pomodoro.setupHint": "选择一个专注时长，终端保持可见。",
     "pomodoro.title": "番茄时钟",
+    "whiteNoise.categoryCount": "{count} 个声音",
+    "whiteNoise.dirMissing": "声音目录还未准备好",
+    "whiteNoise.disabled": "关闭",
+    "whiteNoise.enabled": "开启",
+    "whiteNoise.helpCustom": "也可以在 sounds/ 下新增自己的分类目录和音频文件。修改文件后点击刷新。",
+    "whiteNoise.helpFormats": "支持的音频格式：{formats}。",
+    "whiteNoise.helpRemotePackage": "默认远程资源包",
+    "whiteNoise.helpRoot": "音频文件从 {path} 读取。sounds/ 下第一层目录会作为分类。",
+    "whiteNoise.helpTitle": "如何放置音频",
+    "whiteNoise.helpUnzip": "在设备上下载并解压",
+    "whiteNoise.helpZipTitle": "压缩包目录结构",
+    "whiteNoise.idle": "未播放",
+    "whiteNoise.loadError": "加载声音列表失败",
+    "whiteNoise.loading": "正在加载声音...",
+    "whiteNoise.masterVolume": "总音量",
+    "whiteNoise.noFiles": "没有找到支持的音频文件",
+    "whiteNoise.openHelp": "点击 ? 查看默认资源包、目录结构和支持格式。",
+    "whiteNoise.playing": "播放中",
+    "whiteNoise.soundMix": "声音混合",
+    "whiteNoise.toggleTrack": "切换 {name}",
+    "whiteNoise.trackVolume": "{name} 音量",
     "section.appearance": "外观",
     "section.aiAccess": "AI 接入",
     "section.fileTransfer": "文件传输",
@@ -1509,6 +1620,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.mobileQuickInputHelp": "保存个人常用短语，移动端会在 Sym 后显示；点击后按使用频率排序。",
     "setting.pluginDisabled": "已关闭",
     "setting.pluginEnabled": "已启用",
+    "setting.whiteNoiseFloatingControls": "显示左侧播放控制",
+    "setting.whiteNoiseFloatingControlsHelp": "白噪音启用时，在左侧显示播放/暂停和音量控制浮动条。",
     "setting.terminalBackground": "使用背景图片",
     "setting.terminalShaderHelp": "GPU 特效默认关闭。需要额外的输入反馈时再开启。",
     "setting.useResttyClipboard": "使用 restty 剪贴板",
@@ -1743,6 +1856,13 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginLoadFailed": "工具加载失败：{message}",
     "status.pluginSettingsSaved": "{name} 设置已保存",
     "status.pluginSettingsSaveFailed": "设置保存失败：{message}",
+    "status.whiteNoiseAudioError": "无法加载声音：{name}",
+    "status.whiteNoiseLoaded": "已加载 {count} 个声音",
+    "status.whiteNoiseLoadFailed": "声音列表加载失败：{message}",
+    "status.whiteNoiseNoSounds": "请先添加音频文件再播放。",
+    "status.whiteNoisePlayFailed": "播放失败：{message}",
+    "status.whiteNoisePlaying": "白噪音播放中",
+    "status.whiteNoiseStopped": "白噪音已停止",
     "status.portForwardReady": "{count} 个端口转发正在运行",
     "status.publicTunnelReady": "{count} 个 Tunnel 正在运行",
     "status.quickPhraseRemoved": "快速短语已删除",

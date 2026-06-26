@@ -1,0 +1,337 @@
+import type { MessageKey } from "../../i18n";
+import { fetchSoundCatalog, type SoundCatalog, type SoundFile } from "./api";
+
+type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
+
+export type WhiteNoiseTrackState = {
+  track: SoundFile;
+  enabled: boolean;
+  volume: number;
+};
+
+export type WhiteNoiseViewState = {
+  catalog: SoundCatalog;
+  loading: boolean;
+  error: string;
+  playing: boolean;
+  helpOpen: boolean;
+  masterVolume: number;
+  tracks: WhiteNoiseTrackState[];
+};
+
+export type WhiteNoiseControllerOptions = {
+  isEnabled: () => boolean;
+  tr: Translate;
+  onRender: () => void;
+  onStatus: (message: string, tone?: "neutral" | "ok" | "error") => void;
+};
+
+type StoredWhiteNoiseState = {
+  masterVolume?: number;
+  tracks?: Record<string, {
+    enabled?: boolean;
+    volume?: number;
+  }>;
+};
+
+const STORAGE_KEY = "lazycat-neko-webshell.white-noise.v2";
+const DEFAULT_MASTER_VOLUME = 0.6;
+const DEFAULT_TRACK_VOLUME = 0.72;
+const VOLUME_STEP = 0.08;
+
+const EMPTY_CATALOG: SoundCatalog = {
+  rootPath: "/lzcapp/var/sounds",
+  exists: false,
+  files: [],
+};
+
+export function createWhiteNoiseController(options: WhiteNoiseControllerOptions) {
+  const stored = loadStoredState();
+  const players = new Map<string, HTMLAudioElement>();
+  let catalog: SoundCatalog = EMPTY_CATALOG;
+  let loading = false;
+  let loaded = false;
+  let error = "";
+  let masterVolume = normalizeVolume(stored.masterVolume, DEFAULT_MASTER_VOLUME);
+  let playing = false;
+  let helpOpen = false;
+  let tracks: WhiteNoiseTrackState[] = [];
+
+  function viewState(): WhiteNoiseViewState {
+    return {
+      catalog,
+      loading,
+      error,
+      playing,
+      helpOpen,
+      masterVolume,
+      tracks: tracks.map((item) => ({ ...item })),
+    };
+  }
+
+  async function ensureLoaded() {
+    if (loaded || loading) return;
+    await refresh(false);
+  }
+
+  async function refresh(showStatus = true) {
+    if (loading) return;
+    loading = true;
+    error = "";
+    options.onRender();
+    try {
+      catalog = await fetchSoundCatalog();
+      loaded = true;
+      reconcileTracks();
+      saveState();
+      if (showStatus) {
+        options.onStatus(
+          options.tr("status.whiteNoiseLoaded", { count: tracks.length }),
+          "ok",
+        );
+      }
+    } catch (loadError) {
+      error = loadError instanceof Error ? loadError.message : String(loadError);
+      if (showStatus) {
+        options.onStatus(
+          options.tr("status.whiteNoiseLoadFailed", { message: error }),
+          "error",
+        );
+      }
+    } finally {
+      loading = false;
+      options.onRender();
+    }
+  }
+
+  function toggleHelp() {
+    helpOpen = !helpOpen;
+    options.onRender();
+  }
+
+  async function togglePlayback() {
+    if (playing) {
+      pause();
+      return;
+    }
+    await play();
+  }
+
+  async function play() {
+    if (!options.isEnabled()) return;
+    await ensureLoaded();
+    if (!tracks.length) {
+      helpOpen = true;
+      options.onStatus(options.tr("status.whiteNoiseNoSounds"), "error");
+      options.onRender();
+      return;
+    }
+    ensureAtLeastOneTrack();
+    try {
+      await Promise.all(enabledTracks().map((item) => {
+        const player = audioForTrack(item.track);
+        player.loop = true;
+        player.volume = mixedVolume(item.volume);
+        return player.play();
+      }));
+      playing = true;
+      options.onStatus(options.tr("status.whiteNoisePlaying"), "ok");
+    } catch (playError) {
+      playing = false;
+      options.onStatus(
+        options.tr("status.whiteNoisePlayFailed", {
+          message: playError instanceof Error ? playError.message : String(playError),
+        }),
+        "error",
+      );
+    } finally {
+      pauseDisabledTracks();
+      options.onRender();
+    }
+  }
+
+  function pause() {
+    for (const player of players.values()) {
+      player.pause();
+    }
+    playing = false;
+    options.onRender();
+  }
+
+  function stop() {
+    for (const player of players.values()) {
+      player.pause();
+      player.currentTime = 0;
+    }
+    playing = false;
+    options.onStatus(options.tr("status.whiteNoiseStopped"), "neutral");
+    options.onRender();
+  }
+
+  function setMasterVolume(value: unknown) {
+    masterVolume = normalizeVolumeFromInput(value, masterVolume);
+    applyVolumes();
+    saveState();
+    options.onRender();
+  }
+
+  function stepMasterVolume(direction: "up" | "down") {
+    masterVolume = clampVolume(masterVolume + (direction === "up" ? VOLUME_STEP : -VOLUME_STEP));
+    applyVolumes();
+    saveState();
+    options.onRender();
+  }
+
+  function setTrackVolume(trackId: string, value: unknown) {
+    tracks = tracks.map((item) => item.track.id === trackId
+      ? { ...item, volume: normalizeVolumeFromInput(value, item.volume) }
+      : item);
+    applyVolumes();
+    saveState();
+    options.onRender();
+  }
+
+  async function toggleTrack(trackId: string) {
+    tracks = tracks.map((item) => item.track.id === trackId
+      ? { ...item, enabled: !item.enabled }
+      : item);
+    saveState();
+    if (!enabledTracks().length) {
+      pause();
+      return;
+    }
+    if (playing) {
+      await play();
+      return;
+    }
+    pauseDisabledTracks();
+    options.onRender();
+  }
+
+  function applyVolumes() {
+    for (const item of tracks) {
+      const player = players.get(item.track.id);
+      if (player) {
+        player.volume = mixedVolume(item.volume);
+      }
+    }
+  }
+
+  function pauseDisabledTracks() {
+    for (const item of tracks) {
+      if (!item.enabled) {
+        players.get(item.track.id)?.pause();
+      }
+    }
+  }
+
+  function enabledTracks() {
+    return tracks.filter((item) => item.enabled);
+  }
+
+  function ensureAtLeastOneTrack() {
+    if (enabledTracks().length) return;
+    tracks = tracks.map((item, index) => index === 0 ? { ...item, enabled: true } : item);
+    saveState();
+  }
+
+  function reconcileTracks() {
+    const previous = new Map(tracks.map((item) => [item.track.id, item]));
+    tracks = catalog.files.map((track, index) => {
+      const persisted = stored.tracks?.[track.id];
+      const current = previous.get(track.id);
+      return {
+        track,
+        enabled: current?.enabled ?? persisted?.enabled ?? index === 0,
+        volume: normalizeVolume(current?.volume ?? persisted?.volume, DEFAULT_TRACK_VOLUME),
+      };
+    });
+    for (const id of Array.from(players.keys())) {
+      if (!tracks.some((item) => item.track.id === id)) {
+        const player = players.get(id);
+        player?.pause();
+        players.delete(id);
+      }
+    }
+    if (!tracks.length) {
+      playing = false;
+    }
+  }
+
+  function audioForTrack(track: SoundFile): HTMLAudioElement {
+    const existing = players.get(track.id);
+    if (existing) return existing;
+    const audio = new Audio(new URL(track.url, window.location.href).toString());
+    audio.preload = "auto";
+    audio.loop = true;
+    audio.addEventListener("error", () => {
+      options.onStatus(options.tr("status.whiteNoiseAudioError", {
+        name: track.name,
+      }), "error");
+    });
+    players.set(track.id, audio);
+    return audio;
+  }
+
+  function mixedVolume(trackVolume: number): number {
+    return clampVolume(masterVolume * trackVolume);
+  }
+
+  function saveState() {
+    const payload: StoredWhiteNoiseState = {
+      masterVolume,
+      tracks: Object.fromEntries(tracks.map((item) => [
+        item.track.id,
+        {
+          enabled: item.enabled,
+          volume: item.volume,
+        },
+      ])),
+    };
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // Playback preferences are best-effort browser state.
+    }
+  }
+
+  return {
+    viewState,
+    ensureLoaded,
+    refresh,
+    toggleHelp,
+    togglePlayback,
+    play,
+    pause,
+    stop,
+    setMasterVolume,
+    stepMasterVolume,
+    setTrackVolume,
+    toggleTrack,
+  };
+}
+
+function loadStoredState(): StoredWhiteNoiseState {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) as StoredWhiteNoiseState : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeVolumeFromInput(value: unknown, fallback: number): number {
+  const number = typeof value === "string" || typeof value === "number"
+    ? Number(value)
+    : Number.NaN;
+  return normalizeVolume(Number.isFinite(number) ? number / 100 : number, fallback);
+}
+
+function normalizeVolume(value: unknown, fallback: number): number {
+  const number = typeof value === "number" ? value : Number.NaN;
+  return Number.isFinite(number) ? clampVolume(number) : fallback;
+}
+
+function clampVolume(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}

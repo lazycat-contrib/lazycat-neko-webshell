@@ -28,6 +28,7 @@ use crate::preferences::{get_settings, put_settings};
 use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
 use crate::service::CapabilityServiceImpl;
 use crate::session_backend::get_session_backends;
+use crate::sounds::{list_sounds, sound_file};
 use crate::ssh_backend::{
     delete_ssh_profile, get_ssh_config, get_ssh_key_file, list_profile_instances,
     list_ssh_config_hosts, list_ssh_profiles, put_ssh_config, put_ssh_key_file, test_ssh_profile,
@@ -52,8 +53,10 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/ws/herdr", get(herdr_ws))
         .route("/assets/{*path}", get(frontend_asset))
         .route("/fonts/{*path}", get(frontend_font))
+        .route("/sounds/{*path}", get(sound_file))
         .route("/api/instances", get(list_instances))
         .route("/api/runtime", get(runtime_info))
+        .route("/api/sounds", get(list_sounds))
         .route("/api/lightos-admin-info", get(lightos_admin_info))
         .route("/api/ssh-profiles", get(list_ssh_profiles).post(upsert_ssh_profile))
         .route("/api/ssh-config-hosts", get(list_ssh_config_hosts))
@@ -111,7 +114,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         ))
         .layer(security_header(
             CONTENT_SECURITY_POLICY,
-            "default-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data: blob:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; object-src 'none'; base-uri 'self'",
+            "default-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data: blob:; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; object-src 'none'; base-uri 'self'",
         ))
 }
 
