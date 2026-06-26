@@ -527,7 +527,7 @@ fn build_chat_input_audio_payload(
     stream: bool,
 ) -> Value {
     let audio_b64 = BASE64_STANDARD.encode(&upload.bytes);
-    let data_url = format!("data:{};base64,{audio_b64}", upload.mime_type);
+    let data_url = format!("data:{};base64,{audio_b64}", audio_data_url_mime(&upload.mime_type));
     let mut payload = json!({
         "model": profile.model.trim(),
         "stream": stream,
@@ -545,6 +545,10 @@ fn build_chat_input_audio_payload(
         payload["asr_options"] = json!({ "language": language });
     }
     payload
+}
+
+fn audio_data_url_mime(mime_type: &str) -> &str {
+    mime_type.split(';').next().unwrap_or(mime_type).trim()
 }
 
 fn build_chat_speech_payload(profile: &VoiceSpeechProviderProfile, text: &str) -> Value {
@@ -1187,6 +1191,31 @@ mod tests {
         assert_eq!(
             payload["messages"][0]["content"][0]["input_audio"]["data"],
             "data:audio/wav;base64,YXVkaW8="
+        );
+    }
+
+    #[test]
+    fn strips_audio_data_url_mime_parameters() {
+        let profile = normalize_voice_profile(
+            VoiceProviderProfile {
+                id: "compatible".to_owned(),
+                provider: "openai-compatible".to_owned(),
+                endpoint_type: "chat-input-audio".to_owned(),
+                api_key: "secret".to_owned(),
+                ..VoiceProviderProfile::default()
+            },
+            0,
+        );
+        let upload = VoiceAudioUpload {
+            bytes: Bytes::from_static(b"audio"),
+            mime_type: "audio/webm;codecs=opus".to_owned(),
+            filename: "audio.webm".to_owned(),
+        };
+        let payload = build_chat_input_audio_payload(&profile, &upload, false);
+
+        assert_eq!(
+            payload["messages"][0]["content"][0]["input_audio"]["data"],
+            "data:audio/webm;base64,YXVkaW8="
         );
     }
 

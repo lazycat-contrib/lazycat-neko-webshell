@@ -6,7 +6,7 @@ import type {
   AiVoiceSpeechProviderProfile,
 } from "../../../types";
 import { escapeAttr, escapeHtml } from "../../../utils";
-import { aiVoiceProfileConfigured } from "../voice-profiles";
+import { aiVoiceInputFormatLabel, aiVoiceProfileConfigured } from "../voice-profiles";
 import { aiVoiceSpeechProfileConfigured } from "../voice-speech-profiles";
 import type { AIAccessSettingsRenderState } from "./types";
 
@@ -43,7 +43,7 @@ function renderVoiceInputSection(
           provider: profile ? voiceProviderLabel(profile.provider, state) : state.tr("ai.voiceNotConfigured"),
           model: profile?.model || state.tr("status.noTarget"),
           endpoint: profile ? voiceEndpointLabel(profile.endpointType, state) : state.tr("status.noTarget"),
-          status: configured ? profile?.baseUrl ?? "" : state.tr("ai.voiceNotConfigured"),
+          status: configured && profile ? aiVoiceInputFormatLabel(profile.format) : state.tr("ai.voiceNotConfigured"),
         })}
         <span class="ai-config-summary-actions">
           ${renderProfileSelect({

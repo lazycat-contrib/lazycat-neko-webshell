@@ -1,5 +1,5 @@
 import { escapeAttr, escapeHtml } from "../../../utils";
-import { isBuiltinAiVoiceProfile } from "../voice-profiles";
+import { AI_VOICE_INPUT_FORMATS, aiVoiceInputFormatLabel, isBuiltinAiVoiceProfile } from "../voice-profiles";
 import {
   isBuiltinAiVoiceSpeechProfile,
   SPEECH_FORMATS,
@@ -74,6 +74,9 @@ function renderVoiceConfigForm(
 ): string {
   const profile = dialog.profile;
   const fixedPreset = profile.provider === "mimo" || profile.provider === "mimo-token-plan";
+  const formatOptions = AI_VOICE_INPUT_FORMATS
+    .map((format) => `<option value="${escapeAttr(format)}" ${profile.format === format ? "selected" : ""}>${escapeHtml(aiVoiceInputFormatLabel(format))}</option>`)
+    .join("");
   return `
     <div class="ai-config-grid">
       <label class="field">
@@ -98,6 +101,12 @@ function renderVoiceConfigForm(
       <label class="field">
         <span>${escapeHtml(state.tr("field.aiVoiceLanguage"))}</span>
         <input data-ai-dialog-field="voiceLanguage" type="text" value="${escapeAttr(profile.language)}" autocomplete="off" spellcheck="false" placeholder="auto / zh / en" />
+      </label>
+      <label class="field">
+        <span>${escapeHtml(state.tr("field.aiVoiceFormat"))}</span>
+        <select data-ai-dialog-field="voiceFormat" ${fixedPreset ? "disabled" : ""}>
+          ${formatOptions}
+        </select>
       </label>
       <label class="field ai-config-full">
         <span>${escapeHtml(state.tr("field.aiBaseUrl"))}</span>

@@ -2,6 +2,12 @@ import type { MessageKey } from "./i18n";
 import type { Settings, TerminalPane, Tone } from "./types";
 import { aiVoiceProfileConfigured } from "./plugins/ai-chat/voice-profiles";
 import { errorMessage, escapeAttr } from "./utils";
+import {
+  createVoiceAudioRecorder,
+  voiceRecordingAvailable,
+  voiceRecordingFormatSupported,
+  type VoiceAudioRecorder,
+} from "./voice-recorder";
 
 const MAX_VOICE_AUDIO_BYTES = 25 * 1024 * 1024;
 const VOICE_TRANSCRIPTION_ENDPOINT = "./api/ai/voice/transcriptions";
@@ -22,12 +28,10 @@ export function createVoiceInputController(options: {
   onStatus: (message: string, tone?: Tone) => void;
   updateIcons: () => void;
 }): VoiceInputController {
-  let recorder: MediaRecorder | undefined;
-  let stream: MediaStream | undefined;
-  let chunks: Blob[] = [];
+  let recorder: VoiceAudioRecorder | undefined;
   let paneAtStart: TerminalPane | undefined;
-  let stopAsCancel = false;
   let starting = false;
+  let stopping = false;
   let pendingStop: boolean | undefined;
   let uploading = false;
   let audioContext: AudioContext | undefined;
@@ -54,10 +58,10 @@ export function createVoiceInputController(options: {
     const shouldShow = Boolean(
       settings.aiVoiceInputEnabled
       && options.activePane()
-      && mediaRecorderAvailable(),
+      && voiceRecordingAvailable("auto"),
     );
     if (!shouldShow) {
-      if (recorder && recorder.state !== "inactive") {
+      if (recorder) {
         stopRecording(true);
       }
       options.root.hidden = true;
@@ -103,12 +107,13 @@ export function createVoiceInputController(options: {
     const button = options.root.querySelector<HTMLButtonElement>(".ai-voice-input-button");
     if (button) {
       const configured = aiVoiceProfileConfigured(activeProfile);
-      button.disabled = uploading || !configured;
-      button.dataset.state = recorder && recorder.state !== "inactive"
+      const formatSupported = voiceRecordingFormatSupported(activeProfile?.format ?? "auto");
+      button.disabled = uploading || !configured || !formatSupported;
+      button.dataset.state = recorder
         ? "recording"
         : uploading ? "uploading" : configured ? "idle" : "unconfigured";
       const title = configured
-        ? options.tr("action.aiVoiceHold")
+        ? formatSupported ? options.tr("action.aiVoiceHold") : options.tr("ai.voiceFormatNotSupported")
         : options.tr("ai.voiceNotConfigured");
       button.setAttribute("aria-label", title);
       button.title = title;
@@ -124,24 +129,17 @@ export function createVoiceInputController(options: {
     if (!pane) return;
     paneAtStart = pane;
     starting = true;
+    stopping = false;
     pendingStop = undefined;
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream = mediaStream;
-      startLevelMeter(mediaStream);
-      chunks = [];
-      stopAsCancel = false;
+      const settings = options.settings();
+      const activeProfile = settings.aiVoiceProviderProfiles.find(
+        (profile) => profile.id === settings.aiVoiceActiveProviderProfileId,
+      ) ?? settings.aiVoiceProviderProfiles[0];
+      const voiceRecorder = await createVoiceAudioRecorder(activeProfile?.format ?? "auto");
+      recorder = voiceRecorder;
+      startLevelMeter(voiceRecorder.stream);
       liveTranscript = options.tr("status.aiVoiceRecording");
-      recorder = new MediaRecorder(mediaStream, mediaRecorderOptions());
-      recorder.addEventListener("dataavailable", (event) => {
-        if (event.data.size > 0) {
-          chunks.push(event.data);
-        }
-      });
-      recorder.addEventListener("stop", () => {
-        void finishRecording(stopAsCancel);
-      }, { once: true });
-      recorder.start();
       options.onStatus(options.tr("status.aiVoiceRecording"), "neutral");
       starting = false;
       if (pendingStop !== undefined) {
@@ -164,27 +162,33 @@ export function createVoiceInputController(options: {
       pendingStop = cancel;
       return;
     }
-    if (!recorder || recorder.state === "inactive") return;
-    stopAsCancel = cancel;
-    try {
-      recorder.stop();
-    } catch (error) {
-      cleanupRecording();
-      options.onStatus(options.tr("status.aiVoiceFailed", { message: errorMessage(error) }), "error");
-      render();
-    }
+    if (!recorder || stopping) return;
+    stopping = true;
+    void finishRecording(recorder, cancel);
   }
 
-  async function finishRecording(cancel: boolean) {
-    const mimeType = recorder?.mimeType || preferredMimeType() || "audio/webm";
+  async function finishRecording(activeRecorder: VoiceAudioRecorder, cancel: boolean) {
     const pane = paneAtStart;
-    const audioChunks = chunks;
+    let blob: Blob | undefined;
+    let mimeType = "audio/wav";
+    let extension = "wav";
+    try {
+      if (cancel) {
+        await activeRecorder.cancel();
+      } else {
+        const recording = await activeRecorder.stop();
+        blob = recording.blob;
+        mimeType = recording.mimeType;
+        extension = recording.extension;
+      }
+    } catch (error) {
+      options.onStatus(options.tr("status.aiVoiceFailed", { message: errorMessage(error) }), "error");
+    }
     cleanupRecording();
-    if (cancel || !pane || !audioChunks.length) {
+    if (cancel || !pane || !blob) {
       render();
       return;
     }
-    const blob = new Blob(audioChunks, { type: mimeType });
     if (blob.size > MAX_VOICE_AUDIO_BYTES) {
       options.onStatus(options.tr("status.aiVoiceTooLarge"), "error");
       render();
@@ -194,7 +198,7 @@ export function createVoiceInputController(options: {
     liveTranscript = options.tr("status.aiVoiceTranscribing");
     render();
     try {
-      const text = await transcribeBlob(blob, mimeType);
+      const text = await transcribeBlob(blob, mimeType, extension);
       if (text) {
         liveTranscript = text;
         render();
@@ -220,19 +224,16 @@ export function createVoiceInputController(options: {
   function cleanupRecording() {
     recorder = undefined;
     paneAtStart = undefined;
-    chunks = [];
-    stopAsCancel = false;
     starting = false;
+    stopping = false;
     pendingStop = undefined;
     stopLevelMeter();
-    stream?.getTracks().forEach((track) => track.stop());
-    stream = undefined;
   }
 
-  async function transcribeBlob(blob: Blob, mimeType: string): Promise<string> {
+  async function transcribeBlob(blob: Blob, mimeType: string, extension: string): Promise<string> {
     const form = new FormData();
     form.append("mimeType", mimeType);
-    form.append("audio", blob, `voice-input.${extensionForMime(mimeType)}`);
+    form.append("audio", blob, `voice-input.${extension || extensionForMime(mimeType)}`);
     const response = await fetch(new URL(VOICE_TRANSCRIPTION_ENDPOINT, window.location.href), {
       method: "POST",
       credentials: "same-origin",
@@ -252,7 +253,7 @@ export function createVoiceInputController(options: {
     const pill = options.root.querySelector<HTMLElement>(".ai-voice-recording-pill");
     const label = options.root.querySelector<HTMLElement>(".ai-voice-recording-label");
     if (!pill || !label) return;
-    const active = Boolean((recorder && recorder.state !== "inactive") || uploading);
+    const active = Boolean(recorder || uploading);
     pill.hidden = !active;
     label.textContent = liveTranscript || options.tr(uploading ? "status.aiVoiceTranscribing" : "status.aiVoiceRecording");
   }
@@ -315,31 +316,6 @@ export function createVoiceInputController(options: {
       bar.style.transform = "";
     });
   }
-}
-
-declare global {
-  interface Window {
-    webkitAudioContext?: typeof AudioContext;
-  }
-}
-
-function mediaRecorderAvailable(): boolean {
-  return typeof MediaRecorder !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
-}
-
-function mediaRecorderOptions(): MediaRecorderOptions {
-  const mimeType = preferredMimeType();
-  return mimeType ? { mimeType } : {};
-}
-
-function preferredMimeType(): string {
-  const candidates = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/mp4",
-    "audio/wav",
-  ];
-  return candidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? "";
 }
 
 function extensionForMime(mimeType: string): string {

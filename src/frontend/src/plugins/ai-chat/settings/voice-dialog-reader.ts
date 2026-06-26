@@ -1,4 +1,5 @@
 import type {
+  AiVoiceInputFormat,
   AiVoiceProviderProfile,
   AiVoiceSpeechEndpointType,
   AiVoiceSpeechProviderProfile,
@@ -38,6 +39,9 @@ export function readAiVoiceProviderProfileFromFields(options: {
       : options.read("voiceBaseUrl").trim();
   const model = options.read("voiceModel").trim()
     || (endpointType === "chat-input-audio" ? XIAOMI_MIMO_MODEL : "gpt-4o-mini-transcribe");
+  const format = provider === "mimo" || provider === "mimo-token-plan"
+    ? "wav"
+    : options.read("voiceFormat");
   return sanitizeAiVoiceProviderProfile({
     id: profileId,
     name: options.read("voiceName").trim() || fallbackName,
@@ -47,6 +51,7 @@ export function readAiVoiceProviderProfileFromFields(options: {
     apiKey: options.read("voiceApiKey"),
     model,
     language: options.read("voiceLanguage").trim(),
+    format: format as AiVoiceInputFormat,
   }, options.profileCount);
 }
 

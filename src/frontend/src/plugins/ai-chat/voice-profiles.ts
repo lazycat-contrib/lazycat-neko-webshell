@@ -1,10 +1,21 @@
-import type { AiVoiceEndpointType, AiVoiceProviderKind, AiVoiceProviderProfile } from "../../types";
+import type { AiVoiceEndpointType, AiVoiceInputFormat, AiVoiceProviderKind, AiVoiceProviderProfile } from "../../types";
 
 export const AI_VOICE_PROFILE_LIMIT = 12;
 export const XIAOMI_MIMO_API_BASE = "https://api.xiaomimimo.com/v1";
 export const XIAOMI_MIMO_TOKEN_PLAN_API_BASE = "https://token-plan-cn.xiaomimimo.com/v1";
 export const XIAOMI_MIMO_MODEL = "mimo-v2.5-asr";
 export const OPENAI_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe";
+export const AI_VOICE_INPUT_FORMATS: AiVoiceInputFormat[] = [
+  "auto",
+  "wav",
+  "webm-opus",
+  "webm",
+  "mp4",
+  "m4a",
+  "mp3",
+  "mpeg",
+  "mpga",
+];
 
 export function defaultAiVoiceProviderProfiles(): AiVoiceProviderProfile[] {
   return [
@@ -17,6 +28,7 @@ export function defaultAiVoiceProviderProfiles(): AiVoiceProviderProfile[] {
       apiKey: "",
       model: XIAOMI_MIMO_MODEL,
       language: "zh",
+      format: "wav",
     },
     {
       id: "mimo-token-plan",
@@ -27,6 +39,7 @@ export function defaultAiVoiceProviderProfiles(): AiVoiceProviderProfile[] {
       apiKey: "",
       model: XIAOMI_MIMO_MODEL,
       language: "zh",
+      format: "wav",
     },
   ];
 }
@@ -41,6 +54,7 @@ export function newAiVoiceProviderProfile(index: number, id = newVoiceProfileId(
     apiKey: "",
     model: OPENAI_TRANSCRIBE_MODEL,
     language: "auto",
+    format: "auto",
   }, index);
 }
 
@@ -85,6 +99,7 @@ export function sanitizeAiVoiceProviderProfile(
     apiKey: typeof profile.apiKey === "string" ? profile.apiKey : "",
     model: sanitizeVoiceModel(profile.model, endpointType),
     language: sanitizeVoiceLanguage(profile.language, provider),
+    format: sanitizeVoiceInputFormat(profile.format, provider),
   };
 }
 
@@ -98,6 +113,12 @@ export function aiVoiceEndpointLabel(endpointType: AiVoiceEndpointType): string 
   return endpointType === "chat-input-audio"
     ? "Chat input_audio"
     : "Audio transcriptions";
+}
+
+export function aiVoiceInputFormatLabel(format: AiVoiceInputFormat): string {
+  if (format === "auto") return "Auto";
+  if (format === "webm-opus") return "WebM Opus";
+  return format.toUpperCase();
 }
 
 export function aiVoiceProfileConfigured(profile: AiVoiceProviderProfile | undefined): boolean {
@@ -149,6 +170,13 @@ function sanitizeVoiceLanguage(value: unknown, provider: AiVoiceProviderKind): s
   const raw = typeof value === "string" ? value.trim() : "";
   if (raw) return raw.slice(0, 24);
   return provider === "openai-compatible" ? "auto" : "zh";
+}
+
+function sanitizeVoiceInputFormat(value: unknown, provider: AiVoiceProviderKind): AiVoiceInputFormat {
+  if (provider === "mimo" || provider === "mimo-token-plan") return "wav";
+  return AI_VOICE_INPUT_FORMATS.includes(value as AiVoiceInputFormat)
+    ? value as AiVoiceInputFormat
+    : "auto";
 }
 
 function newVoiceProfileId(): string {

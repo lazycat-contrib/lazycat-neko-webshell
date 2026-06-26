@@ -13,7 +13,12 @@ export type AiVoiceReplyPlaybackState = {
   currentSeconds?: number;
   durationSeconds?: number;
   error?: string;
+  textExpanded: boolean;
 };
+
+type AiVoiceReplyPlaybackStateUpdate =
+  Omit<AiVoiceReplyPlaybackState, "textExpanded">
+  & Partial<Pick<AiVoiceReplyPlaybackState, "textExpanded">>;
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -31,10 +36,15 @@ export function createAiVoiceReplyController(options: {
   onRender: () => void;
 }) {
   const entries = new Map<string, VoiceReplyEntry>();
+  const expandedTextKeys = new Set<string>();
   let activeKey = "";
 
   function stateFor(sessionId: string, messageIndex: number, content: string): AiVoiceReplyPlaybackState {
-    return entries.get(messageKey(sessionId, messageIndex, content))?.state ?? { status: "idle" };
+    const key = messageKey(sessionId, messageIndex, content);
+    return {
+      ...(entries.get(key)?.state ?? { status: "idle" }),
+      textExpanded: expandedTextKeys.has(key),
+    };
   }
 
   function prepareAssistantMessage(session: AIChatSession, messageIndex: number, message: AIChatMessage) {
@@ -80,6 +90,18 @@ export function createAiVoiceReplyController(options: {
       options.onStatus(options.tr("status.aiVoiceReplyFailed", { message: errorMessage(error) }), "error");
       options.onRender();
     }
+  }
+
+  function toggleText(session: AIChatSession | undefined, messageIndex: number) {
+    const message = Number.isInteger(messageIndex) ? session?.messages[messageIndex] : undefined;
+    if (!session || !voiceReplyShouldRender(options.settings(), message)) return;
+    const key = messageKey(session.id, messageIndex, message.content);
+    if (expandedTextKeys.has(key)) {
+      expandedTextKeys.delete(key);
+    } else {
+      expandedTextKeys.add(key);
+    }
+    options.onRender();
   }
 
   async function prepare(
@@ -188,16 +210,19 @@ export function createAiVoiceReplyController(options: {
       return existing;
     }
     const entry: VoiceReplyEntry = {
-      state: { status: "idle" },
+      state: { status: "idle", textExpanded: expandedTextKeys.has(key) },
       lastUsedAt: Date.now(),
     };
     entries.set(key, entry);
     return entry;
   }
 
-  function setEntryState(key: string, state: AiVoiceReplyPlaybackState) {
+  function setEntryState(key: string, state: AiVoiceReplyPlaybackStateUpdate) {
     const entry = ensureEntry(key);
-    entry.state = state;
+    entry.state = {
+      ...state,
+      textExpanded: expandedTextKeys.has(key),
+    };
     entry.lastUsedAt = Date.now();
   }
 
@@ -216,6 +241,7 @@ export function createAiVoiceReplyController(options: {
     stateFor,
     prepareAssistantMessage,
     toggle,
+    toggleText,
   };
 }
 

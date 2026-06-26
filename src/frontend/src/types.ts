@@ -184,6 +184,7 @@ export type AiProviderProfile = {
 
 export type AiVoiceProviderKind = "mimo" | "mimo-token-plan" | "openai-compatible";
 export type AiVoiceEndpointType = "audio-transcriptions" | "chat-input-audio";
+export type AiVoiceInputFormat = "auto" | "wav" | "webm-opus" | "webm" | "mp4" | "m4a" | "mp3" | "mpeg" | "mpga";
 export type AiVoiceSpeechEndpointType = "audio-speech" | "chat-audio";
 
 export type AiVoiceProviderProfile = {
@@ -195,6 +196,7 @@ export type AiVoiceProviderProfile = {
   apiKey: string;
   model: string;
   language: string;
+  format: AiVoiceInputFormat;
 };
 
 export type AiVoiceSpeechProviderProfile = {

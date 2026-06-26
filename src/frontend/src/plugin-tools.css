@@ -1785,7 +1785,11 @@
   min-width: 0;
 }
 
-.ai-voice-reply-text summary {
+.ai-voice-reply-text-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1793,19 +1797,18 @@
   color: var(--muted);
   cursor: pointer;
   font-size: 11px;
-  list-style: none;
 }
 
-.ai-voice-reply-text summary::-webkit-details-marker {
-  display: none;
+.ai-voice-reply-text-toggle:hover {
+  color: var(--fg);
 }
 
-.ai-voice-reply-text summary svg {
+.ai-voice-reply-text-toggle svg {
   width: 13px;
   height: 13px;
 }
 
-.ai-voice-reply-text[open] .ai-chat-message-content {
+.ai-voice-reply-text[data-expanded="true"] .ai-chat-message-content {
   margin-top: 7px;
 }
 

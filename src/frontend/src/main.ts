@@ -142,6 +142,7 @@ import {
   readAiVoiceProviderProfileFromFields,
   readAiVoiceReplyProviderProfileFromFields,
 } from "./plugins/ai-chat/settings/voice-dialog-reader";
+import { applyVoiceProviderDialogPreset } from "./plugins/ai-chat/settings/voice-dialog-dynamics";
 import {
   activeAiVoiceProviderProfile as activeAiVoiceProviderProfileInSettings,
   aiVoiceProviderProfileById as aiVoiceProviderProfileByIdInSettings,
@@ -933,6 +934,13 @@ function bindSettings() {
       selectAiVoiceReplyProviderProfile(aiVoiceReplyProfileSelect.value);
       return;
     }
+    const aiVoiceDialogProvider = event.target instanceof Element
+      ? event.target.closest<HTMLSelectElement>('[data-ai-dialog-field="voiceProvider"]')
+      : null;
+    if (aiVoiceDialogProvider) {
+      applyVoiceProviderDialogPreset(elements.pluginList, aiVoiceDialogProvider.value);
+      return;
+    }
     const aiSetting = event.target instanceof Element
       ? event.target.closest<HTMLInputElement | HTMLSelectElement>("[data-ai-setting]")
       : null;
@@ -1334,6 +1342,8 @@ function bindSettings() {
       aiChat.copyMessage(Number(aiButton.dataset.aiMessageIndex));
     } else if (action === "toggle-voice-reply") {
       void aiVoiceReply.toggle(aiChat.activeSession(), Number(aiButton.dataset.aiMessageIndex));
+    } else if (action === "toggle-voice-reply-text") {
+      aiVoiceReply.toggleText(aiChat.activeSession(), Number(aiButton.dataset.aiMessageIndex));
     } else if (action === "copy-code") {
       aiChat.copyCodeBlock(aiButton);
     } else if (action === "send-code-to-terminal") {

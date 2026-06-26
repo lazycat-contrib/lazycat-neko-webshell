@@ -155,6 +155,9 @@ function renderAIVoiceReplyMessage(options: {
   const playing = options.state.status === "playing";
   const loading = options.state.status === "loading";
   const actionLabel = playing ? options.tr("action.aiVoiceReplyPause") : options.tr("action.aiVoiceReplyPlay");
+  const textLabel = options.state.textExpanded
+    ? options.tr("action.aiVoiceReplyHideText")
+    : options.tr("action.aiVoiceReplyShowText");
   return `
     <div class="ai-voice-reply">
       <div class="ai-voice-reply-player" data-state="${escapeAttr(options.state.status)}">
@@ -167,13 +170,13 @@ function renderAIVoiceReplyMessage(options: {
         <span class="ai-voice-reply-time">${escapeHtml(voiceReplyTimeLabel(options.state))}</span>
       </div>
       ${options.state.status === "error" && options.state.error ? `<p class="ai-voice-reply-error">${escapeHtml(options.state.error)}</p>` : ""}
-      <details class="ai-voice-reply-text">
-        <summary>
+      <div class="ai-voice-reply-text" data-expanded="${options.state.textExpanded ? "true" : "false"}">
+        <button class="ai-voice-reply-text-toggle" type="button" data-ai-action="toggle-voice-reply-text" data-ai-message-index="${escapeAttr(String(options.messageIndex))}" aria-expanded="${options.state.textExpanded}" aria-label="${escapeAttr(textLabel)}" title="${escapeAttr(textLabel)}">
           <i data-lucide="message-square-text"></i>
-          <span>${escapeHtml(options.tr("action.aiVoiceReplyShowText"))}</span>
-        </summary>
-        ${options.textContent}
-      </details>
+          <span>${escapeHtml(textLabel)}</span>
+        </button>
+        ${options.state.textExpanded ? options.textContent : ""}
+      </div>
     </div>
   `;
 }

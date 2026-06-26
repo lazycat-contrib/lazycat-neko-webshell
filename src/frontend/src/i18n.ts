@@ -15,6 +15,7 @@ export type MessageKey =
   | "ai.voiceEndpointAudioTranscriptions"
   | "ai.voiceEndpointChatAudio"
   | "ai.voiceEndpointChatInputAudio"
+  | "ai.voiceFormatNotSupported"
   | "ai.voiceNotConfigured"
   | "ai.voiceProviderCompatible"
   | "ai.voiceProviderHelp"
@@ -58,6 +59,7 @@ export type MessageKey =
   | "action.aiVoiceReplyProviderSelect"
   | "action.aiVoiceReplyPause"
   | "action.aiVoiceReplyPlay"
+  | "action.aiVoiceReplyHideText"
   | "action.aiVoiceReplyShowText"
   | "action.aiVoiceReplyTest"
   | "action.cancel"
@@ -170,6 +172,7 @@ export type MessageKey =
   | "field.aiProvider"
   | "field.aiTargetTerminal"
   | "field.aiVoiceEndpointType"
+  | "field.aiVoiceFormat"
   | "field.aiVoiceLanguage"
   | "field.aiVoiceProfileName"
   | "field.aiVoiceProvider"
@@ -767,6 +770,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiVoiceReplyProviderSelect": "Use reply voice",
     "action.aiVoiceReplyPause": "Pause voice reply",
     "action.aiVoiceReplyPlay": "Play voice reply",
+    "action.aiVoiceReplyHideText": "Hide text",
     "action.aiVoiceReplyShowText": "Show text",
     "action.aiVoiceReplyTest": "Test reply voice",
     "action.cancel": "Cancel",
@@ -879,6 +883,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiProvider": "Provider",
     "field.aiTargetTerminal": "Target terminal",
     "field.aiVoiceEndpointType": "Interface type",
+    "field.aiVoiceFormat": "Recording format",
     "field.aiVoiceLanguage": "Speech language",
     "field.aiVoiceProfileName": "Voice profile name",
     "field.aiVoiceProvider": "Voice provider",
@@ -973,6 +978,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "ai.voiceEndpointAudioTranscriptions": "Audio transcriptions",
     "ai.voiceEndpointChatAudio": "Chat audio",
     "ai.voiceEndpointChatInputAudio": "Chat input_audio",
+    "ai.voiceFormatNotSupported": "This browser does not support the selected recording format",
     "ai.voiceNotConfigured": "Voice provider not configured",
     "ai.voiceProviderCompatible": "OpenAI-compatible",
     "ai.voiceProviderHelp": "Xiaomi presets use Chat Completions input_audio. Custom compatible providers can use either Audio Transcriptions or Chat input_audio.",
@@ -1496,6 +1502,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiVoiceReplyProviderSelect": "使用回复音色",
     "action.aiVoiceReplyPause": "暂停语音回复",
     "action.aiVoiceReplyPlay": "播放语音回复",
+    "action.aiVoiceReplyHideText": "收起文本",
     "action.aiVoiceReplyShowText": "展开文本",
     "action.aiVoiceReplyTest": "测试回复音色",
     "action.cancel": "取消",
@@ -1608,6 +1615,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiProvider": "服务商",
     "field.aiTargetTerminal": "目标终端",
     "field.aiVoiceEndpointType": "接口类型",
+    "field.aiVoiceFormat": "录音格式",
     "field.aiVoiceLanguage": "语音语言",
     "field.aiVoiceProfileName": "语音配置名称",
     "field.aiVoiceProvider": "语音服务商",
@@ -1702,6 +1710,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "ai.voiceEndpointAudioTranscriptions": "Audio Transcriptions",
     "ai.voiceEndpointChatAudio": "Chat audio",
     "ai.voiceEndpointChatInputAudio": "Chat input_audio",
+    "ai.voiceFormatNotSupported": "当前浏览器不支持所选录音格式",
     "ai.voiceNotConfigured": "语音服务未配置",
     "ai.voiceProviderCompatible": "OpenAI 兼容",
     "ai.voiceProviderHelp": "小米预设使用 Chat Completions input_audio。自定义兼容服务可以选择 Audio Transcriptions 或 Chat input_audio。",
