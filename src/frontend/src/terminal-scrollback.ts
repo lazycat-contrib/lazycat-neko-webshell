@@ -5,6 +5,15 @@ const FALLBACK_TOUCH_SCROLL_MULTIPLIER = 1.5;
 const WHEEL_PIXEL_SCROLL_MULTIPLIER = 2;
 const WHEEL_LINE_DELTA_PX = 40;
 
+type ScrollViewportApi = {
+  scrollViewportByLines?: (lines: number) => void;
+};
+
+type ResttyViewportApi = ScrollViewportApi & {
+  activePane?: () => ScrollViewportApi | null;
+  focusedPane?: () => ScrollViewportApi | null;
+};
+
 export type ScrollbackFallbackOptions = {
   touchSelectionMode: () => TouchSelectionMode;
 };
@@ -88,17 +97,12 @@ function scrollPaneByPixels(pane: TerminalPane, host: HTMLElement | null, deltaP
 
 function scrollResttyViewportByPixels(pane: TerminalPane, deltaPx: number): boolean {
   if (!Number.isFinite(deltaPx) || Math.abs(deltaPx) < 1) return false;
-  const term = pane.term;
-  if (!term?.restty) return false;
   const lines = resttyScrollLinesFromPixels(pane.mount, deltaPx);
   if (!Number.isFinite(lines) || Math.abs(lines) < 0.25) return false;
-  term.scrollViewportByLines(lines);
-  return true;
+  return scrollResttyViewportByLines(pane, lines);
 }
 
 function scrollResttyViewportByWheel(pane: TerminalPane, event: WheelEvent): boolean {
-  const term = pane.term;
-  if (!term?.restty) return false;
   let lines = 0;
   if (event.deltaMode === 1) {
     const yoff = event.deltaY > 0 ? Math.max(event.deltaY, 1) : Math.min(event.deltaY, -1);
@@ -110,7 +114,22 @@ function scrollResttyViewportByWheel(pane: TerminalPane, event: WheelEvent): boo
     lines = event.deltaY / terminalLineHeightPx(pane.mount) * WHEEL_PIXEL_SCROLL_MULTIPLIER;
   }
   if (!Number.isFinite(lines) || Math.abs(lines) < 0.25) return false;
-  term.scrollViewportByLines(lines);
+  return scrollResttyViewportByLines(pane, lines);
+}
+
+function scrollResttyViewportByLines(pane: TerminalPane, lines: number): boolean {
+  const term = pane.term as ScrollViewportApi | undefined;
+  if (callScrollViewportByLines(term, lines)) return true;
+
+  const restty = pane.term?.restty as ResttyViewportApi | undefined;
+  if (callScrollViewportByLines(restty, lines)) return true;
+  if (callScrollViewportByLines(restty?.focusedPane?.(), lines)) return true;
+  return callScrollViewportByLines(restty?.activePane?.(), lines);
+}
+
+function callScrollViewportByLines(api: ScrollViewportApi | null | undefined, lines: number): boolean {
+  if (typeof api?.scrollViewportByLines !== "function") return false;
+  api.scrollViewportByLines(lines);
   return true;
 }
 
