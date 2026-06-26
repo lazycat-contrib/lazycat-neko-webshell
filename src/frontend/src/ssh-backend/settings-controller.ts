@@ -10,6 +10,7 @@ import {
   type SshProfileSaveInput,
 } from "./api";
 import {
+  draftFromConfigHost,
   draftFromProfile,
   emptySshProfileDraft,
   renderSshProfileSettingsView,
@@ -19,6 +20,7 @@ import {
 export type SshProfileSettingsControllerOptions = {
   root: HTMLElement;
   updateIcons: () => void;
+  onOpenProfile: (selector: string) => void | Promise<void>;
   onProfilesChanged: () => void;
   onStatus: (message: string, tone?: "neutral" | "ok" | "error") => void;
 };
@@ -30,10 +32,26 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
   let draft = emptySshProfileDraft();
   let status = "";
   let tone: "neutral" | "ok" | "error" = "neutral";
+  let query = "";
   let busy = false;
 
   options.root.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
+    const open = target?.closest<HTMLButtonElement>("[data-ssh-profile-open]");
+    if (open) {
+      void openProfile(open.dataset.sshProfileOpen ?? "");
+      return;
+    }
+    const saveConfig = target?.closest<HTMLButtonElement>("[data-ssh-config-save]");
+    if (saveConfig) {
+      void importConfigHost(saveConfig.dataset.sshConfigSave ?? "");
+      return;
+    }
+    const configRow = target?.closest<HTMLButtonElement>("[data-ssh-config-host-row]");
+    if (configRow) {
+      selectConfigHost(configRow.dataset.sshConfigHostRow ?? "");
+      return;
+    }
     const row = target?.closest<HTMLButtonElement>("[data-ssh-profile-id]");
     if (row) {
       selectProfile(row.dataset.sshProfileId ?? "");
@@ -115,6 +133,11 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
     const input = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement
       ? event.target
       : null;
+    if (input instanceof HTMLInputElement && input.matches("[data-ssh-search]")) {
+      query = input.value;
+      render({ focusSearch: true });
+      return;
+    }
     if (input instanceof HTMLSelectElement && input.matches("[data-ssh-config-host]")) {
       selectConfigHost(input.value);
       return;
@@ -138,15 +161,21 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
     if (!host) return;
     selectedId = undefined;
     draft = {
-      ...draft,
-      kind: "device-openssh",
-      name: draft.name.trim() || host.alias,
-      target: host.alias,
-      host: host.host || host.alias,
-      username: host.username,
-      port: "",
+      ...draftFromConfigHost(host),
+      strictHostKeyChecking: draft.strictHostKeyChecking,
     };
     render();
+  }
+
+  async function importConfigHost(alias: string) {
+    const host = configHosts.find((item) => item.alias === alias);
+    if (!host) return;
+    selectedId = undefined;
+    draft = {
+      ...draftFromConfigHost(host),
+      strictHostKeyChecking: draft.strictHostKeyChecking,
+    };
+    await save();
   }
 
   async function save() {
@@ -175,6 +204,19 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
       const message = await testSshProfile(profileId);
       setStatus(message, "ok", false);
     }, "SSH test failed");
+  }
+
+  async function openProfile(id: string) {
+    const selected = profiles.find((profile) => profile.id === id);
+    if (!selected) return;
+    if (!selected.enabled) {
+      setStatus("Enable the SSH profile before opening it", "error");
+      return;
+    }
+    await withBusy(async () => {
+      await options.onOpenProfile(selected.selector);
+      setStatus(`Opening SSH profile: ${selected.name}`, "ok", false);
+    }, "Failed to open SSH profile");
   }
 
   async function remove() {
@@ -238,17 +280,28 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
     if (rerender) render();
   }
 
-  function render() {
+  type RenderOptions = {
+    focusSearch?: boolean;
+  };
+
+  function render(renderOptions: RenderOptions = {}) {
     options.root.innerHTML = renderSshProfileSettingsView({
       profiles,
       configHosts,
       draft,
       selectedId,
+      query,
       status,
       tone,
       busy,
     });
     options.updateIcons();
+    if (renderOptions.focusSearch) {
+      const search = options.root.querySelector<HTMLInputElement>("[data-ssh-search]");
+      search?.focus();
+      const end = search?.value.length ?? 0;
+      search?.setSelectionRange(end, end);
+    }
   }
 
   render();

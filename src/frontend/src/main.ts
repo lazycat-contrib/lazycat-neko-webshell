@@ -418,6 +418,7 @@ const notificationController = createNotificationController({
 const sshProfileSettings = createSshProfileSettingsController({
   root: elements.sshProfileSettings,
   updateIcons,
+  onOpenProfile: openSshProfileFromSettings,
   onProfilesChanged: () => void loadInstances(),
   onStatus: (message, tone = "neutral") => setGlobalStatus(message, tone),
 });
@@ -575,6 +576,19 @@ async function prepareSshUrlOpen() {
     setGlobalStatus(tr("status.sshUrlOpenFailed", { message: errorMessage(error) }), "error");
     return undefined;
   }
+}
+
+async function openSshProfileFromSettings(selector: string) {
+  const normalized = normalizeSelector(selector);
+  if (!normalized) return;
+  selectedSelectorExplicit = true;
+  setSelectedSelector(normalized, { updateLocation: true, replaceLocation: false, tabId: "" });
+  rememberSelector(normalized);
+  updateSelectedInstanceChrome();
+  await loadInstances();
+  setSelectedSelector(normalized, { updateLocation: true, replaceLocation: true, tabId: "" });
+  await loadWorkspace(normalized);
+  await createTerminalTab(normalized, "ssh");
 }
 
 async function loadRuntimeInfo() {
