@@ -385,10 +385,6 @@ export type TerminalPane = {
   terminalShaderEffect?: TerminalShaderEffect;
   viewportGuardInstalled?: boolean;
   scrollbackFallbackInstalled?: boolean;
-  herdrHistoryScroll?: {
-    hide(): void;
-    dispose(): void;
-  };
   touchKeyboardGuardInstalled?: boolean;
   exited: boolean;
   closing: boolean;

@@ -64,7 +64,6 @@ import {
   herdrSplitDirection,
   selectHerdrTerminalPane,
 } from "./herdr-backend";
-import { installHerdrHistoryScroll } from "./herdr-history-scroll";
 import {
   renderHerdrWorkspaceMenuView,
   syncHerdrTabButtons,
@@ -2469,7 +2468,6 @@ async function pasteIntoHerdrPane(pane: TerminalPane, report: boolean): Promise<
 
 async function pasteTextIntoHerdrPane(pane: TerminalPane, text: string, report: boolean): Promise<boolean> {
   if (!text) return false;
-  hidePaneHerdrHistoryScroll(pane);
   try {
     const selector = await ensureHerdrSocketReady(pane);
     const paneId = await currentHerdrPaneId(selector);
@@ -4135,44 +4133,11 @@ function refreshHerdrPaneTerminal(pane: TerminalPane) {
 }
 
 function refreshHerdrPaneTerminalAfterAction(pane: TerminalPane) {
-  hidePaneHerdrHistoryScroll(pane);
   refreshHerdrPaneTerminal(pane);
   for (const delay of HERDR_FOCUS_REFRESH_DELAYS_MS) {
     window.setTimeout(() => refreshHerdrPaneTerminal(pane), delay);
   }
   focusPaneCanvas(pane);
-}
-
-function installPaneHerdrHistoryScroll(pane: TerminalPane) {
-  disposePaneHerdrHistoryScroll(pane);
-  if (!isHerdrTerminalPane(pane)) return;
-  pane.herdrHistoryScroll = installHerdrHistoryScroll({
-    pane,
-    ensureHerdrSocketReady,
-    currentHerdrPaneId,
-    runHerdrSocketRequest,
-    focusPane: focusPaneCanvas,
-    reportError: (message) => {
-      if (settings.debugMode) {
-        setGlobalStatus(tr("status.herdrActionFailed", { message }), "error");
-      }
-    },
-  });
-}
-
-function hidePaneHerdrHistoryScroll(pane: TerminalPane) {
-  pane.herdrHistoryScroll?.hide();
-}
-
-function hideAllPaneHerdrHistoryScroll() {
-  for (const pane of allPanes()) {
-    pane.herdrHistoryScroll?.hide();
-  }
-}
-
-function disposePaneHerdrHistoryScroll(pane: TerminalPane) {
-  pane.herdrHistoryScroll?.dispose();
-  pane.herdrHistoryScroll = undefined;
 }
 
 async function ensureHerdrEntry(selector = selectedSelector): Promise<boolean> {
@@ -4763,7 +4728,6 @@ function preparePaneForFullReplay(pane: TerminalPane) {
   clearReplayInputLock(pane);
   terminalTransfer.resetPane(pane);
   flushPaneDecoder(pane);
-  disposePaneHerdrHistoryScroll(pane);
   disposePaneTerminalRuntime(pane);
   destroyPaneTransport(pane);
   pane.lastReplayAfter = undefined;
@@ -5064,7 +5028,6 @@ function updatePaneActiveState(tab: TerminalTab) {
 }
 
 async function mountTerminal(pane: TerminalPane) {
-  disposePaneHerdrHistoryScroll(pane);
   disposePaneTerminalRuntime(pane);
   const transport = replacePaneTransport(pane, createPaneRuntimeTransport);
   pane.mount.innerHTML = "";
@@ -5093,7 +5056,6 @@ async function mountTerminal(pane: TerminalPane) {
   term.open(pane.mount);
   term.restty?.setMouseMode("auto");
   void installPaneResttyPlugins(pane);
-  installPaneHerdrHistoryScroll(pane);
   installPaneScrollbackFallback(pane, {
     touchSelectionMode: () => settings.touchSelectionMode,
   });
@@ -5544,7 +5506,6 @@ async function remountTerminalsForTouchMode() {
 }
 
 function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: boolean } = {}) {
-  hideAllPaneHerdrHistoryScroll();
   activeTabId = tabId;
   for (const tab of tabs) {
     const active = tab.id === tabId;
@@ -5575,7 +5536,6 @@ function activateAdjacentTab(direction: -1 | 1) {
 }
 
 function activatePane(tabId: string, paneId: string, options: { focus?: boolean; sync?: boolean } = {}) {
-  hideAllPaneHerdrHistoryScroll();
   const tab = tabs.find((item) => item.id === tabId);
   if (!tab) return;
   activeTabId = tabId;
@@ -5943,7 +5903,6 @@ function disposePaneLocal(pane: TerminalPane) {
   clearReplayInputLock(pane);
   flushPaneDecoder(pane);
   clearPendingInput(pane);
-  disposePaneHerdrHistoryScroll(pane);
   disposePaneTerminalRuntime(pane);
   destroyPaneTransport(pane);
   pane.mount.remove();
@@ -6174,7 +6133,6 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
     focusActivePaneCanvas();
     return false;
   }
-  hidePaneHerdrHistoryScroll(pane);
   if (terminalTransfer.consumePaneInput(pane, data)) {
     return true;
   }
