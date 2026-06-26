@@ -88,17 +88,17 @@ function scrollPaneByPixels(pane: TerminalPane, host: HTMLElement | null, deltaP
 
 function scrollResttyViewportByPixels(pane: TerminalPane, deltaPx: number): boolean {
   if (!Number.isFinite(deltaPx) || Math.abs(deltaPx) < 1) return false;
-  const restty = pane.term?.restty;
-  if (!restty) return false;
+  const term = pane.term;
+  if (!term?.restty) return false;
   const lines = resttyScrollLinesFromPixels(pane.mount, deltaPx);
   if (!Number.isFinite(lines) || Math.abs(lines) < 0.25) return false;
-  restty.scrollViewportByLines(lines);
+  term.scrollViewportByLines(lines);
   return true;
 }
 
 function scrollResttyViewportByWheel(pane: TerminalPane, event: WheelEvent): boolean {
-  const restty = pane.term?.restty;
-  if (!restty) return false;
+  const term = pane.term;
+  if (!term?.restty) return false;
   let lines = 0;
   if (event.deltaMode === 1) {
     const yoff = event.deltaY > 0 ? Math.max(event.deltaY, 1) : Math.min(event.deltaY, -1);
@@ -110,7 +110,7 @@ function scrollResttyViewportByWheel(pane: TerminalPane, event: WheelEvent): boo
     lines = event.deltaY / terminalLineHeightPx(pane.mount) * WHEEL_PIXEL_SCROLL_MULTIPLIER;
   }
   if (!Number.isFinite(lines) || Math.abs(lines) < 0.25) return false;
-  restty.scrollViewportByLines(lines);
+  term.scrollViewportByLines(lines);
   return true;
 }
 
