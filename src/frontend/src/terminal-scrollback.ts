@@ -1,18 +1,8 @@
 import type { TerminalPane, TouchSelectionMode } from "./types";
 
 const TOUCH_SCROLL_THRESHOLD_PX = 6;
-const FALLBACK_TOUCH_SCROLL_MULTIPLIER = 1.5;
 const WHEEL_PIXEL_SCROLL_MULTIPLIER = 2;
 const WHEEL_LINE_DELTA_PX = 40;
-
-type ScrollViewportApi = {
-  scrollViewportByLines?: (lines: number) => void;
-};
-
-type ResttyViewportApi = ScrollViewportApi & {
-  activePane?: () => ScrollViewportApi | null;
-  focusedPane?: () => ScrollViewportApi | null;
-};
 
 export type ScrollbackFallbackOptions = {
   touchSelectionMode: () => TouchSelectionMode;
@@ -27,11 +17,13 @@ export function installPaneScrollbackFallback(
   let touchPointerId: number | undefined;
   let lastTouchY = 0;
   let touchScrollActive = false;
+  let touchWheelRemainderPx = 0;
 
   const stopTouchScroll = (pointerId: number) => {
     if (touchPointerId !== pointerId) return;
     touchPointerId = undefined;
     touchScrollActive = false;
+    touchWheelRemainderPx = 0;
   };
 
   pane.mount.addEventListener("wheel", (event) => {
@@ -52,6 +44,7 @@ export function installPaneScrollbackFallback(
     touchPointerId = event.pointerId;
     lastTouchY = event.clientY;
     touchScrollActive = false;
+    touchWheelRemainderPx = 0;
   }, { capture: true, passive: false });
 
   pane.mount.addEventListener("pointermove", (event) => {
@@ -63,7 +56,12 @@ export function installPaneScrollbackFallback(
     if (!touchScrollActive && Math.abs(deltaPx) < TOUCH_SCROLL_THRESHOLD_PX) return;
     touchScrollActive = true;
     lastTouchY = event.clientY;
-    if (scrollPaneByPixels(pane, host, deltaPx)) {
+    const handled = paneMouseReportingActive(pane, event)
+      ? dispatchHerdrTouchWheel(pane, event, deltaPx, (remainder) => {
+        touchWheelRemainderPx = remainder;
+      }, touchWheelRemainderPx)
+      : scrollPaneByPixels(pane, host, deltaPx);
+    if (handled) {
       event.preventDefault();
       event.stopPropagation();
     }
@@ -83,58 +81,49 @@ function scrollNonHerdrPaneFromWheel(pane: TerminalPane, event: WheelEvent): boo
 }
 
 function scrollHerdrPaneFromWheel(pane: TerminalPane, event: WheelEvent): boolean {
+  if (paneMouseReportingActive(pane, event)) return false;
   const host = paneScrollbackHost(pane);
   const deltaPx = normalizedWheelDeltaPx(event, host ?? pane.mount);
-  if (host && hostCanScroll(host) && scrollPaneHost(host, deltaPx)) return true;
-  return scrollResttyViewportByWheel(pane, event);
+  return Boolean(host && hostCanScroll(host) && scrollPaneHost(host, deltaPx));
 }
 
 function scrollPaneByPixels(pane: TerminalPane, host: HTMLElement | null, deltaPx: number): boolean {
   if (host && hostCanScroll(host) && scrollPaneHost(host, deltaPx)) return true;
-  if (!paneIsHerdr(pane)) return false;
-  return scrollResttyViewportByPixels(pane, deltaPx);
+  return false;
 }
 
-function scrollResttyViewportByPixels(pane: TerminalPane, deltaPx: number): boolean {
-  if (!Number.isFinite(deltaPx) || Math.abs(deltaPx) < 1) return false;
-  const lines = resttyScrollLinesFromPixels(pane.mount, deltaPx);
-  if (!Number.isFinite(lines) || Math.abs(lines) < 0.25) return false;
-  return scrollResttyViewportByLines(pane, lines);
-}
-
-function scrollResttyViewportByWheel(pane: TerminalPane, event: WheelEvent): boolean {
-  let lines = 0;
-  if (event.deltaMode === 1) {
-    const yoff = event.deltaY > 0 ? Math.max(event.deltaY, 1) : Math.min(event.deltaY, -1);
-    lines = yoff * 3;
-  } else if (event.deltaMode === 2) {
-    const pageLines = pane.term?.rows ?? pane.rows ?? 24;
-    lines = event.deltaY * Math.max(1, pageLines);
-  } else {
-    lines = event.deltaY / terminalLineHeightPx(pane.mount) * WHEEL_PIXEL_SCROLL_MULTIPLIER;
+function dispatchHerdrTouchWheel(
+  pane: TerminalPane,
+  sourceEvent: PointerEvent,
+  deltaPx: number,
+  setRemainder: (value: number) => void,
+  currentRemainder: number,
+): boolean {
+  if (!paneIsHerdr(pane) || !Number.isFinite(deltaPx) || !deltaPx) return false;
+  const canvas = pane.mount.querySelector<HTMLElement>(".pane-canvas");
+  if (!canvas) return false;
+  const thresholdPx = Math.max(1, terminalLineHeightPx(pane.mount));
+  const next = currentRemainder + deltaPx;
+  const notches = Math.trunc(next / thresholdPx);
+  setRemainder(next - notches * thresholdPx);
+  if (!notches) return true;
+  const direction = notches > 0 ? 1 : -1;
+  const count = Math.min(4, Math.abs(notches));
+  for (let index = 0; index < count; index += 1) {
+    canvas.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: sourceEvent.clientX,
+      clientY: sourceEvent.clientY,
+      ctrlKey: sourceEvent.ctrlKey,
+      altKey: sourceEvent.altKey,
+      shiftKey: sourceEvent.shiftKey,
+      metaKey: sourceEvent.metaKey,
+      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+      deltaY: direction * thresholdPx,
+    }));
   }
-  if (!Number.isFinite(lines) || Math.abs(lines) < 0.25) return false;
-  return scrollResttyViewportByLines(pane, lines);
-}
-
-function scrollResttyViewportByLines(pane: TerminalPane, lines: number): boolean {
-  const term = pane.term as ScrollViewportApi | undefined;
-  if (callScrollViewportByLines(term, lines)) return true;
-
-  const restty = pane.term?.restty as ResttyViewportApi | undefined;
-  if (callScrollViewportByLines(restty, lines)) return true;
-  if (callScrollViewportByLines(restty?.focusedPane?.(), lines)) return true;
-  return callScrollViewportByLines(restty?.activePane?.(), lines);
-}
-
-function callScrollViewportByLines(api: ScrollViewportApi | null | undefined, lines: number): boolean {
-  if (typeof api?.scrollViewportByLines !== "function") return false;
-  api.scrollViewportByLines(lines);
   return true;
-}
-
-function resttyScrollLinesFromPixels(mount: HTMLElement, deltaPx: number): number {
-  return deltaPx / terminalLineHeightPx(mount) * FALLBACK_TOUCH_SCROLL_MULTIPLIER;
 }
 
 function terminalLineHeightPx(mount: HTMLElement): number {
