@@ -885,13 +885,13 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: color-mix(in srgb, var(--text) 78%, var(--muted));
+  color: var(--accent-fg);
   padding: 0;
 }
 
 .white-noise-floating-toggle:hover,
 .white-noise-floating-toggle:focus-visible {
-  color: var(--accent-fg);
+  color: var(--accent-strong);
 }
 
 .white-noise-floating-toggle:focus-visible {
@@ -907,6 +907,8 @@
 .white-noise-floating-toggle svg {
   width: 15px;
   height: 15px;
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--surface) 70%, transparent));
+  stroke-width: 2.6;
 }
 
 .white-noise-floating-controls button:disabled {
