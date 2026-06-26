@@ -1994,6 +1994,22 @@ textarea:focus-visible {
   touch-action: none !important;
 }
 
+.terminal-mount.herdr-scrollback-fallback .restty-native-scroll-host {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+.terminal-mount.herdr-scrollback-fallback .restty-native-scroll-host::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.terminal-mount.herdr-scrollback-fallback .restty-native-scroll-chrome,
+.terminal-mount.herdr-scrollback-fallback .restty-native-scroll-thumb {
+  display: none !important;
+}
+
 .empty-state {
   position: absolute;
   inset: 0;
