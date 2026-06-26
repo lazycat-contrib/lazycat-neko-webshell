@@ -25,6 +25,7 @@ export type WhiteNoiseViewState = {
   installing: boolean;
   floatingCollapsed: boolean;
   playing: boolean;
+  previewTrackId: string;
   helpOpen: boolean;
   masterVolume: number;
   packageUrl: string;
@@ -33,6 +34,7 @@ export type WhiteNoiseViewState = {
 
 export type WhiteNoiseControllerOptions = {
   isEnabled: () => boolean;
+  autoPlayOnSelect: () => boolean;
   tr: Translate;
   onRender: () => void;
   onStatus: (message: string, tone?: "neutral" | "ok" | "error") => void;
@@ -73,6 +75,8 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
   let masterVolume = normalizeVolume(stored.masterVolume, DEFAULT_MASTER_VOLUME);
   let packageUrl = stringOrDefault(stored.packageUrl, DEFAULT_SOUND_PACKAGE_URL);
   let playing = false;
+  let previewPlayer: HTMLAudioElement | undefined;
+  let previewTrackId = "";
   let helpOpen = false;
   let tracks: WhiteNoiseTrackState[] = [];
 
@@ -86,6 +90,7 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
       installing,
       floatingCollapsed,
       playing,
+      previewTrackId,
       helpOpen,
       masterVolume,
       packageUrl,
@@ -212,7 +217,12 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
       options.onRender();
       return;
     }
-    ensureAtLeastOneTrack();
+    if (!enabledTracks().length) {
+      options.onStatus(options.tr("status.whiteNoiseNoSelection"), "error");
+      options.onRender();
+      return;
+    }
+    stopPreview();
     try {
       await Promise.all(enabledTracks().map((item) => {
         const player = audioForTrack(item.track);
@@ -240,6 +250,7 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
     for (const player of players.values()) {
       player.pause();
     }
+    stopPreview();
     playing = false;
     options.onRender();
   }
@@ -249,6 +260,7 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
       player.pause();
       player.currentTime = 0;
     }
+    stopPreview();
     playing = false;
     options.onStatus(options.tr("status.whiteNoiseStopped"), "neutral");
     options.onRender();
@@ -283,10 +295,10 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
       : item);
     saveState();
     if (!enabledTracks().length) {
-      pause();
+      stop();
       return;
     }
-    if (playing) {
+    if (playing || options.autoPlayOnSelect()) {
       await play();
       return;
     }
@@ -294,11 +306,65 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
     options.onRender();
   }
 
+  async function previewTrack(trackId: string) {
+    const item = tracks.find((track) => track.track.id === trackId);
+    if (!item || !options.isEnabled()) return;
+    if (previewTrackId === trackId && previewPlayer && !previewPlayer.paused) {
+      stopPreview();
+      options.onRender();
+      return;
+    }
+    stopPreview();
+    const audio = new Audio(new URL(item.track.url, window.location.href).toString());
+    previewPlayer = audio;
+    previewTrackId = trackId;
+    audio.preload = "auto";
+    audio.loop = false;
+    audio.volume = mixedVolume(item.volume);
+    audio.addEventListener("ended", () => {
+      if (previewPlayer === audio) {
+        previewPlayer = undefined;
+        previewTrackId = "";
+        options.onRender();
+      }
+    });
+    audio.addEventListener("error", () => {
+      if (previewPlayer === audio) {
+        previewPlayer = undefined;
+        previewTrackId = "";
+        options.onStatus(options.tr("status.whiteNoisePreviewFailed", { name: item.track.name }), "error");
+        options.onRender();
+      }
+    });
+    try {
+      await audio.play();
+      options.onRender();
+    } catch (error) {
+      if (previewPlayer === audio) {
+        previewPlayer = undefined;
+        previewTrackId = "";
+      }
+      options.onStatus(
+        options.tr("status.whiteNoisePlayFailed", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+        "error",
+      );
+      options.onRender();
+    }
+  }
+
   function applyVolumes() {
     for (const item of tracks) {
       const player = players.get(item.track.id);
       if (player) {
         player.volume = mixedVolume(item.volume);
+      }
+    }
+    if (previewTrackId) {
+      const item = tracks.find((track) => track.track.id === previewTrackId);
+      if (item && previewPlayer) {
+        previewPlayer.volume = mixedVolume(item.volume);
       }
     }
   }
@@ -313,12 +379,6 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
 
   function enabledTracks() {
     return tracks.filter((item) => item.enabled);
-  }
-
-  function ensureAtLeastOneTrack() {
-    if (enabledTracks().length) return;
-    tracks = tracks.map((item, index) => index === 0 ? { ...item, enabled: true } : item);
-    saveState();
   }
 
   function reconcileTracks() {
@@ -338,6 +398,9 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
         player?.pause();
         players.delete(id);
       }
+    }
+    if (previewTrackId && !tracks.some((item) => item.track.id === previewTrackId)) {
+      stopPreview();
     }
     if (!tracks.length) {
       playing = false;
@@ -361,6 +424,15 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
 
   function mixedVolume(trackVolume: number): number {
     return clampVolume(masterVolume * trackVolume);
+  }
+
+  function stopPreview() {
+    if (previewPlayer) {
+      previewPlayer.pause();
+      previewPlayer.currentTime = 0;
+    }
+    previewPlayer = undefined;
+    previewTrackId = "";
   }
 
   function saveState() {
@@ -399,6 +471,7 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
     stepMasterVolume,
     setTrackVolume,
     toggleTrack,
+    previewTrack,
   };
 }
 

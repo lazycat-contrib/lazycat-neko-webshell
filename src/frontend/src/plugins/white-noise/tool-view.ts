@@ -193,6 +193,10 @@ function renderTrack(
 ): string {
   const disabled = state.disabled ? "disabled" : "";
   const toggleLabel = state.tr("whiteNoise.toggleTrack", { name: item.track.name });
+  const previewing = state.previewTrackId === item.track.id;
+  const previewLabel = state.tr(previewing ? "action.whiteNoiseStopPreview" : "action.whiteNoisePreview", {
+    name: item.track.name,
+  });
   return `
     <article class="white-noise-track" role="listitem" data-white-noise-enabled="${item.enabled}">
       <button class="white-noise-track-toggle" type="button" data-white-noise-track-toggle="${escapeAttr(item.track.id)}" aria-pressed="${item.enabled}" aria-label="${escapeAttr(toggleLabel)}" title="${escapeAttr(toggleLabel)}" ${disabled}>
@@ -210,6 +214,9 @@ function renderTrack(
           <em>${escapeHtml(percent(item.volume))}%</em>
         </label>
       </div>
+      <button class="white-noise-track-preview" type="button" data-white-noise-track-preview="${escapeAttr(item.track.id)}" aria-label="${escapeAttr(previewLabel)}" title="${escapeAttr(previewLabel)}" ${disabled}>
+        <i data-lucide="${previewing ? "square" : "headphones"}"></i>
+      </button>
     </article>
   `;
 }

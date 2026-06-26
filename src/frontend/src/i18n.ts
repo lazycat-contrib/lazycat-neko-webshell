@@ -78,7 +78,9 @@ export type MessageKey =
   | "action.whiteNoiseInstall"
   | "action.whiteNoisePause"
   | "action.whiteNoisePlay"
+  | "action.whiteNoisePreview"
   | "action.whiteNoiseStop"
+  | "action.whiteNoiseStopPreview"
   | "action.whiteNoiseVolumeDown"
   | "action.whiteNoiseVolumeUp"
   | "action.promoteSessionToTab"
@@ -331,6 +333,8 @@ export type MessageKey =
   | "setting.pluginEnabled"
   | "setting.whiteNoiseFloatingControls"
   | "setting.whiteNoiseFloatingControlsHelp"
+  | "setting.whiteNoiseAutoPlayOnSelect"
+  | "setting.whiteNoiseAutoPlayOnSelectHelp"
   | "setting.terminalBackground"
   | "setting.terminalShaderHelp"
   | "setting.useResttyClipboard"
@@ -572,7 +576,9 @@ export type MessageKey =
   | "status.whiteNoiseInstalling"
   | "status.whiteNoiseLoadFailed"
   | "status.whiteNoiseNoSounds"
+  | "status.whiteNoiseNoSelection"
   | "status.whiteNoisePlayFailed"
+  | "status.whiteNoisePreviewFailed"
   | "status.whiteNoisePlaying"
   | "status.whiteNoiseStopped"
   | "status.portForwardReady"
@@ -739,7 +745,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.whiteNoiseInstall": "Download",
     "action.whiteNoisePause": "Pause",
     "action.whiteNoisePlay": "Play",
+    "action.whiteNoisePreview": "Preview {name}",
     "action.whiteNoiseStop": "Stop",
+    "action.whiteNoiseStopPreview": "Stop previewing {name}",
     "action.whiteNoiseVolumeDown": "Volume down",
     "action.whiteNoiseVolumeUp": "Volume up",
     "action.promoteSessionToTab": "Move session to new tab",
@@ -999,6 +1007,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.pluginEnabled": "Enabled",
     "setting.whiteNoiseFloatingControls": "Show left playback controls",
     "setting.whiteNoiseFloatingControlsHelp": "When white noise is enabled, show a left-side floating bar with play/pause and volume buttons.",
+    "setting.whiteNoiseAutoPlayOnSelect": "Auto-play selected sounds",
+    "setting.whiteNoiseAutoPlayOnSelectHelp": "When enabled, selecting a sound starts playback automatically. Clearing all selected sounds stops playback.",
     "setting.terminalBackground": "Use background image",
     "setting.terminalShaderHelp": "GPU effects are off by default. Enable them only when you want extra terminal feedback.",
     "setting.useResttyClipboard": "Use restty clipboard",
@@ -1240,7 +1250,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.whiteNoiseLoaded": "{count} sound(s) loaded",
     "status.whiteNoiseLoadFailed": "Sound catalog load failed: {message}",
     "status.whiteNoiseNoSounds": "Add audio files before playing sounds.",
+    "status.whiteNoiseNoSelection": "Select at least one sound before playing.",
     "status.whiteNoisePlayFailed": "Playback failed: {message}",
+    "status.whiteNoisePreviewFailed": "Preview failed: {name}",
     "status.whiteNoisePlaying": "White noise is playing",
     "status.whiteNoiseStopped": "White noise stopped",
     "status.portForwardReady": "{count} port forward(s) active",
@@ -1406,7 +1418,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.whiteNoiseInstall": "下载",
     "action.whiteNoisePause": "暂停",
     "action.whiteNoisePlay": "播放",
+    "action.whiteNoisePreview": "试听 {name}",
     "action.whiteNoiseStop": "停止",
+    "action.whiteNoiseStopPreview": "停止试听 {name}",
     "action.whiteNoiseVolumeDown": "音量减",
     "action.whiteNoiseVolumeUp": "音量加",
     "action.promoteSessionToTab": "将会话提升为新标签",
@@ -1666,6 +1680,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.pluginEnabled": "已启用",
     "setting.whiteNoiseFloatingControls": "显示左侧播放控制",
     "setting.whiteNoiseFloatingControlsHelp": "白噪音启用时，在左侧显示播放/暂停和音量控制浮动条。",
+    "setting.whiteNoiseAutoPlayOnSelect": "选择后自动播放",
+    "setting.whiteNoiseAutoPlayOnSelectHelp": "开启后，选中声音会自动开始播放；取消到 0 个声音时自动停止。",
     "setting.terminalBackground": "使用背景图片",
     "setting.terminalShaderHelp": "GPU 特效默认关闭。需要额外的输入反馈时再开启。",
     "setting.useResttyClipboard": "使用 restty 剪贴板",
@@ -1907,7 +1923,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.whiteNoiseLoaded": "已加载 {count} 个声音",
     "status.whiteNoiseLoadFailed": "声音列表加载失败：{message}",
     "status.whiteNoiseNoSounds": "请先添加音频文件再播放。",
+    "status.whiteNoiseNoSelection": "请至少选择一个声音再播放。",
     "status.whiteNoisePlayFailed": "播放失败：{message}",
+    "status.whiteNoisePreviewFailed": "试听失败：{name}",
     "status.whiteNoisePlaying": "白噪音播放中",
     "status.whiteNoiseStopped": "白噪音已停止",
     "status.portForwardReady": "{count} 个端口转发正在运行",

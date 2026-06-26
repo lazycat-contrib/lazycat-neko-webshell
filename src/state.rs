@@ -883,6 +883,7 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
                 ("builtin".to_owned(), "true".to_owned()),
                 ("runtime".to_owned(), "browser-audio".to_owned()),
                 ("floatingControls".to_owned(), "true".to_owned()),
+                ("autoPlayOnSelect".to_owned(), "true".to_owned()),
             ]),
         },
         PluginRecord {

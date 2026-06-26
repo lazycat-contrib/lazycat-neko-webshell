@@ -163,7 +163,9 @@ import {
 import { renderTerminalTransferToolView } from "./plugins/terminal-transfer/tool-view";
 import { createWhiteNoiseController } from "./plugins/white-noise/controller";
 import {
+  WHITE_NOISE_AUTO_PLAY_ON_SELECT_METADATA,
   WHITE_NOISE_FLOATING_CONTROLS_METADATA,
+  whiteNoiseAutoPlayOnSelectEnabled,
   whiteNoiseFloatingControlsEnabled,
 } from "./plugins/white-noise/settings-view";
 import {
@@ -551,6 +553,7 @@ const terminalTransfer = createTerminalTransferController({
 });
 const whiteNoise = createWhiteNoiseController({
   isEnabled: () => pluginIsEnabled(WHITE_NOISE_PLUGIN_ID),
+  autoPlayOnSelect: () => whiteNoiseAutoPlayOnSelectEnabled(findWhiteNoisePlugin(plugins)?.metadata ?? {}),
   tr,
   onStatus: setPluginStatus,
   onRender: renderWhiteNoiseSurfaces,
@@ -1146,6 +1149,13 @@ function bindSettings() {
       : null;
     if (whiteNoiseTrackButton) {
       void whiteNoise.toggleTrack(whiteNoiseTrackButton.dataset.whiteNoiseTrackToggle ?? "");
+      return;
+    }
+    const whiteNoiseTrackPreviewButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-white-noise-track-preview]")
+      : null;
+    if (whiteNoiseTrackPreviewButton) {
+      void whiteNoise.previewTrack(whiteNoiseTrackPreviewButton.dataset.whiteNoiseTrackPreview ?? "");
       return;
     }
     const aiSettingButton = event.target instanceof Element
@@ -2942,9 +2952,12 @@ async function configureTerminalTransferProtocols(protocol: string, checked: boo
 async function configureWhiteNoiseSetting(setting: string, checked: boolean) {
   const plugin = findWhiteNoisePlugin(plugins);
   if (!plugin || pluginSaveInFlight.has(WHITE_NOISE_PLUGIN_ID)) return;
-  if (setting !== "floatingControls") return;
+  if (setting !== "floatingControls" && setting !== "autoPlayOnSelect") return;
+  const key = setting === "autoPlayOnSelect"
+    ? WHITE_NOISE_AUTO_PLAY_ON_SELECT_METADATA
+    : WHITE_NOISE_FLOATING_CONTROLS_METADATA;
   await configurePlugin(WHITE_NOISE_PLUGIN_ID, plugin.enabled, {
-    [WHITE_NOISE_FLOATING_CONTROLS_METADATA]: String(checked),
+    [key]: String(checked),
   }, "settings");
 }
 
@@ -3004,6 +3017,7 @@ function renderPluginSettings() {
       tr,
     },
     whiteNoise: {
+      autoPlayOnSelect: whiteNoiseAutoPlayOnSelectEnabled(findWhiteNoisePlugin(plugins)?.metadata ?? {}),
       floatingControls: whiteNoiseFloatingControlsEnabled(findWhiteNoisePlugin(plugins)?.metadata ?? {}),
       disabled: pluginsLoading || pluginSaveInFlight.has(WHITE_NOISE_PLUGIN_ID),
       tr,

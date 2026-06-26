@@ -769,7 +769,7 @@
 
 .white-noise-track {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 34px minmax(0, 1fr) 30px;
   gap: 9px;
   align-items: center;
   border: 1px solid var(--line-soft);
@@ -798,6 +798,29 @@
   border-color: var(--accent-border);
   background: var(--accent-soft);
   color: var(--accent-fg);
+}
+
+.white-noise-track-preview {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--component-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-2) 86%, transparent);
+  color: var(--muted);
+}
+
+.white-noise-track-preview:hover,
+.white-noise-track-preview:focus-visible {
+  border-color: var(--accent-border);
+  background: var(--accent-softer);
+  color: var(--accent-fg);
+}
+
+.white-noise-track-preview svg {
+  width: 15px;
+  height: 15px;
 }
 
 .white-noise-track-main {
