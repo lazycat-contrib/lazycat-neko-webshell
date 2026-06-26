@@ -10,6 +10,20 @@ export type MessageKey =
   | "ai.providerAnthropic"
   | "ai.providerOpenAICompatible"
   | "ai.providerOpenAIResponses"
+  | "ai.voiceEnableHelp"
+  | "ai.voiceEndpointAudioSpeech"
+  | "ai.voiceEndpointAudioTranscriptions"
+  | "ai.voiceEndpointChatAudio"
+  | "ai.voiceEndpointChatInputAudio"
+  | "ai.voiceNotConfigured"
+  | "ai.voiceProviderCompatible"
+  | "ai.voiceProviderHelp"
+  | "ai.voiceProviderMimo"
+  | "ai.voiceProviderMimoTokenPlan"
+  | "ai.voiceReplyEnableHelp"
+  | "ai.voiceReplyInstructionsPlaceholder"
+  | "ai.voiceReplyNotConfigured"
+  | "ai.voiceReplyProviderHelp"
   | "about.description"
   | "about.note"
   | "about.session"
@@ -33,6 +47,18 @@ export type MessageKey =
   | "action.aiSend"
   | "action.aiSendToTerminal"
   | "action.aiTest"
+  | "action.aiVoiceHold"
+  | "action.aiVoiceProviderAdd"
+  | "action.aiVoiceProviderEdit"
+  | "action.aiVoiceProviderRemove"
+  | "action.aiVoiceProviderSelect"
+  | "action.aiVoiceReplyProviderAdd"
+  | "action.aiVoiceReplyProviderEdit"
+  | "action.aiVoiceReplyProviderRemove"
+  | "action.aiVoiceReplyProviderSelect"
+  | "action.aiVoiceReplyPause"
+  | "action.aiVoiceReplyPlay"
+  | "action.aiVoiceReplyShowText"
   | "action.cancel"
   | "action.close"
   | "action.closeActiveSession"
@@ -142,6 +168,14 @@ export type MessageKey =
   | "field.aiPrompt"
   | "field.aiProvider"
   | "field.aiTargetTerminal"
+  | "field.aiVoiceEndpointType"
+  | "field.aiVoiceLanguage"
+  | "field.aiVoiceProfileName"
+  | "field.aiVoiceProvider"
+  | "field.aiVoiceReplyFormat"
+  | "field.aiVoiceReplyInstructions"
+  | "field.aiVoiceReplyProfileName"
+  | "field.aiVoiceReplyVoice"
   | "field.defaultSessionBackend"
   | "field.sshTarget"
   | "field.herdrActiveBackgroundDark"
@@ -315,6 +349,8 @@ export type MessageKey =
   | "section.themes"
   | "section.tunnelProviders"
   | "setting.autoRestartSessions"
+  | "setting.aiVoiceInputEnabled"
+  | "setting.aiVoiceReplyEnabled"
   | "setting.copyOnSelect"
   | "setting.cursorBlink"
   | "setting.debugAdapter"
@@ -486,7 +522,9 @@ export type MessageKey =
   | "tab.fontSettings"
   | "tab.fontUpload"
   | "tab.terminalSession"
+  | "tab.zellijSession"
   | "tab.aiProvider"
+  | "tab.aiVoice"
   | "tab.mcp"
   | "tab.mobile"
   | "tab.plugins"
@@ -558,6 +596,20 @@ export type MessageKey =
   | "status.aiSentToTerminal"
   | "status.aiTestOk"
   | "status.aiWorking"
+  | "status.aiVoiceConfigRemoved"
+  | "status.aiVoiceConfigSaved"
+  | "status.aiVoiceEmpty"
+  | "status.aiVoiceFailed"
+  | "status.aiVoiceInserted"
+  | "status.aiVoiceRecording"
+  | "status.aiVoiceStartFailed"
+  | "status.aiVoiceTooLarge"
+  | "status.aiVoiceReplyConfigRemoved"
+  | "status.aiVoiceReplyConfigSaved"
+  | "status.aiVoiceReplyFailed"
+  | "status.aiVoiceReplyLoading"
+  | "status.aiVoiceReplyPlaying"
+  | "status.aiVoiceReplyReady"
   | "status.pluginDisableFailed"
   | "status.pluginDisabled"
   | "status.pluginEnableFailed"
@@ -700,6 +752,18 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiSend": "Send",
     "action.aiSendToTerminal": "Send to terminal",
     "action.aiTest": "Test",
+    "action.aiVoiceHold": "Hold to speak",
+    "action.aiVoiceProviderAdd": "Add voice provider",
+    "action.aiVoiceProviderEdit": "Edit voice provider",
+    "action.aiVoiceProviderRemove": "Remove voice provider",
+    "action.aiVoiceProviderSelect": "Use voice provider",
+    "action.aiVoiceReplyProviderAdd": "Add reply voice",
+    "action.aiVoiceReplyProviderEdit": "Edit reply voice",
+    "action.aiVoiceReplyProviderRemove": "Remove reply voice",
+    "action.aiVoiceReplyProviderSelect": "Use reply voice",
+    "action.aiVoiceReplyPause": "Pause voice reply",
+    "action.aiVoiceReplyPlay": "Play voice reply",
+    "action.aiVoiceReplyShowText": "Show text",
     "action.cancel": "Cancel",
     "action.close": "Close",
     "action.closeActiveSession": "Close active session",
@@ -809,6 +873,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiPrompt": "Prompt",
     "field.aiProvider": "Provider",
     "field.aiTargetTerminal": "Target terminal",
+    "field.aiVoiceEndpointType": "Interface type",
+    "field.aiVoiceLanguage": "Speech language",
+    "field.aiVoiceProfileName": "Voice profile name",
+    "field.aiVoiceProvider": "Voice provider",
+    "field.aiVoiceReplyFormat": "Audio format",
+    "field.aiVoiceReplyInstructions": "Voice style",
+    "field.aiVoiceReplyProfileName": "Reply voice name",
+    "field.aiVoiceReplyVoice": "Voice",
     "field.defaultSessionBackend": "New tab backend",
     "field.sshTarget": "SSH target",
     "field.herdrActiveBackgroundDark": "Dark highlight",
@@ -891,6 +963,20 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "ai.providerAnthropic": "Anthropic Claude",
     "ai.providerOpenAICompatible": "OpenAI-compatible",
     "ai.providerOpenAIResponses": "OpenAI Responses",
+    "ai.voiceEnableHelp": "When enabled, a hold-to-talk button appears above the mobile keyboard.",
+    "ai.voiceEndpointAudioSpeech": "Audio speech",
+    "ai.voiceEndpointAudioTranscriptions": "Audio transcriptions",
+    "ai.voiceEndpointChatAudio": "Chat audio",
+    "ai.voiceEndpointChatInputAudio": "Chat input_audio",
+    "ai.voiceNotConfigured": "Voice provider not configured",
+    "ai.voiceProviderCompatible": "OpenAI-compatible",
+    "ai.voiceProviderHelp": "Xiaomi presets use Chat Completions input_audio. Custom compatible providers can use either Audio Transcriptions or Chat input_audio.",
+    "ai.voiceProviderMimo": "Xiaomi Mimo",
+    "ai.voiceProviderMimoTokenPlan": "Xiaomi Mimo Token Plan",
+    "ai.voiceReplyEnableHelp": "When enabled, assistant replies show a playback bar and the text stays collapsed by default.",
+    "ai.voiceReplyInstructionsPlaceholder": "Example: Use a natural, clear Chinese narration style.",
+    "ai.voiceReplyNotConfigured": "Reply voice not configured",
+    "ai.voiceReplyProviderHelp": "Xiaomi presets use Chat Completions audio. Compatible providers can use Audio Speech or Chat audio depending on their API shape.",
     "plugin.aiChat.block": "Chat",
     "plugin.aiChat.description": "Chat tool inside WebShell for command help, troubleshooting, and notes.",
     "plugin.aiChat.name": "AI Chat",
@@ -989,6 +1075,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.themes": "Terminal themes",
     "section.tunnelProviders": "Tunnel providers",
     "setting.autoRestartSessions": "Restart sessions after provider restart",
+    "setting.aiVoiceInputEnabled": "Enable voice input",
+    "setting.aiVoiceReplyEnabled": "Enable voice reply",
     "setting.copyOnSelect": "Copy on select",
     "setting.cursorBlink": "Cursor blink",
     "setting.debugAdapter": "Debug adapter",
@@ -1160,7 +1248,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.fontSettings": "Font settings",
     "tab.fontUpload": "Font upload",
     "tab.terminalSession": "Terminal {index}",
+    "tab.zellijSession": "zellij {index}",
     "tab.aiProvider": "AI provider",
+    "tab.aiVoice": "Voice",
     "tab.mcp": "MCP",
     "tab.mobile": "Mobile",
     "tab.plugins": "Tools",
@@ -1232,6 +1322,20 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.aiSentToTerminal": "Sent to {target}",
     "status.aiTestOk": "AI test passed",
     "status.aiWorking": "AI request running...",
+    "status.aiVoiceConfigRemoved": "Voice provider removed",
+    "status.aiVoiceConfigSaved": "Voice provider saved",
+    "status.aiVoiceEmpty": "No speech text returned",
+    "status.aiVoiceFailed": "Voice input failed: {message}",
+    "status.aiVoiceInserted": "Voice text inserted",
+    "status.aiVoiceRecording": "Recording voice...",
+    "status.aiVoiceStartFailed": "Microphone failed: {message}",
+    "status.aiVoiceTooLarge": "Voice recording is larger than 25 MB",
+    "status.aiVoiceReplyConfigRemoved": "Reply voice removed",
+    "status.aiVoiceReplyConfigSaved": "Reply voice saved",
+    "status.aiVoiceReplyFailed": "Voice reply failed: {message}",
+    "status.aiVoiceReplyLoading": "Preparing voice reply...",
+    "status.aiVoiceReplyPlaying": "Playing voice reply",
+    "status.aiVoiceReplyReady": "Voice reply ready",
     "status.pluginDisableFailed": "Disable failed: {message}",
     "status.pluginDisabled": "{name} disabled",
     "status.pluginEnableFailed": "Enable failed: {message}",
@@ -1373,6 +1477,18 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiSend": "发送",
     "action.aiSendToTerminal": "发送到终端",
     "action.aiTest": "测试",
+    "action.aiVoiceHold": "按住说话",
+    "action.aiVoiceProviderAdd": "添加语音服务",
+    "action.aiVoiceProviderEdit": "编辑语音服务",
+    "action.aiVoiceProviderRemove": "移除语音服务",
+    "action.aiVoiceProviderSelect": "使用语音服务",
+    "action.aiVoiceReplyProviderAdd": "添加回复音色",
+    "action.aiVoiceReplyProviderEdit": "编辑回复音色",
+    "action.aiVoiceReplyProviderRemove": "移除回复音色",
+    "action.aiVoiceReplyProviderSelect": "使用回复音色",
+    "action.aiVoiceReplyPause": "暂停语音回复",
+    "action.aiVoiceReplyPlay": "播放语音回复",
+    "action.aiVoiceReplyShowText": "展开文本",
     "action.cancel": "取消",
     "action.close": "关闭",
     "action.closeActiveSession": "关闭当前活动会话",
@@ -1482,6 +1598,14 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiPrompt": "输入",
     "field.aiProvider": "服务商",
     "field.aiTargetTerminal": "目标终端",
+    "field.aiVoiceEndpointType": "接口类型",
+    "field.aiVoiceLanguage": "语音语言",
+    "field.aiVoiceProfileName": "语音配置名称",
+    "field.aiVoiceProvider": "语音服务商",
+    "field.aiVoiceReplyFormat": "音频格式",
+    "field.aiVoiceReplyInstructions": "朗读风格",
+    "field.aiVoiceReplyProfileName": "回复音色名称",
+    "field.aiVoiceReplyVoice": "音色",
     "field.defaultSessionBackend": "新建入口后端",
     "field.sshTarget": "SSH 目标",
     "field.herdrActiveBackgroundDark": "深色高亮",
@@ -1564,6 +1688,20 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "ai.providerAnthropic": "Anthropic Claude",
     "ai.providerOpenAICompatible": "OpenAI-compatible",
     "ai.providerOpenAIResponses": "OpenAI Responses",
+    "ai.voiceEnableHelp": "启用后，移动端键盘上方会显示按住说话按钮。",
+    "ai.voiceEndpointAudioSpeech": "Audio Speech",
+    "ai.voiceEndpointAudioTranscriptions": "Audio Transcriptions",
+    "ai.voiceEndpointChatAudio": "Chat audio",
+    "ai.voiceEndpointChatInputAudio": "Chat input_audio",
+    "ai.voiceNotConfigured": "语音服务未配置",
+    "ai.voiceProviderCompatible": "OpenAI 兼容",
+    "ai.voiceProviderHelp": "小米预设使用 Chat Completions input_audio。自定义兼容服务可以选择 Audio Transcriptions 或 Chat input_audio。",
+    "ai.voiceProviderMimo": "小米 Mimo",
+    "ai.voiceProviderMimoTokenPlan": "小米 Mimo Token Plan",
+    "ai.voiceReplyEnableHelp": "启用后，AI 回复默认显示语音播放条，文本默认折叠。",
+    "ai.voiceReplyInstructionsPlaceholder": "例如：用自然、清晰的中文播报语气朗读。",
+    "ai.voiceReplyNotConfigured": "回复音色未配置",
+    "ai.voiceReplyProviderHelp": "小米预设使用 Chat Completions audio。兼容服务可按接口形态选择 Audio Speech 或 Chat audio。",
     "plugin.aiChat.block": "聊天",
     "plugin.aiChat.description": "WebShell 内的 Chat 工具，可用于命令辅助、问题排查和记录整理。",
     "plugin.aiChat.name": "AI Chat",
@@ -1662,6 +1800,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.themes": "终端主题",
     "section.tunnelProviders": "Tunnel 服务商",
     "setting.autoRestartSessions": "Provider 重启后自动恢复会话",
+    "setting.aiVoiceInputEnabled": "启用语音输入",
+    "setting.aiVoiceReplyEnabled": "启用语音回复",
     "setting.copyOnSelect": "选中即复制",
     "setting.cursorBlink": "光标闪烁",
     "setting.debugAdapter": "调试适配器",
@@ -1833,7 +1973,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.fontSettings": "字体设置",
     "tab.fontUpload": "字体上传",
     "tab.terminalSession": "终端 {index}",
+    "tab.zellijSession": "zellij {index}",
     "tab.aiProvider": "AI 服务",
+    "tab.aiVoice": "语音",
     "tab.mcp": "MCP",
     "tab.mobile": "移动端",
     "tab.plugins": "工具",
@@ -1905,6 +2047,20 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.aiSentToTerminal": "已发送到 {target}",
     "status.aiTestOk": "AI 测试通过",
     "status.aiWorking": "AI 请求中...",
+    "status.aiVoiceConfigRemoved": "语音服务已移除",
+    "status.aiVoiceConfigSaved": "语音服务已保存",
+    "status.aiVoiceEmpty": "没有返回语音文本",
+    "status.aiVoiceFailed": "语音输入失败：{message}",
+    "status.aiVoiceInserted": "语音文本已输入",
+    "status.aiVoiceRecording": "正在录音...",
+    "status.aiVoiceStartFailed": "麦克风启动失败：{message}",
+    "status.aiVoiceTooLarge": "语音录音超过 25 MB",
+    "status.aiVoiceReplyConfigRemoved": "回复音色已移除",
+    "status.aiVoiceReplyConfigSaved": "回复音色已保存",
+    "status.aiVoiceReplyFailed": "语音回复失败：{message}",
+    "status.aiVoiceReplyLoading": "正在准备语音回复...",
+    "status.aiVoiceReplyPlaying": "正在播放语音回复",
+    "status.aiVoiceReplyReady": "语音回复已就绪",
     "status.pluginDisableFailed": "关闭失败：{message}",
     "status.pluginDisabled": "{name} 已关闭",
     "status.pluginEnableFailed": "启用失败：{message}",

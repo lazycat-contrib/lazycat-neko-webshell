@@ -35,6 +35,7 @@ export type ShellElements = {
   herdrNewTab: HTMLButtonElement;
   terminalStage: HTMLDivElement;
   mobileShortcuts: HTMLDivElement;
+  aiVoiceInputSurface: HTMLDivElement;
   mobileShortcutClock: HTMLSpanElement;
   emptyState: HTMLDivElement;
   homeButton: HTMLButtonElement;
@@ -301,6 +302,8 @@ export function renderShell(app: HTMLElement): ShellElements {
       </div>
 
       ${renderMobileKeyboardView()}
+
+      <div class="ai-voice-input-surface" id="aiVoiceInputSurface" hidden></div>
 
       <aside class="plugin-sidebar" id="pluginSidebar" aria-label="Tools" data-i18n-aria="section.plugins" hidden>
         <header class="plugin-sidebar-header">
@@ -638,6 +641,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     herdrNewTab: qs<HTMLButtonElement>("#herdrNewTab"),
     terminalStage: qs<HTMLDivElement>("#terminalStage"),
     mobileShortcuts: qs<HTMLDivElement>("#mobileShortcuts"),
+    aiVoiceInputSurface: qs<HTMLDivElement>("#aiVoiceInputSurface"),
     mobileShortcutClock: qs<HTMLSpanElement>("#mobileShortcutClock"),
     emptyState: qs<HTMLDivElement>("#emptyState"),
     homeButton: qs<HTMLButtonElement>("#homeButton"),

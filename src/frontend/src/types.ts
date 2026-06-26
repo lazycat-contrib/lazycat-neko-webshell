@@ -182,6 +182,34 @@ export type AiProviderProfile = {
   model: string;
 };
 
+export type AiVoiceProviderKind = "mimo" | "mimo-token-plan" | "openai-compatible";
+export type AiVoiceEndpointType = "audio-transcriptions" | "chat-input-audio";
+export type AiVoiceSpeechEndpointType = "audio-speech" | "chat-audio";
+
+export type AiVoiceProviderProfile = {
+  id: string;
+  name: string;
+  provider: AiVoiceProviderKind;
+  endpointType: AiVoiceEndpointType;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  language: string;
+};
+
+export type AiVoiceSpeechProviderProfile = {
+  id: string;
+  name: string;
+  provider: AiVoiceProviderKind;
+  endpointType: AiVoiceSpeechEndpointType;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  voice: string;
+  format: string;
+  instructions: string;
+};
+
 export type MobileQuickPhrase = {
   id: string;
   label: string;
@@ -316,6 +344,12 @@ export type Settings = {
   aiProviderProfiles: AiProviderProfile[];
   aiActiveProviderProfileId: string;
   aiMcpServers: string;
+  aiVoiceInputEnabled: boolean;
+  aiVoiceProviderProfiles: AiVoiceProviderProfile[];
+  aiVoiceActiveProviderProfileId: string;
+  aiVoiceReplyEnabled: boolean;
+  aiVoiceReplyProviderProfiles: AiVoiceSpeechProviderProfile[];
+  aiVoiceReplyActiveProviderProfileId: string;
   mobileQuickPhrases: MobileQuickPhrase[];
 };
 

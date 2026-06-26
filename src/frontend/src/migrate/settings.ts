@@ -1,5 +1,13 @@
 import { DEFAULT_SETTINGS, INTERFACE_STYLE_IDS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "../config";
 import { normalizeMobileQuickPhrases } from "../mobile/quick-input";
+import {
+  normalizeAiVoiceActiveProfileId,
+  normalizeAiVoiceProviderProfiles,
+} from "../plugins/ai-chat/voice-profiles";
+import {
+  normalizeAiVoiceSpeechActiveProfileId,
+  normalizeAiVoiceSpeechProviderProfiles,
+} from "../plugins/ai-chat/voice-speech-profiles";
 import { normalizeFontHintTarget } from "../terminal-fonts/options";
 import { normalizeTerminalShaderEffect } from "../terminal-shaders/options";
 import type { AiProviderProfile, CustomTerminalTheme, InterfaceStyleId, SessionBackendId, Settings } from "../types";
@@ -22,6 +30,16 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     aiProviderProfiles,
   );
   const activeAiProfile = aiProviderProfiles.find((profile) => profile.id === aiActiveProviderProfileId);
+  const aiVoiceProviderProfiles = normalizeAiVoiceProviderProfiles(value.aiVoiceProviderProfiles);
+  const aiVoiceActiveProviderProfileId = normalizeAiVoiceActiveProfileId(
+    value.aiVoiceActiveProviderProfileId,
+    aiVoiceProviderProfiles,
+  );
+  const aiVoiceReplyProviderProfiles = normalizeAiVoiceSpeechProviderProfiles(value.aiVoiceReplyProviderProfiles);
+  const aiVoiceReplyActiveProviderProfileId = normalizeAiVoiceSpeechActiveProfileId(
+    value.aiVoiceReplyActiveProviderProfileId,
+    aiVoiceReplyProviderProfiles,
+  );
 
   return {
     locale: value.locale === "en" || value.locale === "zh-CN" ? value.locale : DEFAULT_SETTINGS.locale,
@@ -84,6 +102,12 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     aiProviderProfiles,
     aiActiveProviderProfileId,
     aiMcpServers: typeof value.aiMcpServers === "string" ? value.aiMcpServers : DEFAULT_SETTINGS.aiMcpServers,
+    aiVoiceInputEnabled: value.aiVoiceInputEnabled ?? DEFAULT_SETTINGS.aiVoiceInputEnabled,
+    aiVoiceProviderProfiles,
+    aiVoiceActiveProviderProfileId,
+    aiVoiceReplyEnabled: value.aiVoiceReplyEnabled ?? DEFAULT_SETTINGS.aiVoiceReplyEnabled,
+    aiVoiceReplyProviderProfiles,
+    aiVoiceReplyActiveProviderProfileId,
     mobileQuickPhrases: normalizeMobileQuickPhrases(value.mobileQuickPhrases),
   };
 }

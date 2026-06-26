@@ -9,6 +9,7 @@ body.mobile-keyboard-visible {
 }
 
 .mobile-shortcuts,
+.ai-voice-input-surface,
 .field.mobile-only-setting {
   display: none;
 }
@@ -114,6 +115,10 @@ body.mobile-keyboard-visible {
     background: color-mix(in srgb, var(--surface-raised) 80%, transparent);
     color: var(--control-fg-hover);
     opacity: 0.9;
+  }
+
+  .tab-close::after {
+    inset: -7px;
   }
 
   .tab-close svg {
@@ -515,6 +520,19 @@ body.mobile-keyboard-visible {
     opacity: 1;
   }
 
+  .ai-voice-reply {
+    min-width: 0;
+  }
+
+  .ai-voice-reply-player {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .ai-voice-reply-toggle {
+    width: 44px;
+    height: 44px;
+  }
+
   .ai-code-actions {
     opacity: 1;
   }
@@ -616,6 +634,12 @@ body.mobile-keyboard-visible {
   .ai-config-summary-meta,
   .ai-config-summary-actions {
     justify-content: space-between;
+  }
+
+  .ai-voice-profile-select select,
+  .ai-config-summary-row .command-button {
+    width: 100%;
+    min-height: 44px;
   }
 
   .ai-mcp-actions {
@@ -796,10 +820,64 @@ body.mobile-keyboard-visible {
     color: var(--accent-fg);
   }
 
-  .mobile-shortcuts svg {
-    width: 15px;
-    height: 15px;
-  }
+.mobile-shortcuts svg {
+  width: 15px;
+  height: 15px;
+}
+
+.ai-voice-input-surface {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--mobile-shortcuts-height) + var(--mobile-shortcuts-bottom-offset) + 10px);
+  z-index: 82;
+  display: flex;
+  justify-content: center;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.ai-voice-input-surface[hidden] {
+  display: none;
+}
+
+.ai-voice-input-button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background:
+    var(--component-wash),
+    var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow-raised);
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.ai-voice-input-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ai-voice-input-button[data-state="recording"] {
+  border-color: var(--danger);
+  background:
+    var(--component-wash-hover),
+    color-mix(in srgb, var(--danger) 18%, var(--surface-raised));
+  color: var(--danger-fg);
+}
+
+.ai-voice-input-button[data-state="uploading"] {
+  border-color: var(--accent-border);
+  color: var(--accent-fg);
+}
+
+.ai-voice-input-button:disabled {
+  opacity: 0.55;
+  box-shadow: none;
+}
 }
 
 .tab-mount {
@@ -856,8 +934,17 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   display: none;
 }
 
+body.desktop-controls-enabled:not(.mobile-controls-enabled) .ai-voice-input-surface {
+  display: none;
+}
+
 .webshell.settings-open .mobile-shortcuts,
 .webshell.plugins-open .mobile-shortcuts {
+  display: none;
+}
+
+.webshell.settings-open .ai-voice-input-surface,
+.webshell.plugins-open .ai-voice-input-surface {
   display: none;
 }
 

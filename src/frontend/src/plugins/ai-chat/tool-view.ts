@@ -3,6 +3,7 @@ import { renderChatMarkdown } from "../../chat-markdown";
 import type { MessageKey } from "../../i18n";
 import type { AIChatMessage, AIChatSession, AiProviderProfile } from "../../types";
 import { escapeAttr, escapeHtml } from "../../utils";
+import type { AiVoiceReplyPlaybackState } from "./voice-reply";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -26,6 +27,8 @@ export type AIChatViewState = {
   targetTerminalLabel: string;
   sendTerminalContext: boolean;
   terminalContextPreview: string;
+  voiceReplyEnabled: boolean;
+  voiceReplyStateForMessage: (messageIndex: number, content: string) => AiVoiceReplyPlaybackState;
   tr: Translate;
 };
 
@@ -95,7 +98,7 @@ export function renderAIChatToolView(state: AIChatViewState): string {
 }
 
 export function renderAIChatMessages(
-  state: Pick<AIChatViewState, "messages" | "streaming" | "sendTerminalContext" | "terminalContextPreview" | "tr">,
+  state: Pick<AIChatViewState, "messages" | "streaming" | "sendTerminalContext" | "terminalContextPreview" | "voiceReplyEnabled" | "voiceReplyStateForMessage" | "tr">,
 ): string {
   if (!state.messages.length) {
     return `<div class="empty">${escapeHtml(state.tr("plugin.aiChat.description"))}</div>`;
@@ -114,6 +117,20 @@ export function renderAIChatMessages(
       thinking ? "is-thinking" : "",
       markdown ? "ai-chat-markdown" : "",
     ].filter(Boolean).join(" ");
+    const contentBlock = `<div class="${escapeAttr(contentClass)}">${content}</div>`;
+    const voiceReply = message.role === "assistant"
+      && state.voiceReplyEnabled
+      && message.tone !== "error"
+      && !thinking
+      && message.content.trim();
+    const body = voiceReply
+      ? renderAIVoiceReplyMessage({
+        state: state.voiceReplyStateForMessage(index, message.content),
+        messageIndex: index,
+        textContent: contentBlock,
+        tr: state.tr,
+      })
+      : contentBlock;
     return `
     <article class="ai-chat-message ${escapeAttr(message.role)}" data-tone="${escapeAttr(message.tone ?? "neutral")}">
       <div class="ai-chat-message-head">
@@ -122,10 +139,73 @@ export function renderAIChatMessages(
         ${message.role === "assistant" ? renderAIContextLcd(state) : ""}
         ${message.content.trim() ? `<button class="ai-message-copy" type="button" data-ai-action="copy-message" data-ai-message-index="${escapeAttr(String(index))}" aria-label="${escapeAttr(state.tr("action.aiCopy"))}" title="${escapeAttr(state.tr("action.aiCopy"))}"><i data-lucide="copy"></i></button>` : ""}
       </div>
-      <div class="${escapeAttr(contentClass)}">${content}</div>
+      ${body}
     </article>
   `;
   }).join("");
+}
+
+function renderAIVoiceReplyMessage(options: {
+  state: AiVoiceReplyPlaybackState;
+  messageIndex: number;
+  textContent: string;
+  tr: Translate;
+}): string {
+  const progress = voiceReplyProgress(options.state);
+  const playing = options.state.status === "playing";
+  const loading = options.state.status === "loading";
+  const actionLabel = playing ? options.tr("action.aiVoiceReplyPause") : options.tr("action.aiVoiceReplyPlay");
+  return `
+    <div class="ai-voice-reply">
+      <div class="ai-voice-reply-player" data-state="${escapeAttr(options.state.status)}">
+        <button class="ai-voice-reply-toggle" type="button" data-ai-action="toggle-voice-reply" data-ai-message-index="${escapeAttr(String(options.messageIndex))}" aria-label="${escapeAttr(actionLabel)}" title="${escapeAttr(actionLabel)}" ${loading ? "disabled" : ""}>
+          <i data-lucide="${playing ? "pause" : loading ? "loader-circle" : "play"}"></i>
+        </button>
+        <div class="ai-voice-reply-track" aria-label="${escapeAttr(voiceReplyStatusLabel(options.state, options.tr))}">
+          <span style="width: ${escapeAttr(String(progress))}%"></span>
+        </div>
+        <span class="ai-voice-reply-time">${escapeHtml(voiceReplyTimeLabel(options.state))}</span>
+      </div>
+      ${options.state.status === "error" && options.state.error ? `<p class="ai-voice-reply-error">${escapeHtml(options.state.error)}</p>` : ""}
+      <details class="ai-voice-reply-text">
+        <summary>
+          <i data-lucide="message-square-text"></i>
+          <span>${escapeHtml(options.tr("action.aiVoiceReplyShowText"))}</span>
+        </summary>
+        ${options.textContent}
+      </details>
+    </div>
+  `;
+}
+
+function voiceReplyProgress(state: AiVoiceReplyPlaybackState): number {
+  if (state.status === "loading") return 35;
+  const duration = state.durationSeconds ?? 0;
+  if (duration <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round(((state.currentSeconds ?? 0) / duration) * 100)));
+}
+
+function voiceReplyStatusLabel(state: AiVoiceReplyPlaybackState, tr: Translate): string {
+  if (state.status === "loading") return tr("status.aiVoiceReplyLoading");
+  if (state.status === "playing") return tr("status.aiVoiceReplyPlaying");
+  if (state.status === "error") return tr("status.aiVoiceReplyFailed", { message: state.error ?? "" });
+  return tr("status.aiVoiceReplyReady");
+}
+
+function voiceReplyTimeLabel(state: AiVoiceReplyPlaybackState): string {
+  const duration = formatVoiceReplySeconds(state.durationSeconds);
+  if (state.status === "playing" || (state.currentSeconds ?? 0) > 0) {
+    return `${formatVoiceReplySeconds(state.currentSeconds)} / ${duration}`;
+  }
+  return duration;
+}
+
+function formatVoiceReplySeconds(value: number | undefined): string {
+  if (!Number.isFinite(value) || !value || value < 0) return "--:--";
+  const totalSeconds = Math.max(0, Math.round(value));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 export function aiChatTranscript(session: AIChatSession): string {

@@ -1,4 +1,6 @@
 import type { FontPreset, InterfaceStyleId, Settings, TerminalTheme } from "./types";
+import { defaultAiVoiceProviderProfiles } from "./plugins/ai-chat/voice-profiles";
+import { defaultAiVoiceSpeechProviderProfiles } from "./plugins/ai-chat/voice-speech-profiles";
 
 export const INITIAL_COLS = 120;
 export const INITIAL_ROWS = 32;
@@ -182,5 +184,11 @@ export const DEFAULT_SETTINGS: Settings = {
   aiProviderProfiles: [],
   aiActiveProviderProfileId: "",
   aiMcpServers: "",
+  aiVoiceInputEnabled: false,
+  aiVoiceProviderProfiles: defaultAiVoiceProviderProfiles(),
+  aiVoiceActiveProviderProfileId: "mimo",
+  aiVoiceReplyEnabled: false,
+  aiVoiceReplyProviderProfiles: defaultAiVoiceSpeechProviderProfiles(),
+  aiVoiceReplyActiveProviderProfileId: "mimo",
   mobileQuickPhrases: [],
 };

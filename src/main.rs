@@ -38,6 +38,7 @@ mod terminal;
 mod terminal_manager;
 mod tty_init;
 mod validation;
+mod voice_input;
 mod workspace;
 
 use crate::router::build_app;

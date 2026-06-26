@@ -6,13 +6,15 @@ rust-version = "1.88"
 
 [dependencies]
 anyhow = "1.0.100"
-axum = { version = "0.8.7", features = ["tokio", "http1", "json", "ws"] }
+async-openai = { version = "0.41.1", default-features = false, features = ["audio", "byot", "chat-completion", "model", "responses", "rustls"] }
+axum = { version = "0.8.7", features = ["tokio", "http1", "json", "multipart", "ws"] }
 buffa = { version = "0.5.2", features = ["json"] }
 buffa-types = "0.5.2"
 bytes = "1.11.0"
 capnp = "0.19.1"
 capnp-futures = "0.19.0"
 capnp-rpc = "0.19.0"
+claude-sdk = { version = "2.1.0", default-features = false, features = ["anthropic"] }
 connectrpc = { version = "0.4.2", features = ["axum"] }
 futures = "0.3.31"
 http = "1.4.0"
@@ -23,8 +25,10 @@ portable-pty = "0.9.0"
 quinn = { version = "0.10.2", features = ["futures-io"] }
 base64 = "0.22.1"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest13 = { package = "reqwest", version = "0.13.4", default-features = false }
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 rustls = "0.21.12"
+secrecy = "0.10.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"

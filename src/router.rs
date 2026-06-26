@@ -13,7 +13,9 @@ use tower_http::trace::TraceLayer;
 use crate::action_ws::action_ws;
 use crate::assets::{frontend_asset, frontend_font, frontend_icon, index, security_header};
 use crate::backgrounds::{background_file, delete_background, upload_background};
-use crate::config::{MAX_CLIPBOARD_IMAGE_BYTES, MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES};
+use crate::config::{
+    MAX_CLIPBOARD_IMAGE_BYTES, MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES, MAX_VOICE_INPUT_BYTES,
+};
 use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
 use crate::herdr::{
     get_herdr_state, herdr_ws, post_herdr_action, post_herdr_output_sequence, post_herdr_socket,
@@ -37,6 +39,7 @@ use crate::ssh_backend::{
 use crate::state::AppState;
 use crate::terminal::{terminal_ws, upload_clipboard_image};
 use crate::tty_init::{TtyInitMode, lightos_features_enabled, tty_init_mode};
+use crate::voice_input::{post_voice_speech, post_voice_transcription};
 use crate::workspace::{get_workspace, put_workspace_action};
 
 pub fn build_app(state: Arc<AppState>) -> Router {
@@ -69,6 +72,8 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         )
         .route("/api/ssh-profiles/{id}/test", post(test_ssh_profile))
         .route("/api/settings", get(get_settings).put(put_settings))
+        .route("/api/ai/voice/transcriptions", post(post_voice_transcription))
+        .route("/api/ai/voice/speech", post(post_voice_speech))
         .route("/api/session-backends", get(get_session_backends))
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
         .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
@@ -102,7 +107,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .merge(connect)
         .layer(axum::extract::DefaultBodyLimit::max(usize::max(
             usize::max(MAX_FONT_BYTES, MAX_TERMINAL_BACKGROUND_BYTES),
-            MAX_CLIPBOARD_IMAGE_BYTES,
+            usize::max(MAX_CLIPBOARD_IMAGE_BYTES, MAX_VOICE_INPUT_BYTES),
         )))
         .layer(TraceLayer::new_for_http())
         .layer(security_header(

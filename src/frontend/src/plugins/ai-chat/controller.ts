@@ -10,6 +10,7 @@ import {
   aiChatTranscript,
   renderAIChatMessages as renderAIChatMessagesView,
 } from "./tool-view";
+import type { AiVoiceReplyPlaybackState } from "./voice-reply";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -30,6 +31,9 @@ type AIChatControllerDeps = {
   createId: () => string;
   onStatus: (message: string, tone?: Tone) => void;
   onRender: () => void;
+  voiceReplyEnabled: () => boolean;
+  voiceReplyStateForMessage: (sessionId: string, messageIndex: number, content: string) => AiVoiceReplyPlaybackState;
+  onAssistantMessageDone: (session: AIChatSession, messageIndex: number, message: AIChatMessage) => void;
 };
 
 export function createAIChatController(deps: AIChatControllerDeps) {
@@ -80,6 +84,8 @@ export function createAIChatController(deps: AIChatControllerDeps) {
       streaming: store.streaming,
       sendTerminalContext: session.sendTerminalContext,
       terminalContextPreview: session.sendTerminalContext ? deps.recentTerminalContext() : "",
+      voiceReplyEnabled: deps.voiceReplyEnabled(),
+      voiceReplyStateForMessage: (index, content) => deps.voiceReplyStateForMessage(session.id, index, content),
       tr: deps.tr,
     });
   }
@@ -190,6 +196,7 @@ export function createAIChatController(deps: AIChatControllerDeps) {
       session.messages.push({ role: "user", content: prompt });
       const assistant: AIChatMessage = { role: "assistant", content: "" };
       session.messages.push(assistant);
+      const assistantIndex = session.messages.length - 1;
       store.streaming = true;
       deps.onRender();
       try {
@@ -207,6 +214,7 @@ export function createAIChatController(deps: AIChatControllerDeps) {
           assistant.content = deps.tr("status.aiNoOutput");
           assistant.tone = "neutral";
         }
+        deps.onAssistantMessageDone(session, assistantIndex, assistant);
         deps.onStatus(deps.tr("status.aiTestOk"), "ok");
       } catch (error) {
         assistant.content = errorMessage(error);

@@ -41,6 +41,12 @@ export type SshProfileSettingsControllerOptions = {
   getBackupLimit: () => number;
   setBackupLimit: (value: number) => void;
   updateIcons: () => void;
+  confirmDanger: (request: {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    cancelLabel: string;
+  }) => Promise<boolean>;
   onOpenProfile: (selector: string) => void | Promise<void>;
   onProfilesChanged: () => void;
   onStatus: (message: string, tone?: "neutral" | "ok" | "error") => void;
@@ -494,7 +500,13 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
     if (!selectedId) return;
     const selected = profiles.find((profile) => profile.id === selectedId);
     if (!selected) return;
-    if (!window.confirm(options.tr("sshConfirm.deleteProfile", { name: selected.name }))) return;
+    const confirmed = await options.confirmDanger({
+      title: options.tr("sshSettings.delete"),
+      message: options.tr("sshConfirm.deleteProfile", { name: selected.name }),
+      confirmLabel: options.tr("sshSettings.delete"),
+      cancelLabel: options.tr("action.cancel"),
+    });
+    if (!confirmed) return;
     await withBusy(async () => {
       await deleteSshProfile(selected.id);
       profiles = profiles.filter((profile) => profile.id !== selected.id);

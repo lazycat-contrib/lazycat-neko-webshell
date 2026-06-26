@@ -49,6 +49,7 @@ import {
   MIN_OUTPUT_BUFFER_LIMIT,
   STATUS_REFRESH_MS,
 } from "./config";
+import { createConfirmDialog } from "./confirm-dialog";
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
 import { clamp, clampFloatingPoint, floatingViewportBounds } from "./floating-position";
 import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
@@ -134,6 +135,32 @@ import {
   createAIChatTerminalTargetResolver,
 } from "./plugins/ai-chat/terminal-target";
 import { renderAIChatToolView } from "./plugins/ai-chat/tool-view";
+import {
+  newAiVoiceProviderProfile,
+} from "./plugins/ai-chat/voice-profiles";
+import {
+  readAiVoiceProviderProfileFromFields,
+  readAiVoiceReplyProviderProfileFromFields,
+} from "./plugins/ai-chat/settings/voice-dialog-reader";
+import {
+  activeAiVoiceProviderProfile as activeAiVoiceProviderProfileInSettings,
+  aiVoiceProviderProfileById as aiVoiceProviderProfileByIdInSettings,
+  removeAiVoiceProviderProfile as removeAiVoiceProviderProfileFromSettings,
+  selectAiVoiceProviderProfile as selectAiVoiceProviderProfileInSettings,
+  syncAiVoiceProviderProfiles,
+  upsertAiVoiceProviderProfile as upsertAiVoiceProviderProfileInSettings,
+  activeAiVoiceReplyProviderProfile as activeAiVoiceReplyProviderProfileInSettings,
+  aiVoiceReplyProviderProfileById as aiVoiceReplyProviderProfileByIdInSettings,
+  removeAiVoiceReplyProviderProfile as removeAiVoiceReplyProviderProfileFromSettings,
+  selectAiVoiceReplyProviderProfile as selectAiVoiceReplyProviderProfileInSettings,
+  syncAiVoiceReplyProviderProfiles,
+  upsertAiVoiceReplyProviderProfile as upsertAiVoiceReplyProviderProfileInSettings,
+} from "./plugins/ai-chat/settings/voice-profile-state";
+import { createAiVoiceInputController } from "./plugins/ai-chat/voice-input";
+import { createAiVoiceReplyController } from "./plugins/ai-chat/voice-reply";
+import {
+  newAiVoiceSpeechProviderProfile,
+} from "./plugins/ai-chat/voice-speech-profiles";
 import { createFileTransferController } from "./plugins/file-transfer/controller";
 import { setFileTransferOutput } from "./plugins/file-transfer/dom";
 import { renderFileTransferToolView } from "./plugins/file-transfer/tool-view";
@@ -245,6 +272,8 @@ import type {
   AIChatTerminalTarget,
   AiMcpServerSettings,
   AiProviderProfile,
+  AiVoiceProviderProfile,
+  AiVoiceSpeechProviderProfile,
   ClipboardImagePayload,
   FontPreset,
   HerdrAction,
@@ -311,8 +340,12 @@ const AI_TERMINAL_CONTEXT_LINES = 40;
 const POMODORO_REFRESH_MS = 5000;
 const NOTIFICATIONS_REFRESH_MS = 5000;
 const TUNNEL_PROVIDER_PROFILES_METADATA = "tunnelProviderProfiles";
-type AISettingsTab = "ai" | "mcp";
-type AIConfigDialogState = { type: "ai"; profileId?: string; isNew?: boolean } | { type: "mcp"; index: number };
+type AISettingsTab = "ai" | "mcp" | "voice";
+type AIConfigDialogState =
+  | { type: "ai"; profileId?: string; isNew?: boolean }
+  | { type: "mcp"; index: number }
+  | { type: "voice"; profileId?: string; isNew?: boolean }
+  | { type: "voice-reply"; profileId?: string; isNew?: boolean };
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -400,6 +433,12 @@ const notificationDom = createNotificationDom({
   prepareOverlay: prepareMobileOverlay,
   updateIcons,
 });
+const confirmDialog = createConfirmDialog({
+  elements,
+  prepareOverlay: prepareMobileOverlay,
+  updateIcons,
+  closeNotificationModal: () => notificationDom.closeModal(),
+});
 const pomodoro = createPomodoroController({
   isEnabled: () => pluginIsEnabled(POMODORO_PLUGIN_ID),
   refreshNotifications: () => refreshNotifications({ showToast: false }),
@@ -468,6 +507,7 @@ const sshProfileSettings = createSshProfileSettingsController({
     saveSettings();
   },
   updateIcons,
+  confirmDanger: (request) => confirmDialog.confirm({ ...request, danger: true }),
   onOpenProfile: openSshProfileFromSettings,
   onProfilesChanged: () => void loadInstances(),
   onStatus: (message, tone = "neutral") => setGlobalStatus(message, tone),
@@ -495,6 +535,12 @@ const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
   tabDisplayName,
   tr,
 });
+const aiVoiceReply = createAiVoiceReplyController({
+  settings: () => settings,
+  tr,
+  onStatus: setPluginStatus,
+  onRender: renderPluginTools,
+});
 const aiChat = createAIChatController({
   isEnabled: () => pluginIsEnabled(AI_CHAT_PLUGIN_ID),
   accessConfigured: aiAccessConfigured,
@@ -512,6 +558,9 @@ const aiChat = createAIChatController({
   createId: newId,
   onStatus: setPluginStatus,
   onRender: renderPluginTools,
+  voiceReplyEnabled: () => settings.aiVoiceReplyEnabled,
+  voiceReplyStateForMessage: (sessionId, messageIndex, content) => aiVoiceReply.stateFor(sessionId, messageIndex, content),
+  onAssistantMessageDone: (session, messageIndex, message) => aiVoiceReply.prepareAssistantMessage(session, messageIndex, message),
 });
 const fileTransfer = createFileTransferController({
   isEnabled: () => pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID),
@@ -558,6 +607,17 @@ const whiteNoise = createWhiteNoiseController({
   onStatus: setPluginStatus,
   onRender: renderWhiteNoiseSurfaces,
 });
+const aiVoiceInput = createAiVoiceInputController({
+  root: elements.aiVoiceInputSurface,
+  settings: () => settings,
+  isAiChatPluginEnabled: () => pluginIsEnabled(AI_CHAT_PLUGIN_ID),
+  activePane,
+  sendText: sendPaneInput,
+  focusTerminal: focusActivePaneCanvas,
+  tr,
+  onStatus: setPluginStatus,
+  updateIcons,
+});
 let activeAISettingsTab: AISettingsTab = "ai";
 let aiConfigDialog: AIConfigDialogState | undefined;
 let tunnelProfileDialog: TunnelProfileDialogState | undefined;
@@ -579,6 +639,8 @@ async function init() {
   await loadRuntimeInfo();
   settings = await loadSettings();
   syncActiveAiProviderProfile();
+  syncAiVoiceProviderProfiles(settings);
+  syncAiVoiceReplyProviderProfiles(settings);
   await loadUploadedFonts();
   renderOptions();
   bindSettings();
@@ -675,11 +737,15 @@ async function loadRuntimeInfo() {
 
 function saveSettings() {
   syncActiveAiProviderProfile();
+  syncAiVoiceProviderProfiles(settings);
+  syncAiVoiceReplyProviderProfiles(settings);
   void persistSettings(settings);
 }
 
 function flushSettings(): Promise<void> {
   syncActiveAiProviderProfile();
+  syncAiVoiceProviderProfiles(settings);
+  syncAiVoiceReplyProviderProfiles(settings);
   return persistSettings(settings);
 }
 
@@ -826,6 +892,39 @@ function bindSettings() {
       );
       return;
     }
+    const aiVoiceEnabled = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-ai-voice-enabled]")
+      : null;
+    if (aiVoiceEnabled) {
+      settings.aiVoiceInputEnabled = aiVoiceEnabled.checked;
+      saveSettings();
+      renderPluginSettings();
+      aiVoiceInput.render();
+      return;
+    }
+    const aiVoiceReplyEnabled = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-ai-voice-reply-enabled]")
+      : null;
+    if (aiVoiceReplyEnabled) {
+      settings.aiVoiceReplyEnabled = aiVoiceReplyEnabled.checked;
+      saveSettings();
+      renderPluginSettings();
+      return;
+    }
+    const aiVoiceProfileSelect = event.target instanceof Element
+      ? event.target.closest<HTMLSelectElement>("[data-ai-voice-profile-active]")
+      : null;
+    if (aiVoiceProfileSelect) {
+      selectAiVoiceProviderProfile(aiVoiceProfileSelect.value);
+      return;
+    }
+    const aiVoiceReplyProfileSelect = event.target instanceof Element
+      ? event.target.closest<HTMLSelectElement>("[data-ai-voice-reply-profile-active]")
+      : null;
+    if (aiVoiceReplyProfileSelect) {
+      selectAiVoiceReplyProviderProfile(aiVoiceReplyProfileSelect.value);
+      return;
+    }
     const aiSetting = event.target instanceof Element
       ? event.target.closest<HTMLInputElement | HTMLSelectElement>("[data-ai-setting]")
       : null;
@@ -873,22 +972,38 @@ function bindSettings() {
     }
     const tabButton = target?.closest<HTMLButtonElement>("[data-ai-settings-tab]");
     if (tabButton) {
-      activeAISettingsTab = tabButton.dataset.aiSettingsTab === "mcp" ? "mcp" : "ai";
+      activeAISettingsTab = normalizeAISettingsTab(tabButton.dataset.aiSettingsTab);
       renderPluginSettings();
       return;
     }
     const openConfigButton = target?.closest<HTMLButtonElement>("[data-ai-config-open]");
     if (openConfigButton) {
-      const type = openConfigButton.dataset.aiConfigOpen === "mcp" ? "mcp" : "ai";
-      activeAISettingsTab = type === "mcp" ? "mcp" : "ai";
-      const isNewAiProfile = openConfigButton.dataset.aiProfileNew === "true" || !activeAiProviderProfile();
-      aiConfigDialog = type === "mcp"
-        ? { type, index: Number(openConfigButton.dataset.aiMcpIndex ?? "-1") }
-        : {
+      const type = normalizeAIConfigDialogType(openConfigButton.dataset.aiConfigOpen);
+      activeAISettingsTab = type === "mcp" ? "mcp" : type === "ai" ? "ai" : "voice";
+      if (type === "mcp") {
+        aiConfigDialog = { type, index: Number(openConfigButton.dataset.aiMcpIndex ?? "-1") };
+      } else if (type === "voice") {
+        const isNewVoiceProfile = openConfigButton.dataset.aiVoiceNew === "true" || !activeAiVoiceProviderProfile();
+        aiConfigDialog = {
+          type,
+          profileId: isNewVoiceProfile ? newId() : openConfigButton.dataset.aiVoiceProfileId || activeAiVoiceProviderProfile()?.id,
+          isNew: isNewVoiceProfile,
+        };
+      } else if (type === "voice-reply") {
+        const isNewVoiceReplyProfile = openConfigButton.dataset.aiVoiceReplyNew === "true" || !activeAiVoiceReplyProviderProfile();
+        aiConfigDialog = {
+          type,
+          profileId: isNewVoiceReplyProfile ? newId() : openConfigButton.dataset.aiVoiceReplyProfileId || activeAiVoiceReplyProviderProfile()?.id,
+          isNew: isNewVoiceReplyProfile,
+        };
+      } else {
+        const isNewAiProfile = openConfigButton.dataset.aiProfileNew === "true" || !activeAiProviderProfile();
+        aiConfigDialog = {
           type,
           profileId: isNewAiProfile ? newId() : openConfigButton.dataset.aiProfileId || activeAiProviderProfile()?.id,
           isNew: isNewAiProfile,
         };
+      }
       renderPluginSettings();
       return;
     }
@@ -905,6 +1020,21 @@ function bindSettings() {
     const removeProfileButton = target?.closest<HTMLButtonElement>("[data-ai-profile-remove]");
     if (removeProfileButton) {
       removeAiProviderProfile(removeProfileButton.dataset.aiProfileRemove ?? "");
+      return;
+    }
+    const selectVoiceProfileButton = target?.closest<HTMLButtonElement>("[data-ai-voice-profile-select]");
+    if (selectVoiceProfileButton) {
+      selectAiVoiceProviderProfile(selectVoiceProfileButton.dataset.aiVoiceProfileSelect ?? "");
+      return;
+    }
+    const removeVoiceProfileButton = target?.closest<HTMLButtonElement>("[data-ai-voice-profile-remove]");
+    if (removeVoiceProfileButton) {
+      removeAiVoiceProviderProfile(removeVoiceProfileButton.dataset.aiVoiceProfileRemove ?? "");
+      return;
+    }
+    const removeVoiceReplyProfileButton = target?.closest<HTMLButtonElement>("[data-ai-voice-reply-profile-remove]");
+    if (removeVoiceReplyProfileButton) {
+      removeAiVoiceReplyProviderProfile(removeVoiceReplyProfileButton.dataset.aiVoiceReplyProfileRemove ?? "");
       return;
     }
     const closeConfigTarget = target?.closest<HTMLElement>("[data-ai-config-close]");
@@ -1189,6 +1319,8 @@ function bindSettings() {
       aiChat.copyOutput();
     } else if (action === "copy-message") {
       aiChat.copyMessage(Number(aiButton.dataset.aiMessageIndex));
+    } else if (action === "toggle-voice-reply") {
+      void aiVoiceReply.toggle(aiChat.activeSession(), Number(aiButton.dataset.aiMessageIndex));
     } else if (action === "copy-code") {
       aiChat.copyCodeBlock(aiButton);
     } else if (action === "send-code-to-terminal") {
@@ -1594,11 +1726,13 @@ function bindActions() {
     }
   });
   elements.notificationModal.addEventListener("click", (event) => {
+    if (confirmDialog.isOpen()) return;
     if (event.target === elements.notificationModal) {
       closeNotificationModal();
     }
   });
   elements.notificationModalBody.addEventListener("click", (event) => {
+    if (confirmDialog.isOpen()) return;
     const target = event.target instanceof Element ? event.target : null;
     const actionButton = target?.closest<HTMLButtonElement>("[data-notification-action]");
     if (actionButton) {
@@ -2531,6 +2665,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   renderMobileQuickInput();
   renderPlugins();
   renderNotifications();
+  aiVoiceInput.render();
 
   for (const pane of allPanes()) {
     applyTerminalAppearance(pane, appearance, reportFontLoadError);
@@ -2964,6 +3099,7 @@ async function configureWhiteNoiseSetting(setting: string, checked: boolean) {
 function renderPlugins() {
   renderPluginSettings();
   renderPluginTools();
+  aiVoiceInput.render();
 }
 
 function renderPluginSettings() {
@@ -2983,6 +3119,12 @@ function renderPluginSettings() {
       profiles: settings.aiProviderProfiles,
       activeProfileId: settings.aiActiveProviderProfileId,
       mcpServers,
+      voiceInputEnabled: settings.aiVoiceInputEnabled,
+      voiceProfiles: settings.aiVoiceProviderProfiles,
+      activeVoiceProfileId: settings.aiVoiceActiveProviderProfileId,
+      voiceReplyEnabled: settings.aiVoiceReplyEnabled,
+      voiceReplyProfiles: settings.aiVoiceReplyProviderProfiles,
+      activeVoiceReplyProfileId: settings.aiVoiceReplyActiveProviderProfileId,
       activeTab: activeAISettingsTab,
       dialog: aiConfigDialog
         ? aiConfigDialog.type === "mcp"
@@ -2991,6 +3133,22 @@ function renderPluginSettings() {
             server: aiConfigDialog.index >= 0 ? mcpServers[aiConfigDialog.index] ?? emptyAiMcpServer() : emptyAiMcpServer(),
             headersText: headersToText(aiConfigDialog.index >= 0 ? mcpServers[aiConfigDialog.index]?.headers ?? {} : {}),
           }
+          : aiConfigDialog.type === "voice"
+            ? {
+              type: "voice",
+              profile: aiConfigDialog.isNew
+                ? newAiVoiceProviderProfile(settings.aiVoiceProviderProfiles.length, aiConfigDialog.profileId)
+                : aiVoiceProviderProfileById(aiConfigDialog.profileId) ?? activeAiVoiceProviderProfile() ?? newAiVoiceProviderProfile(settings.aiVoiceProviderProfiles.length),
+              isNew: Boolean(aiConfigDialog.isNew),
+            }
+          : aiConfigDialog.type === "voice-reply"
+            ? {
+              type: "voice-reply",
+              profile: aiConfigDialog.isNew
+                ? newAiVoiceSpeechProviderProfile(settings.aiVoiceReplyProviderProfiles.length, aiConfigDialog.profileId)
+                : aiVoiceReplyProviderProfileById(aiConfigDialog.profileId) ?? activeAiVoiceReplyProviderProfile() ?? newAiVoiceSpeechProviderProfile(settings.aiVoiceReplyProviderProfiles.length),
+              isNew: Boolean(aiConfigDialog.isNew),
+            }
           : {
             type: "ai",
             profile: aiConfigDialog.isNew
@@ -3114,6 +3272,8 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
     targetTerminalLabel: target?.label ?? tr("status.noTarget"),
     sendTerminalContext: session.sendTerminalContext,
     terminalContextPreview: session.sendTerminalContext ? recentAIContext(activeAIChatTerminalPane()) : "",
+    voiceReplyEnabled: settings.aiVoiceReplyEnabled,
+    voiceReplyStateForMessage: (messageIndex, content) => aiVoiceReply.stateFor(session.id, messageIndex, content),
     tr,
   });
 }
@@ -3229,6 +3389,15 @@ function normalizeAiProviderValue(value: string): string {
     : DEFAULT_SETTINGS.aiProvider;
 }
 
+function normalizeAISettingsTab(value: string | undefined): AISettingsTab {
+  return value === "mcp" || value === "voice" ? value : "ai";
+}
+
+function normalizeAIConfigDialogType(value: string | undefined): AIConfigDialogState["type"] {
+  if (value === "mcp" || value === "voice" || value === "voice-reply") return value;
+  return "ai";
+}
+
 function aiProviderProfileById(profileId: string | undefined): AiProviderProfile | undefined {
   if (!profileId) return undefined;
   return settings.aiProviderProfiles.find((profile) => profile.id === profileId);
@@ -3259,6 +3428,62 @@ function syncActiveAiProviderProfile() {
   settings.aiBaseUrl = activeProfile?.baseUrl ?? "";
   settings.aiApiKey = activeProfile?.apiKey ?? "";
   settings.aiModel = activeProfile?.model ?? "";
+}
+
+function aiVoiceProviderProfileById(profileId: string | undefined): AiVoiceProviderProfile | undefined {
+  return aiVoiceProviderProfileByIdInSettings(settings, profileId);
+}
+
+function activeAiVoiceProviderProfile(): AiVoiceProviderProfile | undefined {
+  return activeAiVoiceProviderProfileInSettings(settings);
+}
+
+function upsertAiVoiceProviderProfile(profile: AiVoiceProviderProfile) {
+  upsertAiVoiceProviderProfileInSettings(settings, profile);
+}
+
+function selectAiVoiceProviderProfile(profileId: string) {
+  if (!selectAiVoiceProviderProfileInSettings(settings, profileId)) return;
+  saveSettings();
+  setPluginStatus(tr("status.aiVoiceConfigSaved"), "ok");
+  renderPluginSettings();
+  aiVoiceInput.render();
+}
+
+function removeAiVoiceProviderProfile(profileId: string) {
+  if (!removeAiVoiceProviderProfileFromSettings(settings, profileId)) return;
+  aiConfigDialog = undefined;
+  saveSettings();
+  setPluginStatus(tr("status.aiVoiceConfigRemoved"), "ok");
+  renderPluginSettings();
+  aiVoiceInput.render();
+}
+
+function aiVoiceReplyProviderProfileById(profileId: string | undefined): AiVoiceSpeechProviderProfile | undefined {
+  return aiVoiceReplyProviderProfileByIdInSettings(settings, profileId);
+}
+
+function activeAiVoiceReplyProviderProfile(): AiVoiceSpeechProviderProfile | undefined {
+  return activeAiVoiceReplyProviderProfileInSettings(settings);
+}
+
+function upsertAiVoiceReplyProviderProfile(profile: AiVoiceSpeechProviderProfile) {
+  upsertAiVoiceReplyProviderProfileInSettings(settings, profile);
+}
+
+function selectAiVoiceReplyProviderProfile(profileId: string) {
+  if (!selectAiVoiceReplyProviderProfileInSettings(settings, profileId)) return;
+  saveSettings();
+  setPluginStatus(tr("status.aiVoiceReplyConfigSaved"), "ok");
+  renderPluginSettings();
+}
+
+function removeAiVoiceReplyProviderProfile(profileId: string) {
+  if (!removeAiVoiceReplyProviderProfileFromSettings(settings, profileId)) return;
+  aiConfigDialog = undefined;
+  saveSettings();
+  setPluginStatus(tr("status.aiVoiceReplyConfigRemoved"), "ok");
+  renderPluginSettings();
 }
 
 function sanitizeAiProviderProfile(profile: AiProviderProfile, index: number): AiProviderProfile {
@@ -3321,6 +3546,32 @@ function readAiProviderProfileFromDialog(existing: AiProviderProfile | undefined
     apiKey: aiDialogStringField("apiKey"),
     model: aiDialogStringField("model").trim(),
   };
+}
+
+function readAiVoiceProviderProfileFromDialog(
+  existing: AiVoiceProviderProfile | undefined,
+  isNew: boolean,
+): AiVoiceProviderProfile {
+  return readAiVoiceProviderProfileFromFields({
+    read: aiDialogStringField,
+    existing,
+    isNew,
+    profileId: aiConfigDialog?.type === "voice" ? aiConfigDialog.profileId : undefined,
+    profileCount: settings.aiVoiceProviderProfiles.length,
+  });
+}
+
+function readAiVoiceReplyProviderProfileFromDialog(
+  existing: AiVoiceSpeechProviderProfile | undefined,
+  isNew: boolean,
+): AiVoiceSpeechProviderProfile {
+  return readAiVoiceReplyProviderProfileFromFields({
+    read: aiDialogStringField,
+    existing,
+    isNew,
+    profileId: aiConfigDialog?.type === "voice-reply" ? aiConfigDialog.profileId : undefined,
+    profileCount: settings.aiVoiceReplyProviderProfiles.length,
+  });
 }
 
 function aiProviderConnectionChanged(previous: AiProviderProfile, next: AiProviderProfile): boolean {
@@ -3399,6 +3650,22 @@ function saveAIConfigDialog(type: string) {
     }
     aiChat.selectSessionForCurrentModel();
     setPluginStatus(tr("status.aiConfigSaved"), "ok");
+  } else if (dialog.type === "voice") {
+    const existing = !dialog.isNew
+      ? aiVoiceProviderProfileById(dialog.profileId)
+      : undefined;
+    const profile = readAiVoiceProviderProfileFromDialog(existing, Boolean(dialog.isNew));
+    upsertAiVoiceProviderProfile(profile);
+    activeAISettingsTab = "voice";
+    setPluginStatus(tr("status.aiVoiceConfigSaved"), "ok");
+  } else if (dialog.type === "voice-reply") {
+    const existing = !dialog.isNew
+      ? aiVoiceReplyProviderProfileById(dialog.profileId)
+      : undefined;
+    const profile = readAiVoiceReplyProviderProfileFromDialog(existing, Boolean(dialog.isNew));
+    upsertAiVoiceReplyProviderProfile(profile);
+    activeAISettingsTab = "voice";
+    setPluginStatus(tr("status.aiVoiceReplyConfigSaved"), "ok");
   } else {
     const url = aiDialogStringField("mcpUrl").trim();
     if (!url) {
@@ -3426,6 +3693,7 @@ function saveAIConfigDialog(type: string) {
   aiConfigDialog = undefined;
   saveSettings();
   renderPlugins();
+  aiVoiceInput.render();
 }
 
 function removeAiMcpServer(index: number) {
@@ -5299,6 +5567,7 @@ function renderTabs() {
     input.addEventListener("blur", () => void commitTabRename(input.dataset.renameTab ?? "", input.value));
   });
   updateIcons();
+  aiVoiceInput.render();
   focusRenameInput();
 }
 
@@ -5523,7 +5792,14 @@ function closeActiveTab() {
 async function requestCloseTab(tabId: string) {
   const tab = tabs.find((item) => item.id === tabId);
   if (!tab) return;
-  if (!window.confirm(tr("confirm.closeTab", { name: tabDisplayName(tab) }))) return;
+  const confirmed = await confirmDialog.confirm({
+    title: tr("action.closeTab"),
+    message: tr("confirm.closeTab", { name: tabDisplayName(tab) }),
+    confirmLabel: tr("action.closeTab"),
+    cancelLabel: tr("action.cancel"),
+    danger: true,
+  });
+  if (!confirmed) return;
   await closeTab(tabId);
 }
 
