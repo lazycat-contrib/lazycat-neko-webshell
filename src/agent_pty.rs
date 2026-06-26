@@ -6,6 +6,7 @@ use anyhow::{Context as _, anyhow};
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use tracing::{info, warn};
 
+use crate::tty_init::terminal_session_bootstrap_script;
 use crate::validation::validate_size;
 
 #[derive(Clone, Debug)]
@@ -251,14 +252,6 @@ echo "setpriv or su is required for webshell login session."
 exit 127"#,
         shell_script_quote(username),
         terminal_session_bootstrap_script(),
-    )
-}
-
-fn terminal_session_bootstrap_script() -> &'static str {
-    concat!(
-        "if [ -z \"${LANG:-}\" ] || [ \"$LANG\" = C ] || [ \"$LANG\" = POSIX ]; then export LANG=C.UTF-8; fi\n",
-        "if [ -f /run/catlink/shell-env.sh ]; then . /run/catlink/shell-env.sh; fi\n",
-        "export SHELL=\"$__webshell_shell\""
     )
 }
 

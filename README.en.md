@@ -4,7 +4,7 @@
 
 Current version: `0.5.5`
 
-Neko Webshell is a browser terminal for LazyCat and LightOS. Open an app instance, run commands, read output, move files, paste images, publish a local preview URL, and use AI Chat to organize recent terminal context without setting up an SSH client first.
+Neko Webshell is a browser WebShell workbench. It defaults to LazyCat / LightOS app instances, but it can also run as a generic WebShell with LightOS initialization disabled and manage remote terminal targets through SSH profiles.
 
 It works as a remote workbench you can reach from a browser. On desktop, it is comfortable for longer development and troubleshooting sessions. On mobile, it keeps the keys, vertical history scrolling, and tab switching behavior terminal work needs.
 
@@ -20,6 +20,7 @@ It works as a remote workbench you can reach from a browser. On desktop, it is c
 - Use AI Chat to analyze recent output, organize command ideas, or draft troubleshooting steps.
 - Preview HTTP services inside a LightOS instance through port forwarding.
 - Publish a local HTTP preview URL through Cloudflare Quick Tunnel or a tunnel provider with saved authentication.
+- Add SSH profiles and open remote hosts as first-class terminal targets.
 - If Herdr is installed on the target device, switch Herdr spaces and tabs from the same WebShell interface.
 
 ## Opening The Terminal
@@ -29,6 +30,23 @@ Open Neko Webshell from the LightOS WebShell entry and choose the app instance y
 The top area handles instance switching, new tabs, layout actions, and menus. The middle area is the terminal. On smaller screens, common actions move into menus or the mobile shortcut bar so the terminal keeps as much room as possible.
 
 Native WebShell sessions are held by an agent running inside the target instance. Browser refreshes, closing the WebShell page, and WebShell backend restarts should not stop a running shell program. When you reopen the page, the workspace is restored and recent output is replayed. If the target instance stops or the agent is killed, those sessions are lost.
+
+## Generic WebShell And SSH Backend
+
+The default runtime mode is `lightos`. It loads LightOS terminal initialization and shows LightOS Home, Herdr, LightOS port forwarding, and other LightOS-only entries. Generic deployments can use:
+
+```bash
+NEKO_WEBSHELL_TTY_INIT=generic cargo run
+```
+
+`generic` mode does not load `/run/catlink/shell-env.sh` and hides LightOS-only menus and APIs. Leaving the variable unset keeps the default `lightos` behavior for LazyCat / LightOS packages.
+
+The SSH backend is managed through SSH profiles in settings. Two profile kinds are supported:
+
+- `Managed key`: WebShell generates and stores an ed25519 key for the profile. Add the public key to the remote host.
+- `OpenSSH`: WebShell calls the device `ssh <target>` command directly, so existing `~/.ssh/config`, ssh-agent, and system OpenSSH behavior can be used.
+
+Managed keys are stored in `/lzcapp/var/ssh/keys` by default. Set `NEKO_WEBSHELL_SSH_KEY_DIR` to override that directory.
 
 ## Terminal Experience
 
@@ -85,11 +103,13 @@ LightOS port forwarding maps an HTTP port inside the target instance to a local 
 Public Tunnel can publish that local HTTP URL temporarily:
 
 - Cloudflare Quick Tunnel works without authentication.
-- Tunnel providers that need tokens use saved tunnel authentication configs from plugin settings.
+- Tunnel providers that need tokens use saved tunnel authentication configs from tool settings.
 - The current version supports Cloudflare Quick Tunnel and ngrok.
 - Tunnel and port-forward sessions stay alive while the WebShell backend is running. If the backend process exits, they need to be started again.
 
 Tunnel authentication configs are stored in the WebShell backend database. The tool panel only selects saved configs and does not ask for tokens directly.
+
+These features are built-in WebShell tools, not a third-party plugin distribution system. External plugin marketplaces, installable plugin packages, and hot-loaded third-party tools are not supported.
 
 ## Appearance And Settings
 
@@ -102,7 +122,7 @@ Settings include:
 - Terminal background image, opacity, and blur.
 - Output history size.
 - Mobile touch selection behavior.
-- Plugin state.
+- Built-in tool state.
 - AI providers, MCP servers, and terminal context options.
 - Tunnel authentication configs.
 
@@ -117,10 +137,10 @@ This section is for developers and package maintainers. You do not need it for n
 - Terminal rendering: Restty, with native plugins and Shader stages for context collection, input glow, scanline, and vignette effects.
 - Native WebShell sessions: in-instance agent daemon manages workspaces, tabs, panes, PTYs, and bounded history.
 - Terminal protocol: WebSocket data plane, ConnectRPC control plane, and protobuf frames for the internal agent protocol.
-- Storage: SQLite for workspaces, session metadata, recent output, Herdr replay cursors, plugin settings, and tunnel authentication configs.
+- Storage: SQLite for workspaces, session metadata, recent output, Herdr replay cursors, built-in tool settings, SSH profiles, and tunnel authentication configs.
 - File capability: file reads, writes, and uploads through the active target instance session.
 - Network capability: LightOS port forwarding, Cloudflare Quick Tunnel, and ngrok.
-- Optional integrations: Herdr socket bridge and zellij backend detection.
+- Optional integrations: SSH backend, Herdr socket bridge, and zellij backend detection.
 - Package target: LazyCat LPK, exported as a LightOS WebShell provider.
 
 Local build:
@@ -140,6 +160,8 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Vite forwards API requests to the local backend.
 
+For generic WebShell deployment, use `NEKO_WEBSHELL_TTY_INIT=generic`. Supported values include `lightos` and `generic`; the default is `lightos`. The managed SSH key directory can be overridden with `NEKO_WEBSHELL_SSH_KEY_DIR`.
+
 Build the LazyCat LPK:
 
 ```bash
@@ -152,4 +174,4 @@ After installation, LightOS opens it through the WebShell entry:
 https://<provider-domain>/?name=<name>@<owner_deploy_id>
 ```
 
-LightOS and the in-instance agent run commands inside the target instance. Neko Webshell provides the interface, workspace recovery, input and output forwarding, plugin features, and mobile experience around the terminal.
+LightOS and the in-instance agent run commands inside LightOS targets; SSH targets connect through the local OpenSSH process. Neko Webshell provides the interface, workspace recovery, input and output forwarding, built-in tool features, and mobile experience around the terminal.

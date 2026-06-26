@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
 use std::sync::{Arc, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
@@ -27,7 +27,9 @@ use crate::proto::lazycat::webshell::v1::{
     OwnedListSessionsRequestView, OwnedReleaseControlRequestView, OwnedRequestControlRequestView,
     PluginDescriptor, ProviderDescriptor, ReleaseControlResponse, RequestControlResponse, Session,
 };
+use crate::ssh_backend;
 use crate::state::{AppState, PluginRecord, SessionRecord, output_frame_limit_from_metadata};
+use crate::tty_init::lightos_features_enabled;
 use crate::validation::{normalize_dimension, required_field, validate_selector};
 use crate::workspace::{WorkspaceSessionError, close_workspace_session};
 
@@ -92,6 +94,11 @@ impl CapabilityServiceImpl {
                     "plugin is not registered: {plugin_id}"
                 )));
             };
+            if !plugin_available_in_current_runtime(plugin) {
+                return Err(ConnectError::not_found(format!(
+                    "plugin is not available in this runtime: {plugin_id}"
+                )));
+            }
             if !plugin.enabled {
                 return Err(ConnectError::failed_precondition(format!(
                     "plugin is disabled: {plugin_id}"
@@ -100,15 +107,26 @@ impl CapabilityServiceImpl {
         }
 
         let session = self.session_record(session_id)?;
-        lightos::authorize_selector(&session.selector, true).await?;
 
         match plugin_id {
             "file-transfer" => {
-                invoke_file_transfer_plugin(&session, operation, content_type, &payload, &metadata)
-                    .await
+                authorize_session_target(&self.state, &session, true).await?;
+                invoke_file_transfer_plugin(
+                    &self.state,
+                    &session,
+                    operation,
+                    content_type,
+                    &payload,
+                    &metadata,
+                )
+                .await
             }
-            "ai-chat" => Self::invoke_ai_chat_plugin(&session, operation),
+            "ai-chat" => {
+                authorize_session_target(&self.state, &session, false).await?;
+                Self::invoke_ai_chat_plugin(&session, operation)
+            }
             lightos_port_forward::PLUGIN_ID => {
+                authorize_lightos_session_target(&session, true).await?;
                 self.invoke_lightos_port_forward_plugin(&session, operation, metadata)
                     .await
             }
@@ -435,13 +453,80 @@ fn valid_profile_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
+async fn authorize_session_target(
+    state: &AppState,
+    session: &SessionRecord,
+    require_running: bool,
+) -> Result<(), ConnectError> {
+    if ssh_backend::is_ssh_selector(&session.selector) {
+        ssh_backend::load_enabled_profile(&state.database(), &session.selector)?;
+        return Ok(());
+    }
+    authorize_lightos_session_target(session, require_running).await
+}
+
+async fn authorize_lightos_session_target(
+    session: &SessionRecord,
+    require_running: bool,
+) -> Result<(), ConnectError> {
+    if !lightos_features_enabled() {
+        return Err(ConnectError::not_found("LightOS integration is disabled"));
+    }
+    lightos::authorize_selector(&session.selector, require_running).await
+}
+
+async fn authorize_selector_for_listing(
+    state: &AppState,
+    selector: &str,
+) -> Result<(), ConnectError> {
+    validate_selector(selector)?;
+    if ssh_backend::is_ssh_selector(selector) {
+        ssh_backend::load_enabled_profile(&state.database(), selector)?;
+        return Ok(());
+    }
+    if !lightos_features_enabled() {
+        return Err(ConnectError::not_found("LightOS integration is disabled"));
+    }
+    lightos::authorize_selector(selector, false).await
+}
+
+async fn visible_session_selectors(state: &AppState) -> Result<HashSet<String>, ConnectError> {
+    let mut selectors = if lightos_features_enabled() {
+        lightos::authorized_selectors().await?
+    } else {
+        HashSet::new()
+    };
+    for instance in ssh_backend::list_profile_instances(&state.database())
+        .map_err(|err| ConnectError::internal(err.to_string()))?
+    {
+        if let Some(selector) = instance.selector {
+            selectors.insert(selector);
+        }
+    }
+    Ok(selectors)
+}
+
+fn plugin_available_in_current_runtime(plugin: &PluginRecord) -> bool {
+    match plugin.metadata.get("requiresRuntime").map(String::as_str) {
+        Some("lightos") => lightos_features_enabled(),
+        _ => true,
+    }
+}
+
 impl CapabilityService for CapabilityServiceImpl {
     async fn list_instances(
         &self,
         _ctx: RequestContext,
         _request: OwnedListInstancesRequestView,
     ) -> ServiceResult<ListInstancesResponse> {
-        let instances = lightos::list_instances().await?;
+        let mut instances = if lightos_features_enabled() {
+            lightos::list_instances().await?
+        } else {
+            Vec::new()
+        };
+        let mut ssh_instances = ssh_backend::list_profile_instances(&self.state.database())
+            .map_err(|err| ConnectError::internal(err.to_string()))?;
+        instances.append(&mut ssh_instances);
         ConnectResponse::ok(ListInstancesResponse {
             instances,
             ..Default::default()
@@ -469,6 +554,14 @@ impl CapabilityService for CapabilityServiceImpl {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| ConnectError::invalid_argument("selector is required"))?;
+        if ssh_backend::is_ssh_selector(selector) {
+            return Err(ConnectError::failed_precondition(
+                "SSH sessions are managed through workspace terminals",
+            ));
+        }
+        if !lightos_features_enabled() {
+            return Err(ConnectError::not_found("LightOS integration is disabled"));
+        }
         validate_selector(selector)?;
         let login_user = lightos::login_user_for_selector(selector, true).await?;
         let cols = normalize_dimension(request.cols, DEFAULT_COLS, MAX_COLS, "cols")?;
@@ -551,10 +644,10 @@ impl CapabilityService for CapabilityServiceImpl {
             .map(str::trim)
             .filter(|value| !value.is_empty());
         if let Some(selector) = selector {
-            lightos::authorize_selector(selector, false).await?;
+            authorize_selector_for_listing(&self.state, selector).await?;
         }
         let visible_selectors = if selector.is_none() {
-            Some(lightos::authorized_selectors().await?)
+            Some(visible_session_selectors(&self.state).await?)
         } else {
             None
         };
@@ -586,6 +679,7 @@ impl CapabilityService for CapabilityServiceImpl {
             .read()
             .map_err(|_| ConnectError::internal("plugin store lock poisoned"))?
             .values()
+            .filter(|plugin| plugin_available_in_current_runtime(plugin))
             .cloned()
             .collect::<Vec<_>>();
         let plugins = plugin_records
@@ -623,6 +717,9 @@ impl CapabilityService for CapabilityServiceImpl {
             let Some(plugin) = plugins.get_mut(plugin_id) else {
                 return Err(ConnectError::not_found("plugin not found"));
             };
+            if !plugin_available_in_current_runtime(plugin) {
+                return Err(ConnectError::not_found("plugin not found"));
+            }
             plugin.enabled = request.enabled.unwrap_or(false);
             for (key, value) in &request_metadata {
                 if plugin_id == tunnel::PLUGIN_ID
@@ -671,6 +768,11 @@ impl CapabilityService for CapabilityServiceImpl {
                     "plugin is not registered: {plugin_id}"
                 )));
             };
+            if !plugin_available_in_current_runtime(plugin) {
+                return Err(ConnectError::not_found(format!(
+                    "plugin is not available in this runtime: {plugin_id}"
+                )));
+            }
             if !plugin.enabled {
                 return Err(ConnectError::failed_precondition(format!(
                     "plugin is disabled: {plugin_id}"
@@ -820,6 +922,7 @@ fn provider_descriptor() -> ProviderDescriptor {
 }
 
 async fn invoke_file_transfer_plugin(
+    state: &AppState,
     session: &SessionRecord,
     operation: &str,
     content_type: &str,
@@ -827,10 +930,12 @@ async fn invoke_file_transfer_plugin(
     metadata: &HashMap<String, String>,
 ) -> ServiceResult<InvokePluginResponse> {
     match operation {
-        "default" | "list" => invoke_file_list(session, operation, metadata).await,
-        "read" | "download" => invoke_file_read(session, operation, content_type, metadata).await,
-        "write" | "upload" => invoke_file_write(session, operation, payload, metadata).await,
-        "stat" => invoke_file_stat(session, operation, metadata).await,
+        "default" | "list" => invoke_file_list(state, session, operation, metadata).await,
+        "read" | "download" => {
+            invoke_file_read(state, session, operation, content_type, metadata).await
+        }
+        "write" | "upload" => invoke_file_write(state, session, operation, payload, metadata).await,
+        "stat" => invoke_file_stat(state, session, operation, metadata).await,
         _ => Err(ConnectError::invalid_argument(format!(
             "unsupported file-transfer operation: {operation}"
         ))),
@@ -838,6 +943,7 @@ async fn invoke_file_transfer_plugin(
 }
 
 async fn invoke_file_list(
+    state: &AppState,
     session: &SessionRecord,
     operation: &str,
     metadata: &HashMap<String, String>,
@@ -860,7 +966,7 @@ else
 fi"#,
         shell_quote(path)
     );
-    let output = run_instance_script(session, &script, &[]).await?;
+    let output = run_session_script(state, session, &script, &[]).await?;
     plugin_response(
         "complete",
         "text/plain",
@@ -870,6 +976,7 @@ fi"#,
 }
 
 async fn invoke_file_read(
+    state: &AppState,
     session: &SessionRecord,
     operation: &str,
     content_type: &str,
@@ -889,7 +996,7 @@ fi
 cat -- "$path""#,
         shell_quote(path)
     );
-    let output = run_instance_script(session, &script, &[]).await?;
+    let output = run_session_script(state, session, &script, &[]).await?;
     plugin_response(
         "complete",
         if content_type == "application/json" {
@@ -903,6 +1010,7 @@ cat -- "$path""#,
 }
 
 async fn invoke_file_write(
+    state: &AppState,
     session: &SessionRecord,
     operation: &str,
     payload: &[u8],
@@ -924,7 +1032,7 @@ bytes="$(wc -c < "$path" | tr -d ' ')"
 printf '{{"path":%s,"bytes":%s}}\n' "$(printf '%s' "$path" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/')" "$bytes""#,
         shell_quote(path)
     );
-    let output = run_instance_script(session, &script, payload).await?;
+    let output = run_session_script(state, session, &script, payload).await?;
     plugin_response(
         "complete",
         "application/json",
@@ -934,6 +1042,7 @@ printf '{{"path":%s,"bytes":%s}}\n' "$(printf '%s' "$path" | sed 's/\\/\\\\/g; s
 }
 
 async fn invoke_file_stat(
+    state: &AppState,
     session: &SessionRecord,
     operation: &str,
     metadata: &HashMap<String, String>,
@@ -956,7 +1065,7 @@ else
 fi"#,
         shell_quote(path)
     );
-    let output = run_instance_script(session, &script, &[]).await?;
+    let output = run_session_script(state, session, &script, &[]).await?;
     plugin_response(
         "complete",
         "text/plain",
@@ -972,11 +1081,20 @@ fn plugin_path_metadata(operation: &str, path: &str) -> HashMap<String, String> 
     ])
 }
 
-async fn run_instance_script(
+async fn run_session_script(
+    state: &AppState,
     session: &SessionRecord,
     script: &str,
     stdin: &[u8],
 ) -> Result<Vec<u8>, ConnectError> {
+    if ssh_backend::is_ssh_selector(&session.selector) {
+        let profile = ssh_backend::load_enabled_profile(&state.database(), &session.selector)?;
+        ssh_backend::mark_profile_used(&state.database(), &session.selector);
+        return ssh_backend::run_profile_script(&profile, script, stdin).await;
+    }
+    if !lightos_features_enabled() {
+        return Err(ConnectError::not_found("LightOS integration is disabled"));
+    }
     let script = script_for_session_user(session, script);
     let mut command = tokio::process::Command::new(LIGHTOSCTL);
     command
@@ -1107,6 +1225,14 @@ fn shell_quote(value: &str) -> String {
 }
 
 async fn close_agent_session(selector: &str, session_id: &str) -> Result<(), ConnectError> {
+    if ssh_backend::is_ssh_selector(selector) {
+        return Err(ConnectError::failed_precondition(
+            "SSH sessions are managed by the workspace store",
+        ));
+    }
+    if !lightos_features_enabled() {
+        return Err(ConnectError::not_found("LightOS integration is disabled"));
+    }
     validate_selector(selector)?;
     let login_user = lightos::login_user_for_selector(selector, true).await?;
     let agent = ensure_agent(selector, &login_user)
@@ -1165,9 +1291,11 @@ mod tests {
 
     #[tokio::test]
     async fn file_transfer_rejects_unknown_operation_before_running_commands() {
+        let state = test_app_state();
         let session = test_session(HashMap::new());
 
         let error = invoke_file_transfer_plugin(
+            &state,
             &session,
             "delete",
             "application/octet-stream",

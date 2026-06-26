@@ -70,6 +70,7 @@ export type ShellElements = {
   sessionBackendSettings: HTMLDivElement;
   defaultSessionBackend: HTMLSelectElement;
   sessionBackendHelp: HTMLParagraphElement;
+  sshProfileSettings: HTMLDivElement;
   herdrHighlightSettings: HTMLDivElement;
   herdrActiveBackgroundDark: HTMLInputElement;
   herdrActiveBackgroundLight: HTMLInputElement;
@@ -224,7 +225,7 @@ export function renderShell(app: HTMLElement): ShellElements {
               <div class="notification-list" id="notificationList" role="list" aria-live="polite"></div>
             </div>
           </div>
-          <button class="icon-button" id="pluginsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Plugins" title="Plugins" data-i18n-aria="section.plugins" data-i18n-title="section.plugins">
+          <button class="icon-button" id="pluginsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Tools" title="Tools" data-i18n-aria="section.plugins" data-i18n-title="section.plugins">
             <i data-lucide="plug"></i>
           </button>
           <div class="settings-menu-shell" id="settingsMenuShell">
@@ -234,7 +235,7 @@ export function renderShell(app: HTMLElement): ShellElements {
             <div class="settings-menu" id="settingsMenu" role="menu" aria-label="Settings menu" data-i18n-aria="action.settingsMenu" hidden>
               <button id="openPluginsItem" type="button" role="menuitem">
                 <i data-lucide="plug"></i>
-                <span data-i18n="section.plugins">Plugins</span>
+                <span data-i18n="section.plugins">Tools</span>
               </button>
               <button id="openShortcutHelpItem" type="button" role="menuitem">
                 <i data-lucide="circle-help"></i>
@@ -300,14 +301,14 @@ export function renderShell(app: HTMLElement): ShellElements {
 
       ${renderMobileKeyboardView()}
 
-      <aside class="plugin-sidebar" id="pluginSidebar" aria-label="Plugins" data-i18n-aria="section.plugins" hidden>
+      <aside class="plugin-sidebar" id="pluginSidebar" aria-label="Tools" data-i18n-aria="section.plugins" hidden>
         <header class="plugin-sidebar-header">
-          <strong data-i18n="section.plugins">Plugins</strong>
-          <button class="icon-button" id="closePluginSidebar" type="button" aria-label="Close plugins" title="Close plugins" data-i18n-aria="action.closePlugins" data-i18n-title="action.closePlugins">
+          <strong data-i18n="section.plugins">Tools</strong>
+          <button class="icon-button" id="closePluginSidebar" type="button" aria-label="Close tools" title="Close tools" data-i18n-aria="action.closePlugins" data-i18n-title="action.closePlugins">
             <i data-lucide="x"></i>
           </button>
         </header>
-        <div class="plugin-tool-tabs" id="pluginToolTabs" role="tablist" aria-label="Plugins" data-i18n-aria="section.plugins"></div>
+        <div class="plugin-tool-tabs" id="pluginToolTabs" role="tablist" aria-label="Tools" data-i18n-aria="section.plugins"></div>
         <div class="plugin-tool-body" id="pluginToolBody"></div>
         <p id="pluginToolStatus" class="field-status"></p>
       </aside>
@@ -346,7 +347,7 @@ export function renderShell(app: HTMLElement): ShellElements {
             </button>
             <button type="button" role="tab" aria-selected="false" aria-controls="pluginSettingsPanel" data-settings-tab="plugins">
               <i data-lucide="plug"></i>
-              <span data-i18n="tab.plugins">Plugins</span>
+              <span data-i18n="tab.plugins">Tools</span>
             </button>
           </div>
 
@@ -407,6 +408,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                 </label>
                 <p id="sessionBackendHelp" class="settings-help" data-i18n="setting.defaultSessionBackendHelp">The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.</p>
               </div>
+              <div class="settings-group ssh-profile-settings" id="sshProfileSettings"></div>
               <label class="field">
                 <span data-i18n="field.cursor">Cursor</span>
                 <select id="cursorShape">
@@ -545,8 +547,8 @@ export function renderShell(app: HTMLElement): ShellElements {
 
             <section class="settings-section" id="pluginSettingsPanel" data-settings-panel="plugins" role="tabpanel" hidden>
               <div class="settings-section-head">
-                <div class="settings-group-title" data-i18n="section.plugins">Plugins</div>
-                <button class="icon-button" id="refreshPlugins" type="button" aria-label="Refresh plugins" title="Refresh plugins" data-i18n-aria="action.refreshPlugins" data-i18n-title="action.refreshPlugins">
+                <div class="settings-group-title" data-i18n="section.plugins">Tools</div>
+                <button class="icon-button" id="refreshPlugins" type="button" aria-label="Refresh tools" title="Refresh tools" data-i18n-aria="action.refreshPlugins" data-i18n-title="action.refreshPlugins">
                   <i data-lucide="refresh-cw"></i>
                 </button>
               </div>
@@ -661,6 +663,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     sessionBackendSettings: qs<HTMLDivElement>("#sessionBackendSettings"),
     defaultSessionBackend: qs<HTMLSelectElement>("#defaultSessionBackend"),
     sessionBackendHelp: qs<HTMLParagraphElement>("#sessionBackendHelp"),
+    sshProfileSettings: qs<HTMLDivElement>("#sshProfileSettings"),
     herdrHighlightSettings: qs<HTMLDivElement>("#herdrHighlightSettings"),
     herdrActiveBackgroundDark: qs<HTMLInputElement>("#herdrActiveBackgroundDark"),
     herdrActiveBackgroundLight: qs<HTMLInputElement>("#herdrActiveBackgroundLight"),

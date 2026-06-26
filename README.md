@@ -4,7 +4,7 @@
 
 当前版本：`0.5.5`
 
-Neko Webshell 是给 LazyCat / LightOS 准备的浏览器终端。打开目标应用实例后，你可以直接在网页里执行命令、看输出、传文件、粘贴图片、发布本地预览地址，也可以让 AI Chat 帮你整理最近的终端上下文。不需要先配置 SSH 客户端。
+Neko Webshell 是浏览器里的 WebShell 工作台。它默认面向 LazyCat / LightOS 的应用实例，也可以关闭 LightOS 初始化后作为通用 WebShell 使用，并通过 SSH profile 管理远程终端目标。
 
 它更像一个随手可用的远程工作台：桌面端适合长时间开发和排查，手机上也保留了常用按键、上下滚动查看历史输出和标签切换能力。
 
@@ -19,6 +19,7 @@ Neko Webshell 是给 LazyCat / LightOS 准备的浏览器终端。打开目标�
 - 使用 AI Chat 分析最近输出、整理命令思路、生成排查步骤。
 - 通过 LightOS 端口转发预览实例内 HTTP 服务。
 - 通过 Cloudflare Quick Tunnel 或带认证配置的 Tunnel 服务，把本地 HTTP 预览地址临时公开出去。
+- 添加 SSH profile，把远程主机作为一等终端目标打开。
 - 如果设备里安装了 Herdr，可以在同一个界面里切换 Herdr 的空间和标签。
 
 ## 打开和使用
@@ -28,6 +29,23 @@ Neko Webshell 是给 LazyCat / LightOS 准备的浏览器终端。打开目标�
 顶部区域用于切换实例、新建标签、调整布局和打开菜单。中间是终端输出和输入区域。底部或菜单里会根据屏幕大小收起常用操作，避免占用终端空间。
 
 原生 WebShell 会话由目标实例内的后台 agent 持有。浏览器刷新、关闭 WebShell 页面，甚至 WebShell 后端重启后，正在运行的 shell 程序也会尽量保留；重新打开页面时会恢复工作区并回放最近输出。目标实例停止或 agent 被杀掉时，对应会话会丢失。
+
+## 通用 WebShell 和 SSH 后端
+
+默认运行模式是 `lightos`，会加载 LightOS 终端初始化，并显示 LightOS Home、Herdr、LightOS 端口转发等入口。通用部署可以设置：
+
+```bash
+NEKO_WEBSHELL_TTY_INIT=generic cargo run
+```
+
+`generic` 模式不会加载 `/run/catlink/shell-env.sh`，也会隐藏 LightOS 专属菜单和接口。未设置时默认仍是 `lightos`，保持 LazyCat / LightOS 包内行为。
+
+SSH 后端通过设置里的 SSH profiles 管理目标，当前支持两类：
+
+- `Managed key`：WebShell 为 profile 生成并保存 ed25519 密钥，公钥由用户部署到目标主机。
+- `OpenSSH`：直接调用设备上的 `ssh <target>`，可以使用设备已有的 `~/.ssh/config`、ssh-agent 和系统 OpenSSH 行为。
+
+托管密钥默认保存在 `/lzcapp/var/ssh/keys`，也可以用 `NEKO_WEBSHELL_SSH_KEY_DIR` 覆盖。
 
 ## 终端体验
 
@@ -84,11 +102,13 @@ LightOS 端口转发可以把目标实例内的 HTTP 端口转到 WebShell 后�
 Public Tunnel 可以把这个本地 HTTP URL 临时发布出去：
 
 - Cloudflare Quick Tunnel 无需认证配置，选择后可以直接启动。
-- 需要 token 的 Tunnel 服务商，需要先在插件设置里添加 Tunnel 认证配置。
+- 需要 token 的 Tunnel 服务商，需要先在工具设置里添加 Tunnel 认证配置。
 - 当前实现支持 Cloudflare Quick Tunnel 和 ngrok。
 - Tunnel 和端口转发会话会在 WebShell 后端运行期间保持，后端进程退出后需要重新启动。
 
 Tunnel 认证配置保存在 WebShell 后端数据库里。工具面板只选择已配置的认证配置，不直接输入 token。
+
+这些能力是 WebShell 内置工具，不是独立分发的第三方插件。当前不支持外部插件市场、插件包安装或热加载。
 
 ## 外观和设置
 
@@ -101,7 +121,7 @@ Tunnel 认证配置保存在 WebShell 后端数据库里。工具面板只选择
 - 终端背景图、透明度和模糊效果。
 - 历史输出保留数量。
 - 移动端触控选择方式。
-- 插件启用状态。
+- 内置工具启用状态。
 - AI 服务商、MCP 服务和终端上下文选项。
 - Tunnel 认证配置。
 
@@ -116,10 +136,10 @@ Tunnel 认证配置保存在 WebShell 后端数据库里。工具面板只选择
 - 终端渲染：Restty，使用原生插件和 Shader stage 扩展上下文收集、输入光效、扫描线和暗角效果。
 - 原生 WebShell 会话：目标实例内 agent daemon 管理 workspace、tab、pane、PTY 和 bounded history。
 - 终端协议：WebSocket 数据面，ConnectRPC 控制面，agent 内部协议使用 protobuf frame。
-- 数据保存：SQLite，保存工作区、会话元数据、最近输出、Herdr 回放位置、插件设置和 Tunnel 认证配置。
+- 数据保存：SQLite，保存工作区、会话元数据、最近输出、Herdr 回放位置、内置工具设置、SSH profiles 和 Tunnel 认证配置。
 - 文件能力：通过当前会话的目标实例执行文件读写和上传。
 - 网络能力：LightOS 端口转发、Cloudflare Quick Tunnel、ngrok。
-- 可选集成：Herdr socket bridge、zellij 后端检测。
+- 可选集成：SSH backend、Herdr socket bridge、zellij 后端检测。
 - 打包目标：LazyCat LPK，导出 LightOS WebShell provider。
 
 本地构建：
@@ -130,6 +150,8 @@ npm run build
 cargo test
 cargo run
 ```
+
+通用 WebShell 部署时使用 `NEKO_WEBSHELL_TTY_INIT=generic`。可选值包括 `lightos` 和 `generic`；未设置时默认 `lightos`。SSH 托管密钥目录可以通过 `NEKO_WEBSHELL_SSH_KEY_DIR` 覆盖。
 
 开发前端界面：
 
@@ -151,4 +173,4 @@ lzc-cli project release
 https://<provider-domain>/?name=<name>@<owner_deploy_id>
 ```
 
-目标实例里的命令执行由 LightOS 和目标实例内 agent 配合完成，Neko Webshell 负责界面、工作区恢复、输入输出转发、插件能力和移动端体验。
+目标实例里的命令执行由 LightOS 和目标实例内 agent 配合完成；SSH 目标由本机 OpenSSH 进程连接。Neko Webshell 负责界面、工作区恢复、输入输出转发、内置工具能力和移动端体验。

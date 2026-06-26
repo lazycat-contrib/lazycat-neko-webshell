@@ -3,6 +3,7 @@ import { formatFileSize } from "../../remote-files";
 import type { TerminalTransferProtocolSupport, TerminalTransferState } from "../../terminal-transfer/types";
 import type { SessionBackendId } from "../../types";
 import { escapeAttr, escapeHtml } from "../../utils";
+import { backendSupportsTerminalTransfer } from "./controller";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -16,7 +17,7 @@ export type TerminalTransferToolViewState = {
 
 export function renderTerminalTransferToolView(state: TerminalTransferToolViewState): string {
   const tr = state.tr;
-  const unsupported = state.activeBackend && state.activeBackend !== "webshell";
+  const unsupported = state.activeBackend && !backendSupportsTerminalTransfer(state.activeBackend);
   const disabledAttr = state.disabled ? "disabled" : "";
   return `
     <div class="plugin-tool terminal-transfer-tool">

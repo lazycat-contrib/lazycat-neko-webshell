@@ -166,6 +166,7 @@ import type {
 import { enabledPluginTools, resolveActivePluginToolId } from "./plugins/tool-registry";
 import { renderPluginToolEmpty, renderPluginToolTabs } from "./plugins/tool-shell-view";
 import { workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
+import { fetchRuntimeInfo, type RuntimeInfo } from "./runtime";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderFontFamilyOptions, renderThemeSelectOptions } from "./settings-options-view";
 import { activateFontPanel, activateSettingsPanel, bindSettingsTabControls } from "./settings-tabs";
@@ -179,6 +180,8 @@ import {
   type SessionMode,
 } from "./session-backends";
 import { renderShell } from "./shell";
+import { createSshProfileSettingsController } from "./ssh-backend/settings-controller";
+import { isSshSelector } from "./ssh-backend/selector";
 import { paneLayoutNode } from "./split-layout";
 import { bindTabWheelSwitch } from "./tab-wheel-switch";
 import {
@@ -411,8 +414,15 @@ const notificationController = createNotificationController({
   onLoadError: (error) => setGlobalStatus(tr("status.notificationLoadFailed", { message: errorMessage(error) }), "error"),
   onActionError: (error) => setGlobalStatus(tr("status.notificationActionFailed", { message: errorMessage(error) }), "error"),
 });
+const sshProfileSettings = createSshProfileSettingsController({
+  root: elements.sshProfileSettings,
+  updateIcons,
+  onProfilesChanged: () => void loadInstances(),
+  onStatus: (message, tone = "neutral") => setGlobalStatus(message, tone),
+});
 
 let settings = loadLocalSettings();
+let runtimeInfo: RuntimeInfo = { mode: "lightos", lightosFeaturesEnabled: true };
 let instances: Instance[] = [];
 let selectedSelector = initialSelector;
 let selectedSelectorGeneration = 0;
@@ -516,13 +526,16 @@ init().catch((error) => setGlobalStatus(tr("status.startupFailed", { message: er
 
 async function init() {
   updateViewportMetrics();
+  await loadRuntimeInfo();
   settings = await loadSettings();
   syncActiveAiProviderProfile();
   await loadUploadedFonts();
   renderOptions();
   bindSettings();
   bindActions();
+  applyRuntimeChrome();
   applySettings();
+  void sshProfileSettings.load();
   void document.fonts?.ready.then(() => handleViewportChange()).catch(() => {});
   createIcons({ icons });
   setInterval(updateActiveDetails, STATUS_REFRESH_MS);
@@ -537,6 +550,17 @@ async function init() {
   }
   if (selectedSelector && !tabs.length) {
     elements.targetLabel.textContent = selectorLabel(selectedSelector);
+  }
+}
+
+async function loadRuntimeInfo() {
+  try {
+    runtimeInfo = await fetchRuntimeInfo();
+  } catch (error) {
+    runtimeInfo = { mode: "lightos", lightosFeaturesEnabled: true };
+    if (settings.debugMode) {
+      setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+    }
   }
 }
 
@@ -1772,6 +1796,10 @@ async function refreshNotifications(options: { showToast?: boolean } = {}) {
 }
 
 async function navigateLightOSHome() {
+  if (!runtimeInfo.lightosFeaturesEnabled) {
+    setGlobalStatus("LightOS integration is disabled", "error");
+    return;
+  }
   closeInstanceMenu();
   paneMenuController.close();
   closeSettingsMenu();
@@ -1783,6 +1811,16 @@ async function navigateLightOSHome() {
   } catch (error) {
     elements.homeButton.disabled = false;
     setGlobalStatus(tr("status.lightosHomeFailed", { message: errorMessage(error) }), "error");
+  }
+}
+
+function applyRuntimeChrome() {
+  elements.webshell.dataset.runtimeMode = runtimeInfo.mode;
+  elements.homeButton.hidden = !runtimeInfo.lightosFeaturesEnabled;
+  if (!runtimeInfo.lightosFeaturesEnabled) {
+    elements.herdrWorkspaceSwitcher.hidden = true;
+    closeHerdrWorkspaceMenu();
+    clearHerdrState();
   }
 }
 
@@ -2333,7 +2371,7 @@ function currentTheme(): TerminalTheme {
 function updateSessionBackendSettings() {
   const selectable = selectableSessionBackends(sessionBackendsState);
   const hasOptionalBackend = selectable.some((backend) => backend.id !== "webshell");
-  const hasHerdr = selectable.some((backend) => backend.id === "herdr");
+  const hasHerdr = runtimeInfo.lightosFeaturesEnabled && selectable.some((backend) => backend.id === "herdr");
   elements.sessionBackendSettings.hidden = !hasOptionalBackend;
   elements.herdrHighlightSettings.hidden = !hasHerdr;
   elements.herdrActiveBackgroundDark.value = normalizeHexColorInput(
@@ -2354,7 +2392,7 @@ function updateSessionBackendSettings() {
   }
   const selected = selectable.some((backend) => backend.id === settings.defaultSessionBackend)
     ? settings.defaultSessionBackend
-    : "webshell";
+    : selectable[0]?.id ?? "webshell";
   if (settings.defaultSessionBackend !== selected) {
     settings.defaultSessionBackend = selected;
   }
@@ -2365,7 +2403,7 @@ function updateSessionBackendSettings() {
 }
 
 function updateHerdrWorkspaceEntry() {
-  const hasHerdr = sessionBackendInstalled(sessionBackendsState, "herdr");
+  const hasHerdr = runtimeInfo.lightosFeaturesEnabled && sessionBackendInstalled(sessionBackendsState, "herdr");
   elements.herdrWorkspaceSwitcher.hidden = !hasHerdr;
   if (!hasHerdr) {
     closeHerdrWorkspaceMenu();
@@ -2791,7 +2829,7 @@ function pluginControlsDisabled(plugin: PluginDescriptor): boolean {
 }
 
 function renderPluginTools() {
-  const tools = enabledPluginTools(plugins);
+  const tools = enabledPluginTools(plugins, activePane()?.sessionBackend);
   if (!tools.length) {
     activePluginToolId = "";
     elements.pluginToolTabs.innerHTML = "";
@@ -3190,7 +3228,7 @@ async function terminalAIContext(includeTerminalContext: boolean): Promise<Recor
   const context: Record<string, unknown> = {
     cwd: pane?.workingDirectory ?? "~",
     shell: "sh",
-    os: "LightOS",
+    os: runtimeInfo.lightosFeaturesEnabled ? "LightOS" : "Generic",
     selector: selectedSelector,
     sessionId: pane?.sessionId ?? "",
     backend: pane?.sessionBackend ?? "",
@@ -3447,6 +3485,10 @@ async function refreshHerdrState(
   selector: string,
   generation = selectedSelectorGeneration,
 ): Promise<boolean> {
+  if (!runtimeInfo.lightosFeaturesEnabled) {
+    clearHerdrState();
+    return false;
+  }
   const requestSelector = normalizeSelector(selector);
   if (!requestSelector) {
     clearHerdrState();
@@ -3776,6 +3818,17 @@ function clearHerdrState() {
 }
 
 function renderHerdrDock() {
+  if (!runtimeInfo.lightosFeaturesEnabled) {
+    elements.webshell.classList.remove("has-herdr");
+    elements.herdrDock.hidden = true;
+    elements.herdrWorkspaceSwitcher.hidden = true;
+    elements.herdrWorkspaceList.replaceChildren();
+    elements.herdrTabList.replaceChildren();
+    elements.herdrStatus.textContent = "";
+    renderHerdrProtocolNotice(undefined);
+    stopHerdrEventBridge();
+    return;
+  }
   const hasHerdrControls = Boolean(herdrState?.available);
   const showHerdrControls = hasHerdrControls && Boolean(activeHerdrTerminalPane());
   updateSessionBackendSettings();
@@ -4240,6 +4293,9 @@ async function createTerminalTab(selector: string, requestedMode?: SessionMode) 
 }
 
 function preferredBackendForNewTab(): SessionMode {
+  if (isSshSelector(selectedSelector) && (!sessionBackendsState || sessionBackendIsSelectable(sessionBackendsState, "ssh"))) {
+    return "ssh";
+  }
   const preferred = normalizeSessionMode(settings.defaultSessionBackend);
   if (!sessionBackendIsSelectable(sessionBackendsState, preferred)) return "webshell";
   return preferred;
@@ -4374,7 +4430,7 @@ async function createPane(tab: TerminalTab, placement: SplitPlacement) {
     splitZellijPane(pane, placement);
     return;
   }
-  if (!pane || pane.sessionBackend !== "webshell") {
+  if (!pane || (pane.sessionBackend !== "webshell" && pane.sessionBackend !== "ssh")) {
     if (pane) setBackendActionUnavailable(pane);
     return;
   }
@@ -4384,7 +4440,7 @@ async function createPane(tab: TerminalTab, placement: SplitPlacement) {
       tabId: tab.id,
       paneId: pane.id,
       direction: placement,
-      sessionBackend: "webshell",
+      sessionBackend: pane.sessionBackend,
     });
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");

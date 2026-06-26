@@ -19,11 +19,13 @@ use crate::proto::lazycat::webshell::v1::{
     AgentLayoutNode, AgentLayoutNodeType, AgentSplitAxis, AgentSplitDirection,
     AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
 };
+use crate::ssh_backend;
 use crate::state::{
     AppState, METADATA_LOGIN_USER, SessionRecord, default_session_command_for_user,
     host_from_selector, output_frame_limit_from_metadata, session_command_for_backend_id,
     sync_session_login_user,
 };
+use crate::tty_init::lightos_features_enabled;
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
 fn is_false(value: &bool) -> bool {
@@ -162,6 +164,8 @@ pub(crate) struct WorkspaceTerminalDefaults {
     auto_restart: bool,
     login_user: String,
     session_backend: SessionBackend,
+    command: String,
+    args: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -170,25 +174,32 @@ pub(crate) enum SessionBackend {
     Webshell,
     Herdr,
     Zellij,
+    Ssh,
 }
 
 impl WorkspaceTerminalDefaults {
     pub(crate) fn new(
+        state: &AppState,
+        selector: &str,
         cols: u16,
         rows: u16,
         output_limit: usize,
         auto_restart: bool,
         login_user: &str,
         session_backend: SessionBackend,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        let (command, args) =
+            session_command_for_backend(state, selector, login_user, session_backend)?;
+        Ok(Self {
             cols,
             rows,
             output_limit,
             auto_restart,
             login_user: login_user.trim().to_owned(),
             session_backend,
-        }
+            command,
+            args,
+        })
     }
 }
 
@@ -299,7 +310,7 @@ pub async fn get_workspace(
     Query(query): Query<WorkspaceQuery>,
 ) -> Response {
     let selector = query.name.trim();
-    let login_user = match authorize_workspace_selector(selector, true).await {
+    let login_user = match authorize_workspace_selector(&state, selector, true).await {
         Ok(login_user) => login_user,
         Err(response) => return response.into_response(),
     };
@@ -308,6 +319,10 @@ pub async fn get_workspace(
         Err(response) => return response.into_response(),
     };
     let output_limit = normalize_output_frame_limit(query.output_limit);
+
+    if ssh_backend::is_ssh_selector(selector) {
+        return Json(optional_backend_workspace_state(&state, selector)).into_response();
+    }
 
     match standard_agent_workspace(
         &state,
@@ -330,7 +345,7 @@ pub async fn put_workspace_action(
     Json(request): Json<WorkspaceActionRequest>,
 ) -> Response {
     let selector = request.name.trim().to_owned();
-    let login_user = match authorize_workspace_selector(&selector, true).await {
+    let login_user = match authorize_workspace_selector(&state, &selector, true).await {
         Ok(login_user) => login_user,
         Err(response) => return response.into_response(),
     };
@@ -362,20 +377,35 @@ pub async fn put_workspace_action(
         };
     }
 
-    let defaults = WorkspaceTerminalDefaults::new(
+    let session_backend = request.session_backend.unwrap_or_else(|| {
+        if ssh_backend::is_ssh_selector(&selector) {
+            SessionBackend::Ssh
+        } else {
+            SessionBackend::Webshell
+        }
+    });
+    let defaults = match WorkspaceTerminalDefaults::new(
+        &state,
+        &selector,
         cols,
         rows,
         output_limit,
         auto_restart,
         &login_user,
-        request.session_backend.unwrap_or(SessionBackend::Webshell),
-    );
+        session_backend,
+    ) {
+        Ok(defaults) => defaults,
+        Err(message) => return (StatusCode::BAD_REQUEST, message).into_response(),
+    };
 
     match apply_workspace_action(&state, &selector, &defaults, &request) {
-        Ok((_workspace, closed_sessions)) => {
+        Ok((workspace, closed_sessions)) => {
             state
                 .sessions
                 .close_sessions(closed_sessions.iter().map(String::as_str));
+            if ssh_backend::is_ssh_selector(&selector) {
+                return Json(workspace).into_response();
+            }
             match standard_agent_workspace(
                 &state,
                 &selector,
@@ -449,11 +479,14 @@ fn workspace_action_uses_legacy_store(
     selector: &str,
     request: &WorkspaceActionRequest,
 ) -> bool {
+    if ssh_backend::is_ssh_selector(selector) {
+        return true;
+    }
     if request.action == WorkspaceAction::SetTabPinned {
         return true;
     }
     match request.session_backend {
-        Some(SessionBackend::Herdr | SessionBackend::Zellij) => return true,
+        Some(SessionBackend::Herdr | SessionBackend::Zellij | SessionBackend::Ssh) => return true,
         Some(SessionBackend::Webshell) => return false,
         None => {}
     }
@@ -1557,7 +1590,7 @@ fn session_backend_from_session(session: Option<&SessionRecord>) -> String {
     session
         .and_then(|session| session.metadata.get("sessionBackend"))
         .map(String::as_str)
-        .filter(|backend| matches!(*backend, "webshell" | "herdr" | "zellij"))
+        .filter(|backend| matches!(*backend, "webshell" | "herdr" | "zellij" | "ssh"))
         .unwrap_or("webshell")
         .to_owned()
 }
@@ -1572,8 +1605,6 @@ fn session_record_with_metadata(
     let host = host_from_selector(selector);
     let mut metadata = extra_metadata;
     let login_user = defaults.login_user.trim();
-    let (command, args) =
-        session_command_for_backend(selector, login_user, defaults.session_backend);
     metadata.insert("host".to_owned(), host.clone());
     metadata.insert("restartable".to_owned(), defaults.auto_restart.to_string());
     if login_user.is_empty() {
@@ -1587,6 +1618,7 @@ fn session_record_with_metadata(
             SessionBackend::Webshell => "webshell",
             SessionBackend::Herdr => "herdr",
             SessionBackend::Zellij => "zellij",
+            SessionBackend::Ssh => "ssh",
         }
         .to_owned(),
     );
@@ -1607,22 +1639,35 @@ fn session_record_with_metadata(
         status: status.to_owned(),
         cols: defaults.cols,
         rows: defaults.rows,
-        command,
-        args,
+        command: defaults.command.clone(),
+        args: defaults.args.clone(),
         control: None,
         metadata,
     }
 }
 
 fn session_command_for_backend(
+    state: &AppState,
     selector: &str,
     login_user: &str,
     backend: SessionBackend,
-) -> (String, Vec<String>) {
+) -> Result<(String, Vec<String>), String> {
     match backend {
-        SessionBackend::Webshell => default_session_command_for_user(selector, login_user),
-        SessionBackend::Herdr => session_command_for_backend_id(selector, login_user, "herdr"),
-        SessionBackend::Zellij => session_command_for_backend_id(selector, login_user, "zellij"),
+        SessionBackend::Webshell => Ok(default_session_command_for_user(selector, login_user)),
+        SessionBackend::Herdr => Ok(session_command_for_backend_id(
+            selector, login_user, "herdr",
+        )),
+        SessionBackend::Zellij => Ok(session_command_for_backend_id(
+            selector, login_user, "zellij",
+        )),
+        SessionBackend::Ssh => {
+            let profile =
+                ssh_backend::load_enabled_profile(&state.database(), selector).map_err(|err| {
+                    err.message
+                        .unwrap_or_else(|| "SSH profile is unavailable".to_owned())
+                })?;
+            Ok(ssh_backend::terminal_command_for_profile(&profile))
+        }
     }
 }
 
@@ -1851,6 +1896,7 @@ fn request_size(cols: Option<u16>, rows: Option<u16>) -> Result<(u16, u16), (Sta
 }
 
 async fn authorize_workspace_selector(
+    state: &AppState,
     selector: &str,
     require_running: bool,
 ) -> Result<String, (StatusCode, String)> {
@@ -1863,6 +1909,23 @@ async fn authorize_workspace_selector(
             err.message.unwrap_or_else(|| "invalid selector".to_owned()),
         )
     })?;
+    if ssh_backend::is_ssh_selector(selector) {
+        return ssh_backend::load_enabled_profile(&state.database(), selector)
+            .map(|profile| profile.login_user())
+            .map_err(|err| {
+                (
+                    StatusCode::FORBIDDEN,
+                    err.message
+                        .unwrap_or_else(|| "SSH profile is not available".to_owned()),
+                )
+            });
+    }
+    if !lightos_features_enabled() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "LightOS integration is disabled".to_owned(),
+        ));
+    }
     lightos::login_user_for_selector(selector, require_running)
         .await
         .map_err(|err| {
@@ -1898,16 +1961,10 @@ mod tests {
 
     #[test]
     fn workspace_split_and_rename_are_persisted() {
+        let state = test_app_state();
         let mut sessions = HashMap::new();
         let mut workspace = WorkspaceRecord::new("demo@owner");
-        let defaults = WorkspaceTerminalDefaults::new(
-            DEFAULT_COLS,
-            DEFAULT_ROWS,
-            DEFAULT_OUTPUT_FRAME_LIMIT,
-            false,
-            "",
-            SessionBackend::Webshell,
-        );
+        let defaults = test_defaults(&state, "", SessionBackend::Webshell);
         assert!(workspace.ensure_ready(&mut sessions, &defaults));
 
         let active_tab = workspace.active_tab_id.clone().unwrap();
@@ -1942,14 +1999,7 @@ mod tests {
             pinned: None,
             pinned_order: None,
         };
-        let defaults = WorkspaceTerminalDefaults::new(
-            DEFAULT_COLS,
-            DEFAULT_ROWS,
-            DEFAULT_OUTPUT_FRAME_LIMIT,
-            false,
-            "admin",
-            SessionBackend::Webshell,
-        );
+        let defaults = test_defaults(&state, "admin", SessionBackend::Webshell);
         let mut closed_sessions = Vec::new();
         workspace
             .apply_action(&request, &mut sessions, &defaults, &mut closed_sessions)
@@ -2026,14 +2076,7 @@ mod tests {
     #[test]
     fn create_tab_action_on_empty_workspace_creates_one_tab() {
         let state = test_app_state();
-        let defaults = WorkspaceTerminalDefaults::new(
-            DEFAULT_COLS,
-            DEFAULT_ROWS,
-            DEFAULT_OUTPUT_FRAME_LIMIT,
-            false,
-            "",
-            SessionBackend::Herdr,
-        );
+        let defaults = test_defaults(&state, "", SessionBackend::Herdr);
         let request = WorkspaceActionRequest {
             name: "demo@owner".to_owned(),
             action: WorkspaceAction::CreateTab,
@@ -2172,14 +2215,7 @@ mod tests {
         let herdr_tab_id = {
             let mut sessions = state.sessions.write().unwrap();
             let mut workspaces = state.workspaces.write().unwrap();
-            let defaults = WorkspaceTerminalDefaults::new(
-                DEFAULT_COLS,
-                DEFAULT_ROWS,
-                DEFAULT_OUTPUT_FRAME_LIMIT,
-                false,
-                "",
-                SessionBackend::Herdr,
-            );
+            let defaults = test_defaults(&state, "", SessionBackend::Herdr);
             let workspace = workspaces
                 .entry("demo@owner".to_owned())
                 .or_insert_with(|| WorkspaceRecord::new("demo@owner"));
@@ -2222,14 +2258,7 @@ mod tests {
     #[test]
     fn workspace_session_api_creates_workspace_owned_session() {
         let state = test_app_state();
-        let defaults = WorkspaceTerminalDefaults::new(
-            DEFAULT_COLS,
-            DEFAULT_ROWS,
-            DEFAULT_OUTPUT_FRAME_LIMIT,
-            true,
-            "admin",
-            SessionBackend::Webshell,
-        );
+        let defaults = test_defaults_with_restart(&state, "admin", SessionBackend::Webshell, true);
         let created = create_workspace_session(
             &state,
             "demo@owner",
@@ -2289,14 +2318,7 @@ mod tests {
     #[test]
     fn workspace_session_api_closes_owned_session_and_keeps_siblings() {
         let state = test_app_state();
-        let defaults = WorkspaceTerminalDefaults::new(
-            DEFAULT_COLS,
-            DEFAULT_ROWS,
-            DEFAULT_OUTPUT_FRAME_LIMIT,
-            false,
-            "",
-            SessionBackend::Webshell,
-        );
+        let defaults = test_defaults(&state, "", SessionBackend::Webshell);
         let first =
             create_workspace_session(&state, "demo@owner", &defaults, HashMap::new()).unwrap();
         let second =
@@ -2319,14 +2341,7 @@ mod tests {
     #[test]
     fn workspace_session_api_closes_last_pane_as_last_tab() {
         let state = test_app_state();
-        let defaults = WorkspaceTerminalDefaults::new(
-            DEFAULT_COLS,
-            DEFAULT_ROWS,
-            DEFAULT_OUTPUT_FRAME_LIMIT,
-            false,
-            "",
-            SessionBackend::Webshell,
-        );
+        let defaults = test_defaults(&state, "", SessionBackend::Webshell);
         let created =
             create_workspace_session(&state, "demo@owner", &defaults, HashMap::new()).unwrap();
 
@@ -2350,6 +2365,33 @@ mod tests {
         AppState::new_for_test(
             std::env::temp_dir().join(format!("lazycat-neko-webshell-workspace-test-{suffix}.db")),
         )
+    }
+
+    fn test_defaults(
+        state: &AppState,
+        login_user: &str,
+        backend: SessionBackend,
+    ) -> WorkspaceTerminalDefaults {
+        test_defaults_with_restart(state, login_user, backend, false)
+    }
+
+    fn test_defaults_with_restart(
+        state: &AppState,
+        login_user: &str,
+        backend: SessionBackend,
+        restartable: bool,
+    ) -> WorkspaceTerminalDefaults {
+        WorkspaceTerminalDefaults::new(
+            state,
+            "demo@owner",
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            DEFAULT_OUTPUT_FRAME_LIMIT,
+            restartable,
+            login_user,
+            backend,
+        )
+        .unwrap()
     }
 
     fn test_database() -> Arc<AppDatabase> {

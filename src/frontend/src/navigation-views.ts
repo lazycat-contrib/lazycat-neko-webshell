@@ -80,5 +80,6 @@ export function renderTabsView(items: TabViewItem[], labels: {
 function backendIcon(id: SessionBackendId): string {
   if (id === "herdr") return "panels-top-left";
   if (id === "zellij") return "layout-dashboard";
+  if (id === "ssh") return "key-round";
   return "terminal";
 }

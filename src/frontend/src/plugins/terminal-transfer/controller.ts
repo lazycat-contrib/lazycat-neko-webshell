@@ -3,7 +3,7 @@ import {
   type BrowserTerminalTransferOptions,
 } from "../../terminal-transfer";
 import type { TerminalTransferProtocolSupport, TerminalTransferState } from "../../terminal-transfer/types";
-import type { TerminalPane, Tone } from "../../types";
+import type { SessionBackendId, TerminalPane, Tone } from "../../types";
 
 export type TerminalTransferControllerOptions =
   Omit<BrowserTerminalTransferOptions, "onState" | "onNotify" | "enabledProtocols"> & {
@@ -35,12 +35,12 @@ export function createTerminalTransferController(options: TerminalTransferContro
   });
 
   function consumePaneOutput(pane: TerminalPane, bytes: Uint8Array): boolean {
-    if (!options.isEnabled() || pane.sessionBackend !== "webshell") return false;
+    if (!options.isEnabled() || !backendSupportsTerminalTransfer(pane.sessionBackend)) return false;
     return transfer.consumePaneOutput(pane, bytes);
   }
 
   function consumePaneInput(pane: TerminalPane, text: string): boolean {
-    if (!options.isEnabled() || pane.sessionBackend !== "webshell") return false;
+    if (!options.isEnabled() || !backendSupportsTerminalTransfer(pane.sessionBackend)) return false;
     return transfer.consumePaneInput(pane, text);
   }
 
@@ -76,4 +76,8 @@ export function createTerminalTransferController(options: TerminalTransferContro
     resizePane,
     viewState,
   };
+}
+
+export function backendSupportsTerminalTransfer(backend: SessionBackendId | undefined): boolean {
+  return backend === "webshell" || backend === "ssh";
 }

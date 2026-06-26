@@ -54,6 +54,9 @@ export function defaultTabDisplayName(tab: TerminalTab, tabs: TerminalTab[], tr:
   if (tab.panes.some((pane) => pane.sessionBackend === "webshell")) {
     return tr("tab.terminalSession", { index: tabBackendOrdinal(tab, tabs, "webshell") });
   }
+  if (tab.panes.some((pane) => pane.sessionBackend === "ssh")) {
+    return `SSH ${tabBackendOrdinal(tab, tabs, "ssh")}`;
+  }
   return String(tabs.findIndex((item) => item.id === tab.id) + 1);
 }
 

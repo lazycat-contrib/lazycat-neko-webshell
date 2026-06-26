@@ -113,12 +113,16 @@ export type HerdrBridgeState = {
 
 export type HerdrAction = "focus_workspace" | "focus_tab" | "create_tab" | "close_workspace" | "create_workspace";
 
-export type SessionBackendId = "webshell" | "herdr" | "zellij";
+export type SessionBackendId = "webshell" | "herdr" | "zellij" | "ssh";
 
 export type SessionBackendInfo = {
   id: SessionBackendId;
   label: string;
   available: boolean;
+  supports_terminal_transfer?: boolean;
+  supportsTerminalTransfer?: boolean;
+  lightos_only?: boolean;
+  lightosOnly?: boolean;
 };
 
 export type SessionBackendsState = {

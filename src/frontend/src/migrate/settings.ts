@@ -142,7 +142,7 @@ function normalizeActiveAiProviderProfileId(value: unknown, profiles: AiProvider
 }
 
 function normalizeSessionBackendId(value: unknown): SessionBackendId {
-  return value === "herdr" || value === "zellij" ? value : DEFAULT_SETTINGS.defaultSessionBackend;
+  return value === "herdr" || value === "zellij" || value === "ssh" ? value : DEFAULT_SETTINGS.defaultSessionBackend;
 }
 
 function normalizeHexColor(value: unknown, fallback: string): string {

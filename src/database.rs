@@ -78,6 +78,26 @@ impl AppDatabase {
 
             CREATE INDEX IF NOT EXISTS idx_tunnel_provider_profiles_provider
                 ON tunnel_provider_profiles(provider);
+
+            CREATE TABLE IF NOT EXISTS ssh_profiles (
+                id TEXT NOT NULL PRIMARY KEY,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                host TEXT NOT NULL DEFAULT '',
+                port INTEGER,
+                username TEXT NOT NULL DEFAULT '',
+                target TEXT NOT NULL DEFAULT '',
+                private_key_path TEXT NOT NULL DEFAULT '',
+                public_key TEXT NOT NULL DEFAULT '',
+                strict_host_key_checking TEXT NOT NULL DEFAULT 'accept-new',
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                last_used_at_ms INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ssh_profiles_enabled
+                ON ssh_profiles(enabled);
             ",
         )
         .map_err(TO_IO_ERROR)?;
@@ -462,6 +482,119 @@ impl AppDatabase {
         .map_err(TO_IO_ERROR)
     }
 
+    pub fn list_ssh_profiles(&self) -> io::Result<Vec<SshProfileRecord>> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(
+                r"
+                SELECT id, name, kind, enabled, host, port, username, target,
+                       private_key_path, public_key, strict_host_key_checking,
+                       created_at_ms, updated_at_ms, last_used_at_ms
+                FROM ssh_profiles
+                ORDER BY name COLLATE NOCASE, created_at_ms, id
+                ",
+            )
+            .map_err(TO_IO_ERROR)?;
+        let rows = stmt
+            .query_map([], ssh_profile_from_row)
+            .map_err(TO_IO_ERROR)?;
+        let mut profiles = Vec::new();
+        for row in rows {
+            profiles.push(row.map_err(TO_IO_ERROR)?);
+        }
+        Ok(profiles)
+    }
+
+    pub fn load_ssh_profile(&self, id: &str) -> io::Result<Option<SshProfileRecord>> {
+        let conn = self.lock()?;
+        conn.query_row(
+            r"
+            SELECT id, name, kind, enabled, host, port, username, target,
+                   private_key_path, public_key, strict_host_key_checking,
+                   created_at_ms, updated_at_ms, last_used_at_ms
+            FROM ssh_profiles
+            WHERE id = ?1
+            ",
+            params![id],
+            ssh_profile_from_row,
+        )
+        .optional()
+        .map_err(TO_IO_ERROR)
+    }
+
+    pub fn upsert_ssh_profile(&self, profile: &SshProfileRecordUpsert) -> io::Result<()> {
+        let now = now_ms();
+        let existing = self.load_ssh_profile(&profile.id)?;
+        let created_at_ms = existing.as_ref().map_or(now, |item| item.created_at_ms);
+        let last_used_at_ms = existing.and_then(|item| item.last_used_at_ms);
+        let conn = self.lock()?;
+        conn.execute(
+            r"
+            INSERT INTO ssh_profiles (
+                id, name, kind, enabled, host, port, username, target,
+                private_key_path, public_key, strict_host_key_checking,
+                created_at_ms, updated_at_ms, last_used_at_ms
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                kind = excluded.kind,
+                enabled = excluded.enabled,
+                host = excluded.host,
+                port = excluded.port,
+                username = excluded.username,
+                target = excluded.target,
+                private_key_path = excluded.private_key_path,
+                public_key = excluded.public_key,
+                strict_host_key_checking = excluded.strict_host_key_checking,
+                updated_at_ms = excluded.updated_at_ms
+            ",
+            params![
+                profile.id,
+                profile.name,
+                profile.kind,
+                if profile.enabled { 1 } else { 0 },
+                profile.host,
+                profile.port.map(i64::from),
+                profile.username,
+                profile.target,
+                profile.private_key_path,
+                profile.public_key,
+                profile.strict_host_key_checking,
+                i64_from_u64(created_at_ms)?,
+                i64_from_u64(now)?,
+                last_used_at_ms.map(i64_from_u64).transpose()?,
+            ],
+        )
+        .map(|_| ())
+        .map_err(TO_IO_ERROR)
+    }
+
+    pub fn delete_ssh_profile(&self, id: &str) -> io::Result<Option<SshProfileRecord>> {
+        let existing = self.load_ssh_profile(id)?;
+        if existing.is_none() {
+            return Ok(None);
+        }
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM ssh_profiles WHERE id = ?1", params![id])
+            .map_err(TO_IO_ERROR)?;
+        Ok(existing)
+    }
+
+    pub fn mark_ssh_profile_used(&self, id: &str) -> io::Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            r"
+            UPDATE ssh_profiles
+            SET last_used_at_ms = ?2, updated_at_ms = ?2
+            WHERE id = ?1
+            ",
+            params![id, i64_from_u64(now_ms())?],
+        )
+        .map(|_| ())
+        .map_err(TO_IO_ERROR)
+    }
+
     fn lock(&self) -> io::Result<std::sync::MutexGuard<'_, Connection>> {
         self.conn
             .lock()
@@ -490,6 +623,39 @@ pub struct TunnelProviderProfileUpsert {
     pub enabled: bool,
     pub config_json: String,
     pub secret_json: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SshProfileRecord {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub enabled: bool,
+    pub host: String,
+    pub port: Option<u16>,
+    pub username: String,
+    pub target: String,
+    pub private_key_path: String,
+    pub public_key: String,
+    pub strict_host_key_checking: String,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+    pub last_used_at_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SshProfileRecordUpsert {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub enabled: bool,
+    pub host: String,
+    pub port: Option<u16>,
+    pub username: String,
+    pub target: String,
+    pub private_key_path: String,
+    pub public_key: String,
+    pub strict_host_key_checking: String,
 }
 
 struct ExistingTunnelProviderProfile {
@@ -591,6 +757,67 @@ fn tunnel_provider_profile_from_row(
                     Box::new(err),
                 )
             })?,
+    })
+}
+
+fn ssh_profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SshProfileRecord> {
+    let port = row
+        .get::<_, Option<i64>>(5)?
+        .map(u16_from_i64)
+        .transpose()
+        .map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                5,
+                rusqlite::types::Type::Integer,
+                Box::new(err),
+            )
+        })?;
+    Ok(SshProfileRecord {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        kind: row.get(2)?,
+        enabled: row.get::<_, i64>(3)? != 0,
+        host: row.get(4)?,
+        port,
+        username: row.get(6)?,
+        target: row.get(7)?,
+        private_key_path: row.get(8)?,
+        public_key: row.get(9)?,
+        strict_host_key_checking: row.get(10)?,
+        created_at_ms: u64_from_i64(row.get(11)?).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                11,
+                rusqlite::types::Type::Integer,
+                Box::new(err),
+            )
+        })?,
+        updated_at_ms: u64_from_i64(row.get(12)?).map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                12,
+                rusqlite::types::Type::Integer,
+                Box::new(err),
+            )
+        })?,
+        last_used_at_ms: row
+            .get::<_, Option<i64>>(13)?
+            .map(u64_from_i64)
+            .transpose()
+            .map_err(|err| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    13,
+                    rusqlite::types::Type::Integer,
+                    Box::new(err),
+                )
+            })?,
+    })
+}
+
+fn u16_from_i64(value: i64) -> io::Result<u16> {
+    u16::try_from(value).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "SSH profile port exceeds u16 range",
+        )
     })
 }
 

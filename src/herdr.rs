@@ -18,6 +18,8 @@ use tracing::warn;
 
 use crate::config::LIGHTOSCTL;
 use crate::lightos;
+use crate::ssh_backend;
+use crate::tty_init::lightos_features_enabled;
 use crate::validation::validate_selector;
 
 const HERDR_API_TIMEOUT: Duration = Duration::from_secs(6);
@@ -339,6 +341,18 @@ pub(crate) async fn herdr_ws(
 
 async fn authorize_herdr_target(selector: &str) -> Result<AuthorizedHerdrTarget, HerdrBridgeError> {
     let selector = selector.trim();
+    if ssh_backend::is_ssh_selector(selector) {
+        return Err(HerdrBridgeError {
+            status: StatusCode::BAD_REQUEST,
+            message: "Herdr is only available for LightOS targets".to_owned(),
+        });
+    }
+    if !lightos_features_enabled() {
+        return Err(HerdrBridgeError {
+            status: StatusCode::NOT_FOUND,
+            message: "LightOS integration is disabled".to_owned(),
+        });
+    }
     validate_selector(selector).map_err(|err| HerdrBridgeError {
         status: StatusCode::BAD_REQUEST,
         message: err

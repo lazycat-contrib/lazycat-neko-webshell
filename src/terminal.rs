@@ -28,10 +28,12 @@ use crate::agent_protocol::{
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
 use crate::lightos;
 use crate::proto::lazycat::webshell::v1::{AgentControlType, AgentFrame, AgentFrameType};
-use crate::state::{AppState, bool_flag, mark_session_status, sync_session_login_user};
+use crate::ssh_backend;
+use crate::state::{AppState, mark_session_status, sync_session_login_user};
 use crate::terminal_manager::{
     ManagedTerminal, OutputBuffer, OutputFrame, TerminalEvent, TerminalSpec,
 };
+use crate::tty_init::lightos_features_enabled;
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
 type TerminalSender = SplitSink<WebSocket, Message>;
@@ -182,6 +184,16 @@ pub async fn upload_clipboard_image(
     let selector = query.name.trim();
     if selector.is_empty() {
         return (StatusCode::BAD_REQUEST, "name is required").into_response();
+    }
+    if ssh_backend::is_ssh_selector(selector) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "clipboard image staging is not supported for SSH terminals",
+        )
+            .into_response();
+    }
+    if !lightos_features_enabled() {
+        return (StatusCode::NOT_FOUND, "LightOS integration is disabled").into_response();
     }
     if let Err(err) = validate_selector(selector) {
         return (
@@ -976,6 +988,11 @@ async fn paste_clipboard_image_path(
     expected_size: usize,
     data: &[u8],
 ) -> anyhow::Result<()> {
+    if ssh_backend::is_ssh_selector(terminal.selector()) || !lightos_features_enabled() {
+        return Err(anyhow!(
+            "clipboard image staging is not supported for this terminal backend"
+        ));
+    }
     if data.is_empty() {
         return Err(anyhow!("clipboard image payload is empty"));
     }
@@ -1169,6 +1186,9 @@ async fn resolve_terminal_target(
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow!("name is required for webshell agent attach"))?;
+        if ssh_backend::is_ssh_selector(selector) {
+            return Err(anyhow!("SSH profile selectors must use the ssh backend"));
+        }
         validate_selector(selector).map_err(|err| anyhow!(err.message.unwrap_or_default()))?;
         let cols = query.cols.unwrap_or(DEFAULT_COLS);
         let rows = query.rows.unwrap_or(DEFAULT_ROWS);
@@ -1195,6 +1215,26 @@ async fn resolve_terminal_target(
         let (spec, status) = persisted_terminal_target(state, query, session_id, restart)?;
         let allow_spawn =
             restart.unwrap_or(false) || matches!(status.as_str(), "running" | "starting");
+        if ssh_backend::is_ssh_selector(&spec.selector) {
+            if backend != "ssh" {
+                return Err(anyhow!(
+                    "SSH profile terminal attach requires the ssh backend"
+                ));
+            }
+            let spec = refresh_persisted_ssh_terminal_profile(state, session_id, spec)?;
+            let output = state.output_buffer(session_id, spec.output_frame_limit);
+            return Ok(TerminalAttachTarget::Managed(ManagedTerminalAttachTarget {
+                spec,
+                allow_spawn,
+                replay,
+                replay_after,
+                pane_id,
+                output,
+            }));
+        }
+        if backend == "ssh" {
+            return Err(anyhow!("ssh backend requires an SSH profile selector"));
+        }
         let login_user = authorize_terminal_selector(&spec.selector, allow_spawn).await?;
         let spec = refresh_persisted_terminal_login_user(state, session_id, spec, &login_user)?;
         let output = state.output_buffer(session_id, spec.output_frame_limit);
@@ -1290,10 +1330,82 @@ fn refresh_persisted_terminal_login_user(
     Ok(spec)
 }
 
+fn refresh_persisted_ssh_terminal_profile(
+    state: &AppState,
+    session_id: &str,
+    mut spec: TerminalSpec,
+) -> anyhow::Result<TerminalSpec> {
+    let profile =
+        ssh_backend::load_enabled_profile(&state.database(), &spec.selector).map_err(|err| {
+            anyhow!(
+                err.message
+                    .unwrap_or_else(|| "SSH profile is not available".to_owned())
+            )
+        })?;
+    let (command, args) = ssh_backend::terminal_command_for_profile(&profile);
+    let login_user = profile.login_user();
+    ssh_backend::mark_profile_used(&state.database(), &spec.selector);
+
+    let mut snapshot = None;
+    {
+        let mut sessions = state
+            .sessions
+            .write()
+            .map_err(|_| anyhow!("session store lock poisoned"))?;
+        if let Some(session) = sessions.get_mut(session_id) {
+            let mut changed = false;
+            if session.command != command {
+                session.command = command;
+                changed = true;
+            }
+            if session.args != args {
+                session.args = args;
+                changed = true;
+            }
+            match (
+                login_user.trim().is_empty(),
+                session.metadata.get("loginUser"),
+            ) {
+                (true, Some(_)) => {
+                    session.metadata.remove("loginUser");
+                    changed = true;
+                }
+                (false, Some(value)) if value == login_user.trim() => {}
+                (false, _) => {
+                    session
+                        .metadata
+                        .insert("loginUser".to_owned(), login_user.trim().to_owned());
+                    changed = true;
+                }
+                (true, None) => {}
+            }
+            if session
+                .metadata
+                .insert("sessionBackend".to_owned(), "ssh".to_owned())
+                .as_deref()
+                != Some("ssh")
+            {
+                changed = true;
+            }
+            spec = session.terminal_spec(spec.cols, spec.rows);
+            if changed {
+                snapshot = Some(sessions.clone());
+            }
+        }
+    }
+    if let Some(snapshot) = snapshot {
+        state.persist_sessions_snapshot(&snapshot)?;
+    }
+    Ok(spec)
+}
+
 async fn authorize_terminal_selector(
     selector: &str,
     require_running: bool,
 ) -> anyhow::Result<String> {
+    if !lightos_features_enabled() {
+        return Err(anyhow!("LightOS integration is disabled"));
+    }
     lightos::login_user_for_selector(selector, require_running)
         .await
         .map_err(|err| {
@@ -1306,8 +1418,16 @@ async fn authorize_terminal_selector(
 
 fn parse_query_bool(value: Option<&str>, name: &str) -> anyhow::Result<Option<bool>> {
     value
-        .map(|value| bool_flag(value).ok_or_else(|| anyhow!("{name} must be a boolean")))
+        .map(|value| parse_bool_flag(value).ok_or_else(|| anyhow!("{name} must be a boolean")))
         .transpose()
+}
+
+fn parse_bool_flag(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 fn origin_allowed(headers: &HeaderMap) -> bool {

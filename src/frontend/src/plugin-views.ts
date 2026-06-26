@@ -72,7 +72,6 @@ function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsView
         <div class="plugin-title-row">
           <span class="plugin-icon"><i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i></span>
           <span class="plugin-name">${escapeHtml(pluginDisplayName(plugin, state.tr))}</span>
-          <code>${escapeHtml(plugin.id)}</code>
         </div>
         <p class="plugin-description">${escapeHtml(pluginDescription(plugin, state.tr))}</p>
         <div class="plugin-meta">

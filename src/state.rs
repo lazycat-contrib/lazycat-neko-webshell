@@ -21,6 +21,7 @@ use crate::pomodoro::PomodoroManager;
 use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
 use crate::session_manager::SessionManager;
 use crate::terminal_manager::{OutputBuffer, TerminalSpec};
+use crate::tty_init::terminal_session_bootstrap_script;
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 use crate::workspace::{WorkspaceRecord, WorkspaceStore, default_workspace_store};
 
@@ -239,10 +240,12 @@ impl SessionRecord {
             .map_or("webshell", String::as_str)
             .to_owned();
         if self.command.trim().is_empty() {
-            let (command, args) =
-                session_command_for_backend_id(&self.selector, &login_user, &backend_id);
-            self.command = command;
-            self.args = args;
+            if backend_id != "ssh" {
+                let (command, args) =
+                    session_command_for_backend_id(&self.selector, &login_user, &backend_id);
+                self.command = command;
+                self.args = args;
+            }
         } else if !login_user.trim().is_empty() {
             sync_session_login_user(&mut self, &login_user);
         }
@@ -527,16 +530,18 @@ pub fn sync_session_login_user(session: &mut SessionRecord, login_user: &str) ->
         .get(METADATA_SESSION_BACKEND)
         .map_or("webshell", String::as_str)
         .to_owned();
-    let (command, args) =
-        session_command_for_backend_id(&session.selector, normalized, &backend_id);
     let mut changed = false;
-    if session.command != command {
-        session.command = command;
-        changed = true;
-    }
-    if session.args != args {
-        session.args = args;
-        changed = true;
+    if backend_id != "ssh" {
+        let (command, args) =
+            session_command_for_backend_id(&session.selector, normalized, &backend_id);
+        if session.command != command {
+            session.command = command;
+            changed = true;
+        }
+        if session.args != args {
+            session.args = args;
+            changed = true;
+        }
     }
     match (
         normalized.is_empty(),
@@ -764,14 +769,6 @@ exit 127"#,
     )
 }
 
-fn terminal_session_bootstrap_script() -> &'static str {
-    concat!(
-        "if [ -z \"${LANG:-}\" ] || [ \"$LANG\" = C ] || [ \"$LANG\" = POSIX ]; then export LANG=C.UTF-8; fi\n",
-        "if [ -f /run/catlink/shell-env.sh ]; then . /run/catlink/shell-env.sh; fi\n",
-        "export SHELL=\"$__webshell_shell\""
-    )
-}
-
 fn shell_script_quote(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len() + 2);
     quoted.push('\'');
@@ -784,14 +781,6 @@ fn shell_script_quote(value: &str) -> String {
     }
     quoted.push('\'');
     quoted
-}
-
-pub fn bool_flag(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
 }
 
 pub fn output_frame_limit_from_metadata(metadata: &HashMap<String, String>) -> usize {
@@ -807,7 +796,7 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             id: "file-transfer".to_owned(),
             kind: "transfer".to_owned(),
             display_name: "File Transfer Adapter".to_owned(),
-            description: "Read, write, list, and inspect files in the selected LightOS instance through the current WebShell session boundary.".to_owned(),
+            description: "Read, write, list, and inspect files on the selected terminal target through its active backend boundary.".to_owned(),
             scopes: vec!["session".to_owned(), "filesystem".to_owned()],
             accepted_content_types: vec![
                 "text/plain".to_owned(),
@@ -824,7 +813,8 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             enabled: true,
             metadata: HashMap::from([
                 ("builtin".to_owned(), "true".to_owned()),
-                ("runtime".to_owned(), "lightosctl-exec".to_owned()),
+                ("runtime".to_owned(), "target-shell".to_owned()),
+                ("backends".to_owned(), "webshell,ssh".to_owned()),
             ]),
         },
         PluginRecord {
@@ -835,13 +825,14 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             scopes: vec!["session".to_owned(), "transfer".to_owned()],
             accepted_content_types: vec!["application/octet-stream".to_owned()],
             produced_content_types: vec!["application/octet-stream".to_owned()],
-            input_schema_json: r#"{"operation":"rz|sz|trz|tsz","metadata":{"terminalBackend":"webshell","cwd":"current terminal directory","protocols":"lrzsz,trzsz"},"payload":"local file bytes for upload protocols"}"#.to_owned(),
+            input_schema_json: r#"{"operation":"rz|sz|trz|tsz","metadata":{"terminalBackend":"webshell|ssh","cwd":"current terminal directory","protocols":"lrzsz,trzsz"},"payload":"local file bytes for upload protocols"}"#.to_owned(),
             output_schema_json: r#"{"status":"complete|failed|cancelled","name":"file name","size":"bytes when known"}"#.to_owned(),
             enabled: false,
             metadata: HashMap::from([
                 ("builtin".to_owned(), "true".to_owned()),
                 ("defaultEnabled".to_owned(), "false".to_owned()),
                 ("runtime".to_owned(), "browser-terminal".to_owned()),
+                ("backends".to_owned(), "webshell,ssh".to_owned()),
                 ("protocols".to_owned(), "lrzsz,trzsz".to_owned()),
             ]),
         },
@@ -890,6 +881,7 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
             enabled: false,
             metadata: HashMap::from([
                 ("builtin".to_owned(), "true".to_owned()),
+                ("requiresRuntime".to_owned(), "lightos".to_owned()),
                 ("defaultEnabled".to_owned(), "false".to_owned()),
             ]),
         },
@@ -1164,8 +1156,30 @@ mod tests {
             Some("browser-terminal")
         );
         assert_eq!(
+            plugin.metadata.get("backends").map(String::as_str),
+            Some("webshell,ssh")
+        );
+        assert_eq!(
             plugin.metadata.get("protocols").map(String::as_str),
             Some("lrzsz,trzsz")
+        );
+    }
+
+    #[test]
+    fn builtin_file_transfer_declares_target_backends() {
+        let plugins = builtin_plugins();
+        let plugin = plugins
+            .get("file-transfer")
+            .expect("file transfer builtin tool");
+
+        assert!(plugin.enabled);
+        assert_eq!(
+            plugin.metadata.get("runtime").map(String::as_str),
+            Some("target-shell")
+        );
+        assert_eq!(
+            plugin.metadata.get("backends").map(String::as_str),
+            Some("webshell,ssh")
         );
     }
 
