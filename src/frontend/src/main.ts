@@ -65,9 +65,9 @@ import {
   selectHerdrTerminalPane,
 } from "./herdr-backend";
 import {
-  renderHerdrTabButtons,
-  renderHerdrWorkspaceButtons,
   renderHerdrWorkspaceMenuView,
+  syncHerdrTabButtons,
+  syncHerdrWorkspaceButtons,
 } from "./herdr-views";
 import { translate, type MessageKey } from "./i18n";
 import { renderInstanceListView } from "./instance-views";
@@ -207,7 +207,7 @@ import type {
   TunnelProviderProfileSummary,
 } from "./plugins/public-tunnel/types";
 import { enabledPluginTools, resolveActivePluginToolId } from "./plugins/tool-registry";
-import { renderPluginToolEmpty, renderPluginToolTabs } from "./plugins/tool-shell-view";
+import { renderPluginToolEmpty, syncPluginToolTabs } from "./plugins/tool-shell-view";
 import { workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { fetchRuntimeInfo, type RuntimeInfo } from "./runtime";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
@@ -3225,14 +3225,14 @@ function renderPluginTools() {
   const tools = enabledPluginTools(plugins, activePane()?.sessionBackend);
   if (!tools.length) {
     activePluginToolId = "";
-    elements.pluginToolTabs.innerHTML = "";
+    syncPluginToolTabs(elements.pluginToolTabs, tools, activePluginToolId, tr);
     elements.pluginToolBody.innerHTML = renderPluginToolEmpty(pluginsLoading, tr);
     renderWhiteNoiseFloatingSurface();
     updateIcons();
     return;
   }
   activePluginToolId = resolveActivePluginToolId(tools, activePluginToolId);
-  elements.pluginToolTabs.innerHTML = renderPluginToolTabs(tools, activePluginToolId, tr);
+  syncPluginToolTabs(elements.pluginToolTabs, tools, activePluginToolId, tr);
   const activePlugin = tools.find((plugin) => plugin.id === activePluginToolId);
   if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID) {
     fileTransfer.syncPathWithPane();
@@ -4363,8 +4363,8 @@ function renderHerdrDock() {
     elements.webshell.classList.remove("has-herdr");
     elements.herdrDock.hidden = true;
     elements.herdrWorkspaceSwitcher.hidden = true;
-    elements.herdrWorkspaceList.replaceChildren();
-    elements.herdrTabList.replaceChildren();
+    syncHerdrWorkspaceButtons(elements.herdrWorkspaceList, undefined, tr("action.closeHerdrSpace"));
+    syncHerdrTabButtons(elements.herdrTabList, undefined);
     elements.herdrStatus.textContent = "";
     renderHerdrProtocolNotice(undefined);
     stopHerdrEventBridge();
@@ -4380,8 +4380,8 @@ function renderHerdrDock() {
     elements.herdrTabList.parentElement?.removeAttribute("hidden");
     elements.herdrNewWorkspace.hidden = false;
     elements.herdrNewTab.hidden = false;
-    elements.herdrWorkspaceList.replaceChildren();
-    elements.herdrTabList.replaceChildren();
+    syncHerdrWorkspaceButtons(elements.herdrWorkspaceList, undefined, tr("action.closeHerdrSpace"));
+    syncHerdrTabButtons(elements.herdrTabList, undefined);
     elements.herdrStatus.textContent = "";
     renderHerdrProtocolNotice(undefined);
     renderHerdrWorkspaceMenu();
@@ -4395,16 +4395,17 @@ function renderHerdrDock() {
   elements.herdrTabList.parentElement?.toggleAttribute("hidden", false);
   elements.herdrNewWorkspace.hidden = false;
   elements.herdrNewTab.hidden = false;
-  elements.herdrWorkspaceList.innerHTML = renderHerdrWorkspaceButtons(
+  const workspaceListRendered = syncHerdrWorkspaceButtons(
+    elements.herdrWorkspaceList,
     herdrState?.workspaces,
     tr("action.closeHerdrSpace"),
   );
-  elements.herdrTabList.innerHTML = renderHerdrTabButtons(herdrState?.tabs);
+  const tabListRendered = syncHerdrTabButtons(elements.herdrTabList, herdrState?.tabs);
   elements.herdrStatus.textContent = herdrState?.message ?? "";
   renderHerdrProtocolNotice(herdrState);
   renderHerdrWorkspaceMenu();
   void syncHerdrEventBridge();
-  updateIcons();
+  if (workspaceListRendered || tabListRendered) updateIcons();
 }
 
 function renderHerdrProtocolNotice(state: HerdrBridgeState | undefined) {

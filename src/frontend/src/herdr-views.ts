@@ -39,7 +39,7 @@ export function renderHerdrWorkspaceButton(workspace: HerdrWorkspaceInfo, closeL
   const details = `${workspace.tab_count} tabs, ${workspace.pane_count} panes`;
   const number = String(workspace.number || "").trim();
   return `
-    <div class="herdr-space" role="option" aria-selected="${workspace.focused}" title="${escapeAttr(`${label} · ${details}`)}">
+    <div class="herdr-space" role="option" aria-selected="${workspace.focused}" title="${escapeAttr(`${label} · ${details}`)}" data-herdr-workspace-item="${escapeAttr(workspace.workspace_id)}">
       <button class="herdr-chip" type="button" data-herdr-workspace="${escapeAttr(workspace.workspace_id)}">
         ${number ? `<small>${escapeHtml(number)}</small>` : ""}
         <span>${escapeHtml(label)}</span>
@@ -76,6 +76,48 @@ export function renderHerdrTabButtons(tabs: HerdrTabInfo[] | undefined): string 
   return tabs?.length ? tabs.map(renderHerdrTabButton).join("") : "";
 }
 
+export function syncHerdrWorkspaceButtons(
+  container: HTMLElement,
+  workspaces: HerdrWorkspaceInfo[] | undefined,
+  closeLabel: string,
+): boolean {
+  const items = workspaceItems(workspaces, closeLabel);
+  const signature = JSON.stringify(items.map((item) => [
+    item.id,
+    item.number,
+    item.label,
+    item.details,
+    item.closeLabel,
+  ]));
+  if (!items.length) return syncEmpty(container, "herdrWorkspaceSignature", signature);
+  if (container.dataset.herdrWorkspaceSignature !== signature || workspaceElements(container).length !== items.length) {
+    container.innerHTML = renderHerdrWorkspaceButtons(workspaces, closeLabel);
+    container.dataset.herdrWorkspaceSignature = signature;
+    return true;
+  }
+
+  container.dataset.herdrWorkspaceSignature = signature;
+  const elements = workspaceElements(container);
+  items.forEach((item, index) => patchWorkspaceElement(elements[index], item));
+  return false;
+}
+
+export function syncHerdrTabButtons(container: HTMLElement, tabs: HerdrTabInfo[] | undefined): boolean {
+  const items = tabItems(tabs);
+  const signature = JSON.stringify(items.map((item) => [item.id, item.number, item.label, item.title]));
+  if (!items.length) return syncEmpty(container, "herdrTabSignature", signature);
+  if (container.dataset.herdrTabSignature !== signature || tabElements(container).length !== items.length) {
+    container.innerHTML = renderHerdrTabButtons(tabs);
+    container.dataset.herdrTabSignature = signature;
+    return true;
+  }
+
+  container.dataset.herdrTabSignature = signature;
+  const elements = tabElements(container);
+  items.forEach((item, index) => patchTabElement(elements[index], item));
+  return false;
+}
+
 function compactHerdrTabLabel(label: string, number: string): string {
   if (!number) return label;
   if (label === number) return "";
@@ -84,4 +126,97 @@ function compactHerdrTabLabel(label: string, number: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+type WorkspaceItem = {
+  id: string;
+  number: string;
+  label: string;
+  details: string;
+  closeLabel: string;
+  focused: boolean;
+};
+
+type TabItem = {
+  id: string;
+  number: string;
+  label: string;
+  title: string;
+  focused: boolean;
+};
+
+function workspaceItems(workspaces: HerdrWorkspaceInfo[] | undefined, closeLabel: string): WorkspaceItem[] {
+  return workspaces?.map((workspace) => {
+    const label = workspace.label.trim() || `Workspace ${workspace.number || ""}`.trim();
+    return {
+      id: workspace.workspace_id,
+      number: String(workspace.number || "").trim(),
+      label,
+      details: `${workspace.tab_count} tabs, ${workspace.pane_count} panes`,
+      closeLabel,
+      focused: workspace.focused,
+    };
+  }) ?? [];
+}
+
+function tabItems(tabs: HerdrTabInfo[] | undefined): TabItem[] {
+  return tabs?.map((tab) => {
+    const number = String(tab.number || "").trim();
+    const rawLabel = tab.label.trim() || `Tab ${number}`.trim();
+    return {
+      id: tab.tab_id,
+      number,
+      label: compactHerdrTabLabel(rawLabel, number),
+      title: tab.tab_id,
+      focused: tab.focused,
+    };
+  }) ?? [];
+}
+
+function patchWorkspaceElement(element: HTMLElement | undefined, item: WorkspaceItem) {
+  if (!element) return;
+  element.dataset.herdrWorkspaceItem = item.id;
+  element.setAttribute("aria-selected", String(item.focused));
+  element.setAttribute("title", `${item.label} · ${item.details}`);
+  const chip = element.querySelector<HTMLButtonElement>("[data-herdr-workspace]");
+  if (chip) chip.dataset.herdrWorkspace = item.id;
+  const number = chip?.querySelector<HTMLElement>("small");
+  if (number && number.textContent !== item.number) number.textContent = item.number;
+  const label = chip?.querySelector<HTMLElement>("span");
+  if (label && label.textContent !== item.label) label.textContent = item.label;
+  const close = element.querySelector<HTMLButtonElement>("[data-herdr-close-workspace]");
+  if (close) {
+    close.dataset.herdrCloseWorkspace = item.id;
+    close.setAttribute("aria-label", item.closeLabel);
+    close.setAttribute("title", item.closeLabel);
+  }
+}
+
+function patchTabElement(element: HTMLButtonElement | undefined, item: TabItem) {
+  if (!element) return;
+  element.dataset.herdrTab = item.id;
+  element.classList.toggle("number-only", !item.label);
+  element.setAttribute("aria-selected", String(item.focused));
+  element.setAttribute("title", item.title);
+  const number = element.querySelector<HTMLElement>("small");
+  if (number && number.textContent !== item.number) number.textContent = item.number;
+  const label = element.querySelector<HTMLElement>("span");
+  if (label && label.textContent !== item.label) label.textContent = item.label;
+}
+
+function workspaceElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(":scope > .herdr-space[data-herdr-workspace-item]"));
+}
+
+function tabElements(container: HTMLElement): HTMLButtonElement[] {
+  return Array.from(container.querySelectorAll<HTMLButtonElement>(":scope > .herdr-tab[data-herdr-tab]"));
+}
+
+function syncEmpty(container: HTMLElement, signatureKey: string, signature: string): boolean {
+  const changed = container.childElementCount > 0 || container.dataset[signatureKey] !== signature;
+  if (changed) {
+    container.replaceChildren();
+    container.dataset[signatureKey] = signature;
+  }
+  return changed;
 }
