@@ -240,6 +240,7 @@ import {
   tabTone as toneForTab,
 } from "./tab-labels";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
+import { observeTerminalTitleChunk } from "./terminal-title";
 import {
   normalizeFontHintTarget,
   renderTerminalFontRenderingSettings,
@@ -5414,14 +5415,9 @@ function writeTerminalText(pane: TerminalPane, text: string) {
 }
 
 function observeTerminalTitle(pane: TerminalPane, text: string) {
-  pane.titleBuffer = `${pane.titleBuffer}${text}`.slice(-4096);
-  const pattern = /\x1b\](?:0|2);([\s\S]*?)(?:\x07|\x1b\\)/g;
-  let match: RegExpExecArray | null;
-  let title: string | undefined;
-  while ((match = pattern.exec(pane.titleBuffer)) !== null) {
-    title = match[1]?.replace(/[\x00-\x1f\x7f]/g, "").trim();
-  }
-  if (title) updatePaneTitle(pane, title);
+  const observation = observeTerminalTitleChunk(pane.titleBuffer, text);
+  pane.titleBuffer = observation.buffer;
+  if (observation.found) updatePaneTitle(pane, observation.title ?? "");
 }
 
 function scheduleReconnect(pane: TerminalPane) {
@@ -5877,7 +5873,9 @@ function disposePaneLocal(pane: TerminalPane) {
 }
 
 function updatePaneTitle(pane: TerminalPane, title: string) {
-  pane.title = title.trim() || pane.label;
+  const nextTitle = title.trim() || pane.label;
+  if (pane.title === nextTitle) return;
+  pane.title = nextTitle;
   renderTabs();
   updateActiveDetails();
 }
