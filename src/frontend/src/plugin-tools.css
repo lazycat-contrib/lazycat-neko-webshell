@@ -838,14 +838,24 @@
   font-size: 11px;
 }
 
-.white-noise-floating-controls {
+.white-noise-floating-dock {
   position: fixed;
   z-index: 70;
   top: 50%;
   left: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transform: translateY(-50%);
+}
+
+.white-noise-floating-dock[data-collapsed="true"] {
+  left: 8px;
+}
+
+.white-noise-floating-controls {
   display: grid;
   gap: 5px;
-  transform: translateY(-50%);
   border: 1px solid var(--line);
   border-radius: 7px;
   background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
@@ -853,24 +863,48 @@
   box-shadow: var(--shadow-raised);
 }
 
-.white-noise-floating-controls[data-collapsed="true"] {
-  gap: 0;
-  padding: 3px;
+.white-noise-floating-controls button,
+.white-noise-floating-toggle {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
 }
 
 .white-noise-floating-controls button {
-  position: relative;
-  display: inline-grid;
   width: 28px;
   height: 28px;
-  place-items: center;
   border: 1px solid var(--component-border);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text);
 }
 
+.white-noise-floating-toggle {
+  width: 16px;
+  height: 34px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--text) 78%, var(--muted));
+  padding: 0;
+}
+
+.white-noise-floating-toggle:hover,
+.white-noise-floating-toggle:focus-visible {
+  color: var(--accent-fg);
+}
+
+.white-noise-floating-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 .white-noise-floating-controls button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.white-noise-floating-toggle svg {
   width: 15px;
   height: 15px;
 }
@@ -880,7 +914,8 @@
   opacity: 0.58;
 }
 
-.white-noise-floating-controls button span {
+.white-noise-floating-controls button span,
+.white-noise-floating-toggle span {
   position: absolute;
   left: calc(100% + 8px);
   top: 50%;
@@ -899,8 +934,14 @@
   transition: opacity 120ms ease, transform 120ms ease;
 }
 
+.white-noise-floating-toggle span {
+  left: calc(100% + 12px);
+}
+
 .white-noise-floating-controls button:hover span,
-.white-noise-floating-controls button:focus-visible span {
+.white-noise-floating-controls button:focus-visible span,
+.white-noise-floating-toggle:hover span,
+.white-noise-floating-toggle:focus-visible span {
   transform: translate(0, -50%);
   opacity: 1;
 }
@@ -926,7 +967,7 @@
     grid-column: 1 / -1;
   }
 
-  .white-noise-floating-controls {
+  .white-noise-floating-dock {
     left: 8px;
   }
 }
