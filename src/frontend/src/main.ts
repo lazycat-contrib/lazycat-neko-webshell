@@ -93,7 +93,7 @@ import {
 import { createNotificationController } from "./notifications/controller";
 import { createNotificationDom } from "./notifications/dom";
 import { notificationDisplayTitle, notificationTone } from "./notifications/presenter";
-import { renderNewTabMenuView, renderTabsView, type TabViewItem } from "./navigation-views";
+import { renderNewTabMenuView, syncTabsView, type TabViewItem } from "./navigation-views";
 import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
 import {
   allTabPanes,
@@ -5575,7 +5575,7 @@ function syncAIChatForActiveTerminal() {
 
 function renderTabs() {
   updateTabChrome();
-  elements.tabList.innerHTML = renderTabsView(tabViewItems(), {
+  const result = syncTabsView(elements.tabList, tabViewItems(), {
     empty: tr("status.noSessions"),
     rename: tr("action.renameTab"),
     close: tr("action.closeTab"),
@@ -5584,7 +5584,7 @@ function renderTabs() {
     movePinnedPrevious: tr("action.movePinnedTabPrevious"),
     movePinnedNext: tr("action.movePinnedTabNext"),
   });
-  elements.tabList.querySelectorAll<HTMLInputElement>(".tab-rename[data-rename-tab]").forEach((input) => {
+  result.renameInputs.forEach((input) => {
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -5596,7 +5596,7 @@ function renderTabs() {
     });
     input.addEventListener("blur", () => void commitTabRename(input.dataset.renameTab ?? "", input.value));
   });
-  updateIcons();
+  if (result.rendered) updateIcons();
   aiVoiceInput.render();
   focusRenameInput();
 }
@@ -5663,6 +5663,7 @@ function focusRenameInput() {
   if (!renamingTabId) return;
   requestAnimationFrame(() => {
     const input = elements.tabList.querySelector<HTMLInputElement>(`.tab-rename[data-rename-tab="${CSS.escape(renamingTabId ?? "")}"]`);
+    if (document.activeElement === input) return;
     input?.focus();
     input?.select();
   });
@@ -5936,6 +5937,13 @@ function updateActiveDetails() {
 }
 
 function setPaneStatus(pane: TerminalPane, message: string, tone: Tone = "neutral") {
+  const changed = pane.status !== message || pane.tone !== tone;
+  if (!changed) {
+    if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
+      setGlobalStatus(message, tone);
+    }
+    return;
+  }
   pane.status = message;
   pane.tone = tone;
   renderTabs();
