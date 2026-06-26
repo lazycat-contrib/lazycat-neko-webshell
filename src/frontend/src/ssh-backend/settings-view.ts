@@ -1,4 +1,4 @@
-import type { SshProfile, SshProfileKind } from "./api";
+import type { SshConfigHost, SshProfile, SshProfileKind } from "./api";
 import { escapeAttr, escapeHtml } from "../utils";
 
 export type SshProfileDraft = {
@@ -15,6 +15,7 @@ export type SshProfileDraft = {
 
 export type SshProfileSettingsViewState = {
   profiles: SshProfile[];
+  configHosts: SshConfigHost[];
   draft: SshProfileDraft;
   selectedId?: string;
   status: string;
@@ -28,7 +29,7 @@ export function emptySshProfileDraft(kind: SshProfileKind = "managed-key"): SshP
     kind,
     enabled: true,
     host: "",
-    port: "22",
+    port: kind === "managed-key" ? "22" : "",
     username: "",
     target: "",
     strictHostKeyChecking: "accept-new",
@@ -77,7 +78,7 @@ export function renderSshProfileSettingsView(state: SshProfileSettingsViewState)
             <span>OpenSSH</span>
           </button>
         </div>
-        ${renderProfileForm(state.draft, selected, busy)}
+        ${renderProfileForm(state.draft, selected, state.configHosts, busy)}
       </div>
     </div>
     <p class="field-status" data-tone="${escapeAttr(state.tone)}">${escapeHtml(state.status)}</p>
@@ -105,7 +106,12 @@ function renderProfileList(profiles: SshProfile[], selectedId: string | undefine
   }).join("");
 }
 
-function renderProfileForm(draft: SshProfileDraft, selected: SshProfile | undefined, busy: string): string {
+function renderProfileForm(
+  draft: SshProfileDraft,
+  selected: SshProfile | undefined,
+  configHosts: SshConfigHost[],
+  busy: string,
+): string {
   const managed = draft.kind === "managed-key";
   return `
     <div class="ssh-profile-kind" role="radiogroup" aria-label="SSH profile type">
@@ -120,7 +126,7 @@ function renderProfileForm(draft: SshProfileDraft, selected: SshProfile | undefi
       <span>Name</span>
       <input type="text" data-ssh-profile-field="name" value="${escapeAttr(draft.name)}" autocomplete="off" spellcheck="false" ${busy} />
     </label>
-    ${managed ? renderManagedFields(draft, busy) : renderOpenSshFields(draft, busy)}
+    ${managed ? renderManagedFields(draft, busy) : renderOpenSshFields(draft, configHosts, busy)}
     <label class="field">
       <span>Host key checking</span>
       <select data-ssh-profile-field="strictHostKeyChecking" ${busy}>
@@ -171,8 +177,17 @@ function renderManagedFields(draft: SshProfileDraft, busy: string): string {
   `;
 }
 
-function renderOpenSshFields(draft: SshProfileDraft, busy: string): string {
+function renderOpenSshFields(draft: SshProfileDraft, configHosts: SshConfigHost[], busy: string): string {
   return `
+    ${configHosts.length ? `
+      <label class="field">
+        <span>OpenSSH config</span>
+        <select data-ssh-config-host ${busy}>
+          <option value="">Choose Host from ~/.ssh/config</option>
+          ${configHosts.map((host) => configHostOption(host, draft.target)).join("")}
+        </select>
+      </label>
+    ` : ""}
     <label class="field">
       <span>OpenSSH target</span>
       <input type="text" data-ssh-profile-field="target" value="${escapeAttr(draft.target)}" placeholder="host-alias or user@example.com" autocomplete="off" spellcheck="false" ${busy} />
@@ -188,6 +203,15 @@ function renderOpenSshFields(draft: SshProfileDraft, busy: string): string {
       </label>
     </div>
   `;
+}
+
+function configHostOption(host: SshConfigHost, selectedTarget: string): string {
+  const detail = [
+    host.username && host.host ? `${host.username}@${host.host}` : host.host,
+    host.port ? `:${host.port}` : "",
+  ].filter(Boolean).join("");
+  const label = detail ? `${host.alias} (${detail})` : host.alias;
+  return `<option value="${escapeAttr(host.alias)}" ${host.alias === selectedTarget ? "selected" : ""}>${escapeHtml(label)}</option>`;
 }
 
 function kindButton(kind: SshProfileKind, label: string, selected: SshProfileKind, busy: string): string {

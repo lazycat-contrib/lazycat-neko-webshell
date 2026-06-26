@@ -1,8 +1,10 @@
 import {
   deleteSshProfile,
+  fetchSshConfigHosts,
   fetchSshProfiles,
   saveSshProfile,
   testSshProfile,
+  type SshConfigHost,
   type SshProfile,
   type SshProfileKind,
   type SshProfileSaveInput,
@@ -23,6 +25,7 @@ export type SshProfileSettingsControllerOptions = {
 
 export function createSshProfileSettingsController(options: SshProfileSettingsControllerOptions) {
   let profiles: SshProfile[] = [];
+  let configHosts: SshConfigHost[] = [];
   let selectedId: string | undefined;
   let draft = emptySshProfileDraft();
   let status = "";
@@ -57,6 +60,13 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
   async function load() {
     await withBusy(async () => {
       profiles = await fetchSshProfiles();
+      let configLoadError = "";
+      try {
+        configHosts = await fetchSshConfigHosts();
+      } catch (error) {
+        configHosts = [];
+        configLoadError = error instanceof Error ? error.message : String(error);
+      }
       if (selectedId) {
         const selected = profiles.find((profile) => profile.id === selectedId);
         if (selected) {
@@ -66,7 +76,12 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
           draft = emptySshProfileDraft();
         }
       }
-      setStatus(profiles.length ? "SSH profiles loaded" : "No SSH profiles yet", "neutral", false);
+      const message = configLoadError
+        ? `SSH profiles loaded. OpenSSH config was not readable: ${configLoadError}`
+        : profiles.length
+          ? "SSH profiles loaded"
+          : "No SSH profiles yet";
+      setStatus(message, configLoadError ? "error" : "neutral", false);
     }, "Failed to load SSH profiles");
   }
 
@@ -88,7 +103,11 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
 
   function setDraftKind(kind: SshProfileKind) {
     if (kind !== "managed-key" && kind !== "device-openssh") return;
-    draft = { ...draft, kind };
+    draft = {
+      ...draft,
+      kind,
+      port: kind === "managed-key" ? draft.port || "22" : "",
+    };
     render();
   }
 
@@ -96,6 +115,10 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
     const input = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement
       ? event.target
       : null;
+    if (input instanceof HTMLSelectElement && input.matches("[data-ssh-config-host]")) {
+      selectConfigHost(input.value);
+      return;
+    }
     const field = input?.dataset.sshProfileField as keyof SshProfileDraft | undefined;
     if (!input || !field) return;
     if (field === "enabled" && input instanceof HTMLInputElement) {
@@ -108,6 +131,22 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
       return;
     }
     draft[field] = input.value as never;
+  }
+
+  function selectConfigHost(alias: string) {
+    const host = configHosts.find((item) => item.alias === alias);
+    if (!host) return;
+    selectedId = undefined;
+    draft = {
+      ...draft,
+      kind: "device-openssh",
+      name: draft.name.trim() || host.alias,
+      target: host.alias,
+      host: host.host || host.alias,
+      username: host.username,
+      port: "",
+    };
+    render();
   }
 
   async function save() {
@@ -202,6 +241,7 @@ export function createSshProfileSettingsController(options: SshProfileSettingsCo
   function render() {
     options.root.innerHTML = renderSshProfileSettingsView({
       profiles,
+      configHosts,
       draft,
       selectedId,
       status,

@@ -17,6 +17,14 @@ export type SshProfile = {
   lastUsedAtMs?: number;
 };
 
+export type SshConfigHost = {
+  alias: string;
+  host: string;
+  username: string;
+  port?: number;
+  source: string;
+};
+
 export type SshProfileSaveInput = {
   id?: string;
   name: string;
@@ -37,6 +45,16 @@ export async function fetchSshProfiles(): Promise<SshProfile[]> {
   await throwIfFailed(response);
   const payload = await response.json() as unknown;
   return Array.isArray(payload) ? payload as SshProfile[] : [];
+}
+
+export async function fetchSshConfigHosts(): Promise<SshConfigHost[]> {
+  const response = await fetch(new URL("./api/ssh-config-hosts", window.location.href), {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  await throwIfFailed(response);
+  const payload = await response.json() as unknown;
+  return Array.isArray(payload) ? payload as SshConfigHost[] : [];
 }
 
 export async function saveSshProfile(input: SshProfileSaveInput): Promise<SshProfile> {

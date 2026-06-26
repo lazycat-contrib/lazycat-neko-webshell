@@ -46,7 +46,27 @@ The SSH backend is managed through SSH profiles in settings. Two profile kinds a
 - `Managed key`: WebShell generates and stores an ed25519 key for the profile. Add the public key to the remote host.
 - `OpenSSH`: WebShell calls the device `ssh <target>` command directly, so existing `~/.ssh/config`, ssh-agent, and system OpenSSH behavior can be used.
 
-Managed keys are stored in `/lzcapp/var/ssh/keys` by default. Set `NEKO_WEBSHELL_SSH_KEY_DIR` to override that directory.
+When the device user has `~/.ssh/config`, the settings page reads selectable `Host` aliases and can fill an OpenSSH profile from them. Connections are still resolved by the device OpenSSH command, including certificate and key authentication behavior such as `IdentityFile`, `CertificateFile`, `ProxyJump`, and ssh-agent. WebShell does not copy those OpenSSH semantics and does not store certificate or private-key contents in its own database.
+
+Managed keys are stored in `/lzcapp/var/ssh/keys` by default. Set `NEKO_WEBSHELL_SSH_KEY_DIR` to override that directory. OpenSSH config defaults to the current process user's `~/.ssh/config`; set `NEKO_WEBSHELL_SSH_CONFIG_FILE` to point at another config file.
+
+You can also create or reuse an OpenSSH profile from URL parameters and open an SSH WebShell automatically:
+
+```text
+https://<webshell-domain>/?sshTarget=cert-box
+https://<webshell-domain>/?sshTarget=deploy@example.com&sshName=prod&sshPort=2222
+```
+
+Parameters:
+
+- `sshTarget`: required. This is passed to the device OpenSSH command as `ssh <target>`. It can be a `Host` alias from `~/.ssh/config` or a `user@host` target.
+- `sshName`: optional profile display name. Defaults to `sshTarget`.
+- `sshHost`: optional display host for the UI. The real connection target is still `sshTarget`.
+- `sshUser`: optional display and workspace metadata user. The real connection target is still `sshTarget`.
+- `sshPort`: optional profile port, passed to OpenSSH as `ssh -p`. When `sshTarget` is a `Host` alias from `~/.ssh/config`, usually omit this parameter so it does not override the OpenSSH config port.
+- `sshStrictHostKeyChecking`: optional, one of `accept-new`, `yes`, or `no`. Defaults to `accept-new`.
+
+After these parameters are consumed, the address bar is replaced with the normal workspace URL `?name=<profile-id>@ssh` so refreshes do not create duplicates. Existing OpenSSH profiles with the same `sshTarget` and port are reused. Certificate, private key, ProxyJump, and agent authentication settings are still read and handled only by the device OpenSSH command.
 
 ## Terminal Experience
 
@@ -160,7 +180,7 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. Vite forwards API requests to the local backend.
 
-For generic WebShell deployment, use `NEKO_WEBSHELL_TTY_INIT=generic`. Supported values include `lightos` and `generic`; the default is `lightos`. The managed SSH key directory can be overridden with `NEKO_WEBSHELL_SSH_KEY_DIR`.
+For generic WebShell deployment, use `NEKO_WEBSHELL_TTY_INIT=generic`. Supported values include `lightos` and `generic`; the default is `lightos`. The managed SSH key directory can be overridden with `NEKO_WEBSHELL_SSH_KEY_DIR`, and the OpenSSH config file can be overridden with `NEKO_WEBSHELL_SSH_CONFIG_FILE`.
 
 Build the LazyCat LPK:
 

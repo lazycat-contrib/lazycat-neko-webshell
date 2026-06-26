@@ -182,6 +182,7 @@ import {
 import { renderShell } from "./shell";
 import { createSshProfileSettingsController } from "./ssh-backend/settings-controller";
 import { isSshSelector } from "./ssh-backend/selector";
+import { consumeSshUrlOpenRequest, hasSshUrlOpenRequest, replaceSshUrlOpenParams } from "./ssh-backend/url-open";
 import { paneLayoutNode } from "./split-layout";
 import { bindTabWheelSwitch } from "./tab-wheel-switch";
 import {
@@ -544,12 +545,35 @@ async function init() {
   startNotificationsPolling();
   await pomodoro.refresh(false);
   await refreshNotifications({ showToast: true });
+  const sshUrlOpen = await prepareSshUrlOpen();
   await loadInstances();
   if (selectedSelector) {
     await loadWorkspace(selectedSelector);
   }
+  if (sshUrlOpen) {
+    setGlobalStatus(tr("status.sshUrlProfileReady", { name: sshUrlOpen.profile.name }), "ok");
+  }
+  if (sshUrlOpen && selectedSelector && !tabs.length) {
+    await createTerminalTab(selectedSelector, "ssh");
+  }
   if (selectedSelector && !tabs.length) {
     elements.targetLabel.textContent = selectorLabel(selectedSelector);
+  }
+}
+
+async function prepareSshUrlOpen() {
+  if (!hasSshUrlOpenRequest()) return undefined;
+  try {
+    const result = await consumeSshUrlOpenRequest();
+    if (!result) return undefined;
+    selectedSelectorExplicit = true;
+    setSelectedSelector(result.profile.selector, { updateLocation: false });
+    rememberSelector(result.profile.selector);
+    replaceSshUrlOpenParams(result.profile.selector);
+    return result;
+  } catch (error) {
+    setGlobalStatus(tr("status.sshUrlOpenFailed", { message: errorMessage(error) }), "error");
+    return undefined;
   }
 }
 

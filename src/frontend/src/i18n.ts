@@ -404,6 +404,8 @@ export type MessageKey =
   | "status.socketError"
   | "status.startupFailed"
   | "status.sessionStopped"
+  | "status.sshUrlOpenFailed"
+  | "status.sshUrlProfileReady"
   | "status.terminalError"
   | "status.themeInvalid"
   | "status.urlCopied"
@@ -882,6 +884,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.socketError": "Socket error",
     "status.startupFailed": "Startup failed: {message}",
     "status.sessionStopped": "Session stopped",
+    "status.sshUrlOpenFailed": "SSH URL open failed: {message}",
+    "status.sshUrlProfileReady": "SSH profile ready: {name}",
     "status.terminalError": "Terminal error",
     "status.themeInvalid": "Theme invalid: {message}",
     "status.themeRemoved": "{name} removed",
@@ -1359,6 +1363,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.socketError": "Socket 错误",
     "status.startupFailed": "启动失败：{message}",
     "status.sessionStopped": "会话已停止",
+    "status.sshUrlOpenFailed": "SSH URL 打开失败：{message}",
+    "status.sshUrlProfileReady": "SSH profile 已就绪：{name}",
     "status.terminalError": "终端错误",
     "status.themeInvalid": "主题无效：{message}",
     "status.themeRemoved": "{name} 已删除",

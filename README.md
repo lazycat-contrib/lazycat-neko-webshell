@@ -45,7 +45,27 @@ SSH 后端通过设置里的 SSH profiles 管理目标，当前支持两类：
 - `Managed key`：WebShell 为 profile 生成并保存 ed25519 密钥，公钥由用户部署到目标主机。
 - `OpenSSH`：直接调用设备上的 `ssh <target>`，可以使用设备已有的 `~/.ssh/config`、ssh-agent 和系统 OpenSSH 行为。
 
-托管密钥默认保存在 `/lzcapp/var/ssh/keys`，也可以用 `NEKO_WEBSHELL_SSH_KEY_DIR` 覆盖。
+如果设备用户目录下存在 `~/.ssh/config`，设置页会读取其中可直接选择的 `Host` alias，并可一键填入 OpenSSH profile。连接时仍由设备上的 OpenSSH 解析完整配置，包括 `IdentityFile`、`CertificateFile`、`ProxyJump`、ssh-agent 等证书和密钥认证行为；WebShell 不复制这些 OpenSSH 语义，也不会把证书或私钥内容保存到自己的数据库。
+
+托管密钥默认保存在 `/lzcapp/var/ssh/keys`，也可以用 `NEKO_WEBSHELL_SSH_KEY_DIR` 覆盖。OpenSSH config 默认读取当前进程用户的 `~/.ssh/config`，也可以用 `NEKO_WEBSHELL_SSH_CONFIG_FILE` 指向其他 config 文件。
+
+也可以通过 URL 参数快速创建或复用 OpenSSH profile，并自动打开 SSH WebShell：
+
+```text
+https://<webshell-domain>/?sshTarget=cert-box
+https://<webshell-domain>/?sshTarget=deploy@example.com&sshName=prod&sshPort=2222
+```
+
+参数说明：
+
+- `sshTarget`：必填，传给设备 OpenSSH 的目标，等价于执行 `ssh <target>`；可以是 `~/.ssh/config` 里的 `Host` alias，也可以是 `user@host`。
+- `sshName`：可选，profile 显示名称；未设置时使用 `sshTarget`。
+- `sshHost`：可选，只作为界面显示用的主机名；实际连接仍由 `sshTarget` 决定。
+- `sshUser`：可选，只作为界面显示和工作区元数据用的用户名；实际连接仍由 `sshTarget` 决定。
+- `sshPort`：可选，保存为 profile 端口并在连接时传给 `ssh -p`。如果 `sshTarget` 是 `~/.ssh/config` 的 `Host` alias，通常不要传这个参数，避免覆盖 OpenSSH config 里的端口。
+- `sshStrictHostKeyChecking`：可选，支持 `accept-new`、`yes`、`no`，默认 `accept-new`。
+
+页面消费这些参数后，会把地址栏替换成普通工作区地址 `?name=<profile-id>@ssh`，避免刷新时重复创建。已经存在相同 `sshTarget` 和端口的 OpenSSH profile 时会复用；证书、私钥、ProxyJump、agent 等认证配置仍只由设备 OpenSSH 读取和处理。
 
 ## 终端体验
 
@@ -151,7 +171,7 @@ cargo test
 cargo run
 ```
 
-通用 WebShell 部署时使用 `NEKO_WEBSHELL_TTY_INIT=generic`。可选值包括 `lightos` 和 `generic`；未设置时默认 `lightos`。SSH 托管密钥目录可以通过 `NEKO_WEBSHELL_SSH_KEY_DIR` 覆盖。
+通用 WebShell 部署时使用 `NEKO_WEBSHELL_TTY_INIT=generic`。可选值包括 `lightos` 和 `generic`；未设置时默认 `lightos`。SSH 托管密钥目录可以通过 `NEKO_WEBSHELL_SSH_KEY_DIR` 覆盖，OpenSSH config 文件可以通过 `NEKO_WEBSHELL_SSH_CONFIG_FILE` 覆盖。
 
 开发前端界面：
 

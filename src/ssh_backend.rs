@@ -14,13 +14,14 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 use uuid::Uuid;
 
-use crate::config::{DEFAULT_SSH_KEY_DIR, ENV_SSH_KEY_DIR};
+use crate::config::{DEFAULT_SSH_KEY_DIR, ENV_SSH_CONFIG_FILE, ENV_SSH_KEY_DIR};
 use crate::database::{AppDatabase, SshProfileRecord, SshProfileRecordUpsert};
 use crate::proto::lazycat::webshell::v1::Instance;
 use crate::state::AppState;
 
 const SSH_OWNER_DEPLOY_ID: &str = "ssh";
 const SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_SSH_CONFIG_BYTES: u64 = 512 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -75,6 +76,16 @@ struct SshConnectionTestResponse {
     message: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConfigHostView {
+    pub alias: String,
+    pub host: String,
+    pub username: String,
+    pub port: Option<u16>,
+    pub source: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct SshProfile {
     record: SshProfileRecord,
@@ -84,6 +95,13 @@ pub struct SshProfile {
 pub async fn list_ssh_profiles(State(state): State<std::sync::Arc<AppState>>) -> Response {
     match list_profile_views(&state.database()) {
         Ok(profiles) => Json(profiles).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+pub async fn list_ssh_config_hosts() -> Response {
+    match list_device_ssh_config_hosts() {
+        Ok(hosts) => Json(hosts).into_response(),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
 }
@@ -175,6 +193,24 @@ pub fn list_profile_instances(database: &AppDatabase) -> io::Result<Vec<Instance
             ..Default::default()
         })
         .collect())
+}
+
+pub fn list_device_ssh_config_hosts() -> io::Result<Vec<SshConfigHostView>> {
+    let Some(path) = device_ssh_config_path() else {
+        return Ok(Vec::new());
+    };
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let metadata = fs::metadata(&path)?;
+    if metadata.len() > MAX_SSH_CONFIG_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "OpenSSH config is too large to inspect",
+        ));
+    }
+    let contents = fs::read_to_string(&path)?;
+    Ok(parse_ssh_config_hosts(&contents, &path.to_string_lossy()))
 }
 
 pub fn is_ssh_selector(selector: &str) -> bool {
@@ -561,6 +597,167 @@ fn ssh_key_dir() -> PathBuf {
         .map_or_else(|| PathBuf::from(DEFAULT_SSH_KEY_DIR), PathBuf::from)
 }
 
+fn device_ssh_config_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os(ENV_SSH_CONFIG_FILE) {
+        return Some(PathBuf::from(path));
+    }
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".ssh/config"))
+}
+
+fn parse_ssh_config_hosts(contents: &str, source: &str) -> Vec<SshConfigHostView> {
+    let mut hosts = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut current: Option<SshConfigBlock> = None;
+
+    for line in contents.lines() {
+        let words = split_ssh_config_words(strip_ssh_config_comment(line));
+        let Some((keyword, values)) = words.split_first() else {
+            continue;
+        };
+        match keyword.to_ascii_lowercase().as_str() {
+            "host" => {
+                flush_ssh_config_block(&mut hosts, &mut seen, current.take(), source);
+                let aliases = values
+                    .iter()
+                    .filter(|alias| ssh_config_alias_is_selectable(alias))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                current = (!aliases.is_empty()).then_some(SshConfigBlock {
+                    aliases,
+                    host: String::new(),
+                    username: String::new(),
+                    port: None,
+                });
+            }
+            "match" => {
+                flush_ssh_config_block(&mut hosts, &mut seen, current.take(), source);
+            }
+            "hostname" => {
+                if let Some(block) = current.as_mut()
+                    && let Some(value) = values.first()
+                    && ssh_config_value_is_safe(value)
+                {
+                    block.host.clone_from(value);
+                }
+            }
+            "user" => {
+                if let Some(block) = current.as_mut()
+                    && let Some(value) = values.first()
+                    && ssh_config_value_is_safe(value)
+                {
+                    block.username.clone_from(value);
+                }
+            }
+            "port" => {
+                if let Some(block) = current.as_mut() {
+                    block.port = values
+                        .first()
+                        .and_then(|value| value.parse::<u16>().ok())
+                        .filter(|port| *port > 0);
+                }
+            }
+            _ => {}
+        }
+    }
+    flush_ssh_config_block(&mut hosts, &mut seen, current, source);
+    hosts
+}
+
+fn flush_ssh_config_block(
+    hosts: &mut Vec<SshConfigHostView>,
+    seen: &mut std::collections::HashSet<String>,
+    block: Option<SshConfigBlock>,
+    source: &str,
+) {
+    let Some(block) = block else {
+        return;
+    };
+    for alias in block.aliases {
+        if !seen.insert(alias.clone()) {
+            continue;
+        }
+        hosts.push(SshConfigHostView {
+            alias: alias.clone(),
+            host: if block.host.is_empty() {
+                alias
+            } else {
+                block.host.clone()
+            },
+            username: block.username.clone(),
+            port: block.port,
+            source: source.to_owned(),
+        });
+    }
+}
+
+#[derive(Debug)]
+struct SshConfigBlock {
+    aliases: Vec<String>,
+    host: String,
+    username: String,
+    port: Option<u16>,
+}
+
+fn ssh_config_alias_is_selectable(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with(['-', '!', '*'])
+        && !value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '*' | '?' | '['))
+}
+
+fn ssh_config_value_is_safe(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && !value
+            .chars()
+            .any(|ch| ch.is_control() || ch.is_whitespace())
+}
+
+fn strip_ssh_config_comment(line: &str) -> &str {
+    let mut in_single = false;
+    let mut in_double = false;
+    for (index, ch) in line.char_indices() {
+        match ch {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '#' if !in_single && !in_double => return &line[..index],
+            _ => {}
+        }
+    }
+    line
+}
+
+fn split_ssh_config_words(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    for ch in line.trim().chars() {
+        if escaped {
+            word.push(ch);
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if !in_single => escaped = true,
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            ch if ch.is_whitespace() && !in_single && !in_double => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            _ => word.push(ch),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
 fn default_true() -> bool {
     true
 }
@@ -612,8 +809,8 @@ impl IntoResponse for SshProfileError {
 #[cfg(test)]
 mod tests {
     use super::{
-        SshProfileKind, is_ssh_selector, normalize_host_key_policy, profile_id_from_selector,
-        selector_for_profile_id, shell_quote,
+        SshProfileKind, is_ssh_selector, normalize_host_key_policy, parse_ssh_config_hosts,
+        profile_id_from_selector, selector_for_profile_id, shell_quote,
     };
 
     #[test]
@@ -654,5 +851,45 @@ mod tests {
             shell_quote("printf '%s' ok"),
             "'printf '\"'\"'%s'\"'\"' ok'"
         );
+    }
+
+    #[test]
+    fn parses_selectable_openssh_config_hosts() {
+        let hosts = parse_ssh_config_hosts(
+            r#"
+Host dev-box dev-short *.internal !blocked
+  HostName 10.0.0.5
+  User root
+  Port 2222
+
+Host *
+  User ignored
+
+Match host example.com
+  User ignored
+
+Host quoted
+  HostName "example.org" # trailing comment
+
+Host cert-box
+  HostName cert.example.com
+  User deploy
+  IdentityFile ~/.ssh/id_ed25519
+  CertificateFile ~/.ssh/id_ed25519-cert.pub
+"#,
+            "/home/user/.ssh/config",
+        );
+
+        assert_eq!(hosts.len(), 4);
+        assert_eq!(hosts[0].alias, "dev-box");
+        assert_eq!(hosts[0].host, "10.0.0.5");
+        assert_eq!(hosts[0].username, "root");
+        assert_eq!(hosts[0].port, Some(2222));
+        assert_eq!(hosts[1].alias, "dev-short");
+        assert_eq!(hosts[2].alias, "quoted");
+        assert_eq!(hosts[2].host, "example.org");
+        assert_eq!(hosts[3].alias, "cert-box");
+        assert_eq!(hosts[3].host, "cert.example.com");
+        assert_eq!(hosts[3].username, "deploy");
     }
 }
