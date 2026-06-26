@@ -29,8 +29,9 @@ use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
 use crate::service::CapabilityServiceImpl;
 use crate::session_backend::get_session_backends;
 use crate::ssh_backend::{
-    delete_ssh_profile, list_profile_instances, list_ssh_config_hosts, list_ssh_profiles,
-    test_ssh_profile, upsert_ssh_profile,
+    delete_ssh_profile, get_ssh_config, get_ssh_key_file, list_profile_instances,
+    list_ssh_config_hosts, list_ssh_profiles, put_ssh_config, put_ssh_key_file, test_ssh_profile,
+    upsert_ssh_profile,
 };
 use crate::state::AppState;
 use crate::terminal::{terminal_ws, upload_clipboard_image};
@@ -56,6 +57,8 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/lightos-admin-info", get(lightos_admin_info))
         .route("/api/ssh-profiles", get(list_ssh_profiles).post(upsert_ssh_profile))
         .route("/api/ssh-config-hosts", get(list_ssh_config_hosts))
+        .route("/api/ssh-config", get(get_ssh_config).put(put_ssh_config))
+        .route("/api/ssh-key-file", get(get_ssh_key_file).put(put_ssh_key_file))
         .route(
             "/api/ssh-profiles/{id}",
             delete(delete_ssh_profile).put(upsert_ssh_profile),

@@ -62,6 +62,9 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     outputBufferLimit: Math.round(
       clampNumber(value.outputBufferLimit, MIN_OUTPUT_BUFFER_LIMIT, MAX_OUTPUT_BUFFER_LIMIT, DEFAULT_SETTINGS.outputBufferLimit),
     ),
+    sshConfigBackupLimit: Math.round(
+      clampNumber(value.sshConfigBackupLimit, 1, 100, DEFAULT_SETTINGS.sshConfigBackupLimit),
+    ),
     defaultSessionBackend: normalizeSessionBackendId(value.defaultSessionBackend),
     herdrActiveBackgroundDark: normalizeHexColor(
       value.herdrActiveBackgroundDark,

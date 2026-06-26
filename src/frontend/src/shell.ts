@@ -333,6 +333,10 @@ export function renderShell(app: HTMLElement): ShellElements {
               <i data-lucide="terminal"></i>
               <span data-i18n="tab.terminal">Terminal</span>
             </button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="remoteHostsSettingsPanel" data-settings-tab="remote-hosts">
+              <i data-lucide="server-cog"></i>
+              <span data-i18n="tab.remoteHosts">Remote hosts</span>
+            </button>
             <button type="button" role="tab" aria-selected="false" aria-controls="fontSettingsRootPanel" data-settings-tab="fonts">
               <i data-lucide="type"></i>
               <span data-i18n="tab.fonts">Fonts</span>
@@ -408,7 +412,6 @@ export function renderShell(app: HTMLElement): ShellElements {
                 </label>
                 <p id="sessionBackendHelp" class="settings-help" data-i18n="setting.defaultSessionBackendHelp">The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.</p>
               </div>
-              <div class="settings-group ssh-profile-settings" id="sshProfileSettings"></div>
               <label class="field">
                 <span data-i18n="field.cursor">Cursor</span>
                 <select id="cursorShape">
@@ -473,6 +476,10 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <input id="debugMode" type="checkbox" />
                 <span data-i18n="setting.debugAdapter">Debug adapter</span>
               </label>
+            </section>
+
+            <section class="settings-section" id="remoteHostsSettingsPanel" data-settings-panel="remote-hosts" role="tabpanel" hidden>
+              <div class="settings-group ssh-profile-settings" id="sshProfileSettings"></div>
             </section>
 
             ${renderMobileSettingsView()}

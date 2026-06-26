@@ -180,8 +180,10 @@ import {
   type SessionMode,
 } from "./session-backends";
 import { renderShell } from "./shell";
+import { createSshNewTabMenuController } from "./ssh-backend/new-tab-menu";
 import { createSshProfileSettingsController } from "./ssh-backend/settings-controller";
 import { isSshSelector } from "./ssh-backend/selector";
+import { openOrCreateOpenSshProfile, sshCommandForTarget } from "./ssh-backend/target";
 import { consumeSshUrlOpenRequest, hasSshUrlOpenRequest, replaceSshUrlOpenParams } from "./ssh-backend/url-open";
 import { paneLayoutNode } from "./split-layout";
 import { bindTabWheelSwitch } from "./tab-wheel-switch";
@@ -415,13 +417,6 @@ const notificationController = createNotificationController({
   onLoadError: (error) => setGlobalStatus(tr("status.notificationLoadFailed", { message: errorMessage(error) }), "error"),
   onActionError: (error) => setGlobalStatus(tr("status.notificationActionFailed", { message: errorMessage(error) }), "error"),
 });
-const sshProfileSettings = createSshProfileSettingsController({
-  root: elements.sshProfileSettings,
-  updateIcons,
-  onOpenProfile: openSshProfileFromSettings,
-  onProfilesChanged: () => void loadInstances(),
-  onStatus: (message, tone = "neutral") => setGlobalStatus(message, tone),
-});
 
 let settings = loadLocalSettings();
 let runtimeInfo: RuntimeInfo = { mode: "lightos", lightosFeaturesEnabled: true };
@@ -445,6 +440,37 @@ let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
 let pluginsLoading = false;
 let activePluginToolId = "";
+
+const sshProfileSettings = createSshProfileSettingsController({
+  root: elements.sshProfileSettings,
+  tr,
+  getSelectedSelector: () => selectedSelector,
+  getSelectedLabel: () => selectedInstance()?.name || selectorLabel(selectedSelector || ""),
+  lightosFeaturesEnabled: () => runtimeInfo.lightosFeaturesEnabled,
+  getBackupLimit: () => settings.sshConfigBackupLimit,
+  setBackupLimit: (value) => {
+    settings.sshConfigBackupLimit = value;
+    saveSettings();
+  },
+  updateIcons,
+  onOpenProfile: openSshProfileFromSettings,
+  onProfilesChanged: () => void loadInstances(),
+  onStatus: (message, tone = "neutral") => setGlobalStatus(message, tone),
+});
+const sshNewTabMenu = createSshNewTabMenuController({
+  root: elements.newTabMenu,
+  tr,
+  updateIcons,
+  onDirectTarget: openSshTargetInLightosWebshell,
+  onProviderTarget: openSshTargetThroughProviderProfile,
+  onOpenProfile: openSshProfileFromSettings,
+  onManageHosts: () => {
+    closeNewTabMenu();
+    openSettings("remote-hosts");
+  },
+  onStatus: setGlobalStatus,
+});
+
 const activeAIChatTerminalPane = () => activeHerdrTerminalPane() ?? activePane();
 const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
   pane: activeAIChatTerminalPane,
@@ -589,6 +615,29 @@ async function openSshProfileFromSettings(selector: string) {
   setSelectedSelector(normalized, { updateLocation: true, replaceLocation: true, tabId: "" });
   await loadWorkspace(normalized);
   await createTerminalTab(normalized, "ssh");
+}
+
+async function openSshTargetInLightosWebshell(target: string) {
+  closeNewTabMenu();
+  const selector = normalizeSelector(selectedSelector);
+  if (!selector || isSshSelector(selector) || !runtimeInfo.lightosFeaturesEnabled) {
+    setGlobalStatus(tr("status.selectRunningInstance"), "error");
+    return;
+  }
+  const tab = await createTerminalTab(selector, "webshell", { label: `ssh ${target}` });
+  await nextAnimationFrame();
+  const pane = activePane(tab ?? activeTab());
+  if (!pane || !sendPaneInput(pane, sshCommandForTarget(target))) {
+    setGlobalStatus(tr("status.noTarget"), "error");
+    return;
+  }
+  setGlobalStatus(`ssh ${target}`, "ok");
+}
+
+async function openSshTargetThroughProviderProfile(target: string) {
+  closeNewTabMenu();
+  const profile = await openOrCreateOpenSshProfile(target);
+  await openSshProfileFromSettings(profile.selector);
 }
 
 async function loadRuntimeInfo() {
@@ -1262,10 +1311,6 @@ function bindActions() {
   elements.refreshInstances.addEventListener("click", () => void loadInstances());
   elements.newTabButton.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (selectableSessionBackends(sessionBackendsState).length <= 1) {
-      void createSelectedTab();
-      return;
-    }
     toggleNewTabMenu();
   });
   elements.newTabMenu.addEventListener("click", (event) => {
@@ -1862,13 +1907,16 @@ function applyRuntimeChrome() {
   }
 }
 
-function openSettings() {
+function openSettings(tabId?: string) {
   prepareMobileOverlay();
   elements.settingsPage.hidden = false;
   elements.webshell.classList.add("settings-open");
   setAppBackgroundInert(true);
   closeInstanceMenu();
   closeSettingsMenu();
+  if (tabId) {
+    activateSettingsTab(tabId);
+  }
   if (!pluginsLoaded && !pluginsLoading) {
     void loadPlugins();
   }
@@ -2343,6 +2391,10 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   const appearance = currentAppearanceContext();
   const { theme, font, resttyTheme } = appearance;
   applyI18n();
+  sshProfileSettings.render();
+  if (!elements.newTabMenu.hidden) {
+    renderNewTabMenu();
+  }
   applyThemeVariables(elements.webshell, resttyTheme);
   applyThemeVariables(elements.terminalStage, resttyTheme);
   elements.localeSelect.value = settings.locale;
@@ -3980,7 +4032,7 @@ function removeAIChatSessionsForTerminalTargets(targets: AIChatTerminalTarget[])
 function renderNewTabMenu() {
   const selectable = selectableSessionBackends(sessionBackendsState);
   const preferred = preferredBackendForNewTab();
-  elements.newTabMenu.innerHTML = renderNewTabMenuView(
+  const backendHtml = renderNewTabMenuView(
     selectable.map((backend) => ({
       id: backend.id,
       label: sessionBackendLabel(backend.id, backend.label, tr),
@@ -3988,7 +4040,15 @@ function renderNewTabMenu() {
     })),
     tr("status.defaultBackend"),
   );
-  updateIcons();
+  const instance = selectedInstance();
+  sshNewTabMenu.render({
+    backendHtml,
+    context: {
+      selectedSelector,
+      selectedLabel: instance?.name || selectorLabel(selectedSelector || ""),
+      lightosDirectAvailable: Boolean(runtimeInfo.lightosFeaturesEnabled && selectedSelector && !isSshSelector(selectedSelector)),
+    },
+  });
 }
 
 function toggleNewTabMenu() {
@@ -4302,7 +4362,11 @@ async function createSelectedTab(mode?: SessionMode) {
   await createTerminalTab(selectedSelector, mode);
 }
 
-async function createTerminalTab(selector: string, requestedMode?: SessionMode) {
+async function createTerminalTab(
+  selector: string,
+  requestedMode?: SessionMode,
+  options: { label?: string } = {},
+): Promise<TerminalTab | undefined> {
   const mode = requestedMode && sessionBackendIsSelectable(sessionBackendsState, requestedMode)
     ? requestedMode
     : preferredBackendForNewTab();
@@ -4318,15 +4382,17 @@ async function createTerminalTab(selector: string, requestedMode?: SessionMode) 
         }
         await runHerdrAction("create_workspace");
         await syncHerdrEventBridge({ force: true });
-        return;
+        return activeTab();
       }
     }
-    await runWorkspaceAction("create_tab", { selector, sessionBackend: mode });
+    await runWorkspaceAction("create_tab", { selector, sessionBackend: mode, label: options.label });
     if (mode === "herdr") {
       window.setTimeout(() => void refreshHerdrState(selector), 400);
     }
+    return activeTab();
   } catch (error) {
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+    return undefined;
   }
 }
 

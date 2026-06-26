@@ -303,6 +303,7 @@ export type Settings = {
   terminalShaderEffect: TerminalShaderEffect;
   scrollbackLimit: number;
   outputBufferLimit: number;
+  sshConfigBackupLimit: number;
   defaultSessionBackend: SessionBackendId;
   herdrActiveBackgroundDark: string;
   herdrActiveBackgroundLight: string;

@@ -92,6 +92,7 @@ export type MessageKey =
   | "action.settings"
   | "action.settingsMenu"
   | "action.shortcutHelp"
+  | "action.sshConnect"
   | "action.closeTab"
   | "action.renameTab"
   | "action.splitDown"
@@ -131,6 +132,7 @@ export type MessageKey =
   | "field.aiProvider"
   | "field.aiTargetTerminal"
   | "field.defaultSessionBackend"
+  | "field.sshTarget"
   | "field.herdrActiveBackgroundDark"
   | "field.herdrActiveBackgroundLight"
   | "field.interfaceStyle"
@@ -287,6 +289,135 @@ export type MessageKey =
   | "setting.terminalBackground"
   | "setting.terminalShaderHelp"
   | "setting.useResttyClipboard"
+  | "sshConfirm.deleteProfile"
+  | "sshError.deleteProfile"
+  | "sshError.loadConfig"
+  | "sshError.loadKey"
+  | "sshError.loadProfiles"
+  | "sshError.openProfile"
+  | "sshError.saveConfig"
+  | "sshError.saveHost"
+  | "sshError.saveKey"
+  | "sshError.saveProfile"
+  | "sshError.testProfile"
+  | "sshSettings.acceptNewHosts"
+  | "sshSettings.advanced"
+  | "sshSettings.advancedNetwork"
+  | "sshSettings.backupLimit"
+  | "sshSettings.badgeConfig"
+  | "sshSettings.badgeKey"
+  | "sshSettings.badgeOpenSsh"
+  | "sshSettings.badgeProfile"
+  | "sshSettings.badgeSsh"
+  | "sshSettings.basic"
+  | "sshSettings.chooseHost"
+  | "sshSettings.configSelectLabel"
+  | "sshSettings.configSource"
+  | "sshSettings.connectionCount"
+  | "sshSettings.connectionCountFiltered"
+  | "sshSettings.connectionsAria"
+  | "sshSettings.currentLightosConfig"
+  | "sshSettings.delete"
+  | "sshSettings.deviceOpenSsh"
+  | "sshSettings.displayHost"
+  | "sshSettings.displayUser"
+  | "sshSettings.editHostTitle"
+  | "sshSettings.editKeyLabel"
+  | "sshSettings.editModeAria"
+  | "sshSettings.enabled"
+  | "sshSettings.extraOptions"
+  | "sshSettings.help"
+  | "sshSettings.hide"
+  | "sshSettings.host"
+  | "sshSettings.hostCount"
+  | "sshSettings.hostForm"
+  | "sshSettings.hostKeyChecking"
+  | "sshSettings.hostListAria"
+  | "sshSettings.keyContent"
+  | "sshSettings.keyFile"
+  | "sshSettings.keyHidden"
+  | "sshSettings.keyMissingHidden"
+  | "sshSettings.keyPath"
+  | "sshSettings.managedKey"
+  | "sshSettings.managedKeyTitle"
+  | "sshSettings.managedPublicKey"
+  | "sshSettings.managedSubtitle"
+  | "sshSettings.name"
+  | "sshSettings.newConnection"
+  | "sshSettings.newHost"
+  | "sshSettings.newHostTitle"
+  | "sshSettings.noConfigHosts"
+  | "sshSettings.noConnectionMatch"
+  | "sshSettings.noHostName"
+  | "sshSettings.off"
+  | "sshSettings.open"
+  | "sshSettings.openNamedProfile"
+  | "sshSettings.openSsh"
+  | "sshSettings.openSshSubtitle"
+  | "sshSettings.openSshTarget"
+  | "sshSettings.port"
+  | "sshSettings.profileTypeAria"
+  | "sshSettings.providerConfig"
+  | "sshSettings.publicKey"
+  | "sshSettings.publicKeyPending"
+  | "sshSettings.rawConfig"
+  | "sshSettings.refreshHosts"
+  | "sshSettings.saveAsProfile"
+  | "sshSettings.saveConfig"
+  | "sshSettings.saveHost"
+  | "sshSettings.saveKey"
+  | "sshSettings.saveNamedAsProfile"
+  | "sshSettings.saveProfile"
+  | "sshSettings.searchLabel"
+  | "sshSettings.searchPlaceholder"
+  | "sshSettings.show"
+  | "sshSettings.strict"
+  | "sshSettings.test"
+  | "sshSettings.title"
+  | "sshSettings.unsaved"
+  | "sshSettings.user"
+  | "sshStatus.configLoaded"
+  | "sshStatus.configRefreshed"
+  | "sshStatus.configSaved"
+  | "sshStatus.configSavedBackup"
+  | "sshStatus.hostSaved"
+  | "sshStatus.keyLoaded"
+  | "sshStatus.keyMissing"
+  | "sshStatus.keySaved"
+  | "sshStatus.keySavedBackup"
+  | "sshStatus.noProfiles"
+  | "sshStatus.openingProfile"
+  | "sshStatus.profileDeleted"
+  | "sshStatus.profileSaved"
+  | "sshValidation.enableBeforeOpening"
+  | "sshValidation.hostRequired"
+  | "sshValidation.keyPathRequired"
+  | "sshValidation.nameRequired"
+  | "sshValidation.openSshTargetRequired"
+  | "sshValidation.portRange"
+  | "sshValidation.saveBeforeTesting"
+  | "ssh.back"
+  | "ssh.chooseHelp"
+  | "ssh.chooseTitle"
+  | "ssh.configHosts"
+  | "ssh.configLoadFailed"
+  | "ssh.directAction"
+  | "ssh.directLightosHint"
+  | "ssh.loading"
+  | "ssh.manageHosts"
+  | "ssh.manualConnect"
+  | "ssh.manualTitle"
+  | "ssh.noHosts"
+  | "ssh.quickHelpLightos"
+  | "ssh.quickHelpProvider"
+  | "ssh.quickPlaceholder"
+  | "ssh.quickTitle"
+  | "ssh.savedProfiles"
+  | "ssh.sourceLightosConfig"
+  | "ssh.sourceManagedKey"
+  | "ssh.sourceProviderConfig"
+  | "ssh.sourceSavedProfile"
+  | "ssh.validationTarget"
   | "shader.interactiveGlow"
   | "shader.off"
   | "shader.scanline"
@@ -311,6 +442,7 @@ export type MessageKey =
   | "tab.mobile"
   | "tab.plugins"
   | "tab.quickPhrases"
+  | "tab.remoteHosts"
   | "tab.terminal"
   | "tab.themes"
   | "status.closed"
@@ -565,6 +697,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.settings": "Settings",
     "action.settingsMenu": "Settings menu",
     "action.shortcutHelp": "Keyboard shortcuts",
+    "action.sshConnect": "Connect SSH",
     "action.closeTab": "Close tab",
     "action.renameTab": "Rename tab",
     "action.splitDown": "Split down",
@@ -604,6 +737,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiProvider": "Provider",
     "field.aiTargetTerminal": "Target terminal",
     "field.defaultSessionBackend": "New tab backend",
+    "field.sshTarget": "SSH target",
     "field.herdrActiveBackgroundDark": "Dark highlight",
     "field.herdrActiveBackgroundLight": "Light highlight",
     "field.interfaceStyle": "Interface style",
@@ -767,6 +901,135 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.terminalBackground": "Use background image",
     "setting.terminalShaderHelp": "GPU effects are off by default. Enable them only when you want extra terminal feedback.",
     "setting.useResttyClipboard": "Use restty clipboard",
+    "sshConfirm.deleteProfile": "Delete SSH profile \"{name}\"?",
+    "sshError.deleteProfile": "Failed to delete SSH profile: {message}",
+    "sshError.loadConfig": "Failed to load SSH config: {message}",
+    "sshError.loadKey": "Failed to load SSH key file: {message}",
+    "sshError.loadProfiles": "Failed to load SSH profiles: {message}",
+    "sshError.openProfile": "Failed to open SSH profile: {message}",
+    "sshError.saveConfig": "Failed to save SSH config: {message}",
+    "sshError.saveHost": "Failed to save SSH Host: {message}",
+    "sshError.saveKey": "Failed to save SSH key file: {message}",
+    "sshError.saveProfile": "Failed to save SSH profile: {message}",
+    "sshError.testProfile": "SSH test failed: {message}",
+    "sshSettings.acceptNewHosts": "Accept new hosts",
+    "sshSettings.advanced": "Advanced",
+    "sshSettings.advancedNetwork": "Proxy and advanced",
+    "sshSettings.backupLimit": "Keep backups",
+    "sshSettings.badgeConfig": "config",
+    "sshSettings.badgeKey": "key",
+    "sshSettings.badgeOpenSsh": "openssh",
+    "sshSettings.badgeProfile": "profile",
+    "sshSettings.badgeSsh": "ssh",
+    "sshSettings.basic": "Basic",
+    "sshSettings.chooseHost": "Choose Host from ~/.ssh/config",
+    "sshSettings.configSelectLabel": "OpenSSH config",
+    "sshSettings.configSource": "Config source",
+    "sshSettings.connectionCount": "{profiles} saved / {hosts} config",
+    "sshSettings.connectionCountFiltered": "{shown} shown from {profiles} saved / {hosts} config",
+    "sshSettings.connectionsAria": "SSH connections",
+    "sshSettings.currentLightosConfig": "Current LightOS instance ~/.ssh/config",
+    "sshSettings.delete": "Delete",
+    "sshSettings.deviceOpenSsh": "Device OpenSSH",
+    "sshSettings.displayHost": "Display host",
+    "sshSettings.displayUser": "Display user",
+    "sshSettings.editHostTitle": "Edit {host}",
+    "sshSettings.editKeyLabel": "Edit {label}",
+    "sshSettings.editModeAria": "SSH config edit mode",
+    "sshSettings.enabled": "Enabled",
+    "sshSettings.extraOptions": "Extra options",
+    "sshSettings.help": "Manage OpenSSH config, key files, and saved SSH connections.",
+    "sshSettings.hide": "Hide",
+    "sshSettings.host": "Host",
+    "sshSettings.hostCount": "{count} Host(s)",
+    "sshSettings.hostForm": "Host form",
+    "sshSettings.hostKeyChecking": "Host key checking",
+    "sshSettings.hostListAria": "OpenSSH config Host",
+    "sshSettings.keyContent": "Content",
+    "sshSettings.keyFile": "Key file",
+    "sshSettings.keyHidden": "Key content hidden ({bytes} bytes). Show to view or edit.",
+    "sshSettings.keyMissingHidden": "Key file does not exist. Show to create or edit it.",
+    "sshSettings.keyPath": "Path",
+    "sshSettings.managedKey": "Managed key",
+    "sshSettings.managedKeyTitle": "Managed key",
+    "sshSettings.managedPublicKey": "Managed public key",
+    "sshSettings.managedSubtitle": "Create a WebShell-managed key profile.",
+    "sshSettings.name": "Name",
+    "sshSettings.newConnection": "New SSH connection",
+    "sshSettings.newHost": "New Host",
+    "sshSettings.newHostTitle": "New Host",
+    "sshSettings.noConfigHosts": "This config has no Host.",
+    "sshSettings.noConnectionMatch": "No SSH connections match.",
+    "sshSettings.noHostName": "HostName not configured",
+    "sshSettings.off": "Off",
+    "sshSettings.open": "Open",
+    "sshSettings.openNamedProfile": "Open {name}",
+    "sshSettings.openSsh": "OpenSSH",
+    "sshSettings.openSshSubtitle": "Use an alias or target resolved by the device ssh command.",
+    "sshSettings.openSshTarget": "OpenSSH target",
+    "sshSettings.port": "Port",
+    "sshSettings.profileTypeAria": "SSH profile type",
+    "sshSettings.providerConfig": "Provider ~/.ssh/config",
+    "sshSettings.publicKey": "Public key",
+    "sshSettings.publicKeyPending": "A public key is generated after the profile is saved.",
+    "sshSettings.rawConfig": "Raw config",
+    "sshSettings.refreshHosts": "Refresh remote hosts",
+    "sshSettings.saveAsProfile": "Save as profile",
+    "sshSettings.saveConfig": "Save config",
+    "sshSettings.saveHost": "Save Host to config",
+    "sshSettings.saveKey": "Save key",
+    "sshSettings.saveNamedAsProfile": "Save {name} as profile",
+    "sshSettings.saveProfile": "Save profile",
+    "sshSettings.searchLabel": "Search SSH connections",
+    "sshSettings.searchPlaceholder": "Search saved connections or ~/.ssh/config Host",
+    "sshSettings.show": "Show",
+    "sshSettings.strict": "Strict",
+    "sshSettings.test": "Test",
+    "sshSettings.title": "Remote hosts",
+    "sshSettings.unsaved": "Unsaved",
+    "sshSettings.user": "User",
+    "sshStatus.configLoaded": "SSH config loaded",
+    "sshStatus.configRefreshed": "SSH config refreshed",
+    "sshStatus.configSaved": "config saved",
+    "sshStatus.configSavedBackup": "config saved, backup: {path}",
+    "sshStatus.hostSaved": "Host saved to config",
+    "sshStatus.keyLoaded": "Key file loaded",
+    "sshStatus.keyMissing": "Key file does not exist. It will be created when saved.",
+    "sshStatus.keySaved": "Key saved",
+    "sshStatus.keySavedBackup": "Key saved, backup: {path}",
+    "sshStatus.noProfiles": "No SSH profiles yet",
+    "sshStatus.openingProfile": "Opening SSH profile: {name}",
+    "sshStatus.profileDeleted": "SSH profile deleted",
+    "sshStatus.profileSaved": "SSH profile saved",
+    "sshValidation.enableBeforeOpening": "Enable the SSH profile before opening it",
+    "sshValidation.hostRequired": "Host is required",
+    "sshValidation.keyPathRequired": "Key path is required",
+    "sshValidation.nameRequired": "Name is required",
+    "sshValidation.openSshTargetRequired": "OpenSSH target is required",
+    "sshValidation.portRange": "Port must be between 1 and 65535",
+    "sshValidation.saveBeforeTesting": "Save the SSH profile before testing it",
+    "ssh.back": "Back",
+    "ssh.chooseHelp": "Choose a Host from {instance}'s ~/.ssh/config, or use a saved profile.",
+    "ssh.chooseTitle": "Choose SSH host",
+    "ssh.configHosts": "~/.ssh/config",
+    "ssh.configLoadFailed": "SSH config load failed: {message}",
+    "ssh.directAction": "Connect from current instance",
+    "ssh.directLightosHint": "Uses the selected LightOS instance ssh",
+    "ssh.loading": "Loading SSH hosts...",
+    "ssh.manageHosts": "Manage remote hosts",
+    "ssh.manualConnect": "Manual target",
+    "ssh.manualTitle": "SSH target",
+    "ssh.noHosts": "No SSH hosts yet.",
+    "ssh.quickHelpLightos": "Open ssh from {instance}, using its ~/.ssh/config and keys.",
+    "ssh.quickHelpProvider": "Open a saved SSH profile or create one from a target.",
+    "ssh.quickPlaceholder": "Host alias or user@example.com",
+    "ssh.quickTitle": "SSH remote",
+    "ssh.savedProfiles": "Saved profiles",
+    "ssh.sourceLightosConfig": "LightOS config",
+    "ssh.sourceManagedKey": "Managed key",
+    "ssh.sourceProviderConfig": "Provider config",
+    "ssh.sourceSavedProfile": "Profile",
+    "ssh.validationTarget": "Enter a valid SSH target.",
     "shader.interactiveGlow": "Input glow",
     "shader.off": "Off",
     "shader.scanline": "Scanline",
@@ -791,6 +1054,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.mobile": "Mobile",
     "tab.plugins": "Tools",
     "tab.quickPhrases": "Phrases",
+    "tab.remoteHosts": "Remote hosts",
     "tab.terminal": "Terminal",
     "tab.themes": "Themes",
     "status.closed": "Closed",
@@ -1044,6 +1308,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.settings": "设置",
     "action.settingsMenu": "设置菜单",
     "action.shortcutHelp": "快捷键",
+    "action.sshConnect": "连接 SSH",
     "action.closeTab": "关闭标签",
     "action.renameTab": "重命名标签",
     "action.splitDown": "向下拆分",
@@ -1083,6 +1348,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "field.aiProvider": "服务商",
     "field.aiTargetTerminal": "目标终端",
     "field.defaultSessionBackend": "新建入口后端",
+    "field.sshTarget": "SSH 目标",
     "field.herdrActiveBackgroundDark": "深色高亮",
     "field.herdrActiveBackgroundLight": "浅色高亮",
     "field.interfaceStyle": "界面风格",
@@ -1246,6 +1512,135 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.terminalBackground": "使用背景图片",
     "setting.terminalShaderHelp": "GPU 特效默认关闭。需要额外的输入反馈时再开启。",
     "setting.useResttyClipboard": "使用 restty 剪贴板",
+    "sshConfirm.deleteProfile": "删除 SSH profile “{name}”？",
+    "sshError.deleteProfile": "删除 SSH profile 失败：{message}",
+    "sshError.loadConfig": "加载 SSH config 失败：{message}",
+    "sshError.loadKey": "加载 SSH 密钥文件失败：{message}",
+    "sshError.loadProfiles": "加载 SSH profile 失败：{message}",
+    "sshError.openProfile": "打开 SSH profile 失败：{message}",
+    "sshError.saveConfig": "保存 SSH config 失败：{message}",
+    "sshError.saveHost": "保存 SSH Host 失败：{message}",
+    "sshError.saveKey": "保存 SSH 密钥文件失败：{message}",
+    "sshError.saveProfile": "保存 SSH profile 失败：{message}",
+    "sshError.testProfile": "SSH 测试失败：{message}",
+    "sshSettings.acceptNewHosts": "接受新主机",
+    "sshSettings.advanced": "高级",
+    "sshSettings.advancedNetwork": "代理和高级",
+    "sshSettings.backupLimit": "保留备份",
+    "sshSettings.badgeConfig": "config",
+    "sshSettings.badgeKey": "key",
+    "sshSettings.badgeOpenSsh": "openssh",
+    "sshSettings.badgeProfile": "profile",
+    "sshSettings.badgeSsh": "ssh",
+    "sshSettings.basic": "基础",
+    "sshSettings.chooseHost": "从 ~/.ssh/config 选择 Host",
+    "sshSettings.configSelectLabel": "OpenSSH config",
+    "sshSettings.configSource": "配置来源",
+    "sshSettings.connectionCount": "{profiles} 个已保存 / {hosts} 个 config",
+    "sshSettings.connectionCountFiltered": "显示 {shown} 个，来自 {profiles} 个已保存 / {hosts} 个 config",
+    "sshSettings.connectionsAria": "SSH 连接",
+    "sshSettings.currentLightosConfig": "当前 LightOS 实例 ~/.ssh/config",
+    "sshSettings.delete": "删除",
+    "sshSettings.deviceOpenSsh": "设备 OpenSSH",
+    "sshSettings.displayHost": "显示主机",
+    "sshSettings.displayUser": "显示用户",
+    "sshSettings.editHostTitle": "编辑 {host}",
+    "sshSettings.editKeyLabel": "编辑 {label}",
+    "sshSettings.editModeAria": "SSH config 编辑模式",
+    "sshSettings.enabled": "启用",
+    "sshSettings.extraOptions": "其他选项",
+    "sshSettings.help": "管理 OpenSSH config、密钥文件和保存的 SSH 连接。",
+    "sshSettings.hide": "隐藏",
+    "sshSettings.host": "主机",
+    "sshSettings.hostCount": "{count} 个 Host",
+    "sshSettings.hostForm": "Host 表单",
+    "sshSettings.hostKeyChecking": "主机密钥检查",
+    "sshSettings.hostListAria": "OpenSSH config Host",
+    "sshSettings.keyContent": "内容",
+    "sshSettings.keyFile": "密钥文件",
+    "sshSettings.keyHidden": "密钥内容已隐藏（{bytes} bytes）。点击显示后查看或编辑。",
+    "sshSettings.keyMissingHidden": "密钥文件不存在。点击显示后可以创建或编辑。",
+    "sshSettings.keyPath": "路径",
+    "sshSettings.managedKey": "托管密钥",
+    "sshSettings.managedKeyTitle": "托管密钥",
+    "sshSettings.managedPublicKey": "托管公钥",
+    "sshSettings.managedSubtitle": "创建由 WebShell 托管密钥的 profile。",
+    "sshSettings.name": "名称",
+    "sshSettings.newConnection": "新建 SSH 连接",
+    "sshSettings.newHost": "新增 Host",
+    "sshSettings.newHostTitle": "新增 Host",
+    "sshSettings.noConfigHosts": "当前 config 没有 Host。",
+    "sshSettings.noConnectionMatch": "没有匹配的 SSH 连接。",
+    "sshSettings.noHostName": "未配置 HostName",
+    "sshSettings.off": "关闭",
+    "sshSettings.open": "打开",
+    "sshSettings.openNamedProfile": "打开 {name}",
+    "sshSettings.openSsh": "OpenSSH",
+    "sshSettings.openSshSubtitle": "使用设备 ssh 命令解析 Host 别名或目标。",
+    "sshSettings.openSshTarget": "OpenSSH 目标",
+    "sshSettings.port": "端口",
+    "sshSettings.profileTypeAria": "SSH profile 类型",
+    "sshSettings.providerConfig": "Provider ~/.ssh/config",
+    "sshSettings.publicKey": "公钥",
+    "sshSettings.publicKeyPending": "保存 profile 后会生成公钥。",
+    "sshSettings.rawConfig": "原始 config",
+    "sshSettings.refreshHosts": "刷新远程主机",
+    "sshSettings.saveAsProfile": "保存为 profile",
+    "sshSettings.saveConfig": "保存 config",
+    "sshSettings.saveHost": "保存 Host 到 config",
+    "sshSettings.saveKey": "保存密钥",
+    "sshSettings.saveNamedAsProfile": "将 {name} 保存为 profile",
+    "sshSettings.saveProfile": "保存 profile",
+    "sshSettings.searchLabel": "搜索 SSH 连接",
+    "sshSettings.searchPlaceholder": "搜索已保存连接或 ~/.ssh/config Host",
+    "sshSettings.show": "显示",
+    "sshSettings.strict": "严格",
+    "sshSettings.test": "测试",
+    "sshSettings.title": "远程主机",
+    "sshSettings.unsaved": "未保存",
+    "sshSettings.user": "用户",
+    "sshStatus.configLoaded": "SSH 配置已加载",
+    "sshStatus.configRefreshed": "SSH config 已刷新",
+    "sshStatus.configSaved": "config 已保存",
+    "sshStatus.configSavedBackup": "config 已保存，备份：{path}",
+    "sshStatus.hostSaved": "Host 已保存到 config",
+    "sshStatus.keyLoaded": "密钥文件已读取",
+    "sshStatus.keyMissing": "密钥文件不存在，保存后会创建。",
+    "sshStatus.keySaved": "密钥已保存",
+    "sshStatus.keySavedBackup": "密钥已保存，备份：{path}",
+    "sshStatus.noProfiles": "还没有保存的 SSH profile",
+    "sshStatus.openingProfile": "正在打开 SSH profile：{name}",
+    "sshStatus.profileDeleted": "SSH profile 已删除",
+    "sshStatus.profileSaved": "SSH profile 已保存",
+    "sshValidation.enableBeforeOpening": "请先启用 SSH profile 再打开",
+    "sshValidation.hostRequired": "Host 不能为空",
+    "sshValidation.keyPathRequired": "密钥路径不能为空",
+    "sshValidation.nameRequired": "名称不能为空",
+    "sshValidation.openSshTargetRequired": "OpenSSH 目标不能为空",
+    "sshValidation.portRange": "端口必须在 1 到 65535 之间",
+    "sshValidation.saveBeforeTesting": "请先保存 SSH profile 再测试",
+    "ssh.back": "返回",
+    "ssh.chooseHelp": "从 {instance} 的 ~/.ssh/config 选择 Host，或使用已保存的 profile。",
+    "ssh.chooseTitle": "选择 SSH 主机",
+    "ssh.configHosts": "~/.ssh/config",
+    "ssh.configLoadFailed": "SSH config 加载失败：{message}",
+    "ssh.directAction": "从当前实例连接",
+    "ssh.directLightosHint": "使用当前 LightOS 实例里的 ssh",
+    "ssh.loading": "正在加载 SSH 主机...",
+    "ssh.manageHosts": "管理远程主机",
+    "ssh.manualConnect": "手动输入目标",
+    "ssh.manualTitle": "SSH 目标",
+    "ssh.noHosts": "暂无 SSH 主机。",
+    "ssh.quickHelpLightos": "从 {instance} 发起 ssh，使用它自己的 ~/.ssh/config 和密钥。",
+    "ssh.quickHelpProvider": "打开已保存的 SSH profile，或用目标自动创建一个。",
+    "ssh.quickPlaceholder": "Host 别名或 user@example.com",
+    "ssh.quickTitle": "SSH 远程",
+    "ssh.savedProfiles": "已保存 profile",
+    "ssh.sourceLightosConfig": "LightOS config",
+    "ssh.sourceManagedKey": "托管密钥",
+    "ssh.sourceProviderConfig": "Provider config",
+    "ssh.sourceSavedProfile": "Profile",
+    "ssh.validationTarget": "请输入有效的 SSH 目标。",
     "shader.interactiveGlow": "输入光效",
     "shader.off": "关闭",
     "shader.scanline": "扫描线",
@@ -1270,6 +1665,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "tab.mobile": "移动端",
     "tab.plugins": "工具",
     "tab.quickPhrases": "短语",
+    "tab.remoteHosts": "远程主机",
     "tab.terminal": "终端",
     "tab.themes": "主题",
     "status.closed": "已关闭",

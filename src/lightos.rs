@@ -1,14 +1,22 @@
 use std::collections::HashSet;
+use std::path::{Component, Path};
 use std::time::Duration;
 
 use connectrpc::ConnectError;
 use serde::Deserialize;
 use serde::Serialize;
+use std::process::Stdio;
+use tokio::io::AsyncWriteExt as _;
 use tokio::time::timeout;
 
 use crate::config::LIGHTOSCTL;
 use crate::proto::lazycat::webshell::v1::Instance;
 use crate::validation::validate_selector;
+
+const TARGET_SSH_CONFIG_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const TARGET_SSH_CONFIG_WRITE_TIMEOUT: Duration = Duration::from_secs(8);
+const TARGET_SSH_CONFIG_MAX_BYTES: usize = 512 * 1024;
+const TARGET_SSH_KEY_MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
 struct LightOsInstance {
@@ -94,6 +102,177 @@ pub async fn target_command_available(
     Ok(output.status.success())
 }
 
+pub async fn read_target_ssh_config(selector: &str) -> Result<Option<String>, ConnectError> {
+    validate_selector(selector)?;
+    let instance = authorized_instance(selector, true).await?;
+    let script = target_ssh_config_read_bootstrap_script(instance.username.trim());
+    let mut command = tokio::process::Command::new(LIGHTOSCTL);
+    command.args(["exec", "-i", selector, "/bin/sh", "-lc", script.as_str()]);
+    let output = timeout(TARGET_SSH_CONFIG_READ_TIMEOUT, command.output())
+        .await
+        .map_err(|_| ConnectError::deadline_exceeded("lightosctl exec timed out"))?
+        .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
+
+    if output.status.code() == Some(3) {
+        return Ok(None);
+    }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(ConnectError::failed_precondition(format!(
+            "failed to read target OpenSSH config: {detail}"
+        )));
+    }
+    if output.stdout.len() > TARGET_SSH_CONFIG_MAX_BYTES {
+        return Err(ConnectError::failed_precondition(
+            "target OpenSSH config is too large to inspect",
+        ));
+    }
+    String::from_utf8(output.stdout).map(Some).map_err(|err| {
+        ConnectError::failed_precondition(format!("target OpenSSH config is not UTF-8: {err}"))
+    })
+}
+
+pub async fn write_target_ssh_config(
+    selector: &str,
+    content: &str,
+    backup_limit: usize,
+) -> Result<Option<String>, ConnectError> {
+    validate_selector(selector)?;
+    if content.len() > TARGET_SSH_CONFIG_MAX_BYTES {
+        return Err(ConnectError::failed_precondition(
+            "target OpenSSH config is too large to save",
+        ));
+    }
+    let instance = authorized_instance(selector, true).await?;
+    let script = target_ssh_config_write_bootstrap_script(instance.username.trim(), backup_limit);
+    let mut command = tokio::process::Command::new(LIGHTOSCTL);
+    command
+        .args(["exec", "-i", selector, "/bin/sh", "-lc", script.as_str()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let input = content.as_bytes().to_vec();
+        tokio::spawn(async move {
+            let _ = stdin.write_all(&input).await;
+        });
+    }
+    let output = timeout(TARGET_SSH_CONFIG_WRITE_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| ConnectError::deadline_exceeded("lightosctl exec timed out"))?
+        .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(ConnectError::failed_precondition(format!(
+            "failed to write target OpenSSH config: {detail}"
+        )));
+    }
+    let backup = String::from_utf8(output.stdout)
+        .map_err(|err| {
+            ConnectError::failed_precondition(format!("target output is not UTF-8: {err}"))
+        })?
+        .trim()
+        .to_owned();
+    Ok((!backup.is_empty()).then_some(backup))
+}
+
+pub async fn read_target_ssh_key_file(
+    selector: &str,
+    path: &str,
+) -> Result<Option<String>, ConnectError> {
+    validate_selector(selector)?;
+    validate_target_ssh_file_path(path)?;
+    let instance = authorized_instance(selector, true).await?;
+    let script = target_ssh_file_read_bootstrap_script(instance.username.trim(), path);
+    let mut command = tokio::process::Command::new(LIGHTOSCTL);
+    command.args(["exec", "-i", selector, "/bin/sh", "-lc", script.as_str()]);
+    let output = timeout(TARGET_SSH_CONFIG_READ_TIMEOUT, command.output())
+        .await
+        .map_err(|_| ConnectError::deadline_exceeded("lightosctl exec timed out"))?
+        .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
+
+    if output.status.code() == Some(3) {
+        return Ok(None);
+    }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(ConnectError::failed_precondition(format!(
+            "failed to read target SSH key file: {detail}"
+        )));
+    }
+    if output.stdout.len() > TARGET_SSH_KEY_MAX_BYTES {
+        return Err(ConnectError::failed_precondition(
+            "target SSH key file is too large to inspect",
+        ));
+    }
+    String::from_utf8(output.stdout).map(Some).map_err(|err| {
+        ConnectError::failed_precondition(format!("target SSH key file is not UTF-8: {err}"))
+    })
+}
+
+pub async fn write_target_ssh_key_file(
+    selector: &str,
+    path: &str,
+    content: &str,
+    backup_limit: usize,
+) -> Result<Option<String>, ConnectError> {
+    validate_selector(selector)?;
+    validate_target_ssh_file_path(path)?;
+    if content.len() > TARGET_SSH_KEY_MAX_BYTES {
+        return Err(ConnectError::failed_precondition(
+            "target SSH key file is too large to save",
+        ));
+    }
+    let instance = authorized_instance(selector, true).await?;
+    let script =
+        target_ssh_file_write_bootstrap_script(instance.username.trim(), path, backup_limit);
+    let mut command = tokio::process::Command::new(LIGHTOSCTL);
+    command
+        .args(["exec", "-i", selector, "/bin/sh", "-lc", script.as_str()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let input = content.as_bytes().to_vec();
+        tokio::spawn(async move {
+            let _ = stdin.write_all(&input).await;
+        });
+    }
+    let output = timeout(TARGET_SSH_CONFIG_WRITE_TIMEOUT, child.wait_with_output())
+        .await
+        .map_err(|_| ConnectError::deadline_exceeded("lightosctl exec timed out"))?
+        .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(ConnectError::failed_precondition(format!(
+            "failed to write target SSH key file: {detail}"
+        )));
+    }
+    let backup = String::from_utf8(output.stdout)
+        .map_err(|err| {
+            ConnectError::failed_precondition(format!("target output is not UTF-8: {err}"))
+        })?
+        .trim()
+        .to_owned();
+    Ok((!backup.is_empty()).then_some(backup))
+}
+
 fn target_command_probe_script(command_name: &str) -> String {
     let version_check = match command_name {
         "zellij" => "\n[ -n \"$target_command\" ] && \"$target_command\" --version >/dev/null 2>&1",
@@ -113,9 +292,122 @@ fi{version_check}"#
 
 fn target_command_probe_bootstrap_script(command_name: &str, login_user: &str) -> String {
     let probe_script = target_command_probe_script(command_name);
+    target_login_user_bootstrap_script(&probe_script, login_user)
+}
+
+fn target_ssh_config_read_bootstrap_script(login_user: &str) -> String {
+    let script = format!(
+        r#"config="${{HOME:-}}/.ssh/config"
+if [ ! -r "$config" ]; then
+  exit 3
+fi
+head -c {} "$config""#,
+        TARGET_SSH_CONFIG_MAX_BYTES + 1,
+    );
+    target_login_user_bootstrap_script(&script, login_user)
+}
+
+fn target_ssh_config_write_bootstrap_script(login_user: &str, backup_limit: usize) -> String {
+    let script = format!(
+        r#"set -eu
+dir="${{HOME:-}}/.ssh"
+config="$dir/config"
+tmp="$dir/config.webshell.tmp.$$"
+backup=""
+backup_limit={}
+mkdir -p "$dir"
+chmod 700 "$dir" 2>/dev/null || true
+if [ -f "$config" ]; then
+  ts=$(date +%Y%m%d_%H%M%S 2>/dev/null || date +%s)
+  backup="$dir/config.webshell.bak.$ts"
+  cp -p "$config" "$backup"
+fi
+cat > "$tmp"
+chmod 600 "$tmp" 2>/dev/null || true
+mv "$tmp" "$config"
+if [ "$backup_limit" -gt 0 ]; then
+  ls -1t "$dir"/config.webshell.bak.* 2>/dev/null | awk "NR>$backup_limit" | while IFS= read -r old_backup; do
+    rm -f "$old_backup"
+  done
+fi
+printf '%s' "$backup""#,
+        backup_limit,
+    );
+    target_login_user_bootstrap_script(&script, login_user)
+}
+
+fn target_ssh_file_read_bootstrap_script(login_user: &str, path: &str) -> String {
+    let script = format!(
+        r#"set -eu
+input_path={}
+target=$(resolve_ssh_file_path "$input_path")
+if [ ! -r "$target" ]; then
+  exit 3
+fi
+head -c {} "$target""#,
+        shell_script_quote(path),
+        TARGET_SSH_KEY_MAX_BYTES + 1,
+    );
+    target_ssh_file_bootstrap_script(&script, login_user)
+}
+
+fn target_ssh_file_write_bootstrap_script(
+    login_user: &str,
+    path: &str,
+    backup_limit: usize,
+) -> String {
+    let script = format!(
+        r#"set -eu
+input_path={}
+backup_limit={}
+target=$(resolve_ssh_file_path "$input_path")
+dir=$(dirname "$target")
+base=$(basename "$target")
+tmp="$dir/$base.webshell.tmp.$$"
+backup=""
+mkdir -p "$dir"
+chmod 700 "$dir" 2>/dev/null || true
+if [ -f "$target" ]; then
+  ts=$(date +%Y%m%d_%H%M%S 2>/dev/null || date +%s)
+  backup="$dir/$base.webshell.bak.$ts"
+  cp -p "$target" "$backup"
+fi
+cat > "$tmp"
+chmod 600 "$tmp" 2>/dev/null || true
+mv "$tmp" "$target"
+if [ "$backup_limit" -gt 0 ]; then
+  ls -1t "$dir"/"$base".webshell.bak.* 2>/dev/null | awk "NR>$backup_limit" | while IFS= read -r old_backup; do
+    rm -f "$old_backup"
+  done
+fi
+printf '%s' "$backup""#,
+        shell_script_quote(path),
+        backup_limit,
+    );
+    target_ssh_file_bootstrap_script(&script, login_user)
+}
+
+fn target_ssh_file_bootstrap_script(script: &str, login_user: &str) -> String {
+    let resolver = r#"resolve_ssh_file_path() {
+  raw="$1"
+  case "$raw" in
+    "~/"*) target="$HOME/${raw#~/}" ;;
+    "$HOME/"*) target="$raw" ;;
+    /*) target="$raw" ;;
+    *) target="$HOME/$raw" ;;
+  esac
+  case "$target" in
+    "$HOME/.ssh/"*) printf '%s\n' "$target" ;;
+    *) echo "SSH key file must be under ~/.ssh" >&2; exit 4 ;;
+  esac
+}"#;
+    target_login_user_bootstrap_script(&format!("{resolver}\n{script}"), login_user)
+}
+
+fn target_login_user_bootstrap_script(script: &str, login_user: &str) -> String {
     let login_user = login_user.trim();
     if !login_user_needs_switch(login_user) {
-        return probe_script;
+        return script.to_owned();
     }
     format!(
         r#"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -139,12 +431,33 @@ if command -v su >/dev/null 2>&1; then
 fi
 exit 127"#,
         shell_script_quote(login_user),
-        shell_script_quote(&probe_script),
+        shell_script_quote(script),
     )
 }
 
 fn login_user_needs_switch(login_user: &str) -> bool {
     !matches!(login_user.trim(), "" | "root")
+}
+
+fn validate_target_ssh_file_path(path: &str) -> Result<(), ConnectError> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(ConnectError::invalid_argument(
+            "SSH key file path is required",
+        ));
+    }
+    if path.starts_with('-') || path.chars().any(char::is_control) {
+        return Err(ConnectError::invalid_argument("invalid SSH key file path"));
+    }
+    if Path::new(path)
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(ConnectError::invalid_argument(
+            "SSH key file path must not contain ..",
+        ));
+    }
+    Ok(())
 }
 
 fn shell_script_quote(value: &str) -> String {

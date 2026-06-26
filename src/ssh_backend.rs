@@ -2,10 +2,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Json;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use connectrpc::{ConnectError, error::ErrorCode};
@@ -16,8 +16,11 @@ use uuid::Uuid;
 
 use crate::config::{DEFAULT_SSH_KEY_DIR, ENV_SSH_CONFIG_FILE, ENV_SSH_KEY_DIR};
 use crate::database::{AppDatabase, SshProfileRecord, SshProfileRecordUpsert};
+use crate::lightos;
 use crate::proto::lazycat::webshell::v1::Instance;
+use crate::ssh_config::{self, SshConfigDocument};
 use crate::state::AppState;
+use crate::tty_init::lightos_features_enabled;
 
 const SSH_OWNER_DEPLOY_ID: &str = "ssh";
 const SSH_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
@@ -76,6 +79,39 @@ struct SshConnectionTestResponse {
     message: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConfigHostsQuery {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConfigQuery {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConfigSaveRequest {
+    content: String,
+    backup_limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshKeyFileQuery {
+    name: Option<String>,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshKeyFileSaveRequest {
+    content: String,
+    backup_limit: Option<usize>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshConfigHostView {
@@ -84,6 +120,38 @@ pub struct SshConfigHostView {
     pub username: String,
     pub port: Option<u16>,
     pub source: String,
+    pub identity_files: Vec<String>,
+    pub certificate_files: Vec<String>,
+    pub proxy_jump: String,
+    pub proxy_command: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConfigView {
+    pub source: String,
+    pub content: String,
+    pub document: SshConfigDocument,
+    pub hosts: Vec<SshConfigHostView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConfigSaveResponse {
+    pub source: String,
+    pub backup_path: Option<String>,
+    pub document: SshConfigDocument,
+    pub hosts: Vec<SshConfigHostView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshKeyFileView {
+    pub path: String,
+    pub source: String,
+    pub exists: bool,
+    pub content: String,
+    pub backup_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -99,10 +167,57 @@ pub async fn list_ssh_profiles(State(state): State<std::sync::Arc<AppState>>) ->
     }
 }
 
-pub async fn list_ssh_config_hosts() -> Response {
-    match list_device_ssh_config_hosts() {
+pub async fn list_ssh_config_hosts(Query(query): Query<SshConfigHostsQuery>) -> Response {
+    let result = match query
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        Some(selector) if lightos_features_enabled() && !is_ssh_selector(selector) => {
+            list_target_ssh_config_hosts(selector)
+                .await
+                .map_err(io::Error::other)
+        }
+        _ => list_device_ssh_config_hosts(),
+    };
+    match result {
         Ok(hosts) => Json(hosts).into_response(),
         Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    }
+}
+
+pub async fn get_ssh_config(Query(query): Query<SshConfigQuery>) -> Response {
+    match load_ssh_config_view(query.name.as_deref()).await {
+        Ok(view) => Json(view).into_response(),
+        Err(err) => err.into_response(),
+    }
+}
+
+pub async fn put_ssh_config(
+    Query(query): Query<SshConfigQuery>,
+    Json(request): Json<SshConfigSaveRequest>,
+) -> Response {
+    match save_ssh_config_content(query.name.as_deref(), request).await {
+        Ok(response) => Json(response).into_response(),
+        Err(err) => err.into_response(),
+    }
+}
+
+pub async fn get_ssh_key_file(Query(query): Query<SshKeyFileQuery>) -> Response {
+    match load_ssh_key_file(query.name.as_deref(), &query.path).await {
+        Ok(view) => Json(view).into_response(),
+        Err(err) => err.into_response(),
+    }
+}
+
+pub async fn put_ssh_key_file(
+    Query(query): Query<SshKeyFileQuery>,
+    Json(request): Json<SshKeyFileSaveRequest>,
+) -> Response {
+    match save_ssh_key_file(query.name.as_deref(), &query.path, request).await {
+        Ok(view) => Json(view).into_response(),
+        Err(err) => err.into_response(),
     }
 }
 
@@ -196,21 +311,206 @@ pub fn list_profile_instances(database: &AppDatabase) -> io::Result<Vec<Instance
 }
 
 pub fn list_device_ssh_config_hosts() -> io::Result<Vec<SshConfigHostView>> {
-    let Some(path) = device_ssh_config_path() else {
+    let (source, contents) = read_device_ssh_config_content()?;
+    parse_ssh_config_hosts_from_content(&contents, &source).map_err(io::Error::other)
+}
+
+pub async fn list_target_ssh_config_hosts(
+    selector: &str,
+) -> Result<Vec<SshConfigHostView>, String> {
+    let contents = lightos::read_target_ssh_config(selector)
+        .await
+        .map_err(|err| {
+            err.message
+                .unwrap_or_else(|| "failed to read target OpenSSH config".to_owned())
+        })?;
+    let Some(contents) = contents else {
         return Ok(Vec::new());
     };
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let metadata = fs::metadata(&path)?;
-    if metadata.len() > MAX_SSH_CONFIG_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "OpenSSH config is too large to inspect",
+    parse_ssh_config_hosts_from_content(&contents, &format!("{}:~/.ssh/config", selector.trim()))
+}
+
+async fn load_ssh_config_view(name: Option<&str>) -> Result<SshConfigView, SshConfigError> {
+    let (source, content) = match target_config_selector(name) {
+        Some(selector) => {
+            let content = lightos::read_target_ssh_config(selector)
+                .await
+                .map_err(SshConfigError::from_connect)?
+                .unwrap_or_default();
+            (format!("{}:~/.ssh/config", selector.trim()), content)
+        }
+        None => read_device_ssh_config_content().map_err(SshConfigError::internal)?,
+    };
+    let document = ssh_config::parse_ssh_config(&content).map_err(SshConfigError::bad_request)?;
+    let hosts = ssh_config_hosts_from_document(&document, &source);
+    Ok(SshConfigView {
+        source,
+        content,
+        document,
+        hosts,
+    })
+}
+
+async fn save_ssh_config_content(
+    name: Option<&str>,
+    request: SshConfigSaveRequest,
+) -> Result<SshConfigSaveResponse, SshConfigError> {
+    let content = request.content;
+    if content.len() as u64 > MAX_SSH_CONFIG_BYTES {
+        return Err(SshConfigError::bad_request(
+            "OpenSSH config is too large to save",
         ));
     }
-    let contents = fs::read_to_string(&path)?;
-    Ok(parse_ssh_config_hosts(&contents, &path.to_string_lossy()))
+    let backup_limit = normalize_backup_limit(request.backup_limit);
+    let document = ssh_config::parse_ssh_config(&content).map_err(SshConfigError::bad_request)?;
+    let (source, backup_path) = match target_config_selector(name) {
+        Some(selector) => {
+            let backup_path = lightos::write_target_ssh_config(selector, &content, backup_limit)
+                .await
+                .map_err(SshConfigError::from_connect)?;
+            (format!("{}:~/.ssh/config", selector.trim()), backup_path)
+        }
+        None => {
+            let (source, backup_path) = write_device_ssh_config_content(&content, backup_limit)
+                .map_err(SshConfigError::internal)?;
+            (source, backup_path)
+        }
+    };
+    let hosts = ssh_config_hosts_from_document(&document, &source);
+    Ok(SshConfigSaveResponse {
+        source,
+        backup_path,
+        document,
+        hosts,
+    })
+}
+
+fn normalize_backup_limit(value: Option<usize>) -> usize {
+    value.unwrap_or(10).clamp(1, 100)
+}
+
+async fn load_ssh_key_file(
+    name: Option<&str>,
+    path: &str,
+) -> Result<SshKeyFileView, SshConfigError> {
+    let path = normalize_ssh_key_file_path(path).map_err(SshConfigError::bad_request)?;
+    match target_config_selector(name) {
+        Some(selector) => {
+            let content = lightos::read_target_ssh_key_file(selector, &path)
+                .await
+                .map_err(SshConfigError::from_connect)?;
+            Ok(SshKeyFileView {
+                source: format!("{}:{path}", selector.trim()),
+                path,
+                exists: content.is_some(),
+                content: content.unwrap_or_default(),
+                backup_path: None,
+            })
+        }
+        None => {
+            let file_path = device_ssh_key_path(&path).map_err(SshConfigError::bad_request)?;
+            let source = file_path.to_string_lossy().to_string();
+            if !file_path.exists() {
+                return Ok(SshKeyFileView {
+                    path,
+                    source,
+                    exists: false,
+                    content: String::new(),
+                    backup_path: None,
+                });
+            }
+            let metadata = fs::metadata(&file_path).map_err(SshConfigError::internal)?;
+            if metadata.len() > 1024 * 1024 {
+                return Err(SshConfigError::bad_request(
+                    "SSH key file is too large to inspect",
+                ));
+            }
+            let content = fs::read_to_string(&file_path).map_err(SshConfigError::internal)?;
+            Ok(SshKeyFileView {
+                path,
+                source,
+                exists: true,
+                content,
+                backup_path: None,
+            })
+        }
+    }
+}
+
+async fn save_ssh_key_file(
+    name: Option<&str>,
+    path: &str,
+    request: SshKeyFileSaveRequest,
+) -> Result<SshKeyFileView, SshConfigError> {
+    let path = normalize_ssh_key_file_path(path).map_err(SshConfigError::bad_request)?;
+    if request.content.len() > 1024 * 1024 {
+        return Err(SshConfigError::bad_request(
+            "SSH key file is too large to save",
+        ));
+    }
+    let backup_limit = normalize_backup_limit(request.backup_limit);
+    match target_config_selector(name) {
+        Some(selector) => {
+            let backup_path =
+                lightos::write_target_ssh_key_file(selector, &path, &request.content, backup_limit)
+                    .await
+                    .map_err(SshConfigError::from_connect)?;
+            Ok(SshKeyFileView {
+                source: format!("{}:{path}", selector.trim()),
+                path,
+                exists: true,
+                content: request.content,
+                backup_path,
+            })
+        }
+        None => {
+            let file_path = device_ssh_key_path(&path).map_err(SshConfigError::bad_request)?;
+            let source = file_path.to_string_lossy().to_string();
+            let backup_path = write_device_ssh_key_file(&file_path, &request.content, backup_limit)
+                .map_err(SshConfigError::internal)?;
+            Ok(SshKeyFileView {
+                path,
+                source,
+                exists: true,
+                content: request.content,
+                backup_path,
+            })
+        }
+    }
+}
+
+fn target_config_selector(name: Option<&str>) -> Option<&str> {
+    name.map(str::trim)
+        .filter(|name| !name.is_empty())
+        .filter(|selector| lightos_features_enabled() && !is_ssh_selector(selector))
+}
+
+fn parse_ssh_config_hosts_from_content(
+    contents: &str,
+    source: &str,
+) -> Result<Vec<SshConfigHostView>, String> {
+    let document = ssh_config::parse_ssh_config(contents)?;
+    Ok(ssh_config_hosts_from_document(&document, source))
+}
+
+fn ssh_config_hosts_from_document(
+    document: &SshConfigDocument,
+    source: &str,
+) -> Vec<SshConfigHostView> {
+    ssh_config::selectable_hosts(document)
+        .into_iter()
+        .map(|host| SshConfigHostView {
+            alias: host.alias,
+            host: host.host,
+            username: host.username,
+            port: host.port,
+            source: source.to_owned(),
+            identity_files: host.identity_files,
+            certificate_files: host.certificate_files,
+            proxy_jump: host.proxy_jump,
+            proxy_command: host.proxy_command,
+        })
+        .collect()
 }
 
 pub fn is_ssh_selector(selector: &str) -> bool {
@@ -604,158 +904,195 @@ fn device_ssh_config_path() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".ssh/config"))
 }
 
-fn parse_ssh_config_hosts(contents: &str, source: &str) -> Vec<SshConfigHostView> {
-    let mut hosts = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut current: Option<SshConfigBlock> = None;
-
-    for line in contents.lines() {
-        let words = split_ssh_config_words(strip_ssh_config_comment(line));
-        let Some((keyword, values)) = words.split_first() else {
-            continue;
-        };
-        match keyword.to_ascii_lowercase().as_str() {
-            "host" => {
-                flush_ssh_config_block(&mut hosts, &mut seen, current.take(), source);
-                let aliases = values
-                    .iter()
-                    .filter(|alias| ssh_config_alias_is_selectable(alias))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                current = (!aliases.is_empty()).then_some(SshConfigBlock {
-                    aliases,
-                    host: String::new(),
-                    username: String::new(),
-                    port: None,
-                });
-            }
-            "match" => {
-                flush_ssh_config_block(&mut hosts, &mut seen, current.take(), source);
-            }
-            "hostname" => {
-                if let Some(block) = current.as_mut()
-                    && let Some(value) = values.first()
-                    && ssh_config_value_is_safe(value)
-                {
-                    block.host.clone_from(value);
-                }
-            }
-            "user" => {
-                if let Some(block) = current.as_mut()
-                    && let Some(value) = values.first()
-                    && ssh_config_value_is_safe(value)
-                {
-                    block.username.clone_from(value);
-                }
-            }
-            "port" => {
-                if let Some(block) = current.as_mut() {
-                    block.port = values
-                        .first()
-                        .and_then(|value| value.parse::<u16>().ok())
-                        .filter(|port| *port > 0);
-                }
-            }
-            _ => {}
-        }
-    }
-    flush_ssh_config_block(&mut hosts, &mut seen, current, source);
-    hosts
-}
-
-fn flush_ssh_config_block(
-    hosts: &mut Vec<SshConfigHostView>,
-    seen: &mut std::collections::HashSet<String>,
-    block: Option<SshConfigBlock>,
-    source: &str,
-) {
-    let Some(block) = block else {
-        return;
+fn read_device_ssh_config_content() -> io::Result<(String, String)> {
+    let Some(path) = device_ssh_config_path() else {
+        return Ok(("~/.ssh/config".to_owned(), String::new()));
     };
-    for alias in block.aliases {
-        if !seen.insert(alias.clone()) {
-            continue;
-        }
-        hosts.push(SshConfigHostView {
-            alias: alias.clone(),
-            host: if block.host.is_empty() {
-                alias
-            } else {
-                block.host.clone()
-            },
-            username: block.username.clone(),
-            port: block.port,
-            source: source.to_owned(),
-        });
+    let source = path.to_string_lossy().to_string();
+    if !path.exists() {
+        return Ok((source, String::new()));
     }
+    let metadata = fs::metadata(&path)?;
+    if metadata.len() > MAX_SSH_CONFIG_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "OpenSSH config is too large to inspect",
+        ));
+    }
+    fs::read_to_string(&path).map(|contents| (source, contents))
 }
 
-#[derive(Debug)]
-struct SshConfigBlock {
-    aliases: Vec<String>,
-    host: String,
-    username: String,
-    port: Option<u16>,
-}
-
-fn ssh_config_alias_is_selectable(value: &str) -> bool {
-    !value.is_empty()
-        && !value.starts_with(['-', '!', '*'])
-        && !value
-            .chars()
-            .any(|ch| ch.is_control() || ch.is_whitespace() || matches!(ch, '*' | '?' | '['))
-}
-
-fn ssh_config_value_is_safe(value: &str) -> bool {
-    !value.is_empty()
-        && !value.starts_with('-')
-        && !value
-            .chars()
-            .any(|ch| ch.is_control() || ch.is_whitespace())
-}
-
-fn strip_ssh_config_comment(line: &str) -> &str {
-    let mut in_single = false;
-    let mut in_double = false;
-    for (index, ch) in line.char_indices() {
-        match ch {
-            '\'' if !in_double => in_single = !in_single,
-            '"' if !in_single => in_double = !in_double,
-            '#' if !in_single && !in_double => return &line[..index],
-            _ => {}
+fn write_device_ssh_config_content(
+    content: &str,
+    backup_limit: usize,
+) -> io::Result<(String, Option<String>)> {
+    let path = device_ssh_config_path()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is unavailable"))?;
+    let source = path.to_string_lossy().to_string();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
         }
     }
-    line
+    let backup_path = if path.exists() {
+        let backup = backup_path_for_config(&path);
+        fs::copy(&path, &backup)?;
+        Some(backup.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
+    fs::write(&tmp_path, content)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
+    }
+    fs::rename(&tmp_path, &path)?;
+    cleanup_device_config_backups(&path, backup_limit)?;
+    Ok((source, backup_path))
 }
 
-fn split_ssh_config_words(line: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut word = String::new();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut escaped = false;
-    for ch in line.trim().chars() {
-        if escaped {
-            word.push(ch);
-            escaped = false;
-            continue;
-        }
-        match ch {
-            '\\' if !in_single => escaped = true,
-            '\'' if !in_double => in_single = !in_single,
-            '"' if !in_single => in_double = !in_double,
-            ch if ch.is_whitespace() && !in_single && !in_double => {
-                if !word.is_empty() {
-                    words.push(std::mem::take(&mut word));
-                }
-            }
-            _ => word.push(ch),
+fn backup_path_for_config(path: &Path) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config");
+    path.with_file_name(format!("{file_name}.webshell.bak.{timestamp}"))
+}
+
+fn cleanup_device_config_backups(path: &Path, limit: usize) -> io::Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config");
+    let prefix = format!("{file_name}.webshell.bak.");
+    let mut backups = fs::read_dir(parent)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            name.starts_with(&prefix).then_some((name, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    backups.sort_by(|left, right| right.0.cmp(&left.0));
+    for (_, backup) in backups.into_iter().skip(limit) {
+        let _ = fs::remove_file(backup);
+    }
+    Ok(())
+}
+
+fn normalize_ssh_key_file_path(value: &str) -> Result<String, String> {
+    let path = value.trim();
+    if path.is_empty() {
+        return Err("SSH key file path is required".to_owned());
+    }
+    if path.starts_with('-') || path.chars().any(char::is_control) {
+        return Err("invalid SSH key file path".to_owned());
+    }
+    if path_has_parent_component(path) {
+        return Err("SSH key file path must not contain ..".to_owned());
+    }
+    Ok(path.to_owned())
+}
+
+fn path_has_parent_component(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+}
+
+fn device_ssh_key_path(value: &str) -> Result<PathBuf, String> {
+    let path = normalize_ssh_key_file_path(value)?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME is unavailable".to_owned())?;
+    let full_path = if let Some(rest) = path.strip_prefix("~/") {
+        home.join(rest)
+    } else if path == ".ssh" || path.starts_with(".ssh/") {
+        home.join(path)
+    } else {
+        PathBuf::from(&path)
+    };
+    let ssh_dir = home.join(".ssh");
+    if !full_path.starts_with(&ssh_dir) {
+        return Err("SSH key file must be under ~/.ssh".to_owned());
+    }
+    Ok(full_path)
+}
+
+fn write_device_ssh_key_file(
+    path: &Path,
+    content: &str,
+    backup_limit: usize,
+) -> io::Result<Option<String>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
         }
     }
-    if !word.is_empty() {
-        words.push(word);
+    let backup_path = if path.exists() {
+        let backup = backup_path_for_key(path);
+        fs::copy(path, &backup)?;
+        Some(backup.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
+    fs::write(&tmp_path, content)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
     }
-    words
+    fs::rename(&tmp_path, path)?;
+    cleanup_device_key_backups(path, backup_limit)?;
+    Ok(backup_path)
+}
+
+fn backup_path_for_key(path: &Path) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("key");
+    path.with_file_name(format!("{file_name}.webshell.bak.{timestamp}"))
+}
+
+fn cleanup_device_key_backups(path: &Path, limit: usize) -> io::Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("key");
+    let prefix = format!("{file_name}.webshell.bak.");
+    let mut backups = fs::read_dir(parent)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            name.starts_with(&prefix).then_some((name, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    backups.sort_by(|left, right| right.0.cmp(&left.0));
+    for (_, backup) in backups.into_iter().skip(limit) {
+        let _ = fs::remove_file(backup);
+    }
+    Ok(())
 }
 
 fn default_true() -> bool {
@@ -776,6 +1113,50 @@ fn connect_error_response(err: ConnectError) -> Response {
             .unwrap_or_else(|| "SSH backend request failed".to_owned()),
     )
         .into_response()
+}
+
+#[derive(Debug)]
+struct SshConfigError {
+    status: StatusCode,
+    message: String,
+}
+
+impl SshConfigError {
+    fn bad_request(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            message: message.into(),
+        }
+    }
+
+    fn internal(message: impl ToString) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.to_string(),
+        }
+    }
+
+    fn from_connect(err: ConnectError) -> Self {
+        let status = match err.code {
+            ErrorCode::InvalidArgument => StatusCode::BAD_REQUEST,
+            ErrorCode::NotFound => StatusCode::NOT_FOUND,
+            ErrorCode::FailedPrecondition => StatusCode::PRECONDITION_FAILED,
+            ErrorCode::DeadlineExceeded => StatusCode::GATEWAY_TIMEOUT,
+            _ => StatusCode::BAD_GATEWAY,
+        };
+        Self {
+            status,
+            message: err
+                .message
+                .unwrap_or_else(|| "SSH config request failed".to_owned()),
+        }
+    }
+}
+
+impl IntoResponse for SshConfigError {
+    fn into_response(self) -> Response {
+        (self.status, self.message).into_response()
+    }
 }
 
 #[derive(Debug)]
@@ -809,8 +1190,9 @@ impl IntoResponse for SshProfileError {
 #[cfg(test)]
 mod tests {
     use super::{
-        SshProfileKind, is_ssh_selector, normalize_host_key_policy, parse_ssh_config_hosts,
-        profile_id_from_selector, selector_for_profile_id, shell_quote,
+        SshProfileKind, is_ssh_selector, normalize_host_key_policy,
+        parse_ssh_config_hosts_from_content, profile_id_from_selector, selector_for_profile_id,
+        shell_quote,
     };
 
     #[test]
@@ -855,7 +1237,7 @@ mod tests {
 
     #[test]
     fn parses_selectable_openssh_config_hosts() {
-        let hosts = parse_ssh_config_hosts(
+        let hosts = parse_ssh_config_hosts_from_content(
             r#"
 Host dev-box dev-short *.internal !blocked
   HostName 10.0.0.5
@@ -878,7 +1260,8 @@ Host cert-box
   CertificateFile ~/.ssh/id_ed25519-cert.pub
 "#,
             "/home/user/.ssh/config",
-        );
+        )
+        .unwrap();
 
         assert_eq!(hosts.len(), 4);
         assert_eq!(hosts[0].alias, "dev-box");

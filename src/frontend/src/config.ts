@@ -169,6 +169,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalShaderEffect: "off",
   scrollbackLimit: 10000,
   outputBufferLimit: 4096,
+  sshConfigBackupLimit: 10,
   defaultSessionBackend: "webshell",
   herdrActiveBackgroundDark: "#06193a",
   herdrActiveBackgroundLight: "#f0f7ff",

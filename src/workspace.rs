@@ -839,7 +839,7 @@ pub(crate) fn create_workspace_session(
             .entry(selector.to_owned())
             .or_insert_with(|| WorkspaceRecord::new(selector));
         workspace.repair();
-        let session = workspace.create_tab_with_metadata(&mut sessions, defaults, metadata);
+        let session = workspace.create_tab_with_metadata(&mut sessions, defaults, metadata, None);
         (session, workspaces.clone(), sessions.clone())
     };
     persist_snapshots(state, Some(workspace_snapshot), Some(sessions_snapshot))
@@ -960,7 +960,7 @@ impl WorkspaceRecord {
         self.repair();
         let mut changed = false;
         if self.tabs.is_empty() {
-            self.create_tab(sessions, defaults);
+            self.create_tab(sessions, defaults, None);
             changed = true;
         }
         for tab in &mut self.tabs {
@@ -980,7 +980,7 @@ impl WorkspaceRecord {
     ) -> Result<(), String> {
         match request.action {
             WorkspaceAction::CreateTab => {
-                self.create_tab(sessions, defaults);
+                self.create_tab(sessions, defaults, request.label.as_deref());
             }
             WorkspaceAction::CloseTab => {
                 let tab_id = self.request_tab_id(request)?;
@@ -1113,8 +1113,9 @@ impl WorkspaceRecord {
         &mut self,
         sessions: &mut HashMap<String, SessionRecord>,
         defaults: &WorkspaceTerminalDefaults,
+        label: Option<&str>,
     ) -> SessionRecord {
-        self.create_tab_with_metadata(sessions, defaults, HashMap::new())
+        self.create_tab_with_metadata(sessions, defaults, HashMap::new(), label)
     }
 
     fn create_tab_with_metadata(
@@ -1122,6 +1123,7 @@ impl WorkspaceRecord {
         sessions: &mut HashMap<String, SessionRecord>,
         defaults: &WorkspaceTerminalDefaults,
         metadata: HashMap<String, String>,
+        label: Option<&str>,
     ) -> SessionRecord {
         let tab_id = Self::next_tab_id();
         let pane = Self::new_pane(
@@ -1141,7 +1143,7 @@ impl WorkspaceRecord {
         let pane_id = pane.id.clone();
         let tab = WorkspaceTab {
             id: tab_id.clone(),
-            custom_label: None,
+            custom_label: normalized_tab_label(label),
             active_pane_id: Some(pane_id.clone()),
             layout: Some(pane_layout_node(&pane_id)),
             panes: vec![pane],
@@ -1179,12 +1181,7 @@ impl WorkspaceRecord {
         let tab = self
             .find_tab_mut(tab_id)
             .ok_or_else(|| "tab not found".to_owned())?;
-        let label = label.map(str::trim).unwrap_or_default();
-        tab.custom_label = if label.is_empty() {
-            None
-        } else {
-            Some(label.chars().take(128).collect())
-        };
+        tab.custom_label = normalized_tab_label(label);
         Ok(())
     }
 
@@ -1545,6 +1542,15 @@ impl WorkspaceRecord {
                 .find(|pane| pane.session_id == session_id)
                 .map(|pane| (tab.id.clone(), pane.id.clone()))
         })
+    }
+}
+
+fn normalized_tab_label(label: Option<&str>) -> Option<String> {
+    let label = label.map(str::trim).unwrap_or_default();
+    if label.is_empty() {
+        None
+    } else {
+        Some(label.chars().take(128).collect())
     }
 }
 
@@ -2105,6 +2111,39 @@ mod tests {
     }
 
     #[test]
+    fn create_tab_action_applies_custom_label() {
+        let state = test_app_state();
+        let defaults = test_defaults(&state, "", SessionBackend::Webshell);
+        let request = WorkspaceActionRequest {
+            name: "demo@owner".to_owned(),
+            action: WorkspaceAction::CreateTab,
+            tab_id: None,
+            pane_id: None,
+            direction: None,
+            label: Some("ssh AwsUSServer".to_owned()),
+            layout: None,
+            active_pane_id: None,
+            cols: None,
+            rows: None,
+            output_limit: None,
+            auto_restart: None,
+            session_backend: Some(SessionBackend::Webshell),
+            pinned: None,
+            pinned_order: None,
+        };
+
+        let (workspace, closed) =
+            apply_workspace_action(&state, "demo@owner", &defaults, &request).unwrap();
+
+        assert!(closed.is_empty());
+        assert_eq!(workspace.tabs.len(), 1);
+        assert_eq!(
+            workspace.tabs[0].custom_label.as_deref(),
+            Some("ssh AwsUSServer")
+        );
+    }
+
+    #[test]
     fn pinned_tab_order_is_not_reused_after_unpin() {
         let mut workspace = WorkspaceRecord::new("demo@owner");
 
@@ -2219,7 +2258,7 @@ mod tests {
             let workspace = workspaces
                 .entry("demo@owner".to_owned())
                 .or_insert_with(|| WorkspaceRecord::new("demo@owner"));
-            workspace.create_tab(&mut sessions, &defaults);
+            workspace.create_tab(&mut sessions, &defaults, None);
             workspace.tabs[0].id.clone()
         };
         let agent_workspace = WorkspaceState {
