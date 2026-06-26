@@ -1,5 +1,12 @@
 import type { MessageKey } from "../../i18n";
-import { fetchSoundCatalog, type SoundCatalog, type SoundFile } from "./api";
+import {
+  DEFAULT_SOUND_PACKAGE_URL,
+  fetchSoundCatalog,
+  installSoundPackage,
+  type SoundCatalog,
+  type SoundPackageInstallProgress,
+  type SoundFile,
+} from "./api";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -13,9 +20,14 @@ export type WhiteNoiseViewState = {
   catalog: SoundCatalog;
   loading: boolean;
   error: string;
+  installError: string;
+  installProgress: SoundPackageInstallProgress | undefined;
+  installing: boolean;
+  floatingCollapsed: boolean;
   playing: boolean;
   helpOpen: boolean;
   masterVolume: number;
+  packageUrl: string;
   tracks: WhiteNoiseTrackState[];
 };
 
@@ -27,7 +39,9 @@ export type WhiteNoiseControllerOptions = {
 };
 
 type StoredWhiteNoiseState = {
+  floatingCollapsed?: boolean;
   masterVolume?: number;
+  packageUrl?: string;
   tracks?: Record<string, {
     enabled?: boolean;
     volume?: number;
@@ -52,7 +66,12 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
   let loading = false;
   let loaded = false;
   let error = "";
+  let installError = "";
+  let installProgress: SoundPackageInstallProgress | undefined;
+  let installing = false;
+  let floatingCollapsed = stored.floatingCollapsed === true;
   let masterVolume = normalizeVolume(stored.masterVolume, DEFAULT_MASTER_VOLUME);
+  let packageUrl = stringOrDefault(stored.packageUrl, DEFAULT_SOUND_PACKAGE_URL);
   let playing = false;
   let helpOpen = false;
   let tracks: WhiteNoiseTrackState[] = [];
@@ -62,9 +81,14 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
       catalog,
       loading,
       error,
+      installError,
+      installProgress,
+      installing,
+      floatingCollapsed,
       playing,
       helpOpen,
       masterVolume,
+      packageUrl,
       tracks: tracks.map((item) => ({ ...item })),
     };
   }
@@ -107,6 +131,68 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
   function toggleHelp() {
     helpOpen = !helpOpen;
     options.onRender();
+  }
+
+  function setPackageUrl(value: string) {
+    packageUrl = value;
+    saveState();
+  }
+
+  function setFloatingCollapsed(value: boolean) {
+    floatingCollapsed = value;
+    saveState();
+    options.onRender();
+  }
+
+  async function installPackage() {
+    if (installing) return;
+    const url = packageUrl.trim();
+    if (!url) {
+      installError = options.tr("validation.whiteNoisePackageUrl");
+      options.onStatus(installError, "error");
+      options.onRender();
+      return;
+    }
+    installing = true;
+    installError = "";
+    installProgress = undefined;
+    error = "";
+    options.onRender();
+    options.onStatus(options.tr("status.whiteNoiseInstalling"), "neutral");
+    try {
+      const result = await installSoundPackage(url, (progress) => {
+        installProgress = progress;
+        options.onRender();
+      });
+      catalog = result.catalog;
+      loaded = true;
+      installProgress = {
+        phase: "complete",
+        downloadedBytes: result.downloadedBytes,
+        totalBytes: result.downloadedBytes,
+        extractedBytes: result.extractedBytes,
+        extractedFiles: result.extractedFiles,
+        totalFiles: result.extractedFiles,
+        skippedFiles: result.skippedFiles,
+      };
+      reconcileTracks();
+      saveState();
+      options.onStatus(
+        options.tr("status.whiteNoiseInstallDone", { count: result.extractedFiles }),
+        "ok",
+      );
+    } catch (installPackageError) {
+      installError = installPackageError instanceof Error
+        ? installPackageError.message
+        : String(installPackageError);
+      options.onStatus(
+        options.tr("status.whiteNoiseInstallFailed", { message: installError }),
+        "error",
+      );
+    } finally {
+      installing = false;
+      options.onRender();
+    }
   }
 
   async function togglePlayback() {
@@ -279,7 +365,9 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
 
   function saveState() {
     const payload: StoredWhiteNoiseState = {
+      floatingCollapsed,
       masterVolume,
+      packageUrl,
       tracks: Object.fromEntries(tracks.map((item) => [
         item.track.id,
         {
@@ -300,6 +388,9 @@ export function createWhiteNoiseController(options: WhiteNoiseControllerOptions)
     ensureLoaded,
     refresh,
     toggleHelp,
+    setPackageUrl,
+    setFloatingCollapsed,
+    installPackage,
     togglePlayback,
     play,
     pause,
@@ -318,6 +409,10 @@ function loadStoredState(): StoredWhiteNoiseState {
   } catch {
     return {};
   }
+}
+
+function stringOrDefault(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
 }
 
 function normalizeVolumeFromInput(value: unknown, fallback: number): number {

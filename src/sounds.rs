@@ -1,4 +1,7 @@
+use std::convert::Infallible;
+use std::fs::File;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 use axum::Json;
 use axum::body::Body;
@@ -6,12 +9,24 @@ use axum::extract::Path as AxumPath;
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde::Serialize;
+use bytes::Bytes;
+use futures::StreamExt;
+use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc;
 use tokio_util::io::ReaderStream;
+use url::Url;
+use uuid::Uuid;
+use zip::ZipArchive;
 
 use crate::config::{DEFAULT_SOUNDS_DIR, ENV_SOUNDS_DIR};
 
 const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a", "webm"];
+const MAX_SOUND_PACKAGE_BYTES: u64 = 500 * 1_024 * 1_024;
+const MAX_SOUND_PACKAGE_EXTRACTED_BYTES: u64 = 2_048 * 1_024 * 1_024;
+const MAX_SOUND_PACKAGE_FILES: usize = 5_000;
+const SOUND_PACKAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(240);
+const SOUND_PACKAGE_PROGRESS_CHUNK_BYTES: u64 = 1_024 * 1_024;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,7 +48,63 @@ pub struct SoundFile {
     size_bytes: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallSoundPackageRequest {
+    url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallSoundPackageResponse {
+    downloaded_bytes: u64,
+    extracted_bytes: u64,
+    extracted_files: usize,
+    skipped_files: usize,
+    catalog: SoundCatalog,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SoundPackageInstallEvent {
+    status: &'static str,
+    phase: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    downloaded_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_bytes: Option<u64>,
+    extracted_bytes: u64,
+    extracted_files: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_files: Option<usize>,
+    skipped_files: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    catalog: Option<SoundCatalog>,
+}
+
 pub async fn list_sounds() -> Json<SoundCatalog> {
+    Json(sound_catalog().await)
+}
+
+pub async fn install_sound_package(Json(payload): Json<InstallSoundPackageRequest>) -> Response {
+    let url = match validate_sound_package_url(&payload.url) {
+        Ok(url) => url,
+        Err(error) => return sound_package_error_response(error),
+    };
+    let (sender, receiver) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let result = install_sound_package_from_url(url, sender.clone()).await;
+        let event = match result {
+            Ok(response) => SoundPackageInstallEvent::done(response),
+            Err(error) => SoundPackageInstallEvent::error(error.to_string()),
+        };
+        let _ = sender.send(event);
+    });
+    sound_package_stream_response(receiver)
+}
+
+async fn sound_catalog() -> SoundCatalog {
     let root = sounds_dir();
     let exists = root.is_dir();
     let files = if exists {
@@ -49,11 +120,82 @@ pub async fn list_sounds() -> Json<SoundCatalog> {
     } else {
         Vec::new()
     };
-    Json(SoundCatalog {
+    SoundCatalog {
         root_path: root.to_string_lossy().to_string(),
         exists,
         files,
+    }
+}
+
+async fn install_sound_package_from_url(
+    url: Url,
+    progress: mpsc::UnboundedSender<SoundPackageInstallEvent>,
+) -> Result<InstallSoundPackageResponse, SoundPackageError> {
+    let (package_path, downloaded_bytes, total_bytes) =
+        download_sound_package(&url, &progress).await?;
+    let root = sounds_dir();
+    let extraction_result = tokio::task::spawn_blocking({
+        let package_path = package_path.clone();
+        let progress = progress.clone();
+        move || extract_sound_package(&package_path, &root, &progress)
     })
+    .await
+    .map_err(|err| SoundPackageError::Io(std::io::Error::other(err)))?;
+    let _ = tokio::fs::remove_file(&package_path).await;
+    let extraction = extraction_result?;
+    let catalog = sound_catalog().await;
+    let _ = progress.send(SoundPackageInstallEvent::progress(
+        "complete",
+        downloaded_bytes,
+        total_bytes,
+        extraction.extracted_bytes,
+        extraction.extracted_files,
+        Some(extraction.extracted_files),
+        extraction.skipped_files,
+    ));
+    Ok(InstallSoundPackageResponse {
+        downloaded_bytes,
+        extracted_bytes: extraction.extracted_bytes,
+        extracted_files: extraction.extracted_files,
+        skipped_files: extraction.skipped_files,
+        catalog,
+    })
+}
+
+fn sound_package_stream_response(
+    receiver: mpsc::UnboundedReceiver<SoundPackageInstallEvent>,
+) -> Response {
+    let stream = futures::stream::unfold(receiver, |mut receiver| async move {
+        receiver.recv().await.map(|event| {
+            let bytes = sound_package_event_line(&event);
+            (Ok::<Bytes, Infallible>(bytes), receiver)
+        })
+    });
+    let mut response = Response::new(Body::from_stream(stream));
+    let headers = response.headers_mut();
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static("application/x-ndjson; charset=utf-8"),
+    );
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+fn sound_package_error_response(error: SoundPackageError) -> Response {
+    let status = match error {
+        SoundPackageError::BadRequest(_) | SoundPackageError::Zip(_) => StatusCode::BAD_REQUEST,
+        SoundPackageError::Download(_) => StatusCode::BAD_GATEWAY,
+        SoundPackageError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (status, error.to_string()).into_response()
+}
+
+fn sound_package_event_line(event: &SoundPackageInstallEvent) -> Bytes {
+    let mut line = serde_json::to_vec(event).unwrap_or_else(|_| {
+        br#"{"status":"error","phase":"complete","message":"failed to encode sound package progress","downloadedBytes":0,"extractedBytes":0,"extractedFiles":0,"skippedFiles":0}"#.to_vec()
+    });
+    line.push(b'\n');
+    Bytes::from(line)
 }
 
 pub async fn sound_file(AxumPath(path): AxumPath<String>) -> Response {
@@ -121,6 +263,220 @@ fn collect_sound_files(root: &Path) -> std::io::Result<Vec<SoundFile>> {
             .then_with(|| left.path.cmp(&right.path))
     });
     Ok(files)
+}
+
+async fn download_sound_package(
+    url: &Url,
+    progress: &mpsc::UnboundedSender<SoundPackageInstallEvent>,
+) -> Result<(PathBuf, u64, Option<u64>), SoundPackageError> {
+    let package_path =
+        std::env::temp_dir().join(format!("lazycat-webshell-sounds-{}.zip", Uuid::new_v4()));
+    let result = download_sound_package_to_path(url, &package_path, progress).await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&package_path).await;
+    }
+    result.map(|(downloaded_bytes, total_bytes)| (package_path, downloaded_bytes, total_bytes))
+}
+
+async fn download_sound_package_to_path(
+    url: &Url,
+    package_path: &Path,
+    progress: &mpsc::UnboundedSender<SoundPackageInstallEvent>,
+) -> Result<(u64, Option<u64>), SoundPackageError> {
+    let client = reqwest::Client::builder()
+        .timeout(SOUND_PACKAGE_DOWNLOAD_TIMEOUT)
+        .user_agent("lazycat-neko-webshell/sounds")
+        .build()?;
+    let response = client.get(url.clone()).send().await?.error_for_status()?;
+    let total_bytes = response.content_length();
+    if total_bytes.is_some_and(|size| size > MAX_SOUND_PACKAGE_BYTES) {
+        return Err(SoundPackageError::BadRequest(
+            "sound package is too large".to_owned(),
+        ));
+    }
+
+    let _ = progress.send(SoundPackageInstallEvent::progress(
+        "download",
+        0,
+        total_bytes,
+        0,
+        0,
+        None,
+        0,
+    ));
+    let mut file = tokio::fs::File::create(package_path).await?;
+    let mut downloaded_bytes = 0_u64;
+    let mut reported_bytes = 0_u64;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        downloaded_bytes = downloaded_bytes
+            .checked_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX))
+            .ok_or_else(|| {
+                SoundPackageError::BadRequest("sound package is too large".to_owned())
+            })?;
+        if downloaded_bytes > MAX_SOUND_PACKAGE_BYTES {
+            return Err(SoundPackageError::BadRequest(
+                "sound package is too large".to_owned(),
+            ));
+        }
+        file.write_all(&chunk).await?;
+        if downloaded_bytes.saturating_sub(reported_bytes) >= SOUND_PACKAGE_PROGRESS_CHUNK_BYTES {
+            reported_bytes = downloaded_bytes;
+            let _ = progress.send(SoundPackageInstallEvent::progress(
+                "download",
+                downloaded_bytes,
+                total_bytes,
+                0,
+                0,
+                None,
+                0,
+            ));
+        }
+    }
+    file.flush().await?;
+    let _ = progress.send(SoundPackageInstallEvent::progress(
+        "download",
+        downloaded_bytes,
+        total_bytes,
+        0,
+        0,
+        None,
+        0,
+    ));
+    Ok((downloaded_bytes, total_bytes))
+}
+
+fn extract_sound_package(
+    package_path: &Path,
+    root: &Path,
+    progress: &mpsc::UnboundedSender<SoundPackageInstallEvent>,
+) -> Result<SoundPackageExtraction, SoundPackageError> {
+    std::fs::create_dir_all(root)?;
+    let canonical_root = std::fs::canonicalize(root)?;
+    let file = File::open(package_path)?;
+    let mut archive = ZipArchive::new(file)?;
+    let mut entries = Vec::new();
+    let mut extracted_bytes = 0_u64;
+    let mut skipped_files = 0_usize;
+
+    for index in 0..archive.len() {
+        let file = archive.by_index(index)?;
+        if file.is_dir() {
+            continue;
+        }
+        let Some(relative_path) = sound_package_entry_path(file.name()) else {
+            skipped_files += 1;
+            continue;
+        };
+        if entries.len() >= MAX_SOUND_PACKAGE_FILES {
+            return Err(SoundPackageError::BadRequest(
+                "sound package contains too many audio files".to_owned(),
+            ));
+        }
+        extracted_bytes = extracted_bytes.checked_add(file.size()).ok_or_else(|| {
+            SoundPackageError::BadRequest("sound package expands too large".to_owned())
+        })?;
+        if extracted_bytes > MAX_SOUND_PACKAGE_EXTRACTED_BYTES {
+            return Err(SoundPackageError::BadRequest(
+                "sound package expands too large".to_owned(),
+            ));
+        }
+        entries.push(SoundPackageEntry {
+            index,
+            relative_path,
+            size_bytes: file.size(),
+        });
+    }
+
+    if entries.is_empty() {
+        return Err(SoundPackageError::BadRequest(
+            "sound package contains no supported audio files".to_owned(),
+        ));
+    }
+
+    let total_files = entries.len();
+    let total_extracted_bytes = extracted_bytes;
+    let mut written_bytes = 0_u64;
+    let mut written_files = 0_usize;
+    let _ = progress.send(SoundPackageInstallEvent::progress(
+        "extract",
+        0,
+        None,
+        0,
+        0,
+        Some(total_files),
+        skipped_files,
+    ));
+    for entry in &entries {
+        let mut file = archive.by_index(entry.index)?;
+        let output_path = root.join(&entry.relative_path);
+        let Some(parent) = output_path.parent() else {
+            return Err(SoundPackageError::BadRequest(
+                "invalid sound package path".to_owned(),
+            ));
+        };
+        std::fs::create_dir_all(parent)?;
+        let canonical_parent = std::fs::canonicalize(parent)?;
+        if !canonical_parent.starts_with(&canonical_root) {
+            return Err(SoundPackageError::BadRequest(
+                "invalid sound package path".to_owned(),
+            ));
+        }
+        let mut output = File::create(output_path)?;
+        let copied = std::io::copy(&mut file, &mut output)?;
+        written_bytes = written_bytes.saturating_add(copied.min(entry.size_bytes));
+        written_files += 1;
+        let _ = progress.send(SoundPackageInstallEvent::progress(
+            "extract",
+            0,
+            None,
+            written_bytes,
+            written_files,
+            Some(total_files),
+            skipped_files,
+        ));
+    }
+
+    Ok(SoundPackageExtraction {
+        extracted_bytes: total_extracted_bytes,
+        extracted_files: entries.len(),
+        skipped_files,
+    })
+}
+
+fn validate_sound_package_url(value: &str) -> Result<Url, SoundPackageError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.len() > 2_048 {
+        return Err(SoundPackageError::BadRequest(
+            "invalid sound package url".to_owned(),
+        ));
+    }
+    let url = Url::parse(trimmed)
+        .map_err(|_| SoundPackageError::BadRequest("invalid sound package url".to_owned()))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(SoundPackageError::BadRequest(
+            "sound package url must be an http or https url without credentials".to_owned(),
+        ));
+    }
+    Ok(url)
+}
+
+fn sound_package_entry_path(entry_name: &str) -> Option<String> {
+    let normalized_name = entry_name.replace('\\', "/");
+    let normalized = normalize_relative_path(Path::new(&normalized_name))?;
+    let mut parts = normalized.split('/').collect::<Vec<_>>();
+    if parts.first().is_some_and(|part| *part == "sounds") {
+        parts.remove(0);
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let relative_path = parts.join("/");
+    supported_audio_file(Path::new(&relative_path)).then_some(relative_path)
 }
 
 fn visit_sounds_dir(root: &Path, dir: &Path, files: &mut Vec<SoundFile>) -> std::io::Result<()> {
@@ -274,13 +630,94 @@ impl From<std::io::Error> for SoundError {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum SoundPackageError {
+    #[error("{0}")]
+    BadRequest(String),
+    #[error("failed to download sound package: {0}")]
+    Download(#[from] reqwest::Error),
+    #[error("failed to extract sound package: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("invalid sound package zip: {0}")]
+    Zip(#[from] zip::result::ZipError),
+}
+
+#[derive(Debug)]
+struct SoundPackageEntry {
+    index: usize,
+    relative_path: String,
+    size_bytes: u64,
+}
+
+#[derive(Debug)]
+struct SoundPackageExtraction {
+    extracted_bytes: u64,
+    extracted_files: usize,
+    skipped_files: usize,
+}
+
+impl SoundPackageInstallEvent {
+    fn progress(
+        phase: &'static str,
+        downloaded_bytes: u64,
+        total_bytes: Option<u64>,
+        extracted_bytes: u64,
+        extracted_files: usize,
+        total_files: Option<usize>,
+        skipped_files: usize,
+    ) -> Self {
+        Self {
+            status: "progress",
+            phase,
+            message: None,
+            downloaded_bytes,
+            total_bytes,
+            extracted_bytes,
+            extracted_files,
+            total_files,
+            skipped_files,
+            catalog: None,
+        }
+    }
+
+    fn done(response: InstallSoundPackageResponse) -> Self {
+        Self {
+            status: "done",
+            phase: "complete",
+            message: None,
+            downloaded_bytes: response.downloaded_bytes,
+            total_bytes: Some(response.downloaded_bytes),
+            extracted_bytes: response.extracted_bytes,
+            extracted_files: response.extracted_files,
+            total_files: Some(response.extracted_files),
+            skipped_files: response.skipped_files,
+            catalog: Some(response.catalog),
+        }
+    }
+
+    fn error(message: String) -> Self {
+        Self {
+            status: "error",
+            phase: "complete",
+            message: Some(message),
+            downloaded_bytes: 0,
+            total_bytes: None,
+            extracted_bytes: 0,
+            extracted_files: 0,
+            total_files: None,
+            skipped_files: 0,
+            catalog: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use super::{
-        encode_sound_url_path, normalize_relative_path, sound_label, supported_audio_file,
-        validate_request_path,
+        encode_sound_url_path, normalize_relative_path, sound_label, sound_package_entry_path,
+        supported_audio_file, validate_request_path, validate_sound_package_url,
     };
 
     #[test]
@@ -329,5 +766,33 @@ mod tests {
     fn formats_labels_from_file_names() {
         assert_eq!(sound_label("white-noise"), "White Noise");
         assert_eq!(sound_label("rain_on_window"), "Rain On Window");
+    }
+
+    #[test]
+    fn normalizes_sound_package_entries() {
+        assert_eq!(
+            sound_package_entry_path("sounds/rain/light-rain.mp3").as_deref(),
+            Some("rain/light-rain.mp3")
+        );
+        assert_eq!(
+            sound_package_entry_path("noise/white-noise.wav").as_deref(),
+            Some("noise/white-noise.wav")
+        );
+        assert_eq!(
+            sound_package_entry_path("sounds\\custom\\focus.ogg").as_deref(),
+            Some("custom/focus.ogg")
+        );
+        assert!(sound_package_entry_path("sounds/../secret.mp3").is_none());
+        assert!(sound_package_entry_path("sounds/.hidden/focus.mp3").is_none());
+        assert!(sound_package_entry_path("sounds/readme.md").is_none());
+    }
+
+    #[test]
+    fn validates_sound_package_urls() {
+        assert!(validate_sound_package_url("https://example.com/sounds.zip").is_ok());
+        assert!(validate_sound_package_url("http://example.com/sounds.zip").is_ok());
+        assert!(validate_sound_package_url("file:///tmp/sounds.zip").is_err());
+        assert!(validate_sound_package_url("https://user@example.com/sounds.zip").is_err());
+        assert!(validate_sound_package_url("").is_err());
     }
 }

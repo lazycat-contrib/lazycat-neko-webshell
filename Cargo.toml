@@ -37,6 +37,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 url = "2.5.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 wuff = "0.2.5"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
 connectrpc-build = "0.4.2"

@@ -7,16 +7,24 @@ type Translate = (key: MessageKey, values?: Record<string, string | number>) => 
 export type WhiteNoiseFloatingViewState = {
   visible: boolean;
   disabled: boolean;
-  playback: Pick<WhiteNoiseViewState, "playing" | "loading" | "tracks" | "masterVolume">;
+  playback: Pick<WhiteNoiseViewState, "floatingCollapsed" | "playing" | "loading" | "tracks" | "masterVolume">;
   tr: Translate;
 };
 
 export function renderWhiteNoiseFloatingControls(state: WhiteNoiseFloatingViewState): string {
   if (!state.visible) return "";
+  if (state.playback.floatingCollapsed) {
+    return `
+      <div class="white-noise-floating-controls" data-collapsed="true" role="toolbar" aria-label="${escapeAttr(state.tr("plugin.whiteNoise.name"))}">
+        ${floatingButton("expand", "chevron-right", state.tr("action.whiteNoiseExpand"), "")}
+      </div>
+    `;
+  }
   const playLabel = state.playback.playing ? state.tr("action.whiteNoisePause") : state.tr("action.whiteNoisePlay");
   const disabled = state.disabled || state.playback.loading || !state.playback.tracks.length ? "disabled" : "";
   return `
     <div class="white-noise-floating-controls" role="toolbar" aria-label="${escapeAttr(state.tr("plugin.whiteNoise.name"))}">
+      ${floatingButton("collapse", "chevron-left", state.tr("action.whiteNoiseCollapse"), "")}
       ${floatingButton("toggle", state.playback.playing ? "pause" : "play", playLabel, disabled)}
       ${floatingButton("volume-down", "volume-1", state.tr("action.whiteNoiseVolumeDown"), disabled || state.playback.masterVolume <= 0 ? "disabled" : "")}
       ${floatingButton("volume-up", "volume-2", state.tr("action.whiteNoiseVolumeUp"), disabled || state.playback.masterVolume >= 1 ? "disabled" : "")}

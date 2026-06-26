@@ -963,6 +963,13 @@ function bindSettings() {
       whiteNoise.setMasterVolume(whiteNoiseMasterVolume.value);
       return;
     }
+    const whiteNoisePackageUrl = event.target instanceof Element
+      ? event.target.closest<HTMLInputElement>("[data-white-noise-package-url]")
+      : null;
+    if (whiteNoisePackageUrl) {
+      whiteNoise.setPackageUrl(whiteNoisePackageUrl.value);
+      return;
+    }
     const whiteNoiseTrackVolume = event.target instanceof Element
       ? event.target.closest<HTMLInputElement>("[data-white-noise-track-volume]")
       : null;

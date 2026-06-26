@@ -72,7 +72,10 @@ export type MessageKey =
   | "action.pomodoroNextRound"
   | "action.pomodoroStart"
   | "action.pomodoroStop"
+  | "action.whiteNoiseCollapse"
+  | "action.whiteNoiseExpand"
   | "action.whiteNoiseHelp"
+  | "action.whiteNoiseInstall"
   | "action.whiteNoisePause"
   | "action.whiteNoisePlay"
   | "action.whiteNoiseStop"
@@ -263,7 +266,10 @@ export type MessageKey =
   | "whiteNoise.categoryCount"
   | "whiteNoise.dirMissing"
   | "whiteNoise.disabled"
+  | "whiteNoise.downloadProgress"
+  | "whiteNoise.downloadStarting"
   | "whiteNoise.enabled"
+  | "whiteNoise.extractProgress"
   | "whiteNoise.helpCustom"
   | "whiteNoise.helpFormats"
   | "whiteNoise.helpRemotePackage"
@@ -272,15 +278,21 @@ export type MessageKey =
   | "whiteNoise.helpUnzip"
   | "whiteNoise.helpZipTitle"
   | "whiteNoise.idle"
+  | "whiteNoise.installComplete"
+  | "whiteNoise.installing"
   | "whiteNoise.loadError"
   | "whiteNoise.loading"
   | "whiteNoise.masterVolume"
   | "whiteNoise.noFiles"
   | "whiteNoise.openHelp"
+  | "whiteNoise.packageUrl"
+  | "whiteNoise.packageUrlPlaceholder"
   | "whiteNoise.playing"
+  | "whiteNoise.skippedFiles"
   | "whiteNoise.soundMix"
   | "whiteNoise.toggleTrack"
   | "whiteNoise.trackVolume"
+  | "whiteNoise.unknownSize"
   | "section.appearance"
   | "section.aiAccess"
   | "section.fileTransfer"
@@ -555,6 +567,9 @@ export type MessageKey =
   | "status.pluginSettingsSaveFailed"
   | "status.whiteNoiseAudioError"
   | "status.whiteNoiseLoaded"
+  | "status.whiteNoiseInstallDone"
+  | "status.whiteNoiseInstallFailed"
+  | "status.whiteNoiseInstalling"
   | "status.whiteNoiseLoadFailed"
   | "status.whiteNoiseNoSounds"
   | "status.whiteNoisePlayFailed"
@@ -650,6 +665,7 @@ export type MessageKey =
   | "validation.tunnelProfile"
   | "validation.tunnelProfileName"
   | "validation.upstreamUrl"
+  | "validation.whiteNoisePackageUrl"
   | "zmodem.directionDownload"
   | "zmodem.directionUpload";
 
@@ -717,7 +733,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.pomodoroNextRound": "Next round",
     "action.pomodoroStart": "Start",
     "action.pomodoroStop": "End",
+    "action.whiteNoiseCollapse": "Collapse controls",
+    "action.whiteNoiseExpand": "Expand controls",
     "action.whiteNoiseHelp": "Sound setup help",
+    "action.whiteNoiseInstall": "Download",
     "action.whiteNoisePause": "Pause",
     "action.whiteNoisePlay": "Play",
     "action.whiteNoiseStop": "Stop",
@@ -895,7 +914,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.terminalTransfer.name": "Terminal transfer",
     "plugin.terminalTransfer.output": "Terminal transfer progress",
     "plugin.whiteNoise.description": "Play local focus sounds from /lzcapp/var/sounds.",
-    "plugin.whiteNoise.help": "Mix local sounds from the provider sounds directory. Use ? for package and directory setup.",
+    "plugin.whiteNoise.help": "Mix local sounds from the provider sounds directory. Enter a package URL to download and extract it.",
     "plugin.whiteNoise.name": "White noise",
     "pomodoro.completeHint": "The focus timer is complete. Take a short break before starting another round.",
     "pomodoro.completeTitle": "Time is up",
@@ -915,7 +934,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "whiteNoise.categoryCount": "{count} sound(s)",
     "whiteNoise.dirMissing": "Sound directory is not ready",
     "whiteNoise.disabled": "Off",
+    "whiteNoise.downloadProgress": "Downloading {current} / {total}",
+    "whiteNoise.downloadStarting": "Preparing download...",
     "whiteNoise.enabled": "On",
+    "whiteNoise.extractProgress": "Extracting {current}/{total} files, {bytes}",
     "whiteNoise.helpCustom": "You can add your own category folders and audio files under sounds/. Click refresh after changing files.",
     "whiteNoise.helpFormats": "Supported audio formats: {formats}.",
     "whiteNoise.helpRemotePackage": "Default remote package",
@@ -924,15 +946,21 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "whiteNoise.helpUnzip": "Download and extract on the device",
     "whiteNoise.helpZipTitle": "Zip package directory structure",
     "whiteNoise.idle": "Idle",
+    "whiteNoise.installComplete": "Installed {count} sound(s)",
+    "whiteNoise.installing": "Downloading",
     "whiteNoise.loadError": "Failed to load sound catalog",
     "whiteNoise.loading": "Loading sounds...",
     "whiteNoise.masterVolume": "Master volume",
     "whiteNoise.noFiles": "No supported audio files found",
-    "whiteNoise.openHelp": "Click ? to see the default package, directory structure, and supported formats.",
+    "whiteNoise.openHelp": "Open sound setup help.",
+    "whiteNoise.packageUrl": "Package URL",
+    "whiteNoise.packageUrlPlaceholder": "https://example.com/sounds.zip",
     "whiteNoise.playing": "Playing",
+    "whiteNoise.skippedFiles": "{count} file(s) skipped",
     "whiteNoise.soundMix": "Sound mix",
     "whiteNoise.toggleTrack": "Toggle {name}",
     "whiteNoise.trackVolume": "{name} volume",
+    "whiteNoise.unknownSize": "unknown size",
     "section.appearance": "Appearance",
     "section.aiAccess": "AI access",
     "section.fileTransfer": "File transfer",
@@ -1206,6 +1234,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginSettingsSaved": "{name} settings saved",
     "status.pluginSettingsSaveFailed": "Settings save failed: {message}",
     "status.whiteNoiseAudioError": "Cannot load sound: {name}",
+    "status.whiteNoiseInstallDone": "Installed {count} sound(s)",
+    "status.whiteNoiseInstallFailed": "Sound package install failed: {message}",
+    "status.whiteNoiseInstalling": "Downloading sound package...",
     "status.whiteNoiseLoaded": "{count} sound(s) loaded",
     "status.whiteNoiseLoadFailed": "Sound catalog load failed: {message}",
     "status.whiteNoiseNoSounds": "Add audio files before playing sounds.",
@@ -1302,6 +1333,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.tunnelProfile": "select a configured tunnel profile",
     "validation.tunnelProfileName": "enter a profile name",
     "validation.upstreamUrl": "enter a local upstream URL",
+    "validation.whiteNoisePackageUrl": "enter a sound package URL",
     "zmodem.directionDownload": "Download",
     "zmodem.directionUpload": "Upload",
   },
@@ -1368,7 +1400,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.pomodoroNextRound": "下一轮",
     "action.pomodoroStart": "开始",
     "action.pomodoroStop": "结束番茄",
+    "action.whiteNoiseCollapse": "收起控制条",
+    "action.whiteNoiseExpand": "展开控制条",
     "action.whiteNoiseHelp": "声音配置帮助",
+    "action.whiteNoiseInstall": "下载",
     "action.whiteNoisePause": "暂停",
     "action.whiteNoisePlay": "播放",
     "action.whiteNoiseStop": "停止",
@@ -1546,7 +1581,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "plugin.terminalTransfer.name": "终端传输",
     "plugin.terminalTransfer.output": "终端传输进度",
     "plugin.whiteNoise.description": "从 /lzcapp/var/sounds 播放本地专注声音。",
-    "plugin.whiteNoise.help": "混合播放设备 sounds 目录里的本地音频。点击 ? 查看资源包和目录结构。",
+    "plugin.whiteNoise.help": "混合播放设备 sounds 目录里的本地音频。输入资源包地址即可自动下载并解压。",
     "plugin.whiteNoise.name": "白噪音",
     "pomodoro.completeHint": "本轮专注已经完成。休息一下，再开始下一轮。",
     "pomodoro.completeTitle": "番茄时间到了",
@@ -1566,7 +1601,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "whiteNoise.categoryCount": "{count} 个声音",
     "whiteNoise.dirMissing": "声音目录还未准备好",
     "whiteNoise.disabled": "关闭",
+    "whiteNoise.downloadProgress": "下载中 {current} / {total}",
+    "whiteNoise.downloadStarting": "准备下载...",
     "whiteNoise.enabled": "开启",
+    "whiteNoise.extractProgress": "解压中 {current}/{total} 个文件，{bytes}",
     "whiteNoise.helpCustom": "也可以在 sounds/ 下新增自己的分类目录和音频文件。修改文件后点击刷新。",
     "whiteNoise.helpFormats": "支持的音频格式：{formats}。",
     "whiteNoise.helpRemotePackage": "默认远程资源包",
@@ -1575,15 +1613,21 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "whiteNoise.helpUnzip": "在设备上下载并解压",
     "whiteNoise.helpZipTitle": "压缩包目录结构",
     "whiteNoise.idle": "未播放",
+    "whiteNoise.installComplete": "已安装 {count} 个声音",
+    "whiteNoise.installing": "下载中",
     "whiteNoise.loadError": "加载声音列表失败",
     "whiteNoise.loading": "正在加载声音...",
     "whiteNoise.masterVolume": "总音量",
     "whiteNoise.noFiles": "没有找到支持的音频文件",
-    "whiteNoise.openHelp": "点击 ? 查看默认资源包、目录结构和支持格式。",
+    "whiteNoise.openHelp": "打开声音配置帮助。",
+    "whiteNoise.packageUrl": "资源包地址",
+    "whiteNoise.packageUrlPlaceholder": "https://example.com/sounds.zip",
     "whiteNoise.playing": "播放中",
+    "whiteNoise.skippedFiles": "已跳过 {count} 个文件",
     "whiteNoise.soundMix": "声音混合",
     "whiteNoise.toggleTrack": "切换 {name}",
     "whiteNoise.trackVolume": "{name} 音量",
+    "whiteNoise.unknownSize": "未知大小",
     "section.appearance": "外观",
     "section.aiAccess": "AI 接入",
     "section.fileTransfer": "文件传输",
@@ -1857,6 +1901,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginSettingsSaved": "{name} 设置已保存",
     "status.pluginSettingsSaveFailed": "设置保存失败：{message}",
     "status.whiteNoiseAudioError": "无法加载声音：{name}",
+    "status.whiteNoiseInstallDone": "已安装 {count} 个声音",
+    "status.whiteNoiseInstallFailed": "声音资源包安装失败：{message}",
+    "status.whiteNoiseInstalling": "正在下载声音资源包...",
     "status.whiteNoiseLoaded": "已加载 {count} 个声音",
     "status.whiteNoiseLoadFailed": "声音列表加载失败：{message}",
     "status.whiteNoiseNoSounds": "请先添加音频文件再播放。",
@@ -1953,6 +2000,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "validation.tunnelProfile": "请选择已配置的 Tunnel 配置",
     "validation.tunnelProfileName": "请输入配置名称",
     "validation.upstreamUrl": "请输入本地上游 URL",
+    "validation.whiteNoisePackageUrl": "请输入声音资源包地址",
     "zmodem.directionDownload": "下载",
     "zmodem.directionUpload": "上传",
   },

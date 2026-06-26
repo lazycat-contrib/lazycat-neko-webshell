@@ -28,7 +28,7 @@ use crate::preferences::{get_settings, put_settings};
 use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
 use crate::service::CapabilityServiceImpl;
 use crate::session_backend::get_session_backends;
-use crate::sounds::{list_sounds, sound_file};
+use crate::sounds::{install_sound_package, list_sounds, sound_file};
 use crate::ssh_backend::{
     delete_ssh_profile, get_ssh_config, get_ssh_key_file, list_profile_instances,
     list_ssh_config_hosts, list_ssh_profiles, put_ssh_config, put_ssh_key_file, test_ssh_profile,
@@ -57,6 +57,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/instances", get(list_instances))
         .route("/api/runtime", get(runtime_info))
         .route("/api/sounds", get(list_sounds))
+        .route("/api/sounds/package", post(install_sound_package))
         .route("/api/lightos-admin-info", get(lightos_admin_info))
         .route("/api/ssh-profiles", get(list_ssh_profiles).post(upsert_ssh_profile))
         .route("/api/ssh-config-hosts", get(list_ssh_config_hosts))

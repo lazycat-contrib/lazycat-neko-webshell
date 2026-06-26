@@ -34,10 +34,12 @@ export function renderWhiteNoiseFloatingSurfaceView(options: {
   tr: Translate;
   updateIcons: () => void;
 }): boolean {
-  const visible = Boolean(
-    options.plugin?.enabled && whiteNoiseFloatingControlsEnabled(options.plugin.metadata),
-  );
   const playback = options.controller.viewState();
+  const visible = Boolean(
+    options.plugin?.enabled
+      && whiteNoiseFloatingControlsEnabled(options.plugin.metadata)
+      && playback.playing,
+  );
   options.container.innerHTML = renderWhiteNoiseFloatingControls({
     visible,
     disabled: options.disabled,
@@ -59,6 +61,8 @@ export async function runWhiteNoiseAction(
     controller.stop();
   } else if (action === "refresh") {
     await controller.refresh();
+  } else if (action === "install") {
+    await controller.installPackage();
   }
 }
 
@@ -66,7 +70,11 @@ export async function runWhiteNoiseFloatingAction(
   controller: WhiteNoiseController,
   action: string,
 ): Promise<void> {
-  if (action === "toggle") {
+  if (action === "collapse") {
+    controller.setFloatingCollapsed(true);
+  } else if (action === "expand") {
+    controller.setFloatingCollapsed(false);
+  } else if (action === "toggle") {
     await controller.togglePlayback();
   } else if (action === "volume-up") {
     controller.stepMasterVolume("up");
