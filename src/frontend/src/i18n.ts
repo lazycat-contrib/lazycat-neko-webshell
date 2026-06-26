@@ -59,6 +59,7 @@ export type MessageKey =
   | "action.aiVoiceReplyPause"
   | "action.aiVoiceReplyPlay"
   | "action.aiVoiceReplyShowText"
+  | "action.aiVoiceReplyTest"
   | "action.cancel"
   | "action.close"
   | "action.closeActiveSession"
@@ -603,6 +604,7 @@ export type MessageKey =
   | "status.aiVoiceInserted"
   | "status.aiVoiceRecording"
   | "status.aiVoiceStartFailed"
+  | "status.aiVoiceTranscribing"
   | "status.aiVoiceTooLarge"
   | "status.aiVoiceReplyConfigRemoved"
   | "status.aiVoiceReplyConfigSaved"
@@ -610,6 +612,8 @@ export type MessageKey =
   | "status.aiVoiceReplyLoading"
   | "status.aiVoiceReplyPlaying"
   | "status.aiVoiceReplyReady"
+  | "status.aiVoiceReplyTestLoading"
+  | "status.aiVoiceReplyTestReady"
   | "status.pluginDisableFailed"
   | "status.pluginDisabled"
   | "status.pluginEnableFailed"
@@ -764,6 +768,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiVoiceReplyPause": "Pause voice reply",
     "action.aiVoiceReplyPlay": "Play voice reply",
     "action.aiVoiceReplyShowText": "Show text",
+    "action.aiVoiceReplyTest": "Test reply voice",
     "action.cancel": "Cancel",
     "action.close": "Close",
     "action.closeActiveSession": "Close active session",
@@ -963,7 +968,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "ai.providerAnthropic": "Anthropic Claude",
     "ai.providerOpenAICompatible": "OpenAI-compatible",
     "ai.providerOpenAIResponses": "OpenAI Responses",
-    "ai.voiceEnableHelp": "When enabled, a hold-to-talk button appears above the mobile keyboard.",
+    "ai.voiceEnableHelp": "When enabled, a hold-to-talk button appears above the mobile keyboard and at the bottom center on desktop.",
     "ai.voiceEndpointAudioSpeech": "Audio speech",
     "ai.voiceEndpointAudioTranscriptions": "Audio transcriptions",
     "ai.voiceEndpointChatAudio": "Chat audio",
@@ -1329,6 +1334,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.aiVoiceInserted": "Voice text inserted",
     "status.aiVoiceRecording": "Recording voice...",
     "status.aiVoiceStartFailed": "Microphone failed: {message}",
+    "status.aiVoiceTranscribing": "Transcribing voice...",
     "status.aiVoiceTooLarge": "Voice recording is larger than 25 MB",
     "status.aiVoiceReplyConfigRemoved": "Reply voice removed",
     "status.aiVoiceReplyConfigSaved": "Reply voice saved",
@@ -1336,6 +1342,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.aiVoiceReplyLoading": "Preparing voice reply...",
     "status.aiVoiceReplyPlaying": "Playing voice reply",
     "status.aiVoiceReplyReady": "Voice reply ready",
+    "status.aiVoiceReplyTestLoading": "Testing reply voice...",
+    "status.aiVoiceReplyTestReady": "Reply voice test ready",
     "status.pluginDisableFailed": "Disable failed: {message}",
     "status.pluginDisabled": "{name} disabled",
     "status.pluginEnableFailed": "Enable failed: {message}",
@@ -1489,6 +1497,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.aiVoiceReplyPause": "暂停语音回复",
     "action.aiVoiceReplyPlay": "播放语音回复",
     "action.aiVoiceReplyShowText": "展开文本",
+    "action.aiVoiceReplyTest": "测试回复音色",
     "action.cancel": "取消",
     "action.close": "关闭",
     "action.closeActiveSession": "关闭当前活动会话",
@@ -1688,7 +1697,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "ai.providerAnthropic": "Anthropic Claude",
     "ai.providerOpenAICompatible": "OpenAI-compatible",
     "ai.providerOpenAIResponses": "OpenAI Responses",
-    "ai.voiceEnableHelp": "启用后，移动端键盘上方会显示按住说话按钮。",
+    "ai.voiceEnableHelp": "启用后，移动端键盘上方、PC 页面底部中间会显示按住说话按钮。",
     "ai.voiceEndpointAudioSpeech": "Audio Speech",
     "ai.voiceEndpointAudioTranscriptions": "Audio Transcriptions",
     "ai.voiceEndpointChatAudio": "Chat audio",
@@ -2054,6 +2063,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.aiVoiceInserted": "语音文本已输入",
     "status.aiVoiceRecording": "正在录音...",
     "status.aiVoiceStartFailed": "麦克风启动失败：{message}",
+    "status.aiVoiceTranscribing": "正在转写语音...",
     "status.aiVoiceTooLarge": "语音录音超过 25 MB",
     "status.aiVoiceReplyConfigRemoved": "回复音色已移除",
     "status.aiVoiceReplyConfigSaved": "回复音色已保存",
@@ -2061,6 +2071,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.aiVoiceReplyLoading": "正在准备语音回复...",
     "status.aiVoiceReplyPlaying": "正在播放语音回复",
     "status.aiVoiceReplyReady": "语音回复已就绪",
+    "status.aiVoiceReplyTestLoading": "正在测试回复音色...",
+    "status.aiVoiceReplyTestReady": "回复音色测试已就绪",
     "status.pluginDisableFailed": "关闭失败：{message}",
     "status.pluginDisabled": "{name} 已关闭",
     "status.pluginEnableFailed": "启用失败：{message}",

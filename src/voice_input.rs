@@ -113,11 +113,18 @@ pub struct VoiceTranscriptionResponse {
 #[serde(rename_all = "camelCase")]
 pub struct VoiceSpeechRequest {
     text: String,
+    #[serde(default)]
+    test: bool,
 }
 
 struct VoiceSpeechAudio {
     bytes: Bytes,
-    mime_type: &'static str,
+    mime_type: String,
+}
+
+struct ChatSpeechAudio {
+    bytes: Bytes,
+    mime_type: Option<String>,
 }
 
 struct VoiceAudioUpload {
@@ -201,7 +208,7 @@ pub async fn post_voice_speech(
     Json(request): Json<VoiceSpeechRequest>,
 ) -> Result<Response, (StatusCode, String)> {
     let settings = load_voice_settings(&state).map_err(internal_error)?;
-    if !settings.reply_enabled {
+    if !settings.reply_enabled && !request.test {
         return Err((StatusCode::FORBIDDEN, "voice reply is disabled".to_owned()));
     }
     let profile = selected_voice_reply_profile(&settings).ok_or_else(|| {
@@ -229,9 +236,9 @@ pub async fn post_voice_speech(
         .await
         .map_err(|err| (StatusCode::BAD_GATEWAY, err.to_string()))?;
     let mut response = Response::new(Body::from(audio.bytes));
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, AxumHeaderValue::from_static(audio.mime_type));
+    let content_type = AxumHeaderValue::from_str(&audio.mime_type)
+        .map_err(|err| (StatusCode::BAD_GATEWAY, err.to_string()))?;
+    response.headers_mut().insert(CONTENT_TYPE, content_type);
     Ok(response)
 }
 
@@ -477,10 +484,12 @@ async fn synthesize_chat_audio(
             .context("chat audio speech request failed")?
     };
     let format = normalized_speech_format(&profile.format);
-    let bytes = parse_chat_speech_audio(&response)?;
+    let audio = parse_chat_speech_audio(&response)?;
     Ok(VoiceSpeechAudio {
-        bytes,
-        mime_type: speech_mime_type(&format),
+        bytes: audio.bytes,
+        mime_type: audio
+            .mime_type
+            .unwrap_or_else(|| speech_mime_type(&format).to_owned()),
     })
 }
 
@@ -508,7 +517,7 @@ async fn synthesize_audio_speech(
         .context("audio speech request failed")?;
     Ok(VoiceSpeechAudio {
         bytes: response.bytes,
-        mime_type: speech_mime_type(&format),
+        mime_type: speech_mime_type(&format).to_owned(),
     })
 }
 
@@ -605,7 +614,7 @@ fn parse_chat_completion_text(value: &Value) -> anyhow::Result<String> {
     Ok(text)
 }
 
-fn parse_chat_speech_audio(value: &Value) -> anyhow::Result<Bytes> {
+fn parse_chat_speech_audio(value: &Value) -> anyhow::Result<ChatSpeechAudio> {
     let data = value
         .get("choices")
         .and_then(Value::as_array)
@@ -615,18 +624,33 @@ fn parse_chat_speech_audio(value: &Value) -> anyhow::Result<Bytes> {
         .and_then(|audio| audio.get("data"))
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("chat audio speech response did not include audio data"))?;
-    let base64_data = data
-        .split_once(";base64,")
-        .map(|(_, encoded)| encoded)
-        .unwrap_or(data)
-        .trim();
+    let (mime_type, base64_data) = parse_audio_data_url(data);
     let bytes = BASE64_STANDARD
         .decode(base64_data)
         .context("chat audio speech data was not valid base64")?;
     if bytes.is_empty() {
         return Err(anyhow!("chat audio speech response was empty"));
     }
-    Ok(Bytes::from(bytes))
+    Ok(ChatSpeechAudio {
+        bytes: Bytes::from(bytes),
+        mime_type,
+    })
+}
+
+fn parse_audio_data_url(data: &str) -> (Option<String>, &str) {
+    let trimmed = data.trim();
+    if !trimmed.starts_with("data:") {
+        return (None, trimmed);
+    }
+    let Some((meta, encoded)) = trimmed.split_once(";base64,") else {
+        return (None, trimmed);
+    };
+    let mime_type = meta
+        .strip_prefix("data:")
+        .map(str::trim)
+        .filter(|value| value.starts_with("audio/"))
+        .map(|value| value.to_owned());
+    (mime_type, encoded.trim())
 }
 
 fn parse_chat_completion_message_text(value: &Value) -> Option<String> {
@@ -1198,11 +1222,12 @@ mod tests {
 
     #[test]
     fn parses_chat_speech_audio_data_urls_and_plain_base64() {
+        const WAV_BASE64: &str = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=";
         let data_url = json!({
             "choices": [{
                 "message": {
                     "audio": {
-                        "data": "data:audio/wav;base64,YXVkaW8="
+                        "data": format!("data:audio/wav;base64,{WAV_BASE64}")
                     }
                 }
             }]
@@ -1211,20 +1236,20 @@ mod tests {
             "choices": [{
                 "message": {
                     "audio": {
-                        "data": "YXVkaW8="
+                        "data": WAV_BASE64
                     }
                 }
             }]
         });
 
-        assert_eq!(
-            parse_chat_speech_audio(&data_url).unwrap(),
-            Bytes::from_static(b"audio")
-        );
-        assert_eq!(
-            parse_chat_speech_audio(&plain).unwrap(),
-            Bytes::from_static(b"audio")
-        );
+        let parsed_data_url = parse_chat_speech_audio(&data_url).unwrap();
+        assert_eq!(parsed_data_url.mime_type.as_deref(), Some("audio/wav"));
+        assert!(parsed_data_url.bytes.starts_with(b"RIFF"));
+        assert!(parsed_data_url.bytes.windows(4).any(|window| window == b"WAVE"));
+
+        let parsed_plain = parse_chat_speech_audio(&plain).unwrap();
+        assert_eq!(parsed_plain.mime_type, None);
+        assert_eq!(parsed_plain.bytes, parsed_data_url.bytes);
     }
 
     #[test]

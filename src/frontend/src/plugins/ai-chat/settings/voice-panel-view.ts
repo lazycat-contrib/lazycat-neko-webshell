@@ -53,13 +53,11 @@ function renderVoiceInputSection(
             disabled: state.disabled,
             label: state.tr("action.aiVoiceProviderSelect"),
           })}
-          <button class="command-button" type="button" data-ai-config-open="voice" data-ai-voice-profile-id="${escapeAttr(profile?.id ?? "")}" ${state.disabled || !profile ? "disabled" : ""}>
+          <button class="icon-button" type="button" data-ai-config-open="voice" data-ai-voice-profile-id="${escapeAttr(profile?.id ?? "")}" aria-label="${escapeAttr(state.tr("action.aiVoiceProviderEdit"))}" title="${escapeAttr(state.tr("action.aiVoiceProviderEdit"))}" ${state.disabled || !profile ? "disabled" : ""}>
             <i data-lucide="settings-2"></i>
-            <span>${escapeHtml(state.tr("action.aiVoiceProviderEdit"))}</span>
           </button>
-          <button class="command-button" type="button" data-ai-config-open="voice" data-ai-voice-new="true" ${state.disabled ? "disabled" : ""}>
+          <button class="icon-button" type="button" data-ai-config-open="voice" data-ai-voice-new="true" aria-label="${escapeAttr(state.tr("action.aiVoiceProviderAdd"))}" title="${escapeAttr(state.tr("action.aiVoiceProviderAdd"))}" ${state.disabled ? "disabled" : ""}>
             <i data-lucide="plus"></i>
-            <span>${escapeHtml(state.tr("action.aiVoiceProviderAdd"))}</span>
           </button>
         </span>
       </div>
@@ -111,17 +109,39 @@ function renderVoiceReplySection(
             disabled: state.disabled,
             label: state.tr("action.aiVoiceReplyProviderSelect"),
           })}
-          <button class="command-button" type="button" data-ai-config-open="voice-reply" data-ai-voice-reply-profile-id="${escapeAttr(profile?.id ?? "")}" ${state.disabled || !profile ? "disabled" : ""}>
-            <i data-lucide="settings-2"></i>
-            <span>${escapeHtml(state.tr("action.aiVoiceReplyProviderEdit"))}</span>
+          <button class="icon-button" type="button" data-ai-voice-reply-test aria-label="${escapeAttr(state.tr("action.aiVoiceReplyTest"))}" title="${escapeAttr(state.tr("action.aiVoiceReplyTest"))}" ${state.disabled || state.voiceReplyTest.status === "loading" || !configured ? "disabled" : ""}>
+            <i data-lucide="${state.voiceReplyTest.status === "loading" ? "loader-circle" : "volume-2"}"></i>
           </button>
-          <button class="command-button" type="button" data-ai-config-open="voice-reply" data-ai-voice-reply-new="true" ${state.disabled ? "disabled" : ""}>
+          <button class="icon-button" type="button" data-ai-config-open="voice-reply" data-ai-voice-reply-profile-id="${escapeAttr(profile?.id ?? "")}" aria-label="${escapeAttr(state.tr("action.aiVoiceReplyProviderEdit"))}" title="${escapeAttr(state.tr("action.aiVoiceReplyProviderEdit"))}" ${state.disabled || !profile ? "disabled" : ""}>
+            <i data-lucide="settings-2"></i>
+          </button>
+          <button class="icon-button" type="button" data-ai-config-open="voice-reply" data-ai-voice-reply-new="true" aria-label="${escapeAttr(state.tr("action.aiVoiceReplyProviderAdd"))}" title="${escapeAttr(state.tr("action.aiVoiceReplyProviderAdd"))}" ${state.disabled ? "disabled" : ""}>
             <i data-lucide="plus"></i>
-            <span>${escapeHtml(state.tr("action.aiVoiceReplyProviderAdd"))}</span>
           </button>
         </span>
       </div>
+      ${renderVoiceReplyTest(state)}
     </section>
+  `;
+}
+
+function renderVoiceReplyTest(state: AIAccessSettingsRenderState): string {
+  const test = state.voiceReplyTest;
+  if (test.status === "idle") return "";
+  const status = test.status === "loading"
+    ? state.tr("status.aiVoiceReplyTestLoading")
+    : test.status === "ready"
+      ? state.tr("status.aiVoiceReplyTestReady")
+      : state.tr("status.aiVoiceReplyFailed", { message: test.error ?? "" });
+  const details = test.status === "ready"
+    ? [test.contentType, formatAudioSize(test.sizeBytes), formatAudioDuration(test.durationSeconds)].filter(Boolean).join(" · ")
+    : "";
+  return `
+    <div class="ai-voice-test" data-state="${escapeAttr(test.status)}">
+      <span class="ai-voice-test-status">${escapeHtml(status)}</span>
+      ${details ? `<span class="ai-voice-test-meta">${escapeHtml(details)}</span>` : ""}
+      ${test.objectUrl ? `<audio controls preload="metadata" src="${escapeAttr(test.objectUrl)}"></audio>` : ""}
+    </div>
   `;
 }
 
@@ -170,4 +190,17 @@ function voiceSpeechEndpointLabel(endpointType: AiVoiceSpeechEndpointType, state
   return endpointType === "chat-audio"
     ? state.tr("ai.voiceEndpointChatAudio")
     : state.tr("ai.voiceEndpointAudioSpeech");
+}
+
+function formatAudioSize(value: number | undefined): string {
+  if (!value || !Number.isFinite(value)) return "";
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
+function formatAudioDuration(value: number | undefined): string {
+  if (!value || !Number.isFinite(value)) return "";
+  const seconds = Math.max(0, Math.round(value));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }

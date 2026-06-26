@@ -156,8 +156,8 @@ import {
   syncAiVoiceReplyProviderProfiles,
   upsertAiVoiceReplyProviderProfile as upsertAiVoiceReplyProviderProfileInSettings,
 } from "./plugins/ai-chat/settings/voice-profile-state";
-import { createAiVoiceInputController } from "./plugins/ai-chat/voice-input";
 import { createAiVoiceReplyController } from "./plugins/ai-chat/voice-reply";
+import { createAiVoiceSpeechTestController } from "./plugins/ai-chat/voice-speech-test";
 import {
   newAiVoiceSpeechProviderProfile,
 } from "./plugins/ai-chat/voice-speech-profiles";
@@ -241,6 +241,7 @@ import {
 } from "./tab-labels";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
 import { observeTerminalTitleChunk } from "./terminal-title";
+import { createVoiceInputController } from "./voice-input";
 import {
   normalizeFontHintTarget,
   renderTerminalFontRenderingSettings,
@@ -528,6 +529,7 @@ const sshNewTabMenu = createSshNewTabMenuController({
 });
 
 const activeAIChatTerminalPane = () => activeHerdrTerminalPane() ?? activePane();
+const activeVoiceInputPane = () => activeHerdrTerminalPane() ?? activePane();
 const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
   pane: activeAIChatTerminalPane,
   tab: (pane) => pane ? tabForPane(pane) ?? activeTab() : activeTab(),
@@ -608,16 +610,21 @@ const whiteNoise = createWhiteNoiseController({
   onStatus: setPluginStatus,
   onRender: renderWhiteNoiseSurfaces,
 });
-const aiVoiceInput = createAiVoiceInputController({
+const aiVoiceInput = createVoiceInputController({
   root: elements.aiVoiceInputSurface,
   settings: () => settings,
-  isAiChatPluginEnabled: () => pluginIsEnabled(AI_CHAT_PLUGIN_ID),
-  activePane,
-  sendText: sendPaneInput,
-  focusTerminal: focusActivePaneCanvas,
+  activePane: activeVoiceInputPane,
+  sendText: sendTextToPane,
+  focusTerminal: focusPaneCanvas,
   tr,
   onStatus: setPluginStatus,
   updateIcons,
+});
+const aiVoiceSpeechTest = createAiVoiceSpeechTestController({
+  settings: () => settings,
+  tr,
+  onStatus: setPluginStatus,
+  onRender: renderPluginSettings,
 });
 let activeAISettingsTab: AISettingsTab = "ai";
 let aiConfigDialog: AIConfigDialogState | undefined;
@@ -975,6 +982,11 @@ function bindSettings() {
     if (tabButton) {
       activeAISettingsTab = normalizeAISettingsTab(tabButton.dataset.aiSettingsTab);
       renderPluginSettings();
+      return;
+    }
+    const voiceReplyTestButton = target?.closest<HTMLButtonElement>("[data-ai-voice-reply-test]");
+    if (voiceReplyTestButton) {
+      void aiVoiceSpeechTest.run();
       return;
     }
     const openConfigButton = target?.closest<HTMLButtonElement>("[data-ai-config-open]");
@@ -2462,6 +2474,14 @@ async function pasteTextIntoHerdrPane(pane: TerminalPane, text: string, report: 
   }
 }
 
+async function sendTextToPane(pane: TerminalPane, text: string): Promise<boolean> {
+  if (!text) return false;
+  if (pane.sessionBackend === "herdr") {
+    return pasteTextIntoHerdrPane(pane, text, true);
+  }
+  return pasteTextIntoPane(pane, text);
+}
+
 async function pasteClipboardImageIntoHerdrPane(
   pane: TerminalPane,
   payload: ClipboardImagePayload,
@@ -3126,6 +3146,7 @@ function renderPluginSettings() {
       voiceReplyEnabled: settings.aiVoiceReplyEnabled,
       voiceReplyProfiles: settings.aiVoiceReplyProviderProfiles,
       activeVoiceReplyProfileId: settings.aiVoiceReplyActiveProviderProfileId,
+      voiceReplyTest: aiVoiceSpeechTest.viewState(),
       activeTab: activeAISettingsTab,
       dialog: aiConfigDialog
         ? aiConfigDialog.type === "mcp"
@@ -3474,6 +3495,7 @@ function upsertAiVoiceReplyProviderProfile(profile: AiVoiceSpeechProviderProfile
 
 function selectAiVoiceReplyProviderProfile(profileId: string) {
   if (!selectAiVoiceReplyProviderProfileInSettings(settings, profileId)) return;
+  aiVoiceSpeechTest.reset();
   saveSettings();
   setPluginStatus(tr("status.aiVoiceReplyConfigSaved"), "ok");
   renderPluginSettings();
@@ -3481,6 +3503,7 @@ function selectAiVoiceReplyProviderProfile(profileId: string) {
 
 function removeAiVoiceReplyProviderProfile(profileId: string) {
   if (!removeAiVoiceReplyProviderProfileFromSettings(settings, profileId)) return;
+  aiVoiceSpeechTest.reset();
   aiConfigDialog = undefined;
   saveSettings();
   setPluginStatus(tr("status.aiVoiceReplyConfigRemoved"), "ok");
@@ -3664,6 +3687,7 @@ function saveAIConfigDialog(type: string) {
       ? aiVoiceReplyProviderProfileById(dialog.profileId)
       : undefined;
     const profile = readAiVoiceReplyProviderProfileFromDialog(existing, Boolean(dialog.isNew));
+    aiVoiceSpeechTest.reset();
     upsertAiVoiceReplyProviderProfile(profile);
     activeAISettingsTab = "voice";
     setPluginStatus(tr("status.aiVoiceReplyConfigSaved"), "ok");

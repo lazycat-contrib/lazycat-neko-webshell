@@ -5,6 +5,7 @@ import type {
   AiVoiceProviderProfile,
   AiVoiceSpeechProviderProfile,
 } from "../../../types";
+import type { AiVoiceSpeechTestState } from "../voice-speech-test";
 
 export type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -23,6 +24,7 @@ export type AIAccessSettingsViewState = {
   voiceReplyEnabled: boolean;
   voiceReplyProfiles: AiVoiceSpeechProviderProfile[];
   activeVoiceReplyProfileId: string;
+  voiceReplyTest: AiVoiceSpeechTestState;
   activeTab: "ai" | "mcp" | "voice";
   dialog: AIConfigDialogViewState | undefined;
 };

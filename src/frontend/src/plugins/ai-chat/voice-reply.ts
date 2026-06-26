@@ -1,9 +1,9 @@
 import type { MessageKey } from "../../i18n";
 import type { AIChatMessage, AIChatSession, Settings, Tone } from "../../types";
 import { errorMessage } from "../../utils";
+import { createVoiceSpeechAudioSource, fetchVoiceSpeechAudio, finiteDuration, releaseAudioElement } from "./voice-audio";
 import { aiVoiceSpeechProfileConfigured } from "./voice-speech-profiles";
 
-const VOICE_SPEECH_ENDPOINT = "./api/ai/voice/speech";
 const MAX_AUDIO_CACHE_ENTRIES = 8;
 
 export type AiVoiceReplyPlaybackStatus = "idle" | "loading" | "ready" | "playing" | "error";
@@ -106,28 +106,15 @@ export function createAiVoiceReplyController(options: {
     setEntryState(key, { status: "loading" });
     options.onRender();
     try {
-      const response = await fetch(new URL(VOICE_SPEECH_ENDPOINT, window.location.href), {
-        method: "POST",
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: content.trim() }),
-      });
-      if (!response.ok) {
-        throw new Error(await response.text() || `HTTP ${response.status}`);
-      }
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
+      const source = await createVoiceSpeechAudioSource(await fetchVoiceSpeechAudio(content.trim()));
       releaseEntryAudio(entry);
-      const audio = new Audio(objectUrl);
-      entry.audio = audio;
-      entry.objectUrl = objectUrl;
+      entry.audio = source.audio;
+      entry.objectUrl = source.objectUrl;
       bindAudioEvents(key, entry);
-      await waitForMetadata(audio);
       setEntryState(key, {
         status: flags.autoplay ? "playing" : "ready",
         currentSeconds: 0,
-        durationSeconds: finiteDuration(audio.duration),
+        durationSeconds: source.durationSeconds,
       });
       pruneAudioCache();
       options.onRender();
@@ -254,31 +241,9 @@ function hashString(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
-function waitForMetadata(audio: HTMLAudioElement): Promise<void> {
-  if (Number.isFinite(audio.duration) && audio.duration > 0) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timeout = window.setTimeout(done, 2000);
-    function done() {
-      window.clearTimeout(timeout);
-      audio.removeEventListener("loadedmetadata", done);
-      audio.removeEventListener("durationchange", done);
-      resolve();
-    }
-    audio.addEventListener("loadedmetadata", done, { once: true });
-    audio.addEventListener("durationchange", done, { once: true });
-    audio.load();
-  });
-}
-
-function finiteDuration(value: number): number | undefined {
-  return Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
 function releaseEntryAudio(entry: VoiceReplyEntry) {
   if (entry.audio) {
-    entry.audio.pause();
-    entry.audio.src = "";
-    entry.audio.load();
+    releaseAudioElement(entry.audio);
     entry.audio = undefined;
   }
   if (entry.objectUrl) {
