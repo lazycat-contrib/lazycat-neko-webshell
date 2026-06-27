@@ -81,7 +81,9 @@ function scrollNonHerdrPaneFromWheel(pane: TerminalPane, event: WheelEvent): boo
 }
 
 function scrollHerdrPaneFromWheel(pane: TerminalPane, event: WheelEvent): boolean {
-  if (paneMouseReportingActive(pane, event)) return false;
+  if (paneMouseReportingActive(pane, event)) {
+    return rerouteHerdrWheelToCanvas(pane, event);
+  }
   const host = paneScrollbackHost(pane);
   const deltaPx = normalizedWheelDeltaPx(event, host ?? pane.mount);
   return Boolean(host && hostCanScroll(host) && scrollPaneHost(host, deltaPx));
@@ -92,6 +94,13 @@ function scrollPaneByPixels(pane: TerminalPane, host: HTMLElement | null, deltaP
   return false;
 }
 
+function rerouteHerdrWheelToCanvas(pane: TerminalPane, event: WheelEvent): boolean {
+  const canvas = paneCanvas(pane);
+  if (!canvas || eventTargetIsInside(event.target, canvas)) return false;
+  canvas.dispatchEvent(cloneWheelEvent(event));
+  return true;
+}
+
 function dispatchHerdrTouchWheel(
   pane: TerminalPane,
   sourceEvent: PointerEvent,
@@ -100,7 +109,7 @@ function dispatchHerdrTouchWheel(
   currentRemainder: number,
 ): boolean {
   if (!paneIsHerdr(pane) || !Number.isFinite(deltaPx) || !deltaPx) return false;
-  const canvas = pane.mount.querySelector<HTMLElement>(".pane-canvas");
+  const canvas = paneCanvas(pane);
   if (!canvas) return false;
   const thresholdPx = Math.max(1, terminalLineHeightPx(pane.mount));
   const next = currentRemainder + deltaPx;
@@ -124,6 +133,35 @@ function dispatchHerdrTouchWheel(
     }));
   }
   return true;
+}
+
+function cloneWheelEvent(event: WheelEvent): WheelEvent {
+  return new WheelEvent("wheel", {
+    bubbles: true,
+    cancelable: true,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    screenX: event.screenX,
+    screenY: event.screenY,
+    ctrlKey: event.ctrlKey,
+    altKey: event.altKey,
+    shiftKey: event.shiftKey,
+    metaKey: event.metaKey,
+    button: event.button,
+    buttons: event.buttons,
+    deltaMode: event.deltaMode,
+    deltaX: event.deltaX,
+    deltaY: event.deltaY,
+    deltaZ: event.deltaZ,
+  });
+}
+
+function paneCanvas(pane: TerminalPane): HTMLElement | null {
+  return pane.mount.querySelector<HTMLElement>(".pane-canvas");
+}
+
+function eventTargetIsInside(target: EventTarget | null, element: HTMLElement): boolean {
+  return target instanceof Node && element.contains(target);
 }
 
 function terminalLineHeightPx(mount: HTMLElement): number {
