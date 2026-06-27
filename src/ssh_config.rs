@@ -396,33 +396,30 @@ Match host example.com
     fn parses_common_identity_file_blocks() {
         let document = parse_ssh_config(
             r#"
-Host AwsUSServer
-  HostName essssss9.us-east-2.compute.amazonaws.com
+Host DemoServerA
+  HostName host-a.example.net
   User ubuntu
-  IdentityFile ~/.ssh/ntsp_us.pem
+  IdentityFile ~/.ssh/demo_a_key.pem
 
-Host AwsJPServer
-  HostName ec2-ssssss43.ap-northeast-1.compute.amazonaws.com
+Host DemoServerB
+  HostName host-b.example.net
   User ubuntu
-  IdentityFile ~/.ssh/ntsp_jp.pem
+  IdentityFile ~/.ssh/demo_b_key.pem
 
-Host MalaysiaServer
-  HostName 41.11.111.0
+Host DemoServerC
+  HostName 203.0.113.10
   User ecs-user
-  IdentityFile ~/.ssh/ntsp_mlxy.pem
+  IdentityFile ~/.ssh/demo_c_key.pem
 "#,
         )
         .unwrap();
 
         assert_eq!(document.hosts.len(), 3);
-        assert_eq!(document.hosts[0].patterns, vec!["AwsUSServer"]);
-        assert_eq!(
-            document.hosts[0].host_name,
-            "essssss9.us-east-2.compute.amazonaws.com"
-        );
+        assert_eq!(document.hosts[0].patterns, vec!["DemoServerA"]);
+        assert_eq!(document.hosts[0].host_name, "host-a.example.net");
         assert_eq!(document.hosts[0].user, "ubuntu");
-        assert_eq!(document.hosts[0].identity_files, vec!["~/.ssh/ntsp_us.pem"]);
-        assert_eq!(document.hosts[2].patterns, vec!["MalaysiaServer"]);
+        assert_eq!(document.hosts[0].identity_files, vec!["~/.ssh/demo_a_key.pem"]);
+        assert_eq!(document.hosts[2].patterns, vec!["DemoServerC"]);
         assert_eq!(document.hosts[2].user, "ecs-user");
     }
 }

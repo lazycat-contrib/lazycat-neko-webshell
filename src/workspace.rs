@@ -2119,7 +2119,7 @@ mod tests {
             tab_id: None,
             pane_id: None,
             direction: None,
-            label: Some("ssh AwsUSServer".to_owned()),
+            label: Some("ssh DemoServerA".to_owned()),
             layout: None,
             active_pane_id: None,
             cols: None,
@@ -2138,7 +2138,7 @@ mod tests {
         assert_eq!(workspace.tabs.len(), 1);
         assert_eq!(
             workspace.tabs[0].custom_label.as_deref(),
-            Some("ssh AwsUSServer")
+            Some("ssh DemoServerA")
         );
     }
 

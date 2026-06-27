@@ -223,15 +223,15 @@ function renderHostDraftForm(state: SshProfileSettingsViewState, busy: string): 
     <div class="ssh-profile-editor-section">
       <div class="settings-group-title">${escapeHtml(draft.originalAlias ? tr("sshSettings.editHostTitle", { host: draft.originalAlias }) : tr("sshSettings.newHostTitle"))}</div>
       <div class="ssh-profile-grid">
-        ${hostField("host", "Host", draft.host, "AwsUSServer", busy, "text", false, tr)}
-        ${hostField("hostName", "HostName", draft.hostName, "example.compute.amazonaws.com", busy, "text", false, tr)}
+        ${hostField("host", "Host", draft.host, "DemoServerA", busy, "text", false, tr)}
+        ${hostField("hostName", "HostName", draft.hostName, "host-a.example.net", busy, "text", false, tr)}
       </div>
       <div class="ssh-profile-grid">
         ${hostField("user", tr("sshSettings.user"), draft.user, "ubuntu", busy, "text", false, tr)}
         ${hostField("port", tr("sshSettings.port"), draft.port, "22", busy, "number", false, tr)}
       </div>
-      ${hostField("identityFile", "IdentityFile", draft.identityFile, "~/.ssh/ntsp_us.pem", busy, "text", true, tr)}
-      ${hostField("certificateFile", "CertificateFile", draft.certificateFile, "~/.ssh/id_ed25519-cert.pub", busy, "text", true, tr)}
+      ${hostField("identityFile", "IdentityFile", draft.identityFile, "~/.ssh/demo_a_key.pem", busy, "text", true, tr)}
+      ${hostField("certificateFile", "CertificateFile", draft.certificateFile, "~/.ssh/demo_a_key-cert.pub", busy, "text", true, tr)}
     </div>
     <div class="ssh-profile-editor-section">
       <div class="settings-group-title">${escapeHtml(tr("sshSettings.advancedNetwork"))}</div>
