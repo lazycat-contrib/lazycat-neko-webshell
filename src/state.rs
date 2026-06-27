@@ -822,7 +822,7 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
                 "application/json".to_owned(),
                 "application/octet-stream".to_owned(),
             ],
-            input_schema_json: r#"{"sessionId":"string","operation":"list|stat|read|download|write|upload|upload_begin|upload_chunk|upload_finish|upload_cancel","metadata":{"path":"string","uploadId":"string for chunk/finish/cancel","offset":"number for chunk","size":"number for begin"},"payload":"bytes for write/upload/upload_chunk"}"#.to_owned(),
+            input_schema_json: r#"{"sessionId":"string","operation":"list|stat|read|download|write|upload|upload_begin|upload_chunk|upload_finish|upload_cancel","metadata":{"selector":"optional LightOS selector for agent-managed webshell panes","path":"string","uploadId":"string for chunk/finish/cancel","offset":"number for chunk","size":"number for begin"},"payload":"bytes for write/upload/upload_chunk"}"#.to_owned(),
             output_schema_json: r#"{"status":"complete","contentType":"text/plain|application/json|application/octet-stream","payload":"file bytes, directory listing, stat output, or write summary"}"#.to_owned(),
             enabled: true,
             metadata: HashMap::from([

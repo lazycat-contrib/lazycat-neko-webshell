@@ -28,7 +28,10 @@ use crate::proto::lazycat::webshell::v1::{
     PluginDescriptor, ProviderDescriptor, ReleaseControlResponse, RequestControlResponse, Session,
 };
 use crate::ssh_backend;
-use crate::state::{AppState, PluginRecord, SessionRecord, output_frame_limit_from_metadata};
+use crate::state::{
+    AppState, METADATA_LOGIN_USER, PluginRecord, SessionRecord, host_from_selector,
+    output_frame_limit_from_metadata,
+};
 use crate::tty_init::lightos_features_enabled;
 use crate::validation::{normalize_dimension, required_field, validate_selector};
 use crate::workspace::{WorkspaceSessionError, close_workspace_session};
@@ -67,11 +70,22 @@ impl CapabilityServiceImpl {
             .map_err(|_| ConnectError::internal("session store lock poisoned"))
     }
 
-    fn session_record(&self, session_id: &str) -> Result<SessionRecord, ConnectError> {
-        self.sessions_read()?
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| ConnectError::not_found("session not found"))
+    fn session_record_optional(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<SessionRecord>, ConnectError> {
+        Ok(self.sessions_read()?.get(session_id).cloned())
+    }
+
+    async fn session_record_for_plugin(
+        &self,
+        session_id: &str,
+        metadata: &HashMap<String, String>,
+    ) -> Result<SessionRecord, ConnectError> {
+        if let Some(session) = self.session_record_optional(session_id)? {
+            return Ok(session);
+        }
+        agent_session_record_from_metadata(session_id, metadata).await
     }
 
     pub async fn invoke_plugin_runtime(
@@ -106,7 +120,9 @@ impl CapabilityServiceImpl {
             }
         }
 
-        let session = self.session_record(session_id)?;
+        let session = self
+            .session_record_for_plugin(session_id, &metadata)
+            .await?;
 
         match plugin_id {
             "file-transfer" => {
@@ -389,6 +405,64 @@ fn session_from_agent_pane(
         rows: pane.rows,
         metadata,
         ..Default::default()
+    }
+}
+
+async fn agent_session_record_from_metadata(
+    session_id: &str,
+    metadata: &HashMap<String, String>,
+) -> Result<SessionRecord, ConnectError> {
+    let selector = metadata
+        .get("selector")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ConnectError::not_found("session not found"))?;
+    if ssh_backend::is_ssh_selector(selector) {
+        return Err(ConnectError::not_found("session not found"));
+    }
+    validate_selector(selector)?;
+    if !lightos_features_enabled() {
+        return Err(ConnectError::not_found("LightOS integration is disabled"));
+    }
+    let login_user = lightos::login_user_for_selector(selector, true).await?;
+    Ok(agent_fallback_session_record(
+        session_id,
+        selector,
+        &login_user,
+    ))
+}
+
+fn agent_fallback_session_record(
+    session_id: &str,
+    selector: &str,
+    login_user: &str,
+) -> SessionRecord {
+    let host = host_from_selector(selector);
+    let mut metadata = HashMap::from([
+        ("host".to_owned(), host.clone()),
+        ("restartable".to_owned(), "false".to_owned()),
+        ("sessionBackend".to_owned(), "webshell".to_owned()),
+        (
+            "outputBufferLimit".to_owned(),
+            DEFAULT_OUTPUT_FRAME_LIMIT.to_string(),
+        ),
+    ]);
+    let login_user = login_user.trim();
+    if !login_user.is_empty() {
+        metadata.insert(METADATA_LOGIN_USER.to_owned(), login_user.to_owned());
+    }
+    SessionRecord {
+        id: session_id.to_owned(),
+        host,
+        selector: selector.to_owned(),
+        status: "running".to_owned(),
+        cols: DEFAULT_COLS,
+        rows: DEFAULT_ROWS,
+        command: "/bin/sh".to_owned(),
+        args: Vec::new(),
+        control: None,
+        metadata,
     }
 }
 
@@ -1190,12 +1264,14 @@ async fn run_session_script(
         .spawn()
         .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
     if let Some(mut child_stdin) = child.stdin.take() {
-        let input = stdin.to_vec();
-        tokio::spawn(async move {
-            if !input.is_empty() {
-                let _ = child_stdin.write_all(&input).await;
-            }
-        });
+        if !stdin.is_empty()
+            && let Err(err) = child_stdin.write_all(stdin).await
+        {
+            let _ = child.kill().await;
+            return Err(ConnectError::unavailable(format!(
+                "plugin command input failed: {err}"
+            )));
+        }
     }
     let output = tokio::time::timeout(PLUGIN_COMMAND_TIMEOUT, child.wait_with_output())
         .await
@@ -1391,6 +1467,26 @@ mod tests {
         assert!(script.contains("/run/catlink/shell-env.sh"));
         assert!(script.contains("setpriv --reuid \"$uid\""));
         assert!(script.contains("exec su -s /bin/sh \"$user\""));
+    }
+
+    #[test]
+    fn agent_fallback_session_record_uses_webshell_backend_and_login_user() {
+        let session = agent_fallback_session_record("agent-session", "demo@owner", "dev");
+
+        assert_eq!(session.id, "agent-session");
+        assert_eq!(session.host, "demo");
+        assert_eq!(session.selector, "demo@owner");
+        assert_eq!(
+            session.metadata.get("sessionBackend").map(String::as_str),
+            Some("webshell")
+        );
+        assert_eq!(
+            session
+                .metadata
+                .get(METADATA_LOGIN_USER)
+                .map(String::as_str),
+            Some("dev")
+        );
     }
 
     #[tokio::test]

@@ -101,21 +101,31 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 .terminal-input-action-button {
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
-  border: 0;
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: transparent;
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
   color: var(--text);
-  box-shadow: none;
+  box-shadow: var(--shadow-raised);
   touch-action: none;
   pointer-events: auto;
+  backdrop-filter: blur(16px) saturate(1.2);
 }
 
 .terminal-input-action-button svg {
-  width: 32px;
-  height: 32px;
-  stroke-width: 1.9;
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.85;
+}
+
+.terminal-input-action-button:hover,
+.terminal-input-action-button:focus-visible,
+.terminal-input-action-button[data-state="open"] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+  outline: none;
 }
 
 .terminal-input-action-button[data-state="recording"] {
@@ -130,6 +140,7 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 .terminal-input-action-button:disabled {
   opacity: 0.55;
   box-shadow: none;
+  backdrop-filter: none;
 }
 
 .terminal-input-action-menu {
@@ -1074,21 +1085,31 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 .terminal-input-action-button {
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
-  border: 0;
+  width: 52px;
+  height: 52px;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: transparent;
+  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
   color: var(--text);
-  box-shadow: none;
+  box-shadow: var(--shadow-raised);
   touch-action: none;
   pointer-events: auto;
+  backdrop-filter: blur(16px) saturate(1.2);
 }
 
 .terminal-input-action-button svg {
-  width: 32px;
-  height: 32px;
-  stroke-width: 1.9;
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.85;
+}
+
+.terminal-input-action-button:hover,
+.terminal-input-action-button:focus-visible,
+.terminal-input-action-button[data-state="open"] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+  outline: none;
 }
 
 .terminal-input-action-button[data-state="recording"] {
@@ -1103,6 +1124,7 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 .terminal-input-action-button:disabled {
   opacity: 0.55;
   box-shadow: none;
+  backdrop-filter: none;
 }
 }
 

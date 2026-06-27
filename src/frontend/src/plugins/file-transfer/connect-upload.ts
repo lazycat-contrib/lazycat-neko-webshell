@@ -19,6 +19,7 @@ export type FileTransferConnectResponse = {
 };
 
 export type ConnectUploadCallbacks = {
+  sessionSelector?: string;
   onProgress?: (meta: TransferProgressMeta) => void;
 };
 
@@ -33,8 +34,12 @@ export async function uploadFileWithConnect(
   callbacks: ConnectUploadCallbacks = {},
 ): Promise<ConnectUploadDone> {
   let uploadId = "";
+  const sessionMetadata: Record<string, string> = callbacks.sessionSelector
+    ? { selector: callbacks.sessionSelector }
+    : {};
   try {
     const begin = await invokeFileTransferWithConnect(capabilityClient, sessionId, "upload_begin", {
+      ...sessionMetadata,
       path: remotePath,
       name: file.name,
       size: String(file.size),
@@ -49,6 +54,7 @@ export async function uploadFileWithConnect(
       const nextOffset = Math.min(offset + CONNECT_UPLOAD_CHUNK_BYTES, file.size);
       const chunk = new Uint8Array(await file.slice(offset, nextOffset).arrayBuffer());
       const progress = await invokeFileTransferWithConnect(capabilityClient, sessionId, "upload_chunk", {
+        ...sessionMetadata,
         uploadId,
         offset: String(offset),
       }, chunk, "application/octet-stream");
@@ -57,6 +63,7 @@ export async function uploadFileWithConnect(
     }
 
     const finished = await invokeFileTransferWithConnect(capabilityClient, sessionId, "upload_finish", {
+      ...sessionMetadata,
       uploadId,
     });
     const doneMeta = {
@@ -71,6 +78,7 @@ export async function uploadFileWithConnect(
   } catch (error) {
     if (uploadId) {
       await invokeFileTransferWithConnect(capabilityClient, sessionId, "upload_cancel", {
+        ...sessionMetadata,
         uploadId,
       }).catch(() => undefined);
     }
@@ -117,10 +125,14 @@ function jsonPayload(payload: Uint8Array, contentType: string): TransferProgress
   if (!contentType.includes("application/json")) return {};
   const text = new TextDecoder().decode(payload);
   if (!text.trim()) return {};
-  const parsed = JSON.parse(text) as unknown;
-  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? parsed as TransferProgressMeta
-    : {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as TransferProgressMeta
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function stringMeta(meta: TransferProgressMeta, key: string): string {

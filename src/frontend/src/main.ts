@@ -62,7 +62,6 @@ import {
   herdrEventTone,
   herdrFocusedOrFirstPaneId,
   herdrPaneIdsFromListResult,
-  herdrProcessWorkingDirectory,
   herdrResizeDirectionForPaneAction,
   herdrSplitDirection,
   selectHerdrTerminalPane,
@@ -212,7 +211,7 @@ import type {
 } from "./plugins/public-tunnel/types";
 import { enabledPluginTools, resolveActivePluginToolId } from "./plugins/tool-registry";
 import { renderPluginToolEmpty, syncPluginToolTabs } from "./plugins/tool-shell-view";
-import { normalizeRemotePath, workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
+import { workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { fetchRuntimeInfo, type RuntimeInfo } from "./runtime";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderFontFamilyOptions, renderThemeSelectOptions } from "./settings-options-view";
@@ -621,10 +620,8 @@ const terminalInputActions = createTerminalInputActionController({
   settings: () => settings,
   activePane: activeTerminalInputPane,
   sendText: sendTextToPane,
-  uploadFilesToCurrentDirectory: uploadTerminalInputFilesToCurrentDirectory,
   uploadFilesToTemporaryDirectory: (files) => fileTransfer.uploadToTemporaryDirectory(files),
   uploadImages: uploadImageFilesToActivePane,
-  currentDirectoryFileUploadAvailable: () => terminalInputFileUploadAvailable(),
   temporaryDirectoryFileUploadAvailable: () => terminalInputFileUploadAvailable(),
   imageUploadAvailable: () => terminalInputImageUploadAvailable(),
   focusTerminal: focusPaneCanvas,
@@ -3795,37 +3792,6 @@ function terminalInputFileUploadAvailable(): boolean {
 function terminalInputImageUploadAvailable(): boolean {
   const pane = activeTerminalInputPane();
   return Boolean(pane?.sessionId && !pane.closing && !pane.exited);
-}
-
-async function uploadTerminalInputFilesToCurrentDirectory(files: File[]): Promise<void> {
-  const pane = activeTerminalInputPane();
-  if (!pane) {
-    setGlobalStatus(tr("status.pluginFileNoSession"), "error");
-    return;
-  }
-  if (pane.sessionBackend !== "herdr") {
-    await fileTransfer.uploadToActivePane(files);
-    return;
-  }
-  const directory = await currentHerdrWorkingDirectory(pane);
-  if (!directory) {
-    setGlobalStatus(tr("status.herdrWorkingDirectoryUnavailable"), "error");
-    return;
-  }
-  pane.workingDirectory = directory;
-  await fileTransfer.uploadToDirectory(files, directory);
-}
-
-async function currentHerdrWorkingDirectory(pane: TerminalPane): Promise<string> {
-  const selector = await ensureHerdrSocketReady(pane);
-  const paneId = await currentHerdrPaneId(selector);
-  const processInfo = await runHerdrSocketRequest("pane.process_info", { pane_id: paneId }, {
-    selector,
-    id: "lazycat-webshell:pane-process-info-cwd",
-    mirrorNotification: false,
-  });
-  const cwd = herdrProcessWorkingDirectory(processInfo.result);
-  return cwd ? normalizeRemotePath(cwd) : "";
 }
 
 function terminalTransferPlugin(): PluginDescriptor | undefined {

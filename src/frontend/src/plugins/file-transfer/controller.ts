@@ -25,6 +25,7 @@ type CapabilityClient = Client<typeof import("../../gen/lazycat/webshell/v1/capa
 
 type FileTransferPane = {
   id: string;
+  selector?: string;
   sessionId?: string;
   workingDirectory?: string;
 };
@@ -44,8 +45,21 @@ const TEMP_UPLOAD_ROOT = "/tmp/lazycat-webshell-uploads";
 export function createFileTransferController(deps: FileTransferControllerDeps) {
   const store = new FileBrowserStore();
 
-  function activeSessionId(): string | undefined {
-    return deps.activePane()?.sessionId;
+  function activeSessionTarget(): { sessionId: string; selector?: string } | undefined {
+    const pane = deps.activePane();
+    if (!pane?.sessionId) return undefined;
+    return {
+      sessionId: pane.sessionId,
+      selector: pane.selector,
+    };
+  }
+
+  function withSessionSelector(
+    target: { selector?: string },
+    metadata: Record<string, string>,
+  ): Record<string, string> {
+    const selector = target.selector?.trim();
+    return selector ? { ...metadata, selector } : metadata;
   }
 
   function output(message: string, tone: Tone = "neutral") {
@@ -61,17 +75,17 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
 
   async function loadDirectory(path: string) {
     if (!deps.isEnabled()) return;
-    const sessionId = activeSessionId();
-    if (!sessionId) {
+    const target = activeSessionTarget();
+    if (!target) {
       output(deps.tr("status.pluginFileNoSession"), "error");
       return;
     }
     const directory = store.beginDirectoryLoad(path);
     deps.onRender();
     try {
-      const response = await invokeFileTransferWithConnect(deps.capabilityClient, sessionId, "list", {
+      const response = await invokeFileTransferWithConnect(deps.capabilityClient, target.sessionId, "list", withSessionSelector(target, {
         path: directory,
-      });
+      }));
       const stream = responsePayloadText(response);
       store.finishDirectoryLoad(directory, parseFileBrowserEntries(directory, stream));
       output("");
@@ -86,8 +100,8 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
 
   async function uploadFilesToDirectory(files: File[], directory: string, refreshDirectory: boolean): Promise<string[]> {
     if (!deps.isEnabled() || !files.length) return [];
-    const sessionId = activeSessionId();
-    if (!sessionId) {
+    const target = activeSessionTarget();
+    if (!target) {
       output(deps.tr("status.pluginFileNoSession"), "error");
       return [];
     }
@@ -101,7 +115,8 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
     try {
       for (const file of files) {
         const targetPath = uploadTargetPath(targetDirectory, file.name);
-        const done = await uploadFileWithConnect(deps.capabilityClient, file, sessionId, targetPath, {
+        const done = await uploadFileWithConnect(deps.capabilityClient, file, target.sessionId, targetPath, {
+          sessionSelector: target.selector,
           onProgress: reportProgress,
         });
         const message = metaString(done.meta, "content") || transferProgressText(done.meta);
@@ -202,8 +217,8 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
         output(deps.tr("validation.pluginPath"), "error");
         return;
       }
-      const sessionId = activeSessionId();
-      if (!sessionId) {
+      const target = activeSessionTarget();
+      if (!target) {
         output(deps.tr("status.pluginFileNoSession"), "error");
         return;
       }
@@ -211,9 +226,9 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
       try {
         const response = await invokeFileTransferWithConnect(
           deps.capabilityClient,
-          sessionId,
+          target.sessionId,
           action,
-          { path },
+          withSessionSelector(target, { path }),
           new Uint8Array(),
           action === "download" ? "application/octet-stream" : "text/plain",
         );
@@ -261,8 +276,8 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
     },
     async uploadToTemporaryDirectory(files: File[]): Promise<string[]> {
       if (!files.length) return [];
-      const sessionId = activeSessionId();
-      if (!sessionId) {
+      const target = activeSessionTarget();
+      if (!target) {
         output(deps.tr("status.pluginFileNoSession"), "error");
         return [];
       }
@@ -273,7 +288,8 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
       try {
         for (const [index, file] of files.entries()) {
           const targetPath = paths[index] ?? uploadTargetPath(directory, file.name);
-          const done = await uploadFileWithConnect(deps.capabilityClient, file, sessionId, targetPath, {
+          const done = await uploadFileWithConnect(deps.capabilityClient, file, target.sessionId, targetPath, {
+            sessionSelector: target.selector,
             onProgress: reportProgress,
           });
           const message = metaString(done.meta, "content") || transferProgressText(done.meta);
