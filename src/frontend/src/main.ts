@@ -240,6 +240,7 @@ import {
   tabPinnedGlyph as pinnedGlyphForTab,
   tabTone as toneForTab,
 } from "./tab-labels";
+import { applyPaneMouseMode } from "./terminal-mouse-mode";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
 import { observeTerminalTitleChunk } from "./terminal-title";
 import { createVoiceInputController } from "./voice-input";
@@ -5054,7 +5055,7 @@ async function mountTerminal(pane: TerminalPane) {
   if (pane.closing) return;
   pane.term = term;
   term.open(pane.mount);
-  term.restty?.setMouseMode("auto");
+  applyPaneMouseMode(pane);
   void installPaneResttyPlugins(pane);
   installPaneScrollbackFallback(pane, {
     touchSelectionMode: () => settings.touchSelectionMode,

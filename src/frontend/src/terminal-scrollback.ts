@@ -1,4 +1,5 @@
 import type { TerminalPane, TouchSelectionMode } from "./types";
+import { paneRoutesMouseToApplication } from "./terminal-mouse-mode";
 
 const TOUCH_SCROLL_THRESHOLD_PX = 6;
 const WHEEL_PIXEL_SCROLL_MULTIPLIER = 2;
@@ -37,7 +38,7 @@ export function installPaneScrollbackFallback(
   }, { capture: true, passive: false });
 
   pane.mount.addEventListener("pointerdown", (event) => {
-    if (paneMouseReportingActive(pane, event) && !paneTouchBypassesMouseReporting(pane, event)) return;
+    if (paneRoutesMouseToApplication(pane, event) && !paneTouchBypassesMouseReporting(pane, event)) return;
     if (event.pointerType !== "touch" || !paneTouchScrollbackFallbackEnabled(pane, options)) return;
     const host = paneScrollbackHost(pane);
     if (!paneHasScrollableFallback(pane, host)) return;
@@ -48,7 +49,7 @@ export function installPaneScrollbackFallback(
   }, { capture: true, passive: false });
 
   pane.mount.addEventListener("pointermove", (event) => {
-    if (paneMouseReportingActive(pane, event) && !paneTouchBypassesMouseReporting(pane, event)) return;
+    if (paneRoutesMouseToApplication(pane, event) && !paneTouchBypassesMouseReporting(pane, event)) return;
     if (touchPointerId !== event.pointerId || !paneTouchScrollbackFallbackEnabled(pane, options)) return;
     const host = paneScrollbackHost(pane);
     const deltaPx = lastTouchY - event.clientY;
@@ -56,7 +57,7 @@ export function installPaneScrollbackFallback(
     if (!touchScrollActive && Math.abs(deltaPx) < TOUCH_SCROLL_THRESHOLD_PX) return;
     touchScrollActive = true;
     lastTouchY = event.clientY;
-    const handled = paneMouseReportingActive(pane, event)
+    const handled = paneRoutesMouseToApplication(pane, event)
       ? dispatchHerdrTouchWheel(pane, event, deltaPx, (remainder) => {
         touchWheelRemainderPx = remainder;
       }, touchWheelRemainderPx)
@@ -74,14 +75,14 @@ export function installPaneScrollbackFallback(
 }
 
 function scrollNonHerdrPaneFromWheel(pane: TerminalPane, event: WheelEvent): boolean {
-  if (paneMouseReportingActive(pane, event)) return false;
+  if (paneRoutesMouseToApplication(pane, event)) return false;
   const host = paneScrollbackHost(pane);
   if (!host || !hostCanScroll(host)) return false;
   return scrollPaneHost(host, normalizedWheelDeltaPx(event, host));
 }
 
 function scrollHerdrPaneFromWheel(pane: TerminalPane, event: WheelEvent): boolean {
-  if (paneMouseReportingActive(pane, event)) {
+  if (paneRoutesMouseToApplication(pane, event)) {
     return rerouteHerdrWheelToCanvas(pane, event);
   }
   const host = paneScrollbackHost(pane);
@@ -199,11 +200,6 @@ function paneTouchScrollbackFallbackEnabled(
 
 function paneTouchBypassesMouseReporting(pane: TerminalPane, event: MouseEvent | PointerEvent): boolean {
   return paneIsHerdr(pane) && "pointerType" in event && event.pointerType === "touch";
-}
-
-function paneMouseReportingActive(pane: TerminalPane, event: MouseEvent | PointerEvent): boolean {
-  if (event.shiftKey) return false;
-  return Boolean(pane.term?.restty?.getMouseStatus().active);
 }
 
 function hostCanScroll(host: HTMLElement): boolean {
