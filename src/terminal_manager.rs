@@ -63,9 +63,12 @@ impl TerminalRegistry {
         spec: TerminalSpec,
         allow_spawn: bool,
         output: Arc<OutputBuffer>,
+        resize_existing: bool,
     ) -> anyhow::Result<Arc<ManagedTerminal>> {
         if let Some(existing) = self.existing(&spec.session_id)? {
-            existing.resize(spec.cols, spec.rows)?;
+            if resize_existing {
+                existing.resize(spec.cols, spec.rows)?;
+            }
             existing.set_output_frame_limit(spec.output_frame_limit);
             return Ok(existing);
         }
@@ -84,7 +87,9 @@ impl TerminalRegistry {
             if existing.exit_info().is_some() {
                 sessions.remove(terminal.session_id());
             } else {
-                existing.resize(terminal.cols(), terminal.rows())?;
+                if resize_existing {
+                    existing.resize(terminal.cols(), terminal.rows())?;
+                }
                 return Ok(Arc::clone(existing));
             }
         }

@@ -26,6 +26,7 @@ use crate::agent_protocol::{
     write_agent_frame_async,
 };
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
+use crate::control_lease::{ControlActor, actor_controls_session, request_session_control};
 use crate::lightos;
 use crate::proto::lazycat::webshell::v1::{AgentControlType, AgentFrame, AgentFrameType};
 use crate::ssh_backend;
@@ -53,6 +54,9 @@ pub struct TerminalQuery {
     output_limit: Option<usize>,
     pane_id: Option<String>,
     backend: Option<String>,
+    control_mode: Option<String>,
+    actor_id: Option<String>,
+    actor_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,10 +137,12 @@ enum TerminalAttachTarget {
 struct ManagedTerminalAttachTarget {
     spec: TerminalSpec,
     allow_spawn: bool,
+    resize_existing: bool,
     replay: bool,
     replay_after: u64,
     pane_id: Option<String>,
     output: Arc<OutputBuffer>,
+    control: TerminalControlGuard,
 }
 
 struct AgentTerminalAttachTarget {
@@ -147,6 +153,34 @@ struct AgentTerminalAttachTarget {
     rows: u16,
     replay_after: u64,
     output_limit: usize,
+    control: TerminalControlGuard,
+}
+
+#[derive(Clone, Debug)]
+struct TerminalControlGuard {
+    enabled: bool,
+    session_id: String,
+    actor_id: String,
+    controller_on_attach: bool,
+}
+
+impl TerminalControlGuard {
+    fn disabled() -> Self {
+        Self {
+            enabled: false,
+            session_id: String::new(),
+            actor_id: String::new(),
+            controller_on_attach: true,
+        }
+    }
+
+    fn allows_write(&self, state: &AppState) -> bool {
+        !self.enabled || actor_controls_session(state, &self.session_id, &self.actor_id)
+    }
+
+    fn allows_attach_resize(&self) -> bool {
+        !self.enabled || self.controller_on_attach
+    }
 }
 
 struct TerminalReplayContext<'a> {
@@ -252,7 +286,7 @@ async fn handle_terminal_socket(
     };
     let target = match target {
         TerminalAttachTarget::Agent(target) => {
-            return serve_agent_terminal(sender, receiver, target).await;
+            return serve_agent_terminal(sender, receiver, state, target).await;
         }
         TerminalAttachTarget::Managed(target) => target,
     };
@@ -263,6 +297,8 @@ async fn handle_terminal_socket(
     let replay_output = Arc::clone(&target.output);
     let pane_id = target.pane_id.clone();
     let allow_spawn = target.allow_spawn;
+    let resize_existing = target.resize_existing;
+    let control = target.control.clone();
     let session_id = target.spec.session_id.clone();
     let target_selector = target.spec.selector.clone();
     let replay_context = TerminalReplayContext {
@@ -275,7 +311,10 @@ async fn handle_terminal_socket(
         pane_id: pane_id.as_deref(),
         output: replay_output.as_ref(),
     };
-    let terminal = match state.sessions.open_terminal(target.spec, allow_spawn) {
+    let terminal = match state
+        .sessions
+        .open_terminal(target.spec, allow_spawn, resize_existing)
+    {
         Ok(terminal) => terminal,
         Err(err) => {
             if !allow_spawn && replay {
@@ -290,7 +329,7 @@ async fn handle_terminal_socket(
             return Err(err);
         }
     };
-    serve_open_terminal(sender, receiver, state, terminal, &replay_context).await
+    serve_open_terminal(sender, receiver, state, terminal, &replay_context, control).await
 }
 
 async fn serve_open_terminal(
@@ -299,6 +338,7 @@ async fn serve_open_terminal(
     state: Arc<AppState>,
     terminal: Arc<ManagedTerminal>,
     replay_context: &TerminalReplayContext<'_>,
+    control: TerminalControlGuard,
 ) -> anyhow::Result<()> {
     mark_session_status(&state, terminal.session_id(), "running");
     let mut event_rx = terminal.subscribe();
@@ -348,6 +388,7 @@ async fn serve_open_terminal(
                     &mut sender,
                     &state,
                     &terminal,
+                    &control,
                     &mut pending_clipboard_image,
                     message?,
                 ).await? {
@@ -364,6 +405,7 @@ async fn serve_open_terminal(
 async fn serve_agent_terminal(
     mut sender: TerminalSender,
     mut receiver: TerminalReceiver,
+    state: Arc<AppState>,
     target: AgentTerminalAttachTarget,
 ) -> anyhow::Result<()> {
     let agent = match ensure_agent(&target.selector, &target.username).await {
@@ -432,6 +474,7 @@ async fn serve_agent_terminal(
             Some(message) = receiver.next() => {
                 if !handle_agent_client_message(
                     &mut sender,
+                    &state,
                     &target,
                     &mut stdin,
                     &mut pending_clipboard_image,
@@ -567,6 +610,7 @@ async fn handle_agent_control_frame(
 
 async fn handle_agent_client_message<W>(
     sender: &mut TerminalSender,
+    state: &AppState,
     target: &AgentTerminalAttachTarget,
     stdin: &mut W,
     pending_clipboard_image: &mut Option<PendingClipboardImage>,
@@ -577,6 +621,16 @@ where
 {
     match message {
         Message::Binary(data) => {
+            if !target.control.allows_write(state) {
+                pending_clipboard_image.take();
+                send_terminal_error(
+                    sender,
+                    "terminal control is held by another client".to_owned(),
+                    false,
+                )
+                .await?;
+                return Ok(true);
+            }
             if let Some(pending) = pending_clipboard_image.take() {
                 match stage_clipboard_image_path_for_agent(target, &pending, data.as_ref()).await {
                     Ok(path) => {
@@ -593,7 +647,15 @@ where
             Ok(true)
         }
         Message::Text(text) => {
-            handle_agent_control_message(stdin, pending_clipboard_image, &text).await
+            handle_agent_control_message(
+                sender,
+                state,
+                target,
+                stdin,
+                pending_clipboard_image,
+                &text,
+            )
+            .await
         }
         Message::Close(_) => Ok(false),
         Message::Ping(payload) => {
@@ -605,6 +667,9 @@ where
 }
 
 async fn handle_agent_control_message<W>(
+    sender: &mut TerminalSender,
+    state: &AppState,
+    target: &AgentTerminalAttachTarget,
     stdin: &mut W,
     pending_clipboard_image: &mut Option<PendingClipboardImage>,
     text: &str,
@@ -618,11 +683,29 @@ where
     }
 
     if let Some(rest) = text.strip_prefix("input:") {
+        if !target.control.allows_write(state) {
+            send_terminal_error(
+                sender,
+                "terminal control is held by another client".to_owned(),
+                false,
+            )
+            .await?;
+            return Ok(true);
+        }
         write_agent_frame_async(stdin, &input_frame(rest.as_bytes().to_vec())).await?;
         return Ok(true);
     }
 
     if let Some(rest) = text.strip_prefix("resize:") {
+        if !target.control.allows_write(state) {
+            send_terminal_error(
+                sender,
+                "terminal control is held by another client".to_owned(),
+                false,
+            )
+            .await?;
+            return Ok(true);
+        }
         let (cols, rows) = parse_resize_payload(rest)?;
         write_agent_frame_async(stdin, &resize_frame(cols, rows)).await?;
         return Ok(true);
@@ -630,14 +713,41 @@ where
 
     match serde_json::from_str::<TerminalClientMessage>(text) {
         Ok(TerminalClientMessage::Input { data }) => {
+            if !target.control.allows_write(state) {
+                send_terminal_error(
+                    sender,
+                    "terminal control is held by another client".to_owned(),
+                    false,
+                )
+                .await?;
+                return Ok(true);
+            }
             write_agent_frame_async(stdin, &input_frame(data.into_bytes())).await?;
             Ok(true)
         }
         Ok(TerminalClientMessage::Resize { cols, rows }) => {
+            if !target.control.allows_write(state) {
+                send_terminal_error(
+                    sender,
+                    "terminal control is held by another client".to_owned(),
+                    false,
+                )
+                .await?;
+                return Ok(true);
+            }
             write_agent_frame_async(stdin, &resize_frame(cols, rows)).await?;
             Ok(true)
         }
         Ok(TerminalClientMessage::ClipboardImage { extension, size }) => {
+            if !target.control.allows_write(state) {
+                send_terminal_error(
+                    sender,
+                    "terminal control is held by another client".to_owned(),
+                    false,
+                )
+                .await?;
+                return Ok(true);
+            }
             if size == 0 {
                 return Err(anyhow!("clipboard image payload is empty"));
             }
@@ -730,11 +840,22 @@ async fn handle_terminal_client_message(
     sender: &mut TerminalSender,
     state: &AppState,
     terminal: &ManagedTerminal,
+    control: &TerminalControlGuard,
     pending_clipboard_image: &mut Option<PendingClipboardImage>,
     message: Message,
 ) -> anyhow::Result<bool> {
     match message {
         Message::Binary(data) => {
+            if !control.allows_write(state) {
+                pending_clipboard_image.take();
+                send_terminal_error(
+                    sender,
+                    "terminal control is held by another client".to_owned(),
+                    false,
+                )
+                .await?;
+                return Ok(true);
+            }
             if let Some(pending) = pending_clipboard_image.take() {
                 if let Err(err) = paste_clipboard_image_path(
                     terminal,
@@ -753,7 +874,15 @@ async fn handle_terminal_client_message(
             Ok(true)
         }
         Message::Text(text) => {
-            handle_terminal_control_message(state, &text, terminal, pending_clipboard_image)
+            handle_terminal_control_message(
+                sender,
+                state,
+                &text,
+                terminal,
+                control,
+                pending_clipboard_image,
+            )
+            .await
         }
         Message::Close(_) => Ok(false),
         Message::Ping(payload) => {
@@ -911,10 +1040,12 @@ async fn send_replay_snapshot_for_target(
     Ok(Some(last_sent_sequence))
 }
 
-fn handle_terminal_control_message(
+async fn handle_terminal_control_message(
+    sender: &mut TerminalSender,
     state: &AppState,
     text: &str,
     terminal: &ManagedTerminal,
+    control: &TerminalControlGuard,
     pending_clipboard_image: &mut Option<PendingClipboardImage>,
 ) -> anyhow::Result<bool> {
     if pending_clipboard_image.is_some() {
@@ -923,11 +1054,29 @@ fn handle_terminal_control_message(
     }
 
     if let Some(rest) = text.strip_prefix("input:") {
+        if !control.allows_write(state) {
+            send_terminal_error(
+                sender,
+                "terminal control is held by another client".to_owned(),
+                false,
+            )
+            .await?;
+            return Ok(true);
+        }
         terminal.write_input(rest.as_bytes().to_vec())?;
         return Ok(true);
     }
 
     if let Some(rest) = text.strip_prefix("resize:") {
+        if !control.allows_write(state) {
+            send_terminal_error(
+                sender,
+                "terminal control is held by another client".to_owned(),
+                false,
+            )
+            .await?;
+            return Ok(true);
+        }
         let (cols, rows) = parse_resize_payload(rest)?;
         terminal.resize(cols, rows)?;
         return Ok(true);
@@ -935,10 +1084,28 @@ fn handle_terminal_control_message(
 
     match serde_json::from_str::<TerminalClientMessage>(text) {
         Ok(TerminalClientMessage::Input { data }) => {
+            if !control.allows_write(state) {
+                send_terminal_error(
+                    sender,
+                    "terminal control is held by another client".to_owned(),
+                    false,
+                )
+                .await?;
+                return Ok(true);
+            }
             terminal.write_input(data.into_bytes())?;
             Ok(true)
         }
         Ok(TerminalClientMessage::Resize { cols, rows }) => {
+            if !control.allows_write(state) {
+                send_terminal_error(
+                    sender,
+                    "terminal control is held by another client".to_owned(),
+                    false,
+                )
+                .await?;
+                return Ok(true);
+            }
             terminal.resize(cols, rows)?;
             state
                 .sessions
@@ -946,6 +1113,15 @@ fn handle_terminal_control_message(
             Ok(true)
         }
         Ok(TerminalClientMessage::ClipboardImage { extension, size }) => {
+            if !control.allows_write(state) {
+                send_terminal_error(
+                    sender,
+                    "terminal control is held by another client".to_owned(),
+                    false,
+                )
+                .await?;
+                return Ok(true);
+            }
             if size == 0 {
                 return Err(anyhow!("clipboard image payload is empty"));
             }
@@ -1190,8 +1366,16 @@ async fn resolve_terminal_target(
             return Err(anyhow!("SSH profile selectors must use the ssh backend"));
         }
         validate_selector(selector).map_err(|err| anyhow!(err.message.unwrap_or_default()))?;
-        let cols = query.cols.unwrap_or(DEFAULT_COLS);
-        let rows = query.rows.unwrap_or(DEFAULT_ROWS);
+        let session_id = query
+            .session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or(query.pane_id.as_deref())
+            .unwrap_or_default()
+            .to_owned();
+        let control = terminal_control_guard(state, query, &session_id)?;
+        let (cols, rows) = agent_attach_size(state, query, &session_id, &control)?;
         validate_size(cols, rows)?;
         let username = authorize_terminal_selector(selector, true).await?;
         let output_limit = normalize_output_frame_limit(query.output_limit);
@@ -1203,6 +1387,7 @@ async fn resolve_terminal_target(
             rows,
             replay_after: if replay { replay_after } else { u64::MAX },
             output_limit,
+            control,
         }));
     }
 
@@ -1212,7 +1397,14 @@ async fn resolve_terminal_target(
         .map(str::trim)
         .filter(|v| !v.is_empty())
     {
-        let (spec, status) = persisted_terminal_target(state, query, session_id, restart)?;
+        let control = terminal_control_guard(state, query, session_id)?;
+        let (spec, status) = persisted_terminal_target(
+            state,
+            query,
+            session_id,
+            restart,
+            control.allows_attach_resize(),
+        )?;
         let allow_spawn =
             restart.unwrap_or(false) || matches!(status.as_str(), "running" | "starting");
         if ssh_backend::is_ssh_selector(&spec.selector) {
@@ -1226,10 +1418,12 @@ async fn resolve_terminal_target(
             return Ok(TerminalAttachTarget::Managed(ManagedTerminalAttachTarget {
                 spec,
                 allow_spawn,
+                resize_existing: control.allows_attach_resize(),
                 replay,
                 replay_after,
                 pane_id,
                 output,
+                control,
             }));
         }
         if backend == "ssh" {
@@ -1241,10 +1435,12 @@ async fn resolve_terminal_target(
         return Ok(TerminalAttachTarget::Managed(ManagedTerminalAttachTarget {
             spec,
             allow_spawn,
+            resize_existing: control.allows_attach_resize(),
             replay,
             replay_after,
             pane_id,
             output,
+            control,
         }));
     }
 
@@ -1253,11 +1449,69 @@ async fn resolve_terminal_target(
     ))
 }
 
+fn terminal_control_guard(
+    state: &AppState,
+    query: &TerminalQuery,
+    session_id: &str,
+) -> anyhow::Result<TerminalControlGuard> {
+    let control_mode = query
+        .control_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if control_mode != Some("single") {
+        return Ok(TerminalControlGuard::disabled());
+    }
+    let actor = ControlActor::new(
+        query.actor_id.as_deref().unwrap_or("anonymous"),
+        query.actor_kind.as_deref().unwrap_or("human"),
+    )?;
+    let lease = request_session_control(state, session_id, &actor, "attach")?;
+    let controller_on_attach = lease
+        .actor_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|id| id == actor.actor_id);
+    Ok(TerminalControlGuard {
+        enabled: true,
+        session_id: session_id.trim().to_owned(),
+        actor_id: actor.actor_id,
+        controller_on_attach,
+    })
+}
+
+fn agent_attach_size(
+    state: &AppState,
+    query: &TerminalQuery,
+    session_id: &str,
+    control: &TerminalControlGuard,
+) -> anyhow::Result<(u16, u16)> {
+    if control.allows_attach_resize() {
+        return Ok((
+            query.cols.unwrap_or(DEFAULT_COLS),
+            query.rows.unwrap_or(DEFAULT_ROWS),
+        ));
+    }
+    if let Some((cols, rows)) = state.sessions.read().ok().and_then(|sessions| {
+        sessions
+            .get(session_id)
+            .map(|session| (session.cols, session.rows))
+    }) {
+        validate_size(cols, rows)?;
+        return Ok((cols, rows));
+    }
+    Ok((
+        query.cols.unwrap_or(DEFAULT_COLS),
+        query.rows.unwrap_or(DEFAULT_ROWS),
+    ))
+}
+
 fn persisted_terminal_target(
     state: &AppState,
     query: &TerminalQuery,
     session_id: &str,
     restart: Option<bool>,
+    allow_query_resize: bool,
 ) -> anyhow::Result<(TerminalSpec, String)> {
     let mut snapshot = None;
     let target = {
@@ -1268,8 +1522,16 @@ fn persisted_terminal_target(
         let session = sessions
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("unknown session id"))?;
-        let cols = query.cols.unwrap_or(session.cols);
-        let rows = query.rows.unwrap_or(session.rows);
+        let cols = if allow_query_resize {
+            query.cols.unwrap_or(session.cols)
+        } else {
+            session.cols
+        };
+        let rows = if allow_query_resize {
+            query.rows.unwrap_or(session.rows)
+        } else {
+            session.rows
+        };
         validate_size(cols, rows)?;
 
         let mut changed = false;

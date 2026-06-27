@@ -84,6 +84,7 @@ export function migrateSettings(value: Partial<Settings>): Settings {
       clampNumber(value.sshConfigBackupLimit, 1, 100, DEFAULT_SETTINGS.sshConfigBackupLimit),
     ),
     defaultSessionBackend: normalizeSessionBackendId(value.defaultSessionBackend),
+    terminalSingleControllerMode: value.terminalSingleControllerMode ?? DEFAULT_SETTINGS.terminalSingleControllerMode,
     herdrActiveBackgroundDark: normalizeHexColor(
       value.herdrActiveBackgroundDark,
       DEFAULT_SETTINGS.herdrActiveBackgroundDark,

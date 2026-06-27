@@ -2,6 +2,7 @@ import { qs } from "./utils";
 import { renderAboutDialog } from "./about-view";
 import { renderMobileKeyboardView } from "./mobile/keyboard-view";
 import { renderMobileSettingsView } from "./mobile/settings-view";
+import { renderTerminalControlSettingsView } from "./terminal-control/settings-view";
 
 export type ShellElements = {
   webshell: HTMLElement;
@@ -95,6 +96,8 @@ export type ShellElements = {
   lineHeightValue: HTMLOutputElement;
   scrollbackLimit: HTMLInputElement;
   outputBufferLimit: HTMLInputElement;
+  terminalControlSettings: HTMLDivElement;
+  terminalSingleControllerMode: HTMLInputElement;
   terminalBackgroundEnabled: HTMLInputElement;
   terminalBackgroundUpload: HTMLInputElement;
   removeTerminalBackground: HTMLButtonElement;
@@ -127,6 +130,7 @@ export type ShellElements = {
   aboutDialog: HTMLDivElement;
   aboutClose: HTMLButtonElement;
   paneMenu: HTMLDivElement;
+  terminalControlOverlay: HTMLDivElement;
   fitTerminal: HTMLButtonElement;
 };
 
@@ -293,6 +297,7 @@ export function renderShell(app: HTMLElement): ShellElements {
           </button>
           <p id="statusLine" aria-live="polite" data-i18n="status.idle">Idle</p>
         </div>
+        <div id="terminalControlOverlay" class="terminal-control-overlay" hidden></div>
       </section>
 
       <div class="notification-modal" id="notificationModal" hidden>
@@ -435,6 +440,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <span data-i18n="field.outputBuffer">Output buffer</span>
                 <input id="outputBufferLimit" type="number" min="128" max="20000" step="128" />
               </label>
+              <div id="terminalControlSettings">${renderTerminalControlSettingsView()}</div>
               <div class="settings-group terminal-background-settings">
                 <div class="settings-group-title" data-i18n="section.terminalBackground">Terminal background</div>
                 <label class="switch">
@@ -717,6 +723,8 @@ export function renderShell(app: HTMLElement): ShellElements {
     lineHeightValue: qs<HTMLOutputElement>("#lineHeightValue"),
     scrollbackLimit: qs<HTMLInputElement>("#scrollbackLimit"),
     outputBufferLimit: qs<HTMLInputElement>("#outputBufferLimit"),
+    terminalControlSettings: qs<HTMLDivElement>("#terminalControlSettings"),
+    terminalSingleControllerMode: qs<HTMLInputElement>("#terminalSingleControllerMode"),
     terminalBackgroundEnabled: qs<HTMLInputElement>("#terminalBackgroundEnabled"),
     terminalBackgroundUpload: qs<HTMLInputElement>("#terminalBackgroundUpload"),
     removeTerminalBackground: qs<HTMLButtonElement>("#removeTerminalBackground"),
@@ -749,6 +757,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     aboutDialog: qs<HTMLDivElement>("#aboutDialog"),
     aboutClose: qs<HTMLButtonElement>("#aboutClose"),
     paneMenu: qs<HTMLDivElement>("#paneMenu"),
+    terminalControlOverlay: qs<HTMLDivElement>("#terminalControlOverlay"),
     fitTerminal: qs<HTMLButtonElement>("#fitTerminal"),
   };
 }

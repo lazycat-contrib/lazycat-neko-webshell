@@ -152,6 +152,7 @@ export type MessageKey =
   | "action.terminalInputUploadFileTemporary"
   | "action.terminalInputUploadImage"
   | "action.terminalInputVoice"
+  | "action.takeTerminalControl"
   | "action.tunnelStart"
   | "action.tunnelStop"
   | "action.tunnelProfileAdd"
@@ -360,6 +361,7 @@ export type MessageKey =
   | "section.mobileShortcuts"
   | "section.notifications"
   | "section.sessionBackend"
+  | "section.terminalControl"
   | "section.shortcuts"
   | "section.terminalBackground"
   | "section.themes"
@@ -388,6 +390,8 @@ export type MessageKey =
   | "setting.whiteNoiseAutoPlayOnSelect"
   | "setting.whiteNoiseAutoPlayOnSelectHelp"
   | "setting.terminalBackground"
+  | "setting.terminalSingleControllerMode"
+  | "setting.terminalSingleControllerModeHelp"
   | "setting.terminalShaderHelp"
   | "setting.useResttyClipboard"
   | "sshConfirm.deleteProfile"
@@ -680,6 +684,10 @@ export type MessageKey =
   | "status.sshUrlOpenFailed"
   | "status.sshUrlProfileReady"
   | "status.terminalError"
+  | "status.terminalControlObserver"
+  | "status.terminalControlSyncFailed"
+  | "status.terminalControlTaken"
+  | "status.terminalControlTakeFailed"
   | "status.themeInvalid"
   | "status.urlCopied"
   | "status.terminalTransferCancelled"
@@ -732,6 +740,10 @@ export type MessageKey =
   | "terminalTransfer.protocolTrzszHelp"
   | "terminalTransfer.protocolsHelp"
   | "terminalTransfer.protocolsTitle"
+  | "terminalControl.controller"
+  | "terminalControl.localSize"
+  | "terminalControl.observer"
+  | "terminalControl.serverSize"
   | "validation.fontExtension"
   | "validation.fontMime"
   | "validation.fontSize"
@@ -884,6 +896,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.terminalInputUploadFileTemporary": "Upload to temp directory",
     "action.terminalInputUploadImage": "Upload image",
     "action.terminalInputVoice": "Voice input",
+    "action.takeTerminalControl": "Take terminal control",
     "action.tunnelStart": "Start tunnel",
     "action.tunnelStop": "Stop tunnel",
     "action.tunnelProfileAdd": "Add configuration",
@@ -1114,6 +1127,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.notifications": "Notifications",
     "section.plugins": "Tools",
     "section.sessionBackend": "Session backend",
+    "section.terminalControl": "Multi-device control",
     "section.shortcuts": "Shortcuts",
     "section.terminalBackground": "Terminal background",
     "section.themes": "Terminal themes",
@@ -1142,6 +1156,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.whiteNoiseAutoPlayOnSelect": "Auto-play selected sounds",
     "setting.whiteNoiseAutoPlayOnSelectHelp": "When enabled, selecting a sound starts playback automatically. Clearing all selected sounds stops playback.",
     "setting.terminalBackground": "Use background image",
+    "setting.terminalSingleControllerMode": "Use single controller mode",
+    "setting.terminalSingleControllerModeHelp": "When enabled, new clients observe the current terminal size until they explicitly take control.",
     "setting.terminalShaderHelp": "GPU effects are off by default. Enable them only when you want extra terminal feedback.",
     "setting.useResttyClipboard": "Use restty clipboard",
     "sshConfirm.deleteProfile": "Delete SSH profile \"{name}\"?",
@@ -1434,6 +1450,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.sshUrlOpenFailed": "SSH URL open failed: {message}",
     "status.sshUrlProfileReady": "SSH profile ready: {name}",
     "status.terminalError": "Terminal error",
+    "status.terminalControlObserver": "Observation mode. Take control before sending input.",
+    "status.terminalControlSyncFailed": "Failed to sync terminal control state",
+    "status.terminalControlTaken": "Terminal control taken",
+    "status.terminalControlTakeFailed": "Failed to take terminal control",
     "status.themeInvalid": "Theme invalid: {message}",
     "status.themeRemoved": "{name} removed",
     "status.themeSaved": "{name} saved",
@@ -1486,6 +1506,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "terminalTransfer.protocolTrzszHelp": "Handles trz upload and tsz download through trzsz.js.",
     "terminalTransfer.protocolsHelp": "Choose which terminal transfer protocols this built-in tool should intercept. At least one protocol stays enabled.",
     "terminalTransfer.protocolsTitle": "Supported protocols",
+    "terminalControl.controller": "Controller",
+    "terminalControl.localSize": "Local {cols}x{rows}",
+    "terminalControl.observer": "Observation mode",
+    "terminalControl.serverSize": "Terminal {cols}x{rows}",
     "validation.fontExtension": "only .woff, .woff2, .ttf, and .otf are allowed",
     "validation.fontMime": "unsupported font MIME type: {mimeType}",
     "validation.fontSize": "font must be between 1 byte and 10 MB",
@@ -1637,6 +1661,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.terminalInputUploadFileTemporary": "上传到临时目录",
     "action.terminalInputUploadImage": "上传图片",
     "action.terminalInputVoice": "语音输入",
+    "action.takeTerminalControl": "接管终端控制权",
     "action.tunnelStart": "启动 Tunnel",
     "action.tunnelStop": "停止 Tunnel",
     "action.tunnelProfileAdd": "添加配置",
@@ -1867,6 +1892,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "section.notifications": "通知",
     "section.plugins": "工具",
     "section.sessionBackend": "会话后端",
+    "section.terminalControl": "多端控制",
     "section.shortcuts": "快捷键",
     "section.terminalBackground": "终端背景",
     "section.themes": "终端主题",
@@ -1895,6 +1921,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.whiteNoiseAutoPlayOnSelect": "选择后自动播放",
     "setting.whiteNoiseAutoPlayOnSelectHelp": "开启后，选中声音会自动开始播放；取消到 0 个声音时自动停止。",
     "setting.terminalBackground": "使用背景图片",
+    "setting.terminalSingleControllerMode": "启用单主控模式",
+    "setting.terminalSingleControllerModeHelp": "开启后，新接入客户端先观察当前终端尺寸，点击接管后才获得输入权并按本端尺寸 resize。",
     "setting.terminalShaderHelp": "GPU 特效默认关闭。需要额外的输入反馈时再开启。",
     "setting.useResttyClipboard": "使用 restty 剪贴板",
     "sshConfirm.deleteProfile": "删除 SSH profile “{name}”？",
@@ -2187,6 +2215,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.sshUrlOpenFailed": "SSH URL 打开失败：{message}",
     "status.sshUrlProfileReady": "SSH profile 已就绪：{name}",
     "status.terminalError": "终端错误",
+    "status.terminalControlObserver": "当前是观察模式，请先接管再输入。",
+    "status.terminalControlSyncFailed": "终端控制状态同步失败",
+    "status.terminalControlTaken": "已接管终端控制权",
+    "status.terminalControlTakeFailed": "接管终端控制权失败",
     "status.themeInvalid": "主题无效：{message}",
     "status.themeRemoved": "{name} 已删除",
     "status.themeSaved": "{name} 已保存",
@@ -2239,6 +2271,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "terminalTransfer.protocolTrzszHelp": "通过 trzsz.js 处理 trz 上传和 tsz 下载。",
     "terminalTransfer.protocolsHelp": "选择这个内置工具需要拦截的终端传输协议，至少保留一种协议启用。",
     "terminalTransfer.protocolsTitle": "支持的协议",
+    "terminalControl.controller": "主控端",
+    "terminalControl.localSize": "本端 {cols}x{rows}",
+    "terminalControl.observer": "观察模式",
+    "terminalControl.serverSize": "终端 {cols}x{rows}",
     "validation.fontExtension": "只允许 .woff、.woff2、.ttf 和 .otf",
     "validation.fontMime": "不支持的字体 MIME 类型：{mimeType}",
     "validation.fontSize": "字体大小必须在 1 字节到 10 MB 之间",

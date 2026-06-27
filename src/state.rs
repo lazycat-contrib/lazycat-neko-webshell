@@ -35,6 +35,7 @@ pub const METADATA_LOGIN_USER: &str = "loginUser";
 #[derive(Clone)]
 pub struct AppState {
     pub sessions: Arc<SessionManager>,
+    pub control_leases: Arc<RwLock<HashMap<String, ControlLease>>>,
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
     pub lightos_port_forwards: Arc<LightOsPortForwardManager>,
     pub file_uploads: Arc<FileTransferUploadManager>,
@@ -87,6 +88,7 @@ impl AppState {
                 Arc::clone(&session_store),
                 Arc::clone(&database),
             )),
+            control_leases: Arc::new(RwLock::new(HashMap::new())),
             plugins: Arc::new(RwLock::new(plugins)),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
             file_uploads: Arc::new(FileTransferUploadManager::default()),
@@ -143,6 +145,7 @@ impl AppState {
                 Arc::new(SessionStore::new(Arc::clone(&database))),
                 Arc::clone(&database),
             )),
+            control_leases: Arc::new(RwLock::new(HashMap::new())),
             plugins: Arc::new(RwLock::new(HashMap::new())),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
             file_uploads: Arc::new(FileTransferUploadManager::default()),

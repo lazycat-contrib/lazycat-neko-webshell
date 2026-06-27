@@ -335,6 +335,7 @@ export type Settings = {
   outputBufferLimit: number;
   sshConfigBackupLimit: number;
   defaultSessionBackend: SessionBackendId;
+  terminalSingleControllerMode: boolean;
   herdrActiveBackgroundDark: string;
   herdrActiveBackgroundLight: string;
   autoRestartSessions: boolean;
@@ -382,6 +383,10 @@ export type TerminalPane = {
   lastReplayAfter?: number;
   lastOutputSequence: number;
   aiContextText: string;
+  serverCols: number;
+  serverRows: number;
+  localCols: number;
+  localRows: number;
   terminalShaderEffect?: TerminalShaderEffect;
   viewportGuardInstalled?: boolean;
   scrollbackFallbackInstalled?: boolean;

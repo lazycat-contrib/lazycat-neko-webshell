@@ -262,6 +262,7 @@ import {
   schedulePaneViewportReset,
 } from "./terminal-viewport";
 import { createPaneTerminal } from "./terminal-options";
+import { createTerminalControlController } from "./terminal-control/controller";
 import { createAIContextPlugin, createTerminalShaderPlugin, TERMINAL_SHADER_PLUGIN_ID } from "./restty-plugins";
 import { normalizeTerminalShaderEffect, renderTerminalShaderSettings } from "./terminal-shaders";
 import {
@@ -499,6 +500,7 @@ let sessionBackendsGeneration = 0;
 const herdrAutoRestoredSelectors = new Set<string>();
 const pendingHerdrOutputSequences = new Map<string, { selector: string; sequence: number }>();
 const herdrOutputSequenceTimers = new Map<string, number>();
+const pendingPaneSocketOpens = new Set<string>();
 let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
 let pluginsLoading = false;
@@ -533,6 +535,23 @@ const sshNewTabMenu = createSshNewTabMenuController({
     openSettings("remote-hosts");
   },
   onStatus: setGlobalStatus,
+});
+
+const terminalControl = createTerminalControlController({
+  capabilityClient,
+  settings: () => settings,
+  overlayRoot: elements.terminalControlOverlay,
+  activePane,
+  tr,
+  onStatus: setGlobalStatus,
+  onRenderIcons: updateIcons,
+  onTakeControlResize: (pane) => {
+    const cols = pane.localCols || pane.cols;
+    const rows = pane.localRows || pane.rows;
+    if (Number.isFinite(cols) && Number.isFinite(rows)) {
+      sendPaneResize(pane, cols, rows);
+    }
+  },
 });
 
 const activeAIChatTerminalPane = () => activeHerdrTerminalPane() ?? activePane();
@@ -1454,6 +1473,12 @@ function bindSettings() {
     saveSettings();
     syncOutputBufferLimitToServer();
     applySettings();
+  });
+  elements.terminalSingleControllerMode.addEventListener("change", () => {
+    settings.terminalSingleControllerMode = elements.terminalSingleControllerMode.checked;
+    saveSettings();
+    terminalControl.render();
+    reconnectPanesForTerminalControlMode();
   });
   elements.terminalBackgroundEnabled.addEventListener("change", () => {
     settings.terminalBackgroundEnabled = elements.terminalBackgroundEnabled.checked;
@@ -2502,6 +2527,7 @@ async function pasteIntoHerdrPane(pane: TerminalPane, report: boolean): Promise<
 
 async function pasteTextIntoHerdrPane(pane: TerminalPane, text: string, report: boolean): Promise<boolean> {
   if (!text) return false;
+  if (!terminalControl.canWrite(pane, { report })) return false;
   try {
     const selector = await ensureHerdrSocketReady(pane);
     const paneId = await currentHerdrPaneId(selector);
@@ -2707,6 +2733,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.lineHeightValue.textContent = settings.lineHeight.toFixed(2);
   elements.scrollbackLimit.value = String(settings.scrollbackLimit);
   elements.outputBufferLimit.value = String(settings.outputBufferLimit);
+  elements.terminalSingleControllerMode.checked = settings.terminalSingleControllerMode;
   elements.terminalBackgroundEnabled.checked = settings.terminalBackgroundEnabled;
   elements.terminalBackgroundEnabled.disabled = !settings.terminalBackgroundUrl;
   elements.removeTerminalBackground.disabled = !settings.terminalBackgroundUrl;
@@ -2731,6 +2758,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   renderPlugins();
   renderNotifications();
   terminalInputActions.render();
+  terminalControl.render();
 
   for (const pane of allPanes()) {
     applyTerminalAppearance(pane, appearance, reportFontLoadError);
@@ -4759,8 +4787,14 @@ async function restoreWorkspacePane(
   pane.sessionStatus = paneState.status;
   pane.sessionBackend = nextBackend;
   restoreHerdrOutputSequence(pane, paneState.herdr_output_sequence);
-  pane.cols = paneState.cols || INITIAL_COLS;
-  pane.rows = paneState.rows || INITIAL_ROWS;
+  pane.serverCols = paneState.cols || INITIAL_COLS;
+  pane.serverRows = paneState.rows || INITIAL_ROWS;
+  pane.cols = pane.localCols || pane.serverCols;
+  pane.rows = pane.localRows || pane.serverRows;
+  if (!pane.localCols || !pane.localRows) {
+    pane.localCols = pane.serverCols;
+    pane.localRows = pane.serverRows;
+  }
   pane.exited = paneState.status === "exited";
   pane.closing = false;
   tab.panes.push(pane);
@@ -5010,6 +5044,10 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     workingDirectory: "",
     cols: INITIAL_COLS,
     rows: INITIAL_ROWS,
+    serverCols: INITIAL_COLS,
+    serverRows: INITIAL_ROWS,
+    localCols: INITIAL_COLS,
+    localRows: INITIAL_ROWS,
   };
   applyThemeToMount(mount, currentAppearanceContext());
   return pane;
@@ -5175,6 +5213,7 @@ function updatePaneTerminalSize(pane: TerminalPane, cols: number, rows: number):
   if (pane.cols === nextCols && pane.rows === nextRows) return false;
   pane.cols = nextCols;
   pane.rows = nextRows;
+  terminalControl.noteLocalSize(pane, nextCols, nextRows);
   if (pane.term) {
     pane.term.cols = nextCols;
     pane.term.rows = nextRows;
@@ -5184,8 +5223,13 @@ function updatePaneTerminalSize(pane: TerminalPane, cols: number, rows: number):
 
 function sendPaneResize(pane: TerminalPane, cols: number, rows: number): boolean {
   updatePaneTerminalSize(pane, cols, rows);
+  if (!terminalControl.canWrite(pane, { report: false })) {
+    terminalControl.render();
+    return false;
+  }
   if (pane.socket?.readyState === WebSocket.OPEN) {
     pane.socket.send(webshellResizeMessage(pane.cols, pane.rows));
+    terminalControl.noteServerSize(pane, pane.cols, pane.rows);
     updateActiveDetails();
     return true;
   }
@@ -5203,7 +5247,21 @@ function connectPanePty(pane: TerminalPane) {
 }
 
 function openSocket(pane: TerminalPane) {
+  void openSocketPrepared(pane);
+}
+
+async function openSocketPrepared(pane: TerminalPane) {
   if (!pane.sessionId) return;
+  if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
+  if (pendingPaneSocketOpens.has(pane.id)) return;
+  pendingPaneSocketOpens.add(pane.id);
+  let attach: Awaited<ReturnType<typeof terminalControl.prepareAttach>>;
+  try {
+    attach = await terminalControl.prepareAttach(pane);
+  } finally {
+    pendingPaneSocketOpens.delete(pane.id);
+  }
+  if (pane.closing || !pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
   const replayAfter = replayAfterForPane(pane);
   pane.lastReplayAfter = replayAfter;
@@ -5212,11 +5270,14 @@ function openSocket(pane: TerminalPane) {
     sessionId: pane.sessionId,
     paneId: pane.id,
     sessionBackend: pane.sessionBackend,
-    cols: pane.cols || pane.term?.cols || INITIAL_COLS,
-    rows: pane.rows || pane.term?.rows || INITIAL_ROWS,
+    cols: attach.cols,
+    rows: attach.rows,
     restart: shouldRestartSessionOnConnect(pane),
     after: replayAfter,
     outputLimit: settings.outputBufferLimit,
+    controlMode: attach.controlMode,
+    actorId: attach.actorId,
+    actorKind: attach.actorKind,
   });
 
   pane.exited = false;
@@ -5242,6 +5303,7 @@ function openSocket(pane: TerminalPane) {
   });
   socket.addEventListener("close", () => {
     if (pane.socket !== socket) return;
+    pendingPaneSocketOpens.delete(pane.id);
     terminalTransfer.resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
     flushPaneDecoder(pane);
@@ -5250,6 +5312,7 @@ function openSocket(pane: TerminalPane) {
   });
   socket.addEventListener("error", () => {
     if (pane.socket !== socket) return;
+    pendingPaneSocketOpens.delete(pane.id);
     terminalTransfer.resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
     pane.transport?.notifyError(tr("status.socketError"));
@@ -5287,6 +5350,22 @@ function finishReplayInputLock(pane: TerminalPane) {
 function syncRestartPolicyToServer() {
   for (const pane of allPanes()) {
     sendRestartPolicy(pane);
+  }
+}
+
+function reconnectPanesForTerminalControlMode() {
+  for (const pane of allPanes()) {
+    if (!canConnectPanePty(pane)) continue;
+    const shouldReconnect = pane.socket?.readyState === WebSocket.OPEN
+      || pane.socket?.readyState === WebSocket.CONNECTING;
+    if (!shouldReconnect) continue;
+    if (pane.transport) {
+      pane.transport.disconnect();
+    } else {
+      pane.socket?.close();
+      pane.socket = undefined;
+    }
+    connectPanePty(pane);
   }
 }
 
@@ -5431,6 +5510,9 @@ function handleServerText(pane: TerminalPane, text: string) {
   if (event.type === "ready") {
     pane.sessionStatus = "running";
     pane.exited = false;
+    if (typeof event.cols === "number" && typeof event.rows === "number") {
+      terminalControl.noteServerSize(pane, event.cols, event.rows);
+    }
     setPaneStatus(pane, tr("status.shellReady"), "ok");
   } else if (event.type === "replay-start") {
     if (!matchesPaneReplay(pane, event)) {
@@ -5445,6 +5527,9 @@ function handleServerText(pane: TerminalPane, text: string) {
     pane.replaying = true;
   } else if (event.type === "error") {
     clearReplayInputLock(pane);
+    if (event.message === "terminal control is held by another client") {
+      terminalControl.handleRejectedWrite(pane);
+    }
     pane.transport?.notifyError(event.message ?? tr("status.terminalError"));
     setPaneStatus(pane, event.message ?? tr("status.terminalError"), "error");
     if (event.fatal) {
@@ -5980,6 +6065,7 @@ function updateActiveDetails() {
     setGlobalStatus(tr("status.idle"));
     document.title = tr("app.title");
     mobileSymbolAgent.reset();
+    terminalControl.render();
     return;
   }
 
@@ -5989,6 +6075,7 @@ function updateActiveDetails() {
   setGlobalStatus(pane.status, pane.tone);
   document.title = `${tabCurrentTitle(tab)} - ${tr("app.title")}`;
   void mobileSymbolAgent.refresh();
+  terminalControl.render();
 }
 
 function setPaneStatus(pane: TerminalPane, message: string, tone: Tone = "neutral") {
@@ -6016,6 +6103,7 @@ function setGlobalStatus(message: string, tone: Tone = "neutral") {
 function sendActivePaneKeyInput(data: string): boolean {
   const pane = activePane();
   if (!pane?.term?.restty || !data) return false;
+  if (!terminalControl.canWrite(pane)) return false;
   pane.term.restty.sendKeyInput(data);
   return true;
 }
@@ -6172,6 +6260,7 @@ function cancelPaneImeComposition(pane: TerminalPane, force: boolean): boolean {
 
 function sendPaneBytes(pane: TerminalPane, bytes: Uint8Array): boolean {
   if (!pane || !canConnectPanePty(pane)) return false;
+  if (!terminalControl.canWrite(pane)) return false;
   if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying || pane.closing) return false;
   pane.socket.send(bytes);
   return true;
@@ -6184,6 +6273,10 @@ function sendHistoryRecording(pane: TerminalPane, enabled: boolean) {
 
 function sendPaneInput(pane: TerminalPane, data: string): boolean {
   if (!pane || !canConnectPanePty(pane)) {
+    focusActivePaneCanvas();
+    return false;
+  }
+  if (!terminalControl.canWrite(pane)) {
     focusActivePaneCanvas();
     return false;
   }
@@ -6372,6 +6465,7 @@ function sendClipboardImageIntoPane(
   report: boolean,
 ): boolean {
   if (!pane || pane.closing || pane.exited || !pane.sessionId) return false;
+  if (!terminalControl.canWrite(pane, { report })) return false;
   if (!clipboardImagePayloadIsValid(payload)) return false;
   if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying) {
     connectPanePty(pane);
@@ -6403,6 +6497,7 @@ function sendClipboardImageIntoPane(
 
 function pasteTextIntoPane(pane: TerminalPane | undefined, text: string): boolean {
   if (!pane?.term?.restty || !text) return false;
+  if (!terminalControl.canWrite(pane)) return false;
   pane.term.restty.sendKeyInput(text);
   focusPaneCanvas(pane);
   return true;

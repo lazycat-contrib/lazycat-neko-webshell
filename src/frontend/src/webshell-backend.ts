@@ -8,6 +8,9 @@ export type WebshellSocketUrlOptions = {
   restart: boolean;
   after: number;
   outputLimit: number;
+  controlMode?: "single";
+  actorId?: string;
+  actorKind?: string;
 };
 
 export function webshellTerminalSocketUrl(options: WebshellSocketUrlOptions): URL {
@@ -16,6 +19,9 @@ export function webshellTerminalSocketUrl(options: WebshellSocketUrlOptions): UR
   url.searchParams.set("backend", options.sessionBackend || "webshell");
   if ((options.sessionBackend || "webshell") === "webshell") {
     url.searchParams.set("name", options.selector);
+    if (options.sessionId) {
+      url.searchParams.set("session_id", options.sessionId);
+    }
   } else {
     url.searchParams.set("session_id", options.sessionId);
   }
@@ -26,6 +32,15 @@ export function webshellTerminalSocketUrl(options: WebshellSocketUrlOptions): UR
   url.searchParams.set("replay", "true");
   url.searchParams.set("after", String(options.after));
   url.searchParams.set("output_limit", String(options.outputLimit));
+  if (options.controlMode) {
+    url.searchParams.set("control_mode", options.controlMode);
+  }
+  if (options.actorId) {
+    url.searchParams.set("actor_id", options.actorId);
+  }
+  if (options.actorKind) {
+    url.searchParams.set("actor_kind", options.actorKind);
+  }
   return url;
 }
 

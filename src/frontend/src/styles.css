@@ -1861,6 +1861,81 @@ textarea:focus-visible {
   box-shadow: inset 0 1px 0 var(--line-soft);
 }
 
+.terminal-control-overlay {
+  position: absolute;
+  top: max(10px, var(--lzc-safe-area-inset-top));
+  right: max(12px, var(--lzc-safe-area-inset-right));
+  z-index: 34;
+  pointer-events: none;
+}
+
+.terminal-control-overlay[hidden] {
+  display: none;
+}
+
+.terminal-control-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 32px));
+  min-height: 36px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 66%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-bg) 88%, transparent);
+  color: var(--text);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(18px) saturate(1.25);
+  pointer-events: auto;
+}
+
+.terminal-control-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.terminal-control-pill.is-observer .terminal-control-dot {
+  background: var(--warning, #d69b2d);
+}
+
+.terminal-control-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.1;
+}
+
+.terminal-control-text strong,
+.terminal-control-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-control-text strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.terminal-control-text small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.terminal-control-takeover {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.terminal-control-takeover i {
+  width: 15px;
+  height: 15px;
+}
+
 .tab-mount {
   position: absolute;
   inset: 0 0 var(--lzc-safe-area-inset-bottom) 0;

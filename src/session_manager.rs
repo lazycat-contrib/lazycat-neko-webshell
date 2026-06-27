@@ -88,9 +88,11 @@ impl SessionManager {
         &self,
         spec: TerminalSpec,
         allow_spawn: bool,
+        resize_existing: bool,
     ) -> anyhow::Result<Arc<ManagedTerminal>> {
         let output = self.output_buffer(&spec.session_id, spec.output_frame_limit);
-        self.terminals.open(spec, allow_spawn, output)
+        self.terminals
+            .open(spec, allow_spawn, output, resize_existing)
     }
 
     pub fn close_sessions<'a>(&self, session_ids: impl IntoIterator<Item = &'a str>) {

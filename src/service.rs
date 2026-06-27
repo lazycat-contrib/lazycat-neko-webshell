@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
-use std::sync::{Arc, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, RwLockReadGuard};
 use std::time::Duration;
 
 use buffa::MessageField;
@@ -14,12 +14,16 @@ use crate::config::{
     APP_ID, APP_NAME, DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, LIGHTOSCTL, MAX_COLS,
     MAX_ROWS,
 };
+use crate::control_lease::{
+    ControlActor, apply_runtime_control_to_session, release_session_control,
+    request_session_control,
+};
 use crate::database::{TunnelProviderProfile, TunnelProviderProfileUpsert};
 use crate::lightos;
 use crate::plugins::{file_transfer, lightos_port_forward, tunnel};
 use crate::proto::lazycat::webshell::v1::{
     AgentPaneState, AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
-    Capability, CapabilityService, CloseSessionResponse, ConfigurePluginResponse, ControlLease,
+    Capability, CapabilityService, CloseSessionResponse, ConfigurePluginResponse,
     CreateSessionResponse, GetProviderResponse, InvokePluginResponse, ListInstancesResponse,
     ListPluginsResponse, ListSessionsResponse, OwnedCloseSessionRequestView,
     OwnedConfigurePluginRequestView, OwnedCreateSessionRequestView, OwnedGetProviderRequestView,
@@ -58,15 +62,6 @@ impl CapabilityServiceImpl {
         self.state
             .sessions
             .read()
-            .map_err(|_| ConnectError::internal("session store lock poisoned"))
-    }
-
-    fn sessions_write(
-        &self,
-    ) -> Result<RwLockWriteGuard<'_, HashMap<String, SessionRecord>>, ConnectError> {
-        self.state
-            .sessions
-            .write()
             .map_err(|_| ConnectError::internal("session store lock poisoned"))
     }
 
@@ -725,6 +720,12 @@ impl CapabilityService for CapabilityServiceImpl {
         } else {
             None
         };
+        let runtime_leases = self
+            .state
+            .control_leases
+            .read()
+            .map_err(|_| ConnectError::internal("control lease store lock poisoned"))?
+            .clone();
         let sessions = self.sessions_read()?;
         let sessions = sessions
             .values()
@@ -735,6 +736,7 @@ impl CapabilityService for CapabilityServiceImpl {
                     .is_none_or(|selectors| selectors.contains(&session.selector))
             })
             .map(SessionRecord::to_proto)
+            .map(|session| apply_runtime_control_to_session(session, &runtime_leases))
             .collect();
         ConnectResponse::ok(ListSessionsResponse {
             sessions,
@@ -890,32 +892,18 @@ impl CapabilityService for CapabilityServiceImpl {
         request: OwnedRequestControlRequestView,
     ) -> ServiceResult<RequestControlResponse> {
         let session_id = required_field(request.session_id, "session_id")?;
-        let actor_id = request.actor_id.unwrap_or("anonymous").trim();
-        let actor_kind = request.actor_kind.unwrap_or("human").trim();
-        if actor_id.is_empty() || actor_kind.is_empty() {
-            return Err(ConnectError::invalid_argument(
-                "actor_id and actor_kind must not be empty",
-            ));
-        }
-
-        let lease = ControlLease {
-            lease_id: Some(Uuid::new_v4().to_string()),
-            actor_id: Some(actor_id.to_owned()),
-            actor_kind: Some(actor_kind.to_owned()),
-            status: Some("active".to_owned()),
-            ..Default::default()
-        };
-        let snapshot = {
-            let mut sessions = self.sessions_write()?;
-            let Some(session) = sessions.get_mut(session_id) else {
-                return Err(ConnectError::not_found("session not found"));
-            };
-            session.control = Some(lease.clone());
-            sessions.clone()
-        };
-        self.state
-            .persist_sessions_snapshot(&snapshot)
-            .map_err(|err| ConnectError::internal(err.to_string()))?;
+        let actor = ControlActor::new(
+            request.actor_id.unwrap_or("anonymous"),
+            request.actor_kind.unwrap_or("human"),
+        )
+        .map_err(|err| ConnectError::invalid_argument(err.to_string()))?;
+        let lease = request_session_control(
+            &self.state,
+            session_id,
+            &actor,
+            request.reason.unwrap_or("attach"),
+        )
+        .map_err(|err| ConnectError::failed_precondition(err.to_string()))?;
         ConnectResponse::ok(RequestControlResponse {
             lease: MessageField::some(lease),
             ..Default::default()
@@ -929,26 +917,8 @@ impl CapabilityService for CapabilityServiceImpl {
     ) -> ServiceResult<ReleaseControlResponse> {
         let session_id = required_field(request.session_id, "session_id")?;
         let lease_id = required_field(request.lease_id, "lease_id")?;
-        let snapshot = {
-            let mut sessions = self.sessions_write()?;
-            let Some(session) = sessions.get_mut(session_id) else {
-                return Err(ConnectError::not_found("session not found"));
-            };
-            let current = session
-                .control
-                .as_ref()
-                .and_then(|lease| lease.lease_id.as_deref());
-            if current != Some(lease_id) {
-                return Err(ConnectError::failed_precondition(
-                    "lease_id does not match active control lease",
-                ));
-            }
-            session.control = None;
-            sessions.clone()
-        };
-        self.state
-            .persist_sessions_snapshot(&snapshot)
-            .map_err(|err| ConnectError::internal(err.to_string()))?;
+        release_session_control(&self.state, session_id, lease_id)
+            .map_err(|err| ConnectError::failed_precondition(err.to_string()))?;
         ConnectResponse::ok(ReleaseControlResponse {
             session_id: Some(session_id.to_owned()),
             status: Some("released".to_owned()),
