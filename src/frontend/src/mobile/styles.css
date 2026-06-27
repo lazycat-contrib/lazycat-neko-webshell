@@ -101,8 +101,8 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 .terminal-input-action-button {
   display: grid;
   place-items: center;
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
@@ -114,9 +114,9 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 }
 
 .terminal-input-action-button svg {
-  width: 24px;
-  height: 24px;
-  stroke-width: 1.85;
+  width: 30px;
+  height: 30px;
+  stroke-width: 2.05;
 }
 
 .terminal-input-action-button:hover,
@@ -178,6 +178,7 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   font-weight: 560;
   line-height: 1;
   text-align: left;
+  cursor: pointer;
 }
 
 .terminal-input-menu-item[hidden] {
@@ -201,8 +202,10 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   outline: none;
 }
 
-.terminal-input-menu-item:disabled {
+.terminal-input-menu-item:disabled,
+.terminal-input-menu-item[aria-disabled="true"] {
   opacity: 0.5;
+  cursor: default;
 }
 
 .terminal-input-menu-back {
@@ -1085,8 +1088,8 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 .terminal-input-action-button {
   display: grid;
   place-items: center;
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
@@ -1098,9 +1101,9 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 }
 
 .terminal-input-action-button svg {
-  width: 24px;
-  height: 24px;
-  stroke-width: 1.85;
+  width: 30px;
+  height: 30px;
+  stroke-width: 2.05;
 }
 
 .terminal-input-action-button:hover,

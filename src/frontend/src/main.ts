@@ -36,7 +36,9 @@ import {
 import {
   clipboardImageFile,
   clipboardImagePayloadIsValid,
-  imageBlobPayload,
+  ImageFilePayloadError,
+  imageFilePayload,
+  isImageFileCandidate,
   readClipboardImagePayload,
   stageClipboardImage,
 } from "./clipboard-image";
@@ -44,6 +46,7 @@ import {
   DEFAULT_SETTINGS,
   INITIAL_COLS,
   INITIAL_ROWS,
+  MAX_CLIPBOARD_IMAGE_BYTES,
   MAX_CUSTOM_THEME_SOURCE_BYTES,
   MAX_OUTPUT_BUFFER_LIMIT,
   MIN_OUTPUT_BUFFER_LIMIT,
@@ -622,6 +625,7 @@ const terminalInputActions = createTerminalInputActionController({
   sendText: sendTextToPane,
   uploadFilesToTemporaryDirectory: (files) => fileTransfer.uploadToTemporaryDirectory(files),
   uploadImages: uploadImageFilesToActivePane,
+  temporaryDirectoryFileUploadVisible: () => terminalInputFileUploadVisible(),
   temporaryDirectoryFileUploadAvailable: () => terminalInputFileUploadAvailable(),
   imageUploadAvailable: () => terminalInputImageUploadAvailable(),
   focusTerminal: focusPaneCanvas,
@@ -3784,6 +3788,15 @@ function pluginIsEnabled(pluginId: string): boolean {
   return plugins.find((plugin) => plugin.id === pluginId)?.enabled ?? false;
 }
 
+function pluginIsListed(pluginId: string): boolean {
+  return plugins.some((plugin) => plugin.id === pluginId);
+}
+
+function terminalInputFileUploadVisible(): boolean {
+  const pane = activeTerminalInputPane();
+  return Boolean(pane?.sessionId && !pane.closing && !pane.exited && pluginIsListed(FILE_TRANSFER_PLUGIN_ID));
+}
+
 function terminalInputFileUploadAvailable(): boolean {
   const pane = activeTerminalInputPane();
   return Boolean(pane?.sessionId && !pane.closing && !pane.exited && pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID));
@@ -6337,15 +6350,26 @@ async function pasteIntoPane(pane: TerminalPane | undefined, report: boolean): P
 
 async function pasteImageFileIntoPane(pane: TerminalPane, file: File, report: boolean): Promise<boolean> {
   try {
-    const payload = await imageBlobPayload(file, file.type);
+    const payload = await imageFilePayload(file);
     if (pane.sessionBackend === "herdr") {
       return pasteClipboardImageIntoHerdrPane(pane, payload, report);
     }
     return sendClipboardImageIntoPane(pane, payload, report);
   } catch (error) {
-    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+    if (report) setGlobalStatus(tr("status.imageUploadFailed", { message: imageUploadErrorMessage(error) }), "error");
     return false;
   }
+}
+
+function imageUploadErrorMessage(error: unknown): string {
+  if (error instanceof ImageFilePayloadError) {
+    if (error.code === "unsupported-heic") return tr("status.imageUploadHeicUnsupported");
+    if (error.code === "decode-failed") return tr("status.imageUploadDecodeFailed");
+    return tr("status.imageUploadTooLarge", {
+      size: Math.floor(MAX_CLIPBOARD_IMAGE_BYTES / (1024 * 1024)),
+    });
+  }
+  return errorMessage(error);
 }
 
 async function uploadImageFilesToActivePane(files: File[]): Promise<void> {
@@ -6354,7 +6378,7 @@ async function uploadImageFilesToActivePane(files: File[]): Promise<void> {
     setPluginStatus(tr("status.aiNoTerminalTarget"), "error");
     return;
   }
-  const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+  const imageFiles = files.filter(isImageFileCandidate);
   if (!imageFiles.length) {
     setPluginStatus(tr("status.terminalInputNoImageFile"), "error");
     return;

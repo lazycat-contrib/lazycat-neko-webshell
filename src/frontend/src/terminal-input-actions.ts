@@ -1,5 +1,6 @@
 import type { MessageKey } from "./i18n";
 import type { Settings, TerminalPane, Tone } from "./types";
+import { IMAGE_FILE_ACCEPT } from "./clipboard-image";
 import { aiVoiceProfileConfigured } from "./plugins/ai-chat/voice-profiles";
 import { errorMessage, escapeAttr, escapeHtml } from "./utils";
 import {
@@ -26,6 +27,7 @@ export function createTerminalInputActionController(options: {
   sendText: (pane: TerminalPane, text: string) => boolean | Promise<boolean>;
   uploadFilesToTemporaryDirectory: (files: File[]) => string[] | Promise<string[]>;
   uploadImages: (files: File[]) => void | Promise<void>;
+  temporaryDirectoryFileUploadVisible: () => boolean;
   temporaryDirectoryFileUploadAvailable: () => boolean;
   imageUploadAvailable: () => boolean;
   focusTerminal: (pane: TerminalPane) => void;
@@ -83,6 +85,7 @@ export function createTerminalInputActionController(options: {
   function render() {
     const shouldShow = Boolean(options.activePane() && (
       voiceMenuVisible()
+      || options.temporaryDirectoryFileUploadVisible()
       || options.temporaryDirectoryFileUploadAvailable()
       || options.imageUploadAvailable()
     ));
@@ -109,20 +112,20 @@ export function createTerminalInputActionController(options: {
             <i data-lucide="mic"></i>
             <span>${escapeHtml(options.tr("action.terminalInputVoice"))}</span>
           </button>
-          <button class="terminal-input-menu-item" type="button" role="menuitem" data-terminal-input-action="image">
+          <label class="terminal-input-menu-item" role="menuitem" tabindex="0" data-terminal-input-action="image">
+            <input class="terminal-input-file-picker" data-terminal-input-image type="file" accept="${escapeAttr(IMAGE_FILE_ACCEPT)}" multiple aria-hidden="true" tabindex="-1" />
             <i data-lucide="image-up"></i>
             <span>${escapeHtml(options.tr("action.terminalInputUploadImage"))}</span>
-          </button>
-          <button class="terminal-input-menu-item" type="button" role="menuitem" data-terminal-input-action="file">
+          </label>
+          <label class="terminal-input-menu-item" role="menuitem" tabindex="0" data-terminal-input-action="file">
+            <input class="terminal-input-file-picker" data-terminal-input-file type="file" multiple aria-hidden="true" tabindex="-1" />
             <i data-lucide="file-up"></i>
             <span>${escapeHtml(options.tr("action.terminalInputUploadFile"))}</span>
-          </button>
+          </label>
         </div>
         <button class="terminal-input-action-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeAttr(options.tr("action.terminalInputActions"))}" title="${escapeAttr(options.tr("action.terminalInputActions"))}">
-          <i data-lucide="message-circle-plus"></i>
+          <i data-lucide="plus"></i>
         </button>
-        <input class="terminal-input-file-picker" data-terminal-input-file type="file" multiple aria-hidden="true" tabindex="-1" />
-        <input class="terminal-input-file-picker" data-terminal-input-image type="file" accept="image/*" multiple aria-hidden="true" tabindex="-1" />
       `;
       bindSurfaceEvents();
     }
@@ -135,8 +138,8 @@ export function createTerminalInputActionController(options: {
   function bindSurfaceEvents() {
     const button = options.root.querySelector<HTMLButtonElement>(".terminal-input-action-button");
     const voiceButton = options.root.querySelector<HTMLButtonElement>("[data-terminal-input-action=\"voice\"]");
-    const imageButton = options.root.querySelector<HTMLButtonElement>("[data-terminal-input-action=\"image\"]");
-    const fileButton = options.root.querySelector<HTMLButtonElement>("[data-terminal-input-action=\"file\"]");
+    const imageButton = options.root.querySelector<HTMLElement>("[data-terminal-input-action=\"image\"]");
+    const fileButton = options.root.querySelector<HTMLElement>("[data-terminal-input-action=\"file\"]");
     const imageInput = options.root.querySelector<HTMLInputElement>("[data-terminal-input-image]");
     const fileInput = options.root.querySelector<HTMLInputElement>("[data-terminal-input-file]");
 
@@ -206,27 +209,51 @@ export function createTerminalInputActionController(options: {
       stopRecording(false);
     });
 
-    imageButton?.addEventListener("click", () => {
-      if (imageButton.disabled) return;
-      openFilePicker(imageInput);
-      menuOpen = false;
-      render();
+    imageButton?.addEventListener("click", (event) => {
+      if (imageButton.dataset.disabled !== "true") return;
+      event.preventDefault();
+      options.onStatus(options.tr("status.terminalInputImageUploadUnavailable"), "error");
     });
-    fileButton?.addEventListener("click", () => {
-      if (fileButton.disabled) return;
+    fileButton?.addEventListener("click", (event) => {
+      if (fileButton.dataset.disabled !== "true") return;
+      event.preventDefault();
+      options.onStatus(options.tr("status.terminalInputFileUploadUnavailable"), "error");
+    });
+    imageButton?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (imageButton.dataset.disabled === "true") {
+        options.onStatus(options.tr("status.terminalInputImageUploadUnavailable"), "error");
+        return;
+      }
+      openFilePicker(imageInput);
+    });
+    fileButton?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (fileButton.dataset.disabled === "true") {
+        options.onStatus(options.tr("status.terminalInputFileUploadUnavailable"), "error");
+        return;
+      }
       openFilePicker(fileInput);
-      menuOpen = false;
-      render();
     });
     imageInput?.addEventListener("change", () => {
       const files = Array.from(imageInput.files ?? []);
       imageInput.value = "";
-      if (files.length) void runSelectedUpload(files, "image");
+      if (files.length) {
+        menuOpen = false;
+        render();
+        void runSelectedUpload(files, "image");
+      }
     });
     fileInput?.addEventListener("change", () => {
       const files = Array.from(fileInput.files ?? []);
       fileInput.value = "";
-      if (files.length) void runSelectedUpload(files, "temporary");
+      if (files.length) {
+        menuOpen = false;
+        render();
+        void runSelectedUpload(files, "temporary");
+      }
     });
   }
 
@@ -234,8 +261,8 @@ export function createTerminalInputActionController(options: {
     const button = options.root.querySelector<HTMLButtonElement>(".terminal-input-action-button");
     const menu = options.root.querySelector<HTMLElement>(".terminal-input-action-menu");
     const voiceButton = options.root.querySelector<HTMLButtonElement>("[data-terminal-input-action=\"voice\"]");
-    const imageButton = options.root.querySelector<HTMLButtonElement>("[data-terminal-input-action=\"image\"]");
-    const fileButton = options.root.querySelector<HTMLButtonElement>("[data-terminal-input-action=\"file\"]");
+    const imageButton = options.root.querySelector<HTMLElement>("[data-terminal-input-action=\"image\"]");
+    const fileButton = options.root.querySelector<HTMLElement>("[data-terminal-input-action=\"file\"]");
     const voiceState = currentVoiceState();
     const busy = Boolean(recorder || uploading || runningUpload);
 
@@ -258,6 +285,7 @@ export function createTerminalInputActionController(options: {
     if (menu) {
       const hasMenuAction = voiceState.visible
         || options.imageUploadAvailable()
+        || options.temporaryDirectoryFileUploadVisible()
         || options.temporaryDirectoryFileUploadAvailable();
       menu.hidden = !menuOpen || !hasMenuAction || busy || suppressedByTyping;
     }
@@ -270,16 +298,21 @@ export function createTerminalInputActionController(options: {
     if (imageButton) {
       const imageAvailable = options.imageUploadAvailable();
       imageButton.hidden = !imageAvailable;
-      imageButton.disabled = !imageAvailable || busy;
       imageButton.title = options.tr("action.terminalInputUploadImage");
       imageButton.setAttribute("aria-label", imageButton.title);
+      imageButton.setAttribute("aria-disabled", !imageAvailable || busy ? "true" : "false");
+      imageButton.dataset.disabled = !imageAvailable || busy ? "true" : "false";
     }
     if (fileButton) {
+      const fileVisible = options.temporaryDirectoryFileUploadVisible();
       const fileAvailable = options.temporaryDirectoryFileUploadAvailable();
-      fileButton.hidden = !fileAvailable;
-      fileButton.disabled = !fileAvailable || busy;
-      fileButton.title = options.tr("action.terminalInputUploadFile");
+      fileButton.hidden = !fileVisible;
+      fileButton.title = fileAvailable
+        ? options.tr("action.terminalInputUploadFile")
+        : options.tr("status.terminalInputFileUploadUnavailable");
       fileButton.setAttribute("aria-label", fileButton.title);
+      fileButton.setAttribute("aria-disabled", !fileAvailable || busy ? "true" : "false");
+      fileButton.dataset.disabled = !fileAvailable || busy ? "true" : "false";
     }
   }
 

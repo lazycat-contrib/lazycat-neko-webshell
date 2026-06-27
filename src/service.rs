@@ -1095,27 +1095,37 @@ async fn invoke_file_write(
     metadata: &HashMap<String, String>,
 ) -> ServiceResult<InvokePluginResponse> {
     let path = required_metadata(metadata, "path")?;
-    let script = format!(
-        r#"path={}
-case "$path" in
-  "~") path="$HOME" ;;
-  "~/"*) path="$HOME/${{path#~/}}" ;;
-esac
-parent="$(dirname -- "$path")"
-mkdir -p -- "$parent"
-tmp="$path.webshell-upload.$$"
-cat > "$tmp"
-mv -f -- "$tmp" "$path"
-bytes="$(wc -c < "$path" | tr -d ' ')"
-printf '{{"path":%s,"bytes":%s}}\n' "$(printf '%s' "$path" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/')" "$bytes""#,
-        shell_quote(path)
-    );
+    let script = file_write_script(path);
     let output = run_session_script(state, session, &script, payload).await?;
     plugin_response(
         "complete",
         "application/json",
         output,
         plugin_path_metadata(operation, path),
+    )
+}
+
+fn file_write_script(path: &str) -> String {
+    format!(
+        r#"path={}
+case "$path" in
+  "~") path="$HOME" ;;
+  "~/"*) path="$HOME/${{path#~/}}" ;;
+esac
+parent="${{path%/*}}"
+if [ "$parent" = "$path" ]; then
+  parent="."
+fi
+if [ -z "$parent" ]; then
+  parent="/"
+fi
+mkdir -p "$parent"
+tmp="$path.webshell-upload.$$"
+cat > "$tmp"
+mv -f "$tmp" "$path"
+bytes="$(wc -c < "$path" | tr -d ' ')"
+printf '{{"path":%s,"bytes":%s}}\n' "$(printf '%s' "$path" | sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/')" "$bytes""#,
+        shell_quote(path)
     )
 }
 
@@ -1510,6 +1520,18 @@ mod tests {
                 .to_string()
                 .contains("unsupported file-transfer operation")
         );
+    }
+
+    #[test]
+    fn file_transfer_write_script_uses_portable_parent_directory() {
+        let script = file_write_script("/tmp/lazycat-webshell-uploads/a/b.txt");
+
+        assert!(script.contains("parent=\"${path%/*}\""));
+        assert!(script.contains("mkdir -p \"$parent\""));
+        assert!(script.contains("mv -f \"$tmp\" \"$path\""));
+        assert!(!script.contains("dirname --"));
+        assert!(!script.contains("mkdir -p --"));
+        assert!(!script.contains("mv -f --"));
     }
 
     #[test]

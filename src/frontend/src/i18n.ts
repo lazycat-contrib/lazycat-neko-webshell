@@ -579,8 +579,11 @@ export type MessageKey =
   | "status.herdrWorkspaceFocused"
   | "status.idle"
   | "status.imageUploadDone"
+  | "status.imageUploadDecodeFailed"
   | "status.imageUploadFailed"
+  | "status.imageUploadHeicUnsupported"
   | "status.imageUploadStarted"
+  | "status.imageUploadTooLarge"
   | "status.instance"
   | "status.instanceLoadFailed"
   | "status.instancesLoaded"
@@ -1329,8 +1332,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.herdrWorkspaceFocused": "Herdr workspace focused",
     "status.idle": "Idle",
     "status.imageUploadDone": "Image uploaded",
+    "status.imageUploadDecodeFailed": "Cannot read this image. Please choose JPEG, PNG, GIF, or WebP.",
     "status.imageUploadFailed": "Image upload failed: {message}",
+    "status.imageUploadHeicUnsupported": "HEIC/HEIF images are not supported yet. Please choose JPEG, PNG, GIF, or WebP.",
     "status.imageUploadStarted": "Uploading image...",
+    "status.imageUploadTooLarge": "Image is too large. Please choose an image under {size} MiB.",
     "status.instance": "Instance",
     "status.instanceLoadFailed": "Instance load failed: {message}",
     "status.instancesLoaded": "Instances loaded",
@@ -2078,8 +2084,11 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.herdrWorkspaceFocused": "已切换 Herdr 工作区",
     "status.idle": "空闲",
     "status.imageUploadDone": "图片上传完成",
+    "status.imageUploadDecodeFailed": "无法读取这张图片，请选择 JPEG、PNG、GIF 或 WebP。",
     "status.imageUploadFailed": "图片上传失败：{message}",
+    "status.imageUploadHeicUnsupported": "暂不支持 HEIC/HEIF 图片，请选择 JPEG、PNG、GIF 或 WebP。",
     "status.imageUploadStarted": "正在上传图片...",
+    "status.imageUploadTooLarge": "图片太大，请选择小于 {size} MiB 的图片。",
     "status.instance": "实例",
     "status.instanceLoadFailed": "实例加载失败：{message}",
     "status.instancesLoaded": "实例已加载",
