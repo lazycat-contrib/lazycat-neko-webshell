@@ -38,7 +38,6 @@ import {
   clipboardImagePayloadIsValid,
   ImageFilePayloadError,
   imageFilePayload,
-  isImageFileCandidate,
   readClipboardImagePayload,
   stageClipboardImage,
 } from "./clipboard-image";
@@ -624,7 +623,6 @@ const terminalInputActions = createTerminalInputActionController({
   activePane: activeTerminalInputPane,
   sendText: sendTextToPane,
   uploadFilesToTemporaryDirectory: (files) => fileTransfer.uploadToTemporaryDirectory(files),
-  uploadImages: uploadImageFilesToActivePane,
   temporaryDirectoryFileUploadVisible: () => terminalInputFileUploadVisible(),
   temporaryDirectoryFileUploadAvailable: () => terminalInputFileUploadAvailable(),
   imageUploadAvailable: () => terminalInputImageUploadAvailable(),
@@ -3788,18 +3786,14 @@ function pluginIsEnabled(pluginId: string): boolean {
   return plugins.find((plugin) => plugin.id === pluginId)?.enabled ?? false;
 }
 
-function pluginIsListed(pluginId: string): boolean {
-  return plugins.some((plugin) => plugin.id === pluginId);
-}
-
 function terminalInputFileUploadVisible(): boolean {
   const pane = activeTerminalInputPane();
-  return Boolean(pane?.sessionId && !pane.closing && !pane.exited && pluginIsListed(FILE_TRANSFER_PLUGIN_ID));
+  return Boolean(pane?.sessionId && !pane.closing && !pane.exited);
 }
 
 function terminalInputFileUploadAvailable(): boolean {
   const pane = activeTerminalInputPane();
-  return Boolean(pane?.sessionId && !pane.closing && !pane.exited && pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID));
+  return Boolean(pane?.sessionId && !pane.closing && !pane.exited);
 }
 
 function terminalInputImageUploadAvailable(): boolean {
@@ -6370,22 +6364,6 @@ function imageUploadErrorMessage(error: unknown): string {
     });
   }
   return errorMessage(error);
-}
-
-async function uploadImageFilesToActivePane(files: File[]): Promise<void> {
-  const pane = activeTerminalInputPane();
-  if (!pane) {
-    setPluginStatus(tr("status.aiNoTerminalTarget"), "error");
-    return;
-  }
-  const imageFiles = files.filter(isImageFileCandidate);
-  if (!imageFiles.length) {
-    setPluginStatus(tr("status.terminalInputNoImageFile"), "error");
-    return;
-  }
-  for (const file of imageFiles) {
-    await pasteImageFileIntoPane(pane, file, true);
-  }
 }
 
 function sendClipboardImageIntoPane(

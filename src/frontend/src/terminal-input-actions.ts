@@ -26,7 +26,6 @@ export function createTerminalInputActionController(options: {
   activePane: () => TerminalPane | undefined;
   sendText: (pane: TerminalPane, text: string) => boolean | Promise<boolean>;
   uploadFilesToTemporaryDirectory: (files: File[]) => string[] | Promise<string[]>;
-  uploadImages: (files: File[]) => void | Promise<void>;
   temporaryDirectoryFileUploadVisible: () => boolean;
   temporaryDirectoryFileUploadAvailable: () => boolean;
   imageUploadAvailable: () => boolean;
@@ -371,17 +370,19 @@ export function createTerminalInputActionController(options: {
     runningUpload = true;
     render();
     try {
-      if (type === "image") {
-        await options.uploadImages(files);
-      } else if (type === "temporary") {
-        const pane = options.activePane();
-        const paths = await options.uploadFilesToTemporaryDirectory(files);
-        if (pane && paths.length) {
-          const sent = await options.sendText(pane, paths.map(shellQuotePath).join(" "));
-          if (sent) {
-            options.focusTerminal(pane);
-            options.onStatus(options.tr("status.terminalInputTemporaryPathsInserted"), "ok");
-          }
+      const pane = options.activePane();
+      const paths = await options.uploadFilesToTemporaryDirectory(files);
+      if (!paths.length) {
+        options.onStatus(options.tr("status.terminalInputFileUploadFailed"), "error");
+        return;
+      }
+      if (pane) {
+        const sent = await options.sendText(pane, paths.map(shellQuotePath).join(" "));
+        if (sent) {
+          options.focusTerminal(pane);
+          options.onStatus(options.tr(
+            type === "image" ? "status.imageUploadDone" : "status.terminalInputTemporaryPathsInserted",
+          ), "ok");
         }
       }
     } catch (error) {

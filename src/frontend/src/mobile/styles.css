@@ -101,8 +101,8 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 .terminal-input-action-button {
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
@@ -114,8 +114,8 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 }
 
 .terminal-input-action-button svg {
-  width: 30px;
-  height: 30px;
+  width: 27px;
+  height: 27px;
   stroke-width: 2.05;
 }
 
@@ -1088,8 +1088,8 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 .terminal-input-action-button {
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
@@ -1101,8 +1101,8 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 }
 
 .terminal-input-action-button svg {
-  width: 30px;
-  height: 30px;
+  width: 27px;
+  height: 27px;
   stroke-width: 2.05;
 }
 

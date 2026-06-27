@@ -645,6 +645,7 @@ export type MessageKey =
   | "status.pluginSettingsSaved"
   | "status.pluginSettingsSaveFailed"
   | "status.terminalInputFileUploadUnavailable"
+  | "status.terminalInputFileUploadFailed"
   | "status.terminalInputImageUploadUnavailable"
   | "status.terminalInputNoImageFile"
   | "status.terminalInputTemporaryPathsInserted"
@@ -1398,6 +1399,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginSettingsSaved": "{name} settings saved",
     "status.pluginSettingsSaveFailed": "Settings save failed: {message}",
     "status.terminalInputFileUploadUnavailable": "File upload is not available for this terminal.",
+    "status.terminalInputFileUploadFailed": "File upload failed. Check the current terminal session and try again.",
     "status.terminalInputImageUploadUnavailable": "Image upload is not available for this terminal.",
     "status.terminalInputNoImageFile": "Choose an image file to upload.",
     "status.terminalInputTemporaryPathsInserted": "Temporary file path inserted",
@@ -2150,6 +2152,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginSettingsSaved": "{name} 设置已保存",
     "status.pluginSettingsSaveFailed": "设置保存失败：{message}",
     "status.terminalInputFileUploadUnavailable": "当前终端不可上传文件。",
+    "status.terminalInputFileUploadFailed": "文件上传失败，请确认当前终端会话后重试。",
     "status.terminalInputImageUploadUnavailable": "当前终端不可上传图片。",
     "status.terminalInputNoImageFile": "请选择图片文件上传。",
     "status.terminalInputTemporaryPathsInserted": "临时文件路径已输入",
