@@ -4736,6 +4736,7 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
     }
     renderPaneLayout(tab);
   }
+  restoreTerminalStageChrome();
   activeTabId = firstExistingTabId(preferredTabIds);
   if (!activeTabId || !tabs.some((tab) => tab.id === activeTabId)) {
     activeTabId = tabs[0]?.id;
@@ -4755,6 +4756,14 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
   connectWorkspacePanes();
   scheduleTerminalSizeRefresh();
   return true;
+}
+
+function restoreTerminalStageChrome() {
+  for (const element of [elements.emptyState, elements.terminalControlOverlay]) {
+    if (element.parentElement !== elements.terminalStage) {
+      elements.terminalStage.appendChild(element);
+    }
+  }
 }
 
 async function restoreWorkspacePane(
