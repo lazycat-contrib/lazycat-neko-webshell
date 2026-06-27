@@ -1874,16 +1874,22 @@ textarea:focus-visible {
 }
 
 .terminal-control-pill {
+  --terminal-control-bg: rgba(8, 10, 18, 0.86);
+  --terminal-control-border: rgba(232, 237, 247, 0.34);
+  --terminal-control-text: #f7f9ff;
+  --terminal-control-muted: rgba(226, 232, 240, 0.78);
+  --terminal-control-icon: rgba(238, 242, 255, 0.9);
+
   display: inline-flex;
   align-items: center;
   gap: 8px;
   max-width: min(360px, calc(100vw - 32px));
   min-height: 36px;
   padding: 6px 8px 6px 10px;
-  border: 1px solid color-mix(in srgb, var(--line-strong) 66%, transparent);
+  border: 1px solid var(--terminal-control-border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--panel-bg) 88%, transparent);
-  color: var(--text);
+  background: var(--terminal-control-bg);
+  color: var(--terminal-control-text);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(18px) saturate(1.25);
   pointer-events: auto;
@@ -1915,23 +1921,33 @@ textarea:focus-visible {
 }
 
 .terminal-control-text strong {
+  color: var(--terminal-control-text);
   font-size: 12px;
   font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42);
 }
 
 .terminal-control-text small {
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--terminal-control-muted);
   font-size: 11px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.36);
 }
 
-.terminal-control-takeover {
+.terminal-control-action {
   width: 30px;
   height: 30px;
   border-radius: 50%;
+  color: var(--terminal-control-icon);
 }
 
-.terminal-control-takeover i {
+.terminal-control-action:hover {
+  border-color: rgba(232, 237, 247, 0.32);
+  background: rgba(232, 237, 247, 0.12);
+  color: #ffffff;
+}
+
+.terminal-control-action i {
   width: 15px;
   height: 15px;
 }

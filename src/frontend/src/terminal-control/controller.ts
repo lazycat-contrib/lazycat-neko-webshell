@@ -31,8 +31,13 @@ type AttachControlParams = {
 
 type ControlMode = "controller" | "observer" | "unknown";
 
+const CONTROL_SYNC_INTERVAL_MS = 1500;
+const RELEASE_RECLAIM_COOLDOWN_MS = 6000;
+
 export function createTerminalControlController(deps: TerminalControlControllerDeps) {
   const leases = new Map<string, ControlLease>();
+  const releasedUntil = new Map<string, number>();
+  let syncInFlight = false;
 
   function enabled(): boolean {
     return deps.settings().terminalSingleControllerMode;
@@ -45,6 +50,27 @@ export function createTerminalControlController(deps: TerminalControlControllerD
   function leaseFor(pane: TerminalPane | undefined): ControlLease | undefined {
     const sessionId = paneSessionId(pane);
     return sessionId ? leases.get(sessionId) : undefined;
+  }
+
+  function activeLease(lease: ControlLease | undefined): lease is ControlLease {
+    const status = lease?.status?.trim().toLowerCase();
+    return Boolean(lease?.actorId?.trim() && (!status || status === "active"));
+  }
+
+  function rememberLease(sessionId: string | undefined, lease: ControlLease | undefined) {
+    if (!sessionId) return;
+    if (activeLease(lease)) {
+      leases.set(sessionId, lease);
+    } else {
+      leases.delete(sessionId);
+    }
+  }
+
+  function releaseCooldownActive(sessionId: string): boolean {
+    const until = releasedUntil.get(sessionId) ?? 0;
+    if (until > Date.now()) return true;
+    releasedUntil.delete(sessionId);
+    return false;
   }
 
   function modeFor(pane: TerminalPane | undefined): ControlMode {
@@ -73,17 +99,8 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     if (!enabled() || !pane.sessionId) {
       return { ...local };
     }
-    const actor = currentTerminalControlActor();
     try {
-      const response = await deps.capabilityClient.requestControl({
-        sessionId: pane.sessionId,
-        actorId: actor.actorId,
-        actorKind: actor.actorKind,
-        reason: "attach",
-      }, { timeoutMs: 5000 });
-      if (response.lease) {
-        leases.set(pane.sessionId, response.lease);
-      }
+      await requestControlLease(pane, "attach");
     } catch (error) {
       console.debug("failed to prepare terminal control lease", error);
       deps.onStatus(deps.tr("status.terminalControlSyncFailed"), "error");
@@ -91,6 +108,7 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     render();
     const isController = modeFor(pane) === "controller";
     const size = isController ? local : serverSize(pane);
+    const actor = currentTerminalControlActor();
     return {
       controlMode: "single",
       actorId: actor.actorId,
@@ -101,17 +119,9 @@ export function createTerminalControlController(deps: TerminalControlControllerD
 
   async function takeControl(pane: TerminalPane | undefined = deps.activePane()): Promise<boolean> {
     if (!enabled() || !pane?.sessionId) return false;
-    const actor = currentTerminalControlActor();
     try {
-      const response = await deps.capabilityClient.requestControl({
-        sessionId: pane.sessionId,
-        actorId: actor.actorId,
-        actorKind: actor.actorKind,
-        reason: "takeover",
-      }, { timeoutMs: 5000 });
-      if (response.lease) {
-        leases.set(pane.sessionId, response.lease);
-      }
+      releasedUntil.delete(pane.sessionId);
+      await requestControlLease(pane, "takeover");
       render();
       deps.onTakeControlResize(pane);
       deps.onStatus(deps.tr("status.terminalControlTaken"), "ok");
@@ -120,6 +130,65 @@ export function createTerminalControlController(deps: TerminalControlControllerD
       console.debug("failed to take terminal control", error);
       deps.onStatus(deps.tr("status.terminalControlTakeFailed"), "error");
       return false;
+    }
+  }
+
+  async function releaseControl(pane: TerminalPane | undefined = deps.activePane()): Promise<boolean> {
+    if (!enabled() || !pane?.sessionId) return false;
+    const lease = leaseFor(pane);
+    if (modeFor(pane) !== "controller" || !lease?.leaseId) return false;
+    releasedUntil.set(pane.sessionId, Date.now() + RELEASE_RECLAIM_COOLDOWN_MS);
+    try {
+      await deps.capabilityClient.releaseControl({
+        sessionId: pane.sessionId,
+        leaseId: lease.leaseId,
+      }, { timeoutMs: 5000 });
+      leases.delete(pane.sessionId);
+      render();
+      deps.onStatus(deps.tr("status.terminalControlReleased"), "ok");
+      return true;
+    } catch (error) {
+      console.debug("failed to release terminal control", error);
+      deps.onStatus(deps.tr("status.terminalControlReleaseFailed"), "error");
+      void syncActiveLease();
+      return false;
+    }
+  }
+
+  async function requestControlLease(pane: TerminalPane, reason: "attach" | "takeover") {
+    const actor = currentTerminalControlActor();
+    const response = await deps.capabilityClient.requestControl({
+      sessionId: pane.sessionId,
+      actorId: actor.actorId,
+      actorKind: actor.actorKind,
+      reason,
+    }, { timeoutMs: 5000 });
+    rememberLease(pane.sessionId, response.lease);
+    return response.lease;
+  }
+
+  async function syncActiveLease() {
+    const pane = deps.activePane();
+    if (!enabled() || !pane?.sessionId || syncInFlight) return;
+    syncInFlight = true;
+    try {
+      const modeBefore = modeFor(pane);
+      const response = await deps.capabilityClient.listSessions({
+        selector: pane.selector,
+      }, { timeoutMs: 5000 });
+      const session = response.sessions.find((item) => item.id === pane.sessionId);
+      rememberLease(pane.sessionId, session?.control);
+      if (!activeLease(session?.control) && !releaseCooldownActive(pane.sessionId)) {
+        await requestControlLease(pane, "attach");
+      }
+      if (modeBefore !== "controller" && modeFor(pane) === "controller") {
+        deps.onTakeControlResize(pane);
+      }
+    } catch (error) {
+      console.debug("failed to sync terminal control lease", error);
+    } finally {
+      syncInFlight = false;
+      render();
     }
   }
 
@@ -133,8 +202,7 @@ export function createTerminalControlController(deps: TerminalControlControllerD
   }
 
   function noteLease(sessionId: string | undefined, lease: ControlLease | undefined) {
-    if (!sessionId || !lease?.actorId) return;
-    leases.set(sessionId, lease);
+    rememberLease(sessionId, lease);
     render();
   }
 
@@ -171,6 +239,7 @@ export function createTerminalControlController(deps: TerminalControlControllerD
         label: deps.tr(mode === "controller" ? "terminalControl.controller" : "terminalControl.observer"),
         detail: overlayDetail(pane!, mode),
         takeControlTitle: deps.tr("action.takeTerminalControl"),
+        releaseControlTitle: deps.tr("action.releaseTerminalControl"),
       })
       : "";
     deps.onRenderIcons();
@@ -193,10 +262,24 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     void takeControl();
   });
 
+  deps.overlayRoot.addEventListener("click", (event) => {
+    const button = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-terminal-control-action='release-control']")
+      : null;
+    if (!button) return;
+    event.preventDefault();
+    void releaseControl();
+  });
+
+  window.setInterval(() => {
+    void syncActiveLease();
+  }, CONTROL_SYNC_INTERVAL_MS);
+
   return {
     enabled,
     prepareAttach,
     takeControl,
+    releaseControl,
     canWrite,
     noteLease,
     noteServerSize,

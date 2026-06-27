@@ -140,6 +140,7 @@ export type MessageKey =
   | "action.resizeLeft"
   | "action.resizeRight"
   | "action.resizeUp"
+  | "action.releaseTerminalControl"
   | "action.splitDown"
   | "action.splitLeft"
   | "action.splitRight"
@@ -685,6 +686,8 @@ export type MessageKey =
   | "status.sshUrlProfileReady"
   | "status.terminalError"
   | "status.terminalControlObserver"
+  | "status.terminalControlReleased"
+  | "status.terminalControlReleaseFailed"
   | "status.terminalControlSyncFailed"
   | "status.terminalControlTaken"
   | "status.terminalControlTakeFailed"
@@ -880,6 +883,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.sshConnect": "Connect SSH",
     "action.closeTab": "Close tab",
     "action.renameTab": "Rename tab",
+    "action.releaseTerminalControl": "Release terminal control",
     "action.resizeDown": "Resize down",
     "action.resizeLeft": "Resize left",
     "action.resizeRight": "Resize right",
@@ -1451,6 +1455,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.sshUrlProfileReady": "SSH profile ready: {name}",
     "status.terminalError": "Terminal error",
     "status.terminalControlObserver": "Observation mode. Take control before sending input.",
+    "status.terminalControlReleased": "Terminal control released",
+    "status.terminalControlReleaseFailed": "Failed to release terminal control",
     "status.terminalControlSyncFailed": "Failed to sync terminal control state",
     "status.terminalControlTaken": "Terminal control taken",
     "status.terminalControlTakeFailed": "Failed to take terminal control",
@@ -1645,6 +1651,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.sshConnect": "连接 SSH",
     "action.closeTab": "关闭标签",
     "action.renameTab": "重命名标签",
+    "action.releaseTerminalControl": "释放终端控制权",
     "action.resizeDown": "向下调整",
     "action.resizeLeft": "向左调整",
     "action.resizeRight": "向右调整",
@@ -2216,6 +2223,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.sshUrlProfileReady": "SSH profile 已就绪：{name}",
     "status.terminalError": "终端错误",
     "status.terminalControlObserver": "当前是观察模式，请先接管再输入。",
+    "status.terminalControlReleased": "已释放终端控制权",
+    "status.terminalControlReleaseFailed": "释放终端控制权失败",
     "status.terminalControlSyncFailed": "终端控制状态同步失败",
     "status.terminalControlTaken": "已接管终端控制权",
     "status.terminalControlTakeFailed": "接管终端控制权失败",

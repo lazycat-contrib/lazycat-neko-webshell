@@ -86,6 +86,39 @@ pub fn release_session_control(
     Ok(())
 }
 
+pub fn release_actor_session_control(
+    state: &AppState,
+    session_id: &str,
+    actor_id: &str,
+) -> anyhow::Result<bool> {
+    let session_id = normalize_session_id(session_id)?;
+    let actor_id = actor_id.trim();
+    if actor_id.is_empty() {
+        bail!("actor_id must not be empty");
+    }
+    let released = {
+        let mut leases = state
+            .control_leases
+            .write()
+            .map_err(|_| anyhow!("control lease store lock poisoned"))?;
+        let actor_matches = leases
+            .get(session_id)
+            .filter(|lease| lease_is_active(lease))
+            .and_then(lease_actor_id)
+            == Some(actor_id);
+        if actor_matches {
+            leases.remove(session_id);
+            true
+        } else {
+            false
+        }
+    };
+    if released {
+        mirror_session_control(state, session_id, None)?;
+    }
+    Ok(released)
+}
+
 pub fn current_session_control(state: &AppState, session_id: &str) -> Option<ControlLease> {
     let session_id = session_id.trim();
     if session_id.is_empty() {
@@ -242,6 +275,25 @@ mod tests {
         let mismatch = release_session_control(&state, "session-one", "wrong-lease");
         assert!(mismatch.is_err());
         release_session_control(&state, "session-one", lease.lease_id.as_deref().unwrap()).unwrap();
+        assert!(current_session_control(&state, "session-one").is_none());
+    }
+
+    #[test]
+    fn release_by_actor_only_releases_matching_controller() {
+        let state = test_state();
+        insert_session(&state, "session-one");
+        let first = ControlActor::new("desktop", "desktop").unwrap();
+        let second = ControlActor::new("phone", "mobile").unwrap();
+        request_session_control(&state, "session-one", &first, "attach").unwrap();
+
+        assert!(!release_actor_session_control(&state, "session-one", &second.actor_id).unwrap());
+        assert!(actor_controls_session(
+            &state,
+            "session-one",
+            &first.actor_id
+        ));
+
+        assert!(release_actor_session_control(&state, "session-one", &first.actor_id).unwrap());
         assert!(current_session_control(&state, "session-one").is_none());
     }
 

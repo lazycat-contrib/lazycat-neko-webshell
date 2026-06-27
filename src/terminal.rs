@@ -26,7 +26,9 @@ use crate::agent_protocol::{
     write_agent_frame_async,
 };
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
-use crate::control_lease::{ControlActor, actor_controls_session, request_session_control};
+use crate::control_lease::{
+    ControlActor, actor_controls_session, release_actor_session_control, request_session_control,
+};
 use crate::lightos;
 use crate::proto::lazycat::webshell::v1::{AgentControlType, AgentFrame, AgentFrameType};
 use crate::ssh_backend;
@@ -180,6 +182,13 @@ impl TerminalControlGuard {
 
     fn allows_attach_resize(&self) -> bool {
         !self.enabled || self.controller_on_attach
+    }
+
+    fn release_if_current(&self, state: &AppState) {
+        if !self.enabled {
+            return;
+        }
+        let _ = release_actor_session_control(state, &self.session_id, &self.actor_id);
     }
 }
 
@@ -399,6 +408,7 @@ async fn serve_open_terminal(
         }
     }
 
+    control.release_if_current(&state);
     Ok(())
 }
 
@@ -505,6 +515,7 @@ async fn serve_agent_terminal(
     }
 
     let _ = write_agent_frame_async(&mut stdin, &detach_frame()).await;
+    target.control.release_if_current(&state);
     Ok(())
 }
 
