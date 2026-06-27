@@ -1,6 +1,7 @@
 import { newId } from "../utils";
 
 const ACTOR_ID_STORAGE_KEY = "lazycat-webshell.terminalControlActorId";
+let cachedActorId: string | undefined;
 
 export type TerminalControlActor = {
   actorId: string;
@@ -15,14 +16,20 @@ export function currentTerminalControlActor(): TerminalControlActor {
 }
 
 function stableActorId(): string {
+  if (cachedActorId) return cachedActorId;
   try {
     const existing = sessionStorage.getItem(ACTOR_ID_STORAGE_KEY);
-    if (existing) return existing;
+    if (existing) {
+      cachedActorId = existing;
+      return existing;
+    }
     const created = newId();
     sessionStorage.setItem(ACTOR_ID_STORAGE_KEY, created);
+    cachedActorId = created;
     return created;
   } catch {
-    return newId();
+    cachedActorId = newId();
+    return cachedActorId;
   }
 }
 

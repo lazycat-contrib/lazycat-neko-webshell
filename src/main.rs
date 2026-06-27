@@ -36,6 +36,7 @@ mod ssh_backend;
 mod ssh_config;
 mod state;
 mod terminal;
+mod terminal_control;
 mod terminal_manager;
 mod tty_init;
 mod validation;

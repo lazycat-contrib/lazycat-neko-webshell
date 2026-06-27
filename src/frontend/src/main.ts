@@ -263,7 +263,10 @@ import {
 } from "./terminal-viewport";
 import { createPaneTerminal } from "./terminal-options";
 import { createTerminalControlController } from "./terminal-control/controller";
-import { releaseControlledTerminalPanes } from "./terminal-control/lifecycle";
+import {
+  releaseControlledTerminalPanes,
+  shouldReleaseTerminalControlWhenHidden,
+} from "./terminal-control/lifecycle";
 import { createAIContextPlugin, createTerminalShaderPlugin, TERMINAL_SHADER_PLUGIN_ID } from "./restty-plugins";
 import { normalizeTerminalShaderEffect, renderTerminalShaderSettings } from "./terminal-shaders";
 import {
@@ -1952,7 +1955,7 @@ function bindActions() {
 function bindLifecycleEvents() {
   window.addEventListener("pagehide", () => {
     flushHerdrOutputSequences();
-    releaseControlledTerminalPanes(allPanes(), terminalControl);
+    releaseControlledTerminalPanes(allPanes(), terminalControl, { keepalive: true });
   });
   window.addEventListener("online", () => {
     void connectRestoredPanes();
@@ -1988,7 +1991,12 @@ function bindLifecycleEvents() {
   window.visualViewport?.addEventListener("resize", handleViewportChange);
   window.visualViewport?.addEventListener("scroll", handleViewportChange);
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) return;
+    if (document.hidden) {
+      if (shouldReleaseTerminalControlWhenHidden()) {
+        releaseControlledTerminalPanes(allPanes(), terminalControl, { keepalive: true });
+      }
+      return;
+    }
     handleViewportChange();
     void connectRestoredPanes();
     void refreshSessionBackends(selectedSelector);
