@@ -185,7 +185,7 @@ export function renderShell(app: HTMLElement): ShellElements {
           </button>
           <div class="shortcut-help-shell" id="shortcutHelpShell">
             <button class="icon-button" id="shortcutHelpButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" data-i18n-aria="action.shortcutHelp" data-i18n-title="action.shortcutHelp">
-              <i data-lucide="circle-help"></i>
+              <i data-lucide="keyboard"></i>
             </button>
             <div class="shortcut-help" id="shortcutHelp" hidden>
               <div class="shortcut-help-dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" data-i18n-aria="action.shortcutHelp">
@@ -245,11 +245,11 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <span data-i18n="section.plugins">Tools</span>
               </button>
               <button id="openShortcutHelpItem" type="button" role="menuitem">
-                <i data-lucide="circle-help"></i>
+                <i data-lucide="keyboard"></i>
                 <span data-i18n="action.shortcutHelp">Keyboard shortcuts</span>
               </button>
               <button id="openAboutItem" type="button" role="menuitem">
-                <i data-lucide="info"></i>
+                <i data-lucide="badge-info"></i>
                 <span data-i18n="action.about">About</span>
               </button>
               <button id="fitTerminalItem" type="button" role="menuitem">
