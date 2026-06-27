@@ -297,6 +297,24 @@ mod tests {
         assert!(current_session_control(&state, "session-one").is_none());
     }
 
+    #[test]
+    fn stale_actor_release_does_not_clear_takeover_controller() {
+        let state = test_state();
+        insert_session(&state, "session-one");
+        let first = ControlActor::new("desktop", "desktop").unwrap();
+        let second = ControlActor::new("phone", "mobile").unwrap();
+
+        request_session_control(&state, "session-one", &first, "attach").unwrap();
+        request_session_control(&state, "session-one", &second, "takeover").unwrap();
+
+        assert!(!release_actor_session_control(&state, "session-one", &first.actor_id).unwrap());
+        assert!(actor_controls_session(
+            &state,
+            "session-one",
+            &second.actor_id
+        ));
+    }
+
     fn test_state() -> AppState {
         AppState::new_for_test(std::env::temp_dir().join(format!(
             "lazycat-neko-webshell-control-{}.db",

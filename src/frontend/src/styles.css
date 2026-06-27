@@ -1877,15 +1877,14 @@ textarea:focus-visible {
   --terminal-control-bg: rgba(8, 10, 18, 0.86);
   --terminal-control-border: rgba(232, 237, 247, 0.34);
   --terminal-control-text: #f7f9ff;
-  --terminal-control-muted: rgba(226, 232, 240, 0.78);
   --terminal-control-icon: rgba(238, 242, 255, 0.9);
 
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  max-width: min(360px, calc(100vw - 32px));
-  min-height: 36px;
-  padding: 6px 8px 6px 10px;
+  gap: 5px;
+  max-width: min(220px, calc(100vw - 32px));
+  min-height: 30px;
+  padding: 4px 4px 4px 8px;
   border: 1px solid var(--terminal-control-border);
   border-radius: 999px;
   background: var(--terminal-control-bg);
@@ -1897,8 +1896,8 @@ textarea:focus-visible {
 
 .terminal-control-dot {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--accent);
 }
@@ -1908,37 +1907,31 @@ textarea:focus-visible {
 }
 
 .terminal-control-text {
-  display: grid;
   min-width: 0;
   line-height: 1.1;
 }
 
-.terminal-control-text strong,
-.terminal-control-text small {
+.terminal-control-text strong {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.terminal-control-text strong {
   color: var(--terminal-control-text);
   font-size: 12px;
   font-weight: 700;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.42);
 }
 
-.terminal-control-text small {
-  margin-top: 2px;
-  color: var(--terminal-control-muted);
-  font-size: 11px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.36);
-}
-
 .terminal-control-action {
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
   border-radius: 50%;
   color: var(--terminal-control-icon);
+}
+
+.terminal-control-action::after {
+  inset: -5px;
 }
 
 .terminal-control-action:hover {
@@ -1948,8 +1941,8 @@ textarea:focus-visible {
 }
 
 .terminal-control-action i {
-  width: 15px;
-  height: 15px;
+  width: 13px;
+  height: 13px;
 }
 
 .tab-mount {

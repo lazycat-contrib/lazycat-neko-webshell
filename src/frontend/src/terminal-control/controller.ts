@@ -38,6 +38,8 @@ export function createTerminalControlController(deps: TerminalControlControllerD
   const leases = new Map<string, ControlLease>();
   const releasedUntil = new Map<string, number>();
   let syncInFlight = false;
+  let leaseMutationSerial = 0;
+  let leaseMutationsInFlight = 0;
 
   function enabled(): boolean {
     return deps.settings().terminalSingleControllerMode;
@@ -78,6 +80,10 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     const lease = leaseFor(pane);
     if (!lease?.actorId) return "unknown";
     return lease.actorId === currentTerminalControlActor().actorId ? "controller" : "observer";
+  }
+
+  function isController(pane: TerminalPane | undefined): boolean {
+    return modeFor(pane) === "controller";
   }
 
   function localSize(pane: TerminalPane): { cols: number; rows: number } {
@@ -138,44 +144,63 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     const lease = leaseFor(pane);
     if (modeFor(pane) !== "controller" || !lease?.leaseId) return false;
     releasedUntil.set(pane.sessionId, Date.now() + RELEASE_RECLAIM_COOLDOWN_MS);
+    const serial = ++leaseMutationSerial;
+    leaseMutationsInFlight += 1;
     try {
       await deps.capabilityClient.releaseControl({
         sessionId: pane.sessionId,
         leaseId: lease.leaseId,
       }, { timeoutMs: 5000 });
-      leases.delete(pane.sessionId);
+      if (serial === leaseMutationSerial) {
+        leases.delete(pane.sessionId);
+      }
       render();
       deps.onStatus(deps.tr("status.terminalControlReleased"), "ok");
       return true;
     } catch (error) {
       console.debug("failed to release terminal control", error);
       deps.onStatus(deps.tr("status.terminalControlReleaseFailed"), "error");
-      void syncActiveLease();
+      window.setTimeout(() => void syncActiveLease(), 0);
       return false;
+    } finally {
+      leaseMutationsInFlight = Math.max(0, leaseMutationsInFlight - 1);
     }
   }
 
   async function requestControlLease(pane: TerminalPane, reason: "attach" | "takeover") {
     const actor = currentTerminalControlActor();
-    const response = await deps.capabilityClient.requestControl({
-      sessionId: pane.sessionId,
-      actorId: actor.actorId,
-      actorKind: actor.actorKind,
-      reason,
-    }, { timeoutMs: 5000 });
-    rememberLease(pane.sessionId, response.lease);
-    return response.lease;
+    const serial = ++leaseMutationSerial;
+    leaseMutationsInFlight += 1;
+    try {
+      const response = await deps.capabilityClient.requestControl({
+        sessionId: pane.sessionId,
+        actorId: actor.actorId,
+        actorKind: actor.actorKind,
+        reason,
+      }, { timeoutMs: 5000 });
+      if (reason === "takeover" && response.lease?.actorId !== actor.actorId) {
+        throw new Error("takeover did not return a controller lease for this client");
+      }
+      if (serial === leaseMutationSerial) {
+        rememberLease(pane.sessionId, response.lease);
+      }
+      return response.lease;
+    } finally {
+      leaseMutationsInFlight = Math.max(0, leaseMutationsInFlight - 1);
+    }
   }
 
   async function syncActiveLease() {
     const pane = deps.activePane();
-    if (!enabled() || !pane?.sessionId || syncInFlight) return;
+    if (!enabled() || !pane?.sessionId || syncInFlight || leaseMutationsInFlight > 0) return;
     syncInFlight = true;
     try {
+      const syncSerial = leaseMutationSerial;
       const modeBefore = modeFor(pane);
       const response = await deps.capabilityClient.listSessions({
         selector: pane.selector,
       }, { timeoutMs: 5000 });
+      if (syncSerial !== leaseMutationSerial || leaseMutationsInFlight > 0) return;
       const session = response.sessions.find((item) => item.id === pane.sessionId);
       rememberLease(pane.sessionId, session?.control);
       if (!activeLease(session?.control) && !releaseCooldownActive(pane.sessionId)) {
@@ -280,6 +305,7 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     prepareAttach,
     takeControl,
     releaseControl,
+    isController,
     canWrite,
     noteLease,
     noteServerSize,

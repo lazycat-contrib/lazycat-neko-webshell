@@ -263,6 +263,7 @@ import {
 } from "./terminal-viewport";
 import { createPaneTerminal } from "./terminal-options";
 import { createTerminalControlController } from "./terminal-control/controller";
+import { releaseControlledTerminalPanes } from "./terminal-control/lifecycle";
 import { createAIContextPlugin, createTerminalShaderPlugin, TERMINAL_SHADER_PLUGIN_ID } from "./restty-plugins";
 import { normalizeTerminalShaderEffect, renderTerminalShaderSettings } from "./terminal-shaders";
 import {
@@ -1949,7 +1950,10 @@ function bindActions() {
 }
 
 function bindLifecycleEvents() {
-  window.addEventListener("pagehide", flushHerdrOutputSequences);
+  window.addEventListener("pagehide", () => {
+    flushHerdrOutputSequences();
+    releaseControlledTerminalPanes(allPanes(), terminalControl);
+  });
   window.addEventListener("online", () => {
     void connectRestoredPanes();
     void refreshSessionBackends(selectedSelector);

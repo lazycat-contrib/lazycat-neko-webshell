@@ -12,6 +12,7 @@ export type TerminalControlOverlayState = {
 export function renderTerminalControlOverlayView(state: TerminalControlOverlayState): string {
   if (!state.enabled || state.mode === "unknown") return "";
   const modeClass = state.mode === "controller" ? "is-controller" : "is-observer";
+  const title = state.detail ? `${state.label} - ${state.detail}` : state.label;
   const action = state.mode === "observer"
     ? `<button type="button" class="terminal-control-action icon-button" data-terminal-control-action="take-control" title="${escapeAttr(state.takeControlTitle)}" aria-label="${escapeAttr(state.takeControlTitle)}">
         <i data-lucide="mouse-pointer-click"></i>
@@ -20,11 +21,10 @@ export function renderTerminalControlOverlayView(state: TerminalControlOverlaySt
         <i data-lucide="unlock"></i>
       </button>`;
   return `
-    <div class="terminal-control-pill ${modeClass}">
+    <div class="terminal-control-pill ${modeClass}" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">
       <span class="terminal-control-dot" aria-hidden="true"></span>
       <span class="terminal-control-text">
         <strong>${escapeHtml(state.label)}</strong>
-        <small>${escapeHtml(state.detail)}</small>
       </span>
       ${action}
     </div>

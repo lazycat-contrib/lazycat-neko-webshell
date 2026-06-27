@@ -56,6 +56,10 @@ export function webshellRestartPolicyMessage(enabled: boolean): string {
   return JSON.stringify({ type: "restart-policy", enabled });
 }
 
+export function webshellReleaseControlMessage(): string {
+  return JSON.stringify({ type: "release-control" });
+}
+
 export function webshellHistoryRecordingMessage(enabled: boolean): string {
   return JSON.stringify({ type: "history-recording", enabled });
 }

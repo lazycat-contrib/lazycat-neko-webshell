@@ -76,6 +76,7 @@ enum TerminalClientMessage {
     RestartPolicy { enabled: bool },
     OutputBuffer { limit: usize },
     HistoryRecording { enabled: bool },
+    ReleaseControl,
     Close,
 }
 
@@ -774,6 +775,10 @@ where
             write_agent_frame_async(stdin, &history_recording_frame(enabled)).await?;
             Ok(true)
         }
+        Ok(TerminalClientMessage::ReleaseControl) => {
+            target.control.release_if_current(state);
+            Ok(true)
+        }
         Ok(
             TerminalClientMessage::RestartPolicy { .. }
             | TerminalClientMessage::OutputBuffer { .. },
@@ -1159,6 +1164,10 @@ async fn handle_terminal_control_message(
         }
         Ok(TerminalClientMessage::HistoryRecording { enabled }) => {
             terminal.set_history_recording(enabled);
+            Ok(true)
+        }
+        Ok(TerminalClientMessage::ReleaseControl) => {
+            control.release_if_current(state);
             Ok(true)
         }
         Ok(TerminalClientMessage::Close) => Ok(false),
