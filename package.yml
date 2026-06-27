@@ -1,5 +1,5 @@
 package: community.lazycat.webshell.neko
-version: 0.5.10
+version: 0.5.11
 name: Neko Webshell
 description: LightOS WebShell provider backed by Rust, Restty terminal I/O, and Connect control APIs
 min_os_version: v1.5.2
