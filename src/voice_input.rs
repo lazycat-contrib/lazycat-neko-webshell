@@ -527,7 +527,10 @@ fn build_chat_input_audio_payload(
     stream: bool,
 ) -> Value {
     let audio_b64 = BASE64_STANDARD.encode(&upload.bytes);
-    let data_url = format!("data:{};base64,{audio_b64}", audio_data_url_mime(&upload.mime_type));
+    let data_url = format!(
+        "data:{};base64,{audio_b64}",
+        audio_data_url_mime(&upload.mime_type)
+    );
     let mut payload = json!({
         "model": profile.model.trim(),
         "stream": stream,
@@ -1274,7 +1277,12 @@ mod tests {
         let parsed_data_url = parse_chat_speech_audio(&data_url).unwrap();
         assert_eq!(parsed_data_url.mime_type.as_deref(), Some("audio/wav"));
         assert!(parsed_data_url.bytes.starts_with(b"RIFF"));
-        assert!(parsed_data_url.bytes.windows(4).any(|window| window == b"WAVE"));
+        assert!(
+            parsed_data_url
+                .bytes
+                .windows(4)
+                .any(|window| window == b"WAVE")
+        );
 
         let parsed_plain = parse_chat_speech_audio(&plain).unwrap();
         assert_eq!(parsed_plain.mime_type, None);

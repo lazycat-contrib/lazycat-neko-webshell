@@ -1,4 +1,5 @@
 import { clampFloatingPoint } from "./floating-position";
+import { isHerdrPaneResizeAction } from "./herdr-backend";
 import type { TerminalPane, TerminalTab } from "./types";
 
 type PaneMenuControllerOptions = {
@@ -70,7 +71,15 @@ function paneMenuActionSupported(
   visiblePaneCount: (tab: TerminalTab) => number,
 ): boolean {
   if (!pane) return false;
-  if (tabHasBackend(tab, "herdr") || pane.sessionBackend === "zellij") {
+  if (tabHasBackend(tab, "herdr")) {
+    return action === "split-right"
+      || action === "split-down"
+      || isHerdrPaneResizeAction(action)
+      || action === "copy-selection"
+      || action === "paste-clipboard"
+      || action === "close-active-session";
+  }
+  if (pane.sessionBackend === "zellij") {
     return action === "split-right"
       || action === "split-down"
       || action === "copy-selection"

@@ -35,7 +35,7 @@ export type ShellElements = {
   herdrNewTab: HTMLButtonElement;
   terminalStage: HTMLDivElement;
   mobileShortcuts: HTMLDivElement;
-  aiVoiceInputSurface: HTMLDivElement;
+  terminalInputActionsSurface: HTMLDivElement;
   mobileShortcutClock: HTMLSpanElement;
   emptyState: HTMLDivElement;
   homeButton: HTMLButtonElement;
@@ -303,7 +303,7 @@ export function renderShell(app: HTMLElement): ShellElements {
 
       ${renderMobileKeyboardView()}
 
-      <div class="ai-voice-input-surface" id="aiVoiceInputSurface" hidden></div>
+      <div class="terminal-input-actions-surface" id="terminalInputActionsSurface" hidden></div>
 
       <aside class="plugin-sidebar" id="pluginSidebar" aria-label="Tools" data-i18n-aria="section.plugins" hidden>
         <header class="plugin-sidebar-header">
@@ -589,6 +589,22 @@ export function renderShell(app: HTMLElement): ShellElements {
           <i data-lucide="panel-right"></i>
           <span data-i18n="action.splitRight">Split right</span>
         </button>
+        <button type="button" data-pane-action="resize-up" role="menuitem" hidden>
+          <i data-lucide="arrow-up"></i>
+          <span data-i18n="action.resizeUp">Resize up</span>
+        </button>
+        <button type="button" data-pane-action="resize-down" role="menuitem" hidden>
+          <i data-lucide="arrow-down"></i>
+          <span data-i18n="action.resizeDown">Resize down</span>
+        </button>
+        <button type="button" data-pane-action="resize-left" role="menuitem" hidden>
+          <i data-lucide="arrow-left"></i>
+          <span data-i18n="action.resizeLeft">Resize left</span>
+        </button>
+        <button type="button" data-pane-action="resize-right" role="menuitem" hidden>
+          <i data-lucide="arrow-right"></i>
+          <span data-i18n="action.resizeRight">Resize right</span>
+        </button>
         <button type="button" data-pane-action="copy-selection" role="menuitem">
           <i data-lucide="copy"></i>
           <span data-i18n="action.copySelection">Copy selection</span>
@@ -641,7 +657,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     herdrNewTab: qs<HTMLButtonElement>("#herdrNewTab"),
     terminalStage: qs<HTMLDivElement>("#terminalStage"),
     mobileShortcuts: qs<HTMLDivElement>("#mobileShortcuts"),
-    aiVoiceInputSurface: qs<HTMLDivElement>("#aiVoiceInputSurface"),
+    terminalInputActionsSurface: qs<HTMLDivElement>("#terminalInputActionsSurface"),
     mobileShortcutClock: qs<HTMLSpanElement>("#mobileShortcutClock"),
     emptyState: qs<HTMLDivElement>("#emptyState"),
     homeButton: qs<HTMLButtonElement>("#homeButton"),

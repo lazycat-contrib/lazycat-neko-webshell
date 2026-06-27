@@ -13,7 +13,7 @@ body.mobile-keyboard-visible {
   display: none;
 }
 
-.ai-voice-input-surface {
+.terminal-input-actions-surface {
   position: fixed;
   left: 50%;
   bottom: calc(var(--lzc-safe-area-inset-bottom) + 18px);
@@ -27,11 +27,15 @@ body.mobile-keyboard-visible {
   pointer-events: none;
 }
 
-.ai-voice-input-surface[hidden] {
+.terminal-input-actions-surface[hidden] {
   display: none;
 }
 
-.ai-voice-recording-pill {
+body.mobile-controls-enabled .terminal-input-actions-surface {
+  bottom: calc(var(--mobile-shortcuts-height) + var(--mobile-shortcuts-bottom-offset) + 10px);
+}
+
+.terminal-input-recording-pill {
   display: grid;
   grid-template-columns: 44px minmax(160px, auto);
   align-items: center;
@@ -48,11 +52,11 @@ body.mobile-keyboard-visible {
   animation: ai-voice-pill-in 350ms cubic-bezier(0.18, 0.9, 0.24, 1.12);
 }
 
-.ai-voice-recording-pill[hidden] {
+.terminal-input-recording-pill[hidden] {
   display: none;
 }
 
-.ai-voice-waveform {
+.terminal-input-waveform {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -61,7 +65,7 @@ body.mobile-keyboard-visible {
   height: 32px;
 }
 
-.ai-voice-waveform i {
+.terminal-input-waveform i {
   width: 4px;
   height: 28px;
   border-radius: 999px;
@@ -71,7 +75,7 @@ body.mobile-keyboard-visible {
   transition: transform 80ms linear;
 }
 
-.ai-voice-recording-label {
+.terminal-input-recording-label {
   display: block;
   min-width: 160px;
   max-width: 460px;
@@ -85,7 +89,7 @@ body.mobile-keyboard-visible {
   transition: max-width 250ms ease;
 }
 
-.ai-voice-input-button {
+.terminal-input-action-button {
   display: grid;
   place-items: center;
   width: 42px;
@@ -101,12 +105,12 @@ body.mobile-keyboard-visible {
   pointer-events: auto;
 }
 
-.ai-voice-input-button svg {
+.terminal-input-action-button svg {
   width: 18px;
   height: 18px;
 }
 
-.ai-voice-input-button[data-state="recording"] {
+.terminal-input-action-button[data-state="recording"] {
   border-color: var(--danger);
   background:
     var(--component-wash-hover),
@@ -114,21 +118,80 @@ body.mobile-keyboard-visible {
   color: var(--danger-fg);
 }
 
-.ai-voice-input-button[data-state="uploading"] {
+.terminal-input-action-button[data-state="uploading"] {
   border-color: var(--accent-border);
   color: var(--accent-fg);
 }
 
-.ai-voice-input-button:disabled {
+.terminal-input-action-button:disabled {
   opacity: 0.55;
   box-shadow: none;
 }
 
-body.mobile-keyboard-visible .ai-voice-input-button:not([data-state="recording"]):not([data-state="uploading"]) {
+.terminal-input-action-menu {
+  display: grid;
+  gap: 4px;
+  min-width: 176px;
+  max-width: min(248px, calc(100vw - 28px));
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  box-shadow: var(--shadow-raised);
+  backdrop-filter: blur(18px) saturate(1.25);
+  pointer-events: auto;
+  animation: terminal-input-menu-in 160ms ease-out;
+}
+
+.terminal-input-action-menu[hidden] {
   display: none;
 }
 
-.ai-voice-input-surface[data-keyboard-active="true"] .ai-voice-input-button:not([data-state="recording"]):not([data-state="uploading"]) {
+.terminal-input-menu-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1;
+  text-align: left;
+}
+
+.terminal-input-menu-item svg {
+  width: 15px;
+  height: 15px;
+}
+
+.terminal-input-menu-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-input-menu-item:hover,
+.terminal-input-menu-item:focus-visible {
+  background: var(--component-wash-hover);
+  outline: none;
+}
+
+.terminal-input-menu-item:disabled {
+  opacity: 0.5;
+}
+
+.terminal-input-menu-back {
+  color: var(--muted);
+}
+
+.terminal-input-actions-surface[data-state="suppressed-by-typing"] .terminal-input-action-button,
+.terminal-input-actions-surface[data-state="suppressed-by-typing"] .terminal-input-action-menu {
   display: none;
 }
 
@@ -136,6 +199,18 @@ body.mobile-keyboard-visible .ai-voice-input-button:not([data-state="recording"]
   from {
     opacity: 0;
     transform: translateY(12px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes terminal-input-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
   }
 
   to {
@@ -964,7 +1039,7 @@ body.mobile-keyboard-visible .ai-voice-input-button:not([data-state="recording"]
   height: 15px;
 }
 
-.ai-voice-input-surface {
+.terminal-input-actions-surface {
   position: fixed;
   left: 50%;
   bottom: calc(var(--mobile-shortcuts-height) + var(--mobile-shortcuts-bottom-offset) + 10px);
@@ -975,11 +1050,11 @@ body.mobile-keyboard-visible .ai-voice-input-button:not([data-state="recording"]
   pointer-events: none;
 }
 
-.ai-voice-input-surface[hidden] {
+.terminal-input-actions-surface[hidden] {
   display: none;
 }
 
-.ai-voice-input-button {
+.terminal-input-action-button {
   display: grid;
   place-items: center;
   width: 42px;
@@ -995,12 +1070,12 @@ body.mobile-keyboard-visible .ai-voice-input-button:not([data-state="recording"]
   pointer-events: auto;
 }
 
-.ai-voice-input-button svg {
+.terminal-input-action-button svg {
   width: 18px;
   height: 18px;
 }
 
-.ai-voice-input-button[data-state="recording"] {
+.terminal-input-action-button[data-state="recording"] {
   border-color: var(--danger);
   background:
     var(--component-wash-hover),
@@ -1008,12 +1083,12 @@ body.mobile-keyboard-visible .ai-voice-input-button:not([data-state="recording"]
   color: var(--danger-fg);
 }
 
-.ai-voice-input-button[data-state="uploading"] {
+.terminal-input-action-button[data-state="uploading"] {
   border-color: var(--accent-border);
   color: var(--accent-fg);
 }
 
-.ai-voice-input-button:disabled {
+.terminal-input-action-button:disabled {
   opacity: 0.55;
   box-shadow: none;
 }
@@ -1078,8 +1153,8 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   display: none;
 }
 
-.webshell.settings-open .ai-voice-input-surface,
-.webshell.plugins-open .ai-voice-input-surface {
+.webshell.settings-open .terminal-input-actions-surface,
+.webshell.plugins-open .terminal-input-actions-surface {
   display: none;
 }
 

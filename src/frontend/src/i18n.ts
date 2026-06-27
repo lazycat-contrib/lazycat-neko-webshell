@@ -34,6 +34,7 @@ export type MessageKey =
   | "about.toolsValue"
   | "about.version"
   | "action.about"
+  | "action.back"
   | "action.aiChat"
   | "action.aiClear"
   | "action.aiConfigure"
@@ -135,11 +136,22 @@ export type MessageKey =
   | "action.sshConnect"
   | "action.closeTab"
   | "action.renameTab"
+  | "action.resizeDown"
+  | "action.resizeLeft"
+  | "action.resizeRight"
+  | "action.resizeUp"
   | "action.splitDown"
   | "action.splitLeft"
   | "action.splitRight"
   | "action.splitUp"
   | "action.switchInstance"
+  | "action.terminalInputActions"
+  | "action.terminalInputActionsHold"
+  | "action.terminalInputUploadFile"
+  | "action.terminalInputUploadFileCurrent"
+  | "action.terminalInputUploadFileTemporary"
+  | "action.terminalInputUploadImage"
+  | "action.terminalInputVoice"
   | "action.tunnelStart"
   | "action.tunnelStop"
   | "action.tunnelProfileAdd"
@@ -628,6 +640,10 @@ export type MessageKey =
   | "status.pluginLoadFailed"
   | "status.pluginSettingsSaved"
   | "status.pluginSettingsSaveFailed"
+  | "status.terminalInputFileUploadUnavailable"
+  | "status.terminalInputImageUploadUnavailable"
+  | "status.terminalInputNoImageFile"
+  | "status.terminalInputTemporaryPathsInserted"
   | "status.whiteNoiseAudioError"
   | "status.whiteNoiseLoaded"
   | "status.whiteNoiseInstallDone"
@@ -745,6 +761,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "about.toolsValue": "Files, themes, fonts, and chat",
     "about.version": "Version",
     "action.about": "About",
+    "action.back": "Back",
     "action.aiChat": "Chat",
     "action.aiClear": "Clear",
     "action.aiConfigure": "Configure",
@@ -846,11 +863,22 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.sshConnect": "Connect SSH",
     "action.closeTab": "Close tab",
     "action.renameTab": "Rename tab",
+    "action.resizeDown": "Resize down",
+    "action.resizeLeft": "Resize left",
+    "action.resizeRight": "Resize right",
+    "action.resizeUp": "Resize up",
     "action.splitDown": "Split down",
     "action.splitLeft": "Split left",
     "action.splitRight": "Split right",
     "action.splitUp": "Split up",
     "action.switchInstance": "Switch instance",
+    "action.terminalInputActions": "Terminal input actions",
+    "action.terminalInputActionsHold": "Tap for input actions, hold to speak",
+    "action.terminalInputUploadFile": "Upload file",
+    "action.terminalInputUploadFileCurrent": "Upload to current directory",
+    "action.terminalInputUploadFileTemporary": "Upload to temp directory",
+    "action.terminalInputUploadImage": "Upload image",
+    "action.terminalInputVoice": "Voice input",
     "action.tunnelStart": "Start tunnel",
     "action.tunnelStop": "Stop tunnel",
     "action.tunnelProfileAdd": "Add configuration",
@@ -1361,6 +1389,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginLoadFailed": "Tool load failed: {message}",
     "status.pluginSettingsSaved": "{name} settings saved",
     "status.pluginSettingsSaveFailed": "Settings save failed: {message}",
+    "status.terminalInputFileUploadUnavailable": "File upload is not available for this terminal.",
+    "status.terminalInputImageUploadUnavailable": "Image upload is not available for this terminal.",
+    "status.terminalInputNoImageFile": "Choose an image file to upload.",
+    "status.terminalInputTemporaryPathsInserted": "Temporary file path inserted",
     "status.whiteNoiseAudioError": "Cannot load sound: {name}",
     "status.whiteNoiseInstallDone": "Installed {count} sound(s)",
     "status.whiteNoiseInstallFailed": "Sound package install failed: {message}",
@@ -1477,6 +1509,7 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "about.toolsValue": "文件、主题、字体和 Chat",
     "about.version": "版本",
     "action.about": "关于",
+    "action.back": "返回",
     "action.aiChat": "对话",
     "action.aiClear": "清空",
     "action.aiConfigure": "配置",
@@ -1578,11 +1611,22 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "action.sshConnect": "连接 SSH",
     "action.closeTab": "关闭标签",
     "action.renameTab": "重命名标签",
+    "action.resizeDown": "向下调整",
+    "action.resizeLeft": "向左调整",
+    "action.resizeRight": "向右调整",
+    "action.resizeUp": "向上调整",
     "action.splitDown": "向下拆分",
     "action.splitLeft": "向左拆分",
     "action.splitRight": "向右拆分",
     "action.splitUp": "向上拆分",
     "action.switchInstance": "切换实例",
+    "action.terminalInputActions": "终端输入动作",
+    "action.terminalInputActionsHold": "点按选择输入动作，长按语音输入",
+    "action.terminalInputUploadFile": "上传文件",
+    "action.terminalInputUploadFileCurrent": "上传到当前目录",
+    "action.terminalInputUploadFileTemporary": "上传到临时目录",
+    "action.terminalInputUploadImage": "上传图片",
+    "action.terminalInputVoice": "语音输入",
     "action.tunnelStart": "启动 Tunnel",
     "action.tunnelStop": "停止 Tunnel",
     "action.tunnelProfileAdd": "添加配置",
@@ -2093,6 +2137,10 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "status.pluginLoadFailed": "工具加载失败：{message}",
     "status.pluginSettingsSaved": "{name} 设置已保存",
     "status.pluginSettingsSaveFailed": "设置保存失败：{message}",
+    "status.terminalInputFileUploadUnavailable": "当前终端不可上传文件。",
+    "status.terminalInputImageUploadUnavailable": "当前终端不可上传图片。",
+    "status.terminalInputNoImageFile": "请选择图片文件上传。",
+    "status.terminalInputTemporaryPathsInserted": "临时文件路径已输入",
     "status.whiteNoiseAudioError": "无法加载声音：{name}",
     "status.whiteNoiseInstallDone": "已安装 {count} 个声音",
     "status.whiteNoiseInstallFailed": "声音资源包安装失败：{message}",

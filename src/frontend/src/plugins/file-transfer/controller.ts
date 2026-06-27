@@ -4,6 +4,7 @@ import { base64ToBytes, metaString } from "../../json-meta";
 import { downloadPluginPayload, transferProgressText } from "../../plugin-utils";
 import {
   fileNameFromPath,
+  joinRemotePath,
   normalizeRemotePath,
   parentRemotePath,
   parseFileBrowserEntries,
@@ -30,6 +31,8 @@ type FileTransferControllerDeps = {
   onStatus: (message: string, tone?: Tone) => void;
   onRender: () => void;
 };
+
+const TEMP_UPLOAD_ROOT = "/tmp/lazycat-webshell-uploads";
 
 export function createFileTransferController(deps: FileTransferControllerDeps) {
   const store = new FileBrowserStore();
@@ -69,6 +72,44 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
     } finally {
       store.finishDirectoryLoadWithoutChanges();
       deps.onRender();
+    }
+  }
+
+  async function uploadFilesToDirectory(files: File[], directory: string, refreshDirectory: boolean): Promise<string[]> {
+    if (!deps.isEnabled() || !files.length) return [];
+    const sessionId = activeSessionId();
+    if (!sessionId) {
+      output(deps.tr("status.pluginFileNoSession"), "error");
+      return [];
+    }
+    const targetDirectory = normalizeRemotePath(directory);
+    if (!targetDirectory) {
+      output(deps.tr("validation.pluginPath"), "error");
+      return [];
+    }
+    output("");
+    const uploadedPaths: string[] = [];
+    try {
+      for (const file of files) {
+        const targetPath = uploadTargetPath(targetDirectory, file.name);
+        const done = await deps.actionClient.uploadFile(file, sessionId, targetPath, {
+          onProgress: (meta: ActionResponseMeta) => output(transferProgressText(meta), "neutral"),
+        });
+        const message = metaString(done.meta, "content") || transferProgressText(done.meta);
+        output(message, "ok");
+        uploadedPaths.push(targetPath);
+      }
+      if (refreshDirectory) {
+        await loadDirectory(targetDirectory);
+      }
+      deps.onStatus(deps.tr("status.pluginFileUploadDone", {
+        name: files.length === 1 ? files[0]?.name ?? "" : String(files.length),
+      }), "ok");
+      return uploadedPaths;
+    } catch (error) {
+      output(errorMessage(error), "error");
+      deps.onStatus(errorMessage(error), "error");
+      return [];
     }
   }
 
@@ -190,35 +231,85 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
       }
     },
     async upload(files: File[]) {
-      if (!deps.isEnabled() || !files.length) return;
-      const sessionId = activeSessionId();
-      if (!sessionId) {
-        output(deps.tr("status.pluginFileNoSession"), "error");
-        return;
-      }
       const directory = store.uploadDirectory();
       if (!directory) {
         output(deps.tr("validation.pluginPath"), "error");
         return;
       }
+      await uploadFilesToDirectory(files, directory, true);
+    },
+    async uploadToActivePane(files: File[]) {
+      const pane = deps.activePane();
+      const directory = normalizeRemotePath(pane?.workingDirectory || "/");
+      await uploadFilesToDirectory(files, directory, store.path === directory || store.loadedPath === directory);
+    },
+    async uploadToTemporaryDirectory(files: File[]): Promise<string[]> {
+      if (!files.length) return [];
+      const sessionId = activeSessionId();
+      if (!sessionId) {
+        output(deps.tr("status.pluginFileNoSession"), "error");
+        return [];
+      }
+      const directory = joinRemotePath(TEMP_UPLOAD_ROOT, newTempUploadId());
+      const paths = uniqueTempUploadPaths(directory, files);
       output("");
+      const uploadedPaths: string[] = [];
       try {
-        for (const file of files) {
-          const targetPath = uploadTargetPath(directory, file.name);
+        for (const [index, file] of files.entries()) {
+          const targetPath = paths[index] ?? uploadTargetPath(directory, file.name);
           const done = await deps.actionClient.uploadFile(file, sessionId, targetPath, {
             onProgress: (meta: ActionResponseMeta) => output(transferProgressText(meta), "neutral"),
           });
           const message = metaString(done.meta, "content") || transferProgressText(done.meta);
           output(message, "ok");
+          uploadedPaths.push(targetPath);
         }
-        await loadDirectory(directory);
         deps.onStatus(deps.tr("status.pluginFileUploadDone", {
           name: files.length === 1 ? files[0]?.name ?? "" : String(files.length),
         }), "ok");
+        return uploadedPaths;
       } catch (error) {
         output(errorMessage(error), "error");
         deps.onStatus(errorMessage(error), "error");
+        return [];
       }
     },
   };
+}
+
+function newTempUploadId(): string {
+  const id = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `upload-${id.replace(/[^A-Za-z0-9._-]/g, "") || Date.now()}`;
+}
+
+function uniqueTempUploadPaths(directory: string, files: File[]): string[] {
+  const used = new Set<string>();
+  return files.map((file, index) => {
+    const name = safeRemoteFileName(file.name, index);
+    const uniqueName = uniqueRemoteFileName(name, used);
+    used.add(uniqueName);
+    return uploadTargetPath(directory, uniqueName);
+  });
+}
+
+function safeRemoteFileName(name: string, index: number): string {
+  const cleaned = name
+    .trim()
+    .replace(/[\\/\0-\x1f\x7f]+/g, "_")
+    .replace(/^\.+$/, "")
+    || `upload-${index + 1}`;
+  return cleaned.slice(0, 180) || `upload-${index + 1}`;
+}
+
+function uniqueRemoteFileName(name: string, used: Set<string>): string {
+  if (!used.has(name)) return name;
+  const dotIndex = name.lastIndexOf(".");
+  const stem = dotIndex > 0 ? name.slice(0, dotIndex) : name;
+  const extension = dotIndex > 0 ? name.slice(dotIndex) : "";
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${stem}-${index}${extension}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `${stem}-${Date.now()}${extension}`;
 }

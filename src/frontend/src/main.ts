@@ -54,6 +54,7 @@ import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry"
 import { clamp, clampFloatingPoint, floatingViewportBounds } from "./floating-position";
 import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
 import {
+  HERDR_PANE_RESIZE_AMOUNT,
   herdrCurrentPaneId,
   herdrEventChangesDock,
   herdrEventSocketUrl,
@@ -61,9 +62,11 @@ import {
   herdrEventTone,
   herdrFocusedOrFirstPaneId,
   herdrPaneIdsFromListResult,
+  herdrResizeDirectionForPaneAction,
   herdrSplitDirection,
   selectHerdrTerminalPane,
 } from "./herdr-backend";
+import type { HerdrPaneResizeDirection } from "./herdr-backend";
 import {
   renderHerdrWorkspaceMenuView,
   syncHerdrTabButtons,
@@ -243,7 +246,7 @@ import {
 import { applyPaneMouseMode } from "./terminal-mouse-mode";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
 import { observeTerminalTitleChunk } from "./terminal-title";
-import { createVoiceInputController } from "./voice-input";
+import { createTerminalInputActionController } from "./terminal-input-actions";
 import {
   normalizeFontHintTarget,
   renderTerminalFontRenderingSettings,
@@ -531,7 +534,7 @@ const sshNewTabMenu = createSshNewTabMenuController({
 });
 
 const activeAIChatTerminalPane = () => activeHerdrTerminalPane() ?? activePane();
-const activeVoiceInputPane = () => activeHerdrTerminalPane() ?? activePane();
+const activeTerminalInputPane = () => activeHerdrTerminalPane() ?? activePane();
 const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
   pane: activeAIChatTerminalPane,
   tab: (pane) => pane ? tabForPane(pane) ?? activeTab() : activeTab(),
@@ -612,11 +615,17 @@ const whiteNoise = createWhiteNoiseController({
   onStatus: setPluginStatus,
   onRender: renderWhiteNoiseSurfaces,
 });
-const aiVoiceInput = createVoiceInputController({
-  root: elements.aiVoiceInputSurface,
+const terminalInputActions = createTerminalInputActionController({
+  root: elements.terminalInputActionsSurface,
   settings: () => settings,
-  activePane: activeVoiceInputPane,
+  activePane: activeTerminalInputPane,
   sendText: sendTextToPane,
+  uploadFilesToCurrentDirectory: (files) => fileTransfer.uploadToActivePane(files),
+  uploadFilesToTemporaryDirectory: (files) => fileTransfer.uploadToTemporaryDirectory(files),
+  uploadImages: uploadImageFilesToActivePane,
+  currentDirectoryFileUploadAvailable: () => terminalInputFileUploadAvailable(),
+  temporaryDirectoryFileUploadAvailable: () => terminalInputFileUploadAvailable(),
+  imageUploadAvailable: () => terminalInputImageUploadAvailable(),
   focusTerminal: focusPaneCanvas,
   tr,
   onStatus: setPluginStatus,
@@ -909,7 +918,7 @@ function bindSettings() {
       settings.aiVoiceInputEnabled = aiVoiceEnabled.checked;
       saveSettings();
       renderPluginSettings();
-      aiVoiceInput.render();
+      terminalInputActions.render();
       return;
     }
     const aiVoiceReplyEnabled = event.target instanceof Element
@@ -2380,8 +2389,11 @@ async function runPaneMenuAction(action: string) {
 async function runHerdrPaneMenuAction(action: string, pane: TerminalPane) {
   try {
     const placement = splitPlacementForPaneAction(action);
+    const resizeDirection = herdrResizeDirectionForPaneAction(action);
     if (placement) {
       await splitHerdrPane(pane, placement);
+    } else if (resizeDirection) {
+      await resizeHerdrPane(pane, resizeDirection);
     } else if (action === "copy-selection") {
       await copySelection(true, pane);
     } else if (action === "paste-clipboard") {
@@ -2429,6 +2441,27 @@ async function splitHerdrPane(pane: TerminalPane, placement: SplitPlacement): Pr
   }, {
     selector,
     id: `lazycat-webshell:pane-split-${direction}`,
+    mirrorNotification: false,
+  });
+  await refreshHerdrState(selector);
+  await syncHerdrEventBridge({ force: true });
+  refreshHerdrPaneTerminalAfterAction(pane);
+  return true;
+}
+
+async function resizeHerdrPane(
+  pane: TerminalPane,
+  direction: HerdrPaneResizeDirection,
+): Promise<boolean> {
+  const selector = await ensureHerdrSocketReady(pane);
+  const paneId = await currentHerdrPaneId(selector);
+  await runHerdrSocketRequest("pane.resize", {
+    pane_id: paneId,
+    direction,
+    amount: HERDR_PANE_RESIZE_AMOUNT,
+  }, {
+    selector,
+    id: `lazycat-webshell:pane-resize-${direction}`,
     mirrorNotification: false,
   });
   await refreshHerdrState(selector);
@@ -2697,7 +2730,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   renderMobileQuickInput();
   renderPlugins();
   renderNotifications();
-  aiVoiceInput.render();
+  terminalInputActions.render();
 
   for (const pane of allPanes()) {
     applyTerminalAppearance(pane, appearance, reportFontLoadError);
@@ -3131,7 +3164,7 @@ async function configureWhiteNoiseSetting(setting: string, checked: boolean) {
 function renderPlugins() {
   renderPluginSettings();
   renderPluginTools();
-  aiVoiceInput.render();
+  terminalInputActions.render();
 }
 
 function renderPluginSettings() {
@@ -3480,7 +3513,7 @@ function selectAiVoiceProviderProfile(profileId: string) {
   saveSettings();
   setPluginStatus(tr("status.aiVoiceConfigSaved"), "ok");
   renderPluginSettings();
-  aiVoiceInput.render();
+  terminalInputActions.render();
 }
 
 function removeAiVoiceProviderProfile(profileId: string) {
@@ -3489,7 +3522,7 @@ function removeAiVoiceProviderProfile(profileId: string) {
   saveSettings();
   setPluginStatus(tr("status.aiVoiceConfigRemoved"), "ok");
   renderPluginSettings();
-  aiVoiceInput.render();
+  terminalInputActions.render();
 }
 
 function aiVoiceReplyProviderProfileById(profileId: string | undefined): AiVoiceSpeechProviderProfile | undefined {
@@ -3729,7 +3762,7 @@ function saveAIConfigDialog(type: string) {
   aiConfigDialog = undefined;
   saveSettings();
   renderPlugins();
-  aiVoiceInput.render();
+  terminalInputActions.render();
 }
 
 function removeAiMcpServer(index: number) {
@@ -3751,6 +3784,19 @@ function aiDialogStringField(field: string): string {
 
 function pluginIsEnabled(pluginId: string): boolean {
   return plugins.find((plugin) => plugin.id === pluginId)?.enabled ?? false;
+}
+
+function terminalInputFileUploadAvailable(): boolean {
+  const pane = activeTerminalInputPane();
+  return Boolean(
+    pane?.sessionId
+    && enabledPluginTools(plugins, pane.sessionBackend).some((plugin) => plugin.id === FILE_TRANSFER_PLUGIN_ID),
+  );
+}
+
+function terminalInputImageUploadAvailable(): boolean {
+  const pane = activeTerminalInputPane();
+  return Boolean(pane?.sessionId && !pane.closing && !pane.exited);
 }
 
 function terminalTransferPlugin(): PluginDescriptor | undefined {
@@ -5599,7 +5645,7 @@ function renderTabs() {
     input.addEventListener("blur", () => void commitTabRename(input.dataset.renameTab ?? "", input.value));
   });
   if (result.rendered) updateIcons();
-  aiVoiceInput.render();
+  terminalInputActions.render();
   focusRenameInput();
 }
 
@@ -6299,6 +6345,22 @@ async function pasteImageFileIntoPane(pane: TerminalPane, file: File, report: bo
   } catch (error) {
     if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
     return false;
+  }
+}
+
+async function uploadImageFilesToActivePane(files: File[]): Promise<void> {
+  const pane = activeTerminalInputPane();
+  if (!pane) {
+    setPluginStatus(tr("status.aiNoTerminalTarget"), "error");
+    return;
+  }
+  const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+  if (!imageFiles.length) {
+    setPluginStatus(tr("status.terminalInputNoImageFile"), "error");
+    return;
+  }
+  for (const file of imageFiles) {
+    await pasteImageFileIntoPane(pane, file, true);
   }
 }
 

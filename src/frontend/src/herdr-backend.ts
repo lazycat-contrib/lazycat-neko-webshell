@@ -1,13 +1,32 @@
 import { boolField, recordField, stringField } from "./json-meta";
 import type { JsonRecord, SplitPlacement, TerminalPane, TerminalTab, Tone } from "./types";
 
+export type HerdrPaneResizeDirection = "left" | "right" | "up" | "down";
+
 const HERDR_SPLIT_DIRECTIONS: Partial<Record<SplitPlacement, "right" | "down">> = {
   right: "right",
   down: "down",
 };
 
+const HERDR_PANE_RESIZE_DIRECTIONS: Partial<Record<string, HerdrPaneResizeDirection>> = {
+  "resize-up": "up",
+  "resize-down": "down",
+  "resize-left": "left",
+  "resize-right": "right",
+};
+
+export const HERDR_PANE_RESIZE_AMOUNT = 0.05;
+
 export function herdrSplitDirection(placement: SplitPlacement): "right" | "down" | undefined {
   return HERDR_SPLIT_DIRECTIONS[placement];
+}
+
+export function herdrResizeDirectionForPaneAction(action: string): HerdrPaneResizeDirection | undefined {
+  return HERDR_PANE_RESIZE_DIRECTIONS[action];
+}
+
+export function isHerdrPaneResizeAction(action: string): boolean {
+  return action in HERDR_PANE_RESIZE_DIRECTIONS;
 }
 
 export function selectHerdrTerminalPane(
