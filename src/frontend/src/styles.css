@@ -2051,6 +2051,7 @@ textarea:focus-visible {
   box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
+.terminal-mount.restty-pane-root,
 .terminal-mount .restty-pane-root {
   background: var(--term-bg, #050a12);
   color: var(--term-fg, #edf2f7);
@@ -2058,11 +2059,13 @@ textarea:focus-visible {
   touch-action: pan-x pan-y;
 }
 
+.terminal-mount.terminal-observer-blur.restty-pane-root,
 .terminal-mount.terminal-observer-blur .restty-pane-root {
   filter: blur(10px) saturate(0.82);
   transform: translateZ(0);
 }
 
+.terminal-mount.has-terminal-background.restty-pane-root,
 .terminal-mount.has-terminal-background .restty-pane-root {
   position: relative;
   z-index: 1;
@@ -2070,6 +2073,8 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--term-bg, #050a12) 68%, transparent);
 }
 
+.terminal-mount.has-terminal-background.restty-pane-root .pane,
+.terminal-mount.has-terminal-background.restty-pane-root .pane-split,
 .terminal-mount.has-terminal-background .restty-pane-root .pane,
 .terminal-mount.has-terminal-background .restty-pane-root .pane-split {
   background: transparent;

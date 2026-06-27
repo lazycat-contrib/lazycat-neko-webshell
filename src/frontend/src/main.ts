@@ -263,6 +263,7 @@ import {
 } from "./terminal-viewport";
 import { createPaneTerminal } from "./terminal-options";
 import { createTerminalControlController } from "./terminal-control/controller";
+import { syncTerminalControlSettingsInputs } from "./terminal-control/settings-state";
 import { createAIContextPlugin, createTerminalShaderPlugin, TERMINAL_SHADER_PLUGIN_ID } from "./restty-plugins";
 import { normalizeTerminalShaderEffect, renderTerminalShaderSettings } from "./terminal-shaders";
 import {
@@ -1477,6 +1478,7 @@ function bindSettings() {
   elements.terminalSingleControllerMode.addEventListener("change", () => {
     settings.terminalSingleControllerMode = elements.terminalSingleControllerMode.checked;
     saveSettings();
+    syncTerminalControlSettingsInputs(elements, settings);
     terminalControl.render();
     reconnectPanesForTerminalControlMode();
   });
@@ -2742,8 +2744,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.lineHeightValue.textContent = settings.lineHeight.toFixed(2);
   elements.scrollbackLimit.value = String(settings.scrollbackLimit);
   elements.outputBufferLimit.value = String(settings.outputBufferLimit);
-  elements.terminalSingleControllerMode.checked = settings.terminalSingleControllerMode;
-  elements.terminalBlurObservers.checked = settings.terminalBlurObservers;
+  syncTerminalControlSettingsInputs(elements, settings);
   elements.terminalBackgroundEnabled.checked = settings.terminalBackgroundEnabled;
   elements.terminalBackgroundEnabled.disabled = !settings.terminalBackgroundUrl;
   elements.removeTerminalBackground.disabled = !settings.terminalBackgroundUrl;
