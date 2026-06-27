@@ -9,8 +9,6 @@ export type WebshellSocketUrlOptions = {
   after: number;
   outputLimit: number;
   controlMode?: "single";
-  actorId?: string;
-  actorKind?: string;
 };
 
 export function webshellTerminalSocketUrl(options: WebshellSocketUrlOptions): URL {
@@ -35,12 +33,6 @@ export function webshellTerminalSocketUrl(options: WebshellSocketUrlOptions): UR
   if (options.controlMode) {
     url.searchParams.set("control_mode", options.controlMode);
   }
-  if (options.actorId) {
-    url.searchParams.set("actor_id", options.actorId);
-  }
-  if (options.actorKind) {
-    url.searchParams.set("actor_kind", options.actorKind);
-  }
   return url;
 }
 
@@ -54,6 +46,10 @@ export function webshellOutputBufferMessage(limit: number): string {
 
 export function webshellRestartPolicyMessage(enabled: boolean): string {
   return JSON.stringify({ type: "restart-policy", enabled });
+}
+
+export function webshellTakeControlMessage(): string {
+  return JSON.stringify({ type: "take-control" });
 }
 
 export function webshellReleaseControlMessage(): string {

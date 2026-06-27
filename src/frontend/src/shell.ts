@@ -98,6 +98,7 @@ export type ShellElements = {
   outputBufferLimit: HTMLInputElement;
   terminalControlSettings: HTMLDivElement;
   terminalSingleControllerMode: HTMLInputElement;
+  terminalBlurObservers: HTMLInputElement;
   terminalBackgroundEnabled: HTMLInputElement;
   terminalBackgroundUpload: HTMLInputElement;
   removeTerminalBackground: HTMLButtonElement;
@@ -725,6 +726,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     outputBufferLimit: qs<HTMLInputElement>("#outputBufferLimit"),
     terminalControlSettings: qs<HTMLDivElement>("#terminalControlSettings"),
     terminalSingleControllerMode: qs<HTMLInputElement>("#terminalSingleControllerMode"),
+    terminalBlurObservers: qs<HTMLInputElement>("#terminalBlurObservers"),
     terminalBackgroundEnabled: qs<HTMLInputElement>("#terminalBackgroundEnabled"),
     terminalBackgroundUpload: qs<HTMLInputElement>("#terminalBackgroundUpload"),
     removeTerminalBackground: qs<HTMLButtonElement>("#removeTerminalBackground"),

@@ -370,7 +370,6 @@ mod tests {
             rows: DEFAULT_ROWS,
             command,
             args,
-            control: None,
             metadata: HashMap::from([
                 ("host".to_owned(), id.to_owned()),
                 ("restartable".to_owned(), "false".to_owned()),

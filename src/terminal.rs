@@ -26,9 +26,6 @@ use crate::agent_protocol::{
     write_agent_frame_async,
 };
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
-use crate::control_lease::{
-    ControlActor, actor_controls_session, release_actor_session_control, request_session_control,
-};
 use crate::lightos;
 use crate::proto::lazycat::webshell::v1::{AgentControlType, AgentFrame, AgentFrameType};
 use crate::ssh_backend;
@@ -57,8 +54,6 @@ pub struct TerminalQuery {
     pane_id: Option<String>,
     backend: Option<String>,
     control_mode: Option<String>,
-    actor_id: Option<String>,
-    actor_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +71,7 @@ enum TerminalClientMessage {
     RestartPolicy { enabled: bool },
     OutputBuffer { limit: usize },
     HistoryRecording { enabled: bool },
+    TakeControl,
     ReleaseControl,
     Close,
 }
@@ -130,6 +126,14 @@ enum TerminalServerMessage<'a> {
         pane_id: Option<&'a str>,
         last_sequence: u64,
     },
+    ControlState {
+        session_id: &'a str,
+        connection_id: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        controller_id: Option<&'a str>,
+        controller: bool,
+        connection_count: usize,
+    },
 }
 
 enum TerminalAttachTarget {
@@ -163,7 +167,7 @@ struct AgentTerminalAttachTarget {
 struct TerminalControlGuard {
     enabled: bool,
     session_id: String,
-    actor_id: String,
+    connection_id: String,
     controller_on_attach: bool,
 }
 
@@ -172,24 +176,54 @@ impl TerminalControlGuard {
         Self {
             enabled: false,
             session_id: String::new(),
-            actor_id: String::new(),
+            connection_id: String::new(),
             controller_on_attach: true,
         }
     }
 
     fn allows_write(&self, state: &AppState) -> bool {
-        !self.enabled || actor_controls_session(state, &self.session_id, &self.actor_id)
+        !self.enabled
+            || state
+                .terminal_control
+                .is_controller(&self.session_id, &self.connection_id)
     }
 
     fn allows_attach_resize(&self) -> bool {
         !self.enabled || self.controller_on_attach
     }
 
-    fn release_if_current(&self, state: &AppState) {
+    fn take_control(&self, state: &AppState) {
         if !self.enabled {
             return;
         }
-        let _ = release_actor_session_control(state, &self.session_id, &self.actor_id);
+        let _ = state
+            .terminal_control
+            .take_control(&self.session_id, &self.connection_id);
+    }
+
+    fn release_control(&self, state: &AppState) {
+        if !self.enabled {
+            return;
+        }
+        let _ = state
+            .terminal_control
+            .release_control(&self.session_id, &self.connection_id);
+    }
+
+    fn disconnect(&self, state: &AppState) {
+        if !self.enabled {
+            return;
+        }
+        let _ = state
+            .terminal_control
+            .disconnect(&self.session_id, &self.connection_id);
+    }
+
+    fn subscribe(&self, state: &AppState) -> Option<broadcast::Receiver<()>> {
+        if !self.enabled {
+            return None;
+        }
+        state.terminal_control.subscribe(&self.session_id)
     }
 }
 
@@ -329,6 +363,7 @@ async fn handle_terminal_socket(
         Err(err) => {
             if !allow_spawn && replay {
                 replay_stopped_terminal(&mut sender, &replay_context).await?;
+                control.disconnect(&state);
                 return Ok(());
             }
             if allow_spawn {
@@ -336,6 +371,7 @@ async fn handle_terminal_socket(
             }
             let message = err.to_string();
             let _ = send_terminal_error(&mut sender, message, true).await;
+            control.disconnect(&state);
             return Err(err);
         }
     };
@@ -352,6 +388,7 @@ async fn serve_open_terminal(
 ) -> anyhow::Result<()> {
     mark_session_status(&state, terminal.session_id(), "running");
     let mut event_rx = terminal.subscribe();
+    let mut control_rx = control.subscribe(&state);
     send_control(
         &mut sender,
         &TerminalServerMessage::Ready {
@@ -362,6 +399,7 @@ async fn serve_open_terminal(
         },
     )
     .await?;
+    send_terminal_control_state(&mut sender, &state, &control).await?;
 
     let mut last_sent_sequence = replay_context.replay_after;
     if replay_context.replay {
@@ -393,6 +431,14 @@ async fn serve_open_terminal(
                     break;
                 }
             }
+            update = recv_terminal_control_update(&mut control_rx) => {
+                match update {
+                    Some(Ok(())) | Some(Err(broadcast::error::RecvError::Lagged(_))) => {
+                        send_terminal_control_state(&mut sender, &state, &control).await?;
+                    }
+                    Some(Err(broadcast::error::RecvError::Closed)) | None => {}
+                }
+            }
             Some(message) = receiver.next() => {
                 if !handle_terminal_client_message(
                     &mut sender,
@@ -409,7 +455,7 @@ async fn serve_open_terminal(
         }
     }
 
-    control.release_if_current(&state);
+    control.disconnect(&state);
     Ok(())
 }
 
@@ -428,6 +474,7 @@ async fn serve_agent_terminal(
                 true,
             )
             .await?;
+            target.control.disconnect(&state);
             return Err(err);
         }
     };
@@ -443,17 +490,27 @@ async fn serve_agent_terminal(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|err| anyhow!("failed to start webshell agent attach: {err}"))?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow!("failed to open agent attach stdin"))?;
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow!("failed to open agent attach stdout"))?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            target.control.disconnect(&state);
+            return Err(anyhow!("failed to start webshell agent attach: {err}"));
+        }
+    };
+    let mut stdin = match child.stdin.take() {
+        Some(stdin) => stdin,
+        None => {
+            target.control.disconnect(&state);
+            return Err(anyhow!("failed to open agent attach stdin"));
+        }
+    };
+    let mut stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            target.control.disconnect(&state);
+            return Err(anyhow!("failed to open agent attach stdout"));
+        }
+    };
     let mut stderr = child.stderr.take();
     let stderr_task = tokio::spawn(async move {
         let mut text = String::new();
@@ -464,6 +521,8 @@ async fn serve_agent_terminal(
     });
     let mut wait_task = tokio::spawn(async move { child.wait().await });
     let mut pending_clipboard_image = None;
+    let mut control_rx = target.control.subscribe(&state);
+    send_terminal_control_state(&mut sender, &state, &target.control).await?;
 
     loop {
         tokio::select! {
@@ -480,6 +539,14 @@ async fn serve_agent_terminal(
                         }
                         break;
                     }
+                }
+            }
+            update = recv_terminal_control_update(&mut control_rx) => {
+                match update {
+                    Some(Ok(())) | Some(Err(broadcast::error::RecvError::Lagged(_))) => {
+                        send_terminal_control_state(&mut sender, &state, &target.control).await?;
+                    }
+                    Some(Err(broadcast::error::RecvError::Closed)) | None => {}
                 }
             }
             Some(message) = receiver.next() => {
@@ -516,7 +583,7 @@ async fn serve_agent_terminal(
     }
 
     let _ = write_agent_frame_async(&mut stdin, &detach_frame()).await;
-    target.control.release_if_current(&state);
+    target.control.disconnect(&state);
     Ok(())
 }
 
@@ -775,8 +842,14 @@ where
             write_agent_frame_async(stdin, &history_recording_frame(enabled)).await?;
             Ok(true)
         }
+        Ok(TerminalClientMessage::TakeControl) => {
+            target.control.take_control(state);
+            send_terminal_control_state(sender, state, &target.control).await?;
+            Ok(true)
+        }
         Ok(TerminalClientMessage::ReleaseControl) => {
-            target.control.release_if_current(state);
+            target.control.release_control(state);
+            send_terminal_control_state(sender, state, &target.control).await?;
             Ok(true)
         }
         Ok(
@@ -1166,8 +1239,14 @@ async fn handle_terminal_control_message(
             terminal.set_history_recording(enabled);
             Ok(true)
         }
+        Ok(TerminalClientMessage::TakeControl) => {
+            control.take_control(state);
+            send_terminal_control_state(sender, state, control).await?;
+            Ok(true)
+        }
         Ok(TerminalClientMessage::ReleaseControl) => {
-            control.release_if_current(state);
+            control.release_control(state);
+            send_terminal_control_state(sender, state, control).await?;
             Ok(true)
         }
         Ok(TerminalClientMessage::Close) => Ok(false),
@@ -1318,6 +1397,42 @@ fn parse_resize_payload(rest: &str) -> anyhow::Result<(u16, u16)> {
     Ok((cols, rows))
 }
 
+async fn recv_terminal_control_update(
+    receiver: &mut Option<broadcast::Receiver<()>>,
+) -> Option<Result<(), broadcast::error::RecvError>> {
+    match receiver {
+        Some(receiver) => Some(receiver.recv().await),
+        None => std::future::pending().await,
+    }
+}
+
+async fn send_terminal_control_state(
+    sender: &mut TerminalSender,
+    state: &AppState,
+    control: &TerminalControlGuard,
+) -> anyhow::Result<()> {
+    if !control.enabled {
+        return Ok(());
+    }
+    let Some(snapshot) = state
+        .terminal_control
+        .snapshot(&control.session_id, &control.connection_id)?
+    else {
+        return Ok(());
+    };
+    send_control(
+        sender,
+        &TerminalServerMessage::ControlState {
+            session_id: &snapshot.session_id,
+            connection_id: &snapshot.connection_id,
+            controller_id: snapshot.controller_id.as_deref(),
+            controller: snapshot.is_controller,
+            connection_count: snapshot.connection_count,
+        },
+    )
+    .await
+}
+
 async fn send_control(
     sender: &mut TerminalSender,
     message: &TerminalServerMessage<'_>,
@@ -1394,10 +1509,19 @@ async fn resolve_terminal_target(
             .or(query.pane_id.as_deref())
             .unwrap_or_default()
             .to_owned();
-        let control = terminal_control_guard(state, query, &session_id)?;
-        let (cols, rows) = agent_attach_size(state, query, &session_id, &control)?;
-        validate_size(cols, rows)?;
         let username = authorize_terminal_selector(selector, true).await?;
+        let control = terminal_control_guard(state, query, &session_id)?;
+        let (cols, rows) = match agent_attach_size(state, query, &session_id, &control) {
+            Ok(size) => size,
+            Err(err) => {
+                control.disconnect(state);
+                return Err(err);
+            }
+        };
+        if let Err(err) = validate_size(cols, rows) {
+            control.disconnect(state);
+            return Err(err);
+        }
         let output_limit = normalize_output_frame_limit(query.output_limit);
         return Ok(TerminalAttachTarget::Agent(AgentTerminalAttachTarget {
             selector: selector.to_owned(),
@@ -1418,22 +1542,35 @@ async fn resolve_terminal_target(
         .filter(|v| !v.is_empty())
     {
         let control = terminal_control_guard(state, query, session_id)?;
-        let (spec, status) = persisted_terminal_target(
+        let (spec, status) = match persisted_terminal_target(
             state,
             query,
             session_id,
             restart,
             control.allows_attach_resize(),
-        )?;
+        ) {
+            Ok(target) => target,
+            Err(err) => {
+                control.disconnect(state);
+                return Err(err);
+            }
+        };
         let allow_spawn =
             restart.unwrap_or(false) || matches!(status.as_str(), "running" | "starting");
         if ssh_backend::is_ssh_selector(&spec.selector) {
             if backend != "ssh" {
+                control.disconnect(state);
                 return Err(anyhow!(
                     "SSH profile terminal attach requires the ssh backend"
                 ));
             }
-            let spec = refresh_persisted_ssh_terminal_profile(state, session_id, spec)?;
+            let spec = match refresh_persisted_ssh_terminal_profile(state, session_id, spec) {
+                Ok(spec) => spec,
+                Err(err) => {
+                    control.disconnect(state);
+                    return Err(err);
+                }
+            };
             let output = state.output_buffer(session_id, spec.output_frame_limit);
             return Ok(TerminalAttachTarget::Managed(ManagedTerminalAttachTarget {
                 spec,
@@ -1447,10 +1584,24 @@ async fn resolve_terminal_target(
             }));
         }
         if backend == "ssh" {
+            control.disconnect(state);
             return Err(anyhow!("ssh backend requires an SSH profile selector"));
         }
-        let login_user = authorize_terminal_selector(&spec.selector, allow_spawn).await?;
-        let spec = refresh_persisted_terminal_login_user(state, session_id, spec, &login_user)?;
+        let login_user = match authorize_terminal_selector(&spec.selector, allow_spawn).await {
+            Ok(login_user) => login_user,
+            Err(err) => {
+                control.disconnect(state);
+                return Err(err);
+            }
+        };
+        let spec = match refresh_persisted_terminal_login_user(state, session_id, spec, &login_user)
+        {
+            Ok(spec) => spec,
+            Err(err) => {
+                control.disconnect(state);
+                return Err(err);
+            }
+        };
         let output = state.output_buffer(session_id, spec.output_frame_limit);
         return Ok(TerminalAttachTarget::Managed(ManagedTerminalAttachTarget {
             spec,
@@ -1482,21 +1633,12 @@ fn terminal_control_guard(
     if control_mode != Some("single") {
         return Ok(TerminalControlGuard::disabled());
     }
-    let actor = ControlActor::new(
-        query.actor_id.as_deref().unwrap_or("anonymous"),
-        query.actor_kind.as_deref().unwrap_or("human"),
-    )?;
-    let lease = request_session_control(state, session_id, &actor, "attach")?;
-    let controller_on_attach = lease
-        .actor_id
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|id| id == actor.actor_id);
+    let snapshot = state.terminal_control.connect(session_id)?;
     Ok(TerminalControlGuard {
         enabled: true,
         session_id: session_id.trim().to_owned(),
-        actor_id: actor.actor_id,
-        controller_on_attach,
+        connection_id: snapshot.connection_id,
+        controller_on_attach: snapshot.is_controller,
     })
 }
 

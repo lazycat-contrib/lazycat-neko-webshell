@@ -38,7 +38,6 @@ use crate::ssh_backend::{
 };
 use crate::state::AppState;
 use crate::terminal::{terminal_ws, upload_clipboard_image};
-use crate::terminal_control::post_release_actor_control;
 use crate::tty_init::{TtyInitMode, lightos_features_enabled, tty_init_mode};
 use crate::voice_input::{post_voice_speech, post_voice_transcription};
 use crate::workspace::{get_workspace, put_workspace_action};
@@ -76,10 +75,6 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/ai/voice/transcriptions", post(post_voice_transcription))
         .route("/api/ai/voice/speech", post(post_voice_speech))
         .route("/api/session-backends", get(get_session_backends))
-        .route(
-            "/api/terminal-control/release",
-            post(post_release_actor_control),
-        )
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
         .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
         .route("/api/herdr/socket", post(post_herdr_socket))

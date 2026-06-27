@@ -19,8 +19,9 @@ use crate::plugins::file_transfer::FileTransferUploadManager;
 use crate::plugins::lightos_port_forward::LightOsPortForwardManager;
 use crate::plugins::tunnel::TunnelManager;
 use crate::pomodoro::PomodoroManager;
-use crate::proto::lazycat::webshell::v1::{ControlLease, PluginDescriptor, Session};
+use crate::proto::lazycat::webshell::v1::{PluginDescriptor, Session};
 use crate::session_manager::SessionManager;
+use crate::terminal_control::TerminalControlHub;
 use crate::terminal_manager::{OutputBuffer, TerminalSpec};
 use crate::tty_init::terminal_session_bootstrap_script;
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
@@ -35,7 +36,7 @@ pub const METADATA_LOGIN_USER: &str = "loginUser";
 #[derive(Clone)]
 pub struct AppState {
     pub sessions: Arc<SessionManager>,
-    pub control_leases: Arc<RwLock<HashMap<String, ControlLease>>>,
+    pub terminal_control: Arc<TerminalControlHub>,
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
     pub lightos_port_forwards: Arc<LightOsPortForwardManager>,
     pub file_uploads: Arc<FileTransferUploadManager>,
@@ -88,7 +89,7 @@ impl AppState {
                 Arc::clone(&session_store),
                 Arc::clone(&database),
             )),
-            control_leases: Arc::new(RwLock::new(HashMap::new())),
+            terminal_control: Arc::new(TerminalControlHub::new()),
             plugins: Arc::new(RwLock::new(plugins)),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
             file_uploads: Arc::new(FileTransferUploadManager::default()),
@@ -145,7 +146,7 @@ impl AppState {
                 Arc::new(SessionStore::new(Arc::clone(&database))),
                 Arc::clone(&database),
             )),
-            control_leases: Arc::new(RwLock::new(HashMap::new())),
+            terminal_control: Arc::new(TerminalControlHub::new()),
             plugins: Arc::new(RwLock::new(HashMap::new())),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
             file_uploads: Arc::new(FileTransferUploadManager::default()),
@@ -194,8 +195,6 @@ pub struct SessionRecord {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub control: Option<ControlLease>,
-    #[serde(default)]
     pub metadata: HashMap<String, String>,
 }
 
@@ -222,10 +221,7 @@ impl SessionRecord {
             status: Some(self.status.clone()),
             cols: Some(i32::from(self.cols)),
             rows: Some(i32::from(self.rows)),
-            control: self
-                .control
-                .clone()
-                .map_or_else(MessageField::none, MessageField::some),
+            control: MessageField::none(),
             metadata: self.metadata.clone(),
             ..Default::default()
         }
@@ -1118,7 +1114,6 @@ mod tests {
             rows: DEFAULT_ROWS,
             command,
             args,
-            control: None,
             metadata: HashMap::from([("sessionBackend".to_owned(), "herdr".to_owned())]),
         };
 
@@ -1245,7 +1240,6 @@ mod tests {
             rows: DEFAULT_ROWS,
             command,
             args,
-            control: None,
             metadata,
         }
     }

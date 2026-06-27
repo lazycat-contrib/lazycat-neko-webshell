@@ -174,6 +174,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sshConfigBackupLimit: 10,
   defaultSessionBackend: "webshell",
   terminalSingleControllerMode: false,
+  terminalBlurObservers: false,
   herdrActiveBackgroundDark: "#06193a",
   herdrActiveBackgroundLight: "#f0f7ff",
   autoRestartSessions: false,

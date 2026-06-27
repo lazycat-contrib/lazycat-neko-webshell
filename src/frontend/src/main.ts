@@ -263,10 +263,6 @@ import {
 } from "./terminal-viewport";
 import { createPaneTerminal } from "./terminal-options";
 import { createTerminalControlController } from "./terminal-control/controller";
-import {
-  releaseControlledTerminalPanes,
-  shouldReleaseTerminalControlWhenHidden,
-} from "./terminal-control/lifecycle";
 import { createAIContextPlugin, createTerminalShaderPlugin, TERMINAL_SHADER_PLUGIN_ID } from "./restty-plugins";
 import { normalizeTerminalShaderEffect, renderTerminalShaderSettings } from "./terminal-shaders";
 import {
@@ -542,10 +538,10 @@ const sshNewTabMenu = createSshNewTabMenuController({
 });
 
 const terminalControl = createTerminalControlController({
-  capabilityClient,
   settings: () => settings,
   overlayRoot: elements.terminalControlOverlay,
   activePane,
+  panes: allPanes,
   tr,
   onStatus: setGlobalStatus,
   onRenderIcons: updateIcons,
@@ -1484,6 +1480,11 @@ function bindSettings() {
     terminalControl.render();
     reconnectPanesForTerminalControlMode();
   });
+  elements.terminalBlurObservers.addEventListener("change", () => {
+    settings.terminalBlurObservers = elements.terminalBlurObservers.checked;
+    saveSettings();
+    terminalControl.refreshPaneEffects();
+  });
   elements.terminalBackgroundEnabled.addEventListener("change", () => {
     settings.terminalBackgroundEnabled = elements.terminalBackgroundEnabled.checked;
     saveSettings();
@@ -1955,7 +1956,6 @@ function bindActions() {
 function bindLifecycleEvents() {
   window.addEventListener("pagehide", () => {
     flushHerdrOutputSequences();
-    releaseControlledTerminalPanes(allPanes(), terminalControl, { keepalive: true });
   });
   window.addEventListener("online", () => {
     void connectRestoredPanes();
@@ -1992,9 +1992,6 @@ function bindLifecycleEvents() {
   window.visualViewport?.addEventListener("scroll", handleViewportChange);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
-      if (shouldReleaseTerminalControlWhenHidden()) {
-        releaseControlledTerminalPanes(allPanes(), terminalControl, { keepalive: true });
-      }
       return;
     }
     handleViewportChange();
@@ -2746,6 +2743,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.scrollbackLimit.value = String(settings.scrollbackLimit);
   elements.outputBufferLimit.value = String(settings.outputBufferLimit);
   elements.terminalSingleControllerMode.checked = settings.terminalSingleControllerMode;
+  elements.terminalBlurObservers.checked = settings.terminalBlurObservers;
   elements.terminalBackgroundEnabled.checked = settings.terminalBackgroundEnabled;
   elements.terminalBackgroundEnabled.disabled = !settings.terminalBackgroundUrl;
   elements.removeTerminalBackground.disabled = !settings.terminalBackgroundUrl;
@@ -5180,6 +5178,7 @@ async function mountTerminal(pane: TerminalPane) {
     scheduleSizeRefresh: scheduleTerminalSizeRefresh,
   });
   schedulePaneViewportReset(pane);
+  terminalControl.refreshPaneEffects();
   applyTerminalAppearance(pane, currentAppearanceContext(), reportFontLoadError);
   if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
     focusPaneCanvas(pane);
@@ -5297,8 +5296,6 @@ async function openSocketPrepared(pane: TerminalPane) {
     after: replayAfter,
     outputLimit: settings.outputBufferLimit,
     controlMode: attach.controlMode,
-    actorId: attach.actorId,
-    actorKind: attach.actorKind,
   });
 
   pane.exited = false;
@@ -5328,6 +5325,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     terminalTransfer.resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
     flushPaneDecoder(pane);
+    terminalControl.forgetPane(pane);
     pane.transport?.notifyDisconnect();
     scheduleReconnect(pane);
   });
@@ -5535,6 +5533,8 @@ function handleServerText(pane: TerminalPane, text: string) {
       terminalControl.noteServerSize(pane, event.cols, event.rows);
     }
     setPaneStatus(pane, tr("status.shellReady"), "ok");
+  } else if (event.type === "control-state") {
+    terminalControl.noteControlState(pane, event);
   } else if (event.type === "replay-start") {
     if (!matchesPaneReplay(pane, event)) {
       clearReplayInputLock(pane);
@@ -6063,6 +6063,7 @@ function disposePaneLocal(pane: TerminalPane) {
   clearReplayInputLock(pane);
   flushPaneDecoder(pane);
   clearPendingInput(pane);
+  terminalControl.forgetPane(pane);
   disposePaneTerminalRuntime(pane);
   destroyPaneTransport(pane);
   pane.mount.remove();

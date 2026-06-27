@@ -336,6 +336,7 @@ export type Settings = {
   sshConfigBackupLimit: number;
   defaultSessionBackend: SessionBackendId;
   terminalSingleControllerMode: boolean;
+  terminalBlurObservers: boolean;
   herdrActiveBackgroundDark: string;
   herdrActiveBackgroundLight: string;
   autoRestartSessions: boolean;

@@ -391,6 +391,8 @@ export type MessageKey =
   | "setting.whiteNoiseAutoPlayOnSelect"
   | "setting.whiteNoiseAutoPlayOnSelectHelp"
   | "setting.terminalBackground"
+  | "setting.terminalBlurObservers"
+  | "setting.terminalBlurObserversHelp"
   | "setting.terminalSingleControllerMode"
   | "setting.terminalSingleControllerModeHelp"
   | "setting.terminalShaderHelp"
@@ -1160,6 +1162,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.whiteNoiseAutoPlayOnSelect": "Auto-play selected sounds",
     "setting.whiteNoiseAutoPlayOnSelectHelp": "When enabled, selecting a sound starts playback automatically. Clearing all selected sounds stops playback.",
     "setting.terminalBackground": "Use background image",
+    "setting.terminalBlurObservers": "Blur observer terminals",
+    "setting.terminalBlurObserversHelp": "When enabled, observer clients see blurred terminal output until they take control.",
     "setting.terminalSingleControllerMode": "Use single controller mode",
     "setting.terminalSingleControllerModeHelp": "When enabled, new clients observe the current terminal size until they explicitly take control.",
     "setting.terminalShaderHelp": "GPU effects are off by default. Enable them only when you want extra terminal feedback.",
@@ -1928,6 +1932,8 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "setting.whiteNoiseAutoPlayOnSelect": "选择后自动播放",
     "setting.whiteNoiseAutoPlayOnSelectHelp": "开启后，选中声音会自动开始播放；取消到 0 个声音时自动停止。",
     "setting.terminalBackground": "使用背景图片",
+    "setting.terminalBlurObservers": "模糊观察端终端",
+    "setting.terminalBlurObserversHelp": "开启后，观察端在接管前会看到模糊的终端输出。",
     "setting.terminalSingleControllerMode": "启用单主控模式",
     "setting.terminalSingleControllerModeHelp": "开启后，新接入客户端先观察当前终端尺寸，点击接管后才获得输入权并按本端尺寸 resize。",
     "setting.terminalShaderHelp": "GPU 特效默认关闭。需要额外的输入反馈时再开启。",

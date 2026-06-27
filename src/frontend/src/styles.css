@@ -2058,6 +2058,11 @@ textarea:focus-visible {
   touch-action: pan-x pan-y;
 }
 
+.terminal-mount.terminal-observer-blur .restty-pane-root {
+  filter: blur(10px) saturate(0.82);
+  transform: translateZ(0);
+}
+
 .terminal-mount.has-terminal-background .restty-pane-root {
   position: relative;
   z-index: 1;

@@ -1647,7 +1647,6 @@ fn session_record_with_metadata(
         rows: defaults.rows,
         command: defaults.command.clone(),
         args: defaults.args.clone(),
-        control: None,
         metadata,
     }
 }

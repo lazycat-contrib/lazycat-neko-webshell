@@ -1,20 +1,16 @@
-import type { Client } from "@connectrpc/connect";
-
-import type { ControlLease } from "../gen/lazycat/webshell/v1/capability_pb";
 import type { MessageKey } from "../i18n";
+import type { TerminalServerEvent } from "../terminal-protocol";
 import type { Settings, TerminalPane, Tone } from "../types";
-import { currentTerminalControlActor } from "./actor";
+import { webshellReleaseControlMessage, webshellTakeControlMessage } from "../webshell-backend";
 import { renderTerminalControlOverlayView } from "./overlay-view";
-
-type CapabilityClient = Client<typeof import("../gen/lazycat/webshell/v1/capability_pb").CapabilityService>;
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
 type TerminalControlControllerDeps = {
-  capabilityClient: CapabilityClient;
   settings: () => Settings;
   overlayRoot: HTMLElement;
   activePane: () => TerminalPane | undefined;
+  panes: () => TerminalPane[];
   tr: Translate;
   onStatus: (message: string, tone?: Tone) => void;
   onRenderIcons: () => void;
@@ -23,23 +19,24 @@ type TerminalControlControllerDeps = {
 
 type AttachControlParams = {
   controlMode?: "single";
-  actorId?: string;
-  actorKind?: string;
   cols: number;
   rows: number;
 };
 
 type ControlMode = "controller" | "observer" | "unknown";
 
-const CONTROL_SYNC_INTERVAL_MS = 1500;
-const RELEASE_RECLAIM_COOLDOWN_MS = 6000;
+type PaneControlState = {
+  sessionId: string;
+  connectionId: string;
+  controllerId: string;
+  connectionCount: number;
+  controller: boolean;
+};
+
+type ControlStateEvent = Extract<TerminalServerEvent, { type: "control-state" }>;
 
 export function createTerminalControlController(deps: TerminalControlControllerDeps) {
-  const leases = new Map<string, ControlLease>();
-  const releasedUntil = new Map<string, number>();
-  let syncInFlight = false;
-  let leaseMutationSerial = 0;
-  let leaseMutationsInFlight = 0;
+  const states = new Map<string, PaneControlState>();
 
   function enabled(): boolean {
     return deps.settings().terminalSingleControllerMode;
@@ -49,41 +46,20 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     return pane?.sessionId?.trim() ?? "";
   }
 
-  function leaseFor(pane: TerminalPane | undefined): ControlLease | undefined {
-    const sessionId = paneSessionId(pane);
-    return sessionId ? leases.get(sessionId) : undefined;
+  function paneStateKey(pane: TerminalPane | undefined): string {
+    return pane?.id ?? "";
   }
 
-  function activeLease(lease: ControlLease | undefined): lease is ControlLease {
-    const status = lease?.status?.trim().toLowerCase();
-    return Boolean(lease?.actorId?.trim() && (!status || status === "active"));
-  }
-
-  function rememberLease(sessionId: string | undefined, lease: ControlLease | undefined) {
-    if (!sessionId) return;
-    if (activeLease(lease)) {
-      leases.set(sessionId, lease);
-    } else {
-      leases.delete(sessionId);
-    }
-  }
-
-  function releaseCooldownActive(sessionId: string): boolean {
-    const until = releasedUntil.get(sessionId) ?? 0;
-    if (until > Date.now()) return true;
-    releasedUntil.delete(sessionId);
-    return false;
+  function stateFor(pane: TerminalPane | undefined): PaneControlState | undefined {
+    const key = paneStateKey(pane);
+    return key ? states.get(key) : undefined;
   }
 
   function modeFor(pane: TerminalPane | undefined): ControlMode {
     if (!enabled() || !paneSessionId(pane)) return "unknown";
-    const lease = leaseFor(pane);
-    if (!lease?.actorId) return "unknown";
-    return lease.actorId === currentTerminalControlActor().actorId ? "controller" : "observer";
-  }
-
-  function isController(pane: TerminalPane | undefined): boolean {
-    return modeFor(pane) === "controller";
+    const state = stateFor(pane);
+    if (!state) return "unknown";
+    return state.controller ? "controller" : "observer";
   }
 
   function localSize(pane: TerminalPane): { cols: number; rows: number } {
@@ -101,35 +77,20 @@ export function createTerminalControlController(deps: TerminalControlControllerD
   }
 
   async function prepareAttach(pane: TerminalPane): Promise<AttachControlParams> {
-    const local = localSize(pane);
+    const size = localSize(pane);
     if (!enabled() || !pane.sessionId) {
-      return { ...local };
+      return size;
     }
-    try {
-      await requestControlLease(pane, "attach");
-    } catch (error) {
-      console.debug("failed to prepare terminal control lease", error);
-      deps.onStatus(deps.tr("status.terminalControlSyncFailed"), "error");
-    }
-    render();
-    const isController = modeFor(pane) === "controller";
-    const size = isController ? local : serverSize(pane);
-    const actor = currentTerminalControlActor();
     return {
       controlMode: "single",
-      actorId: actor.actorId,
-      actorKind: actor.actorKind,
       ...size,
     };
   }
 
   async function takeControl(pane: TerminalPane | undefined = deps.activePane()): Promise<boolean> {
-    if (!enabled() || !pane?.sessionId) return false;
+    if (!enabled() || !pane?.sessionId || pane.socket?.readyState !== WebSocket.OPEN) return false;
     try {
-      releasedUntil.delete(pane.sessionId);
-      await requestControlLease(pane, "takeover");
-      render();
-      deps.onTakeControlResize(pane);
+      pane.socket.send(webshellTakeControlMessage());
       deps.onStatus(deps.tr("status.terminalControlTaken"), "ok");
       return true;
     } catch (error) {
@@ -140,81 +101,20 @@ export function createTerminalControlController(deps: TerminalControlControllerD
   }
 
   async function releaseControl(pane: TerminalPane | undefined = deps.activePane()): Promise<boolean> {
-    if (!enabled() || !pane?.sessionId) return false;
-    const lease = leaseFor(pane);
-    if (modeFor(pane) !== "controller" || !lease?.leaseId) return false;
-    releasedUntil.set(pane.sessionId, Date.now() + RELEASE_RECLAIM_COOLDOWN_MS);
-    const serial = ++leaseMutationSerial;
-    leaseMutationsInFlight += 1;
+    if (!enabled() || !pane?.sessionId || pane.socket?.readyState !== WebSocket.OPEN) return false;
     try {
-      await deps.capabilityClient.releaseControl({
-        sessionId: pane.sessionId,
-        leaseId: lease.leaseId,
-      }, { timeoutMs: 5000 });
-      if (serial === leaseMutationSerial) {
-        leases.delete(pane.sessionId);
-      }
-      render();
+      pane.socket.send(webshellReleaseControlMessage());
       deps.onStatus(deps.tr("status.terminalControlReleased"), "ok");
       return true;
     } catch (error) {
       console.debug("failed to release terminal control", error);
       deps.onStatus(deps.tr("status.terminalControlReleaseFailed"), "error");
-      window.setTimeout(() => void syncActiveLease(), 0);
       return false;
-    } finally {
-      leaseMutationsInFlight = Math.max(0, leaseMutationsInFlight - 1);
     }
   }
 
-  async function requestControlLease(pane: TerminalPane, reason: "attach" | "takeover") {
-    const actor = currentTerminalControlActor();
-    const serial = ++leaseMutationSerial;
-    leaseMutationsInFlight += 1;
-    try {
-      const response = await deps.capabilityClient.requestControl({
-        sessionId: pane.sessionId,
-        actorId: actor.actorId,
-        actorKind: actor.actorKind,
-        reason,
-      }, { timeoutMs: 5000 });
-      if (reason === "takeover" && response.lease?.actorId !== actor.actorId) {
-        throw new Error("takeover did not return a controller lease for this client");
-      }
-      if (serial === leaseMutationSerial) {
-        rememberLease(pane.sessionId, response.lease);
-      }
-      return response.lease;
-    } finally {
-      leaseMutationsInFlight = Math.max(0, leaseMutationsInFlight - 1);
-    }
-  }
-
-  async function syncActiveLease() {
-    const pane = deps.activePane();
-    if (!enabled() || !pane?.sessionId || syncInFlight || leaseMutationsInFlight > 0) return;
-    syncInFlight = true;
-    try {
-      const syncSerial = leaseMutationSerial;
-      const modeBefore = modeFor(pane);
-      const response = await deps.capabilityClient.listSessions({
-        selector: pane.selector,
-      }, { timeoutMs: 5000 });
-      if (syncSerial !== leaseMutationSerial || leaseMutationsInFlight > 0) return;
-      const session = response.sessions.find((item) => item.id === pane.sessionId);
-      rememberLease(pane.sessionId, session?.control);
-      if (!activeLease(session?.control) && !releaseCooldownActive(pane.sessionId)) {
-        await requestControlLease(pane, "attach");
-      }
-      if (modeBefore !== "controller" && modeFor(pane) === "controller") {
-        deps.onTakeControlResize(pane);
-      }
-    } catch (error) {
-      console.debug("failed to sync terminal control lease", error);
-    } finally {
-      syncInFlight = false;
-      render();
-    }
+  function isController(pane: TerminalPane | undefined): boolean {
+    return modeFor(pane) === "controller";
   }
 
   function canWrite(pane: TerminalPane | undefined, options: { report?: boolean } = {}): boolean {
@@ -226,9 +126,20 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     return false;
   }
 
-  function noteLease(sessionId: string | undefined, lease: ControlLease | undefined) {
-    rememberLease(sessionId, lease);
+  function noteControlState(pane: TerminalPane, event: ControlStateEvent) {
+    const previous = modeFor(pane);
+    states.set(pane.id, {
+      sessionId: event.session_id ?? pane.sessionId ?? "",
+      connectionId: event.connection_id ?? "",
+      controllerId: event.controller_id ?? "",
+      connectionCount: normalizeConnectionCount(event.connection_count),
+      controller: event.controller === true,
+    });
+    applyPaneObserverEffect(pane);
     render();
+    if (previous !== "controller" && modeFor(pane) === "controller") {
+      deps.onTakeControlResize(pane);
+    }
   }
 
   function noteServerSize(pane: TerminalPane, cols: number, rows: number) {
@@ -245,14 +156,23 @@ export function createTerminalControlController(deps: TerminalControlControllerD
 
   function handleRejectedWrite(pane: TerminalPane | undefined) {
     if (!enabled() || !pane?.sessionId) return;
-    const existing = leases.get(pane.sessionId);
-    if (existing?.actorId === currentTerminalControlActor().actorId) {
-      leases.delete(pane.sessionId);
+    const state = stateFor(pane);
+    if (state?.controller) {
+      states.set(pane.id, { ...state, controller: false });
     }
+    applyPaneObserverEffect(pane);
+    render();
+  }
+
+  function forgetPane(pane: TerminalPane | undefined) {
+    if (!pane) return;
+    states.delete(pane.id);
+    applyPaneObserverEffect(pane);
     render();
   }
 
   function render() {
+    refreshPaneEffects();
     const pane = deps.activePane();
     const mode = modeFor(pane);
     const active = Boolean(enabled() && pane && mode !== "unknown");
@@ -270,12 +190,26 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     deps.onRenderIcons();
   }
 
+  function refreshPaneEffects() {
+    for (const pane of deps.panes()) {
+      applyPaneObserverEffect(pane);
+    }
+  }
+
+  function applyPaneObserverEffect(pane: TerminalPane) {
+    const shouldBlur = Boolean(
+      enabled()
+        && deps.settings().terminalBlurObservers
+        && modeFor(pane) === "observer",
+    );
+    pane.mount.classList.toggle("terminal-observer-blur", shouldBlur);
+  }
+
   function overlayDetail(pane: TerminalPane, mode: ControlMode): string {
     const size = mode === "controller" ? localSize(pane) : serverSize(pane);
-    const label = mode === "controller"
+    return mode === "controller"
       ? deps.tr("terminalControl.localSize", { cols: size.cols, rows: size.rows })
       : deps.tr("terminalControl.serverSize", { cols: size.cols, rows: size.rows });
-    return label;
   }
 
   deps.overlayRoot.addEventListener("click", (event) => {
@@ -296,10 +230,6 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     void releaseControl();
   });
 
-  window.setInterval(() => {
-    void syncActiveLease();
-  }, CONTROL_SYNC_INTERVAL_MS);
-
   return {
     enabled,
     prepareAttach,
@@ -307,10 +237,18 @@ export function createTerminalControlController(deps: TerminalControlControllerD
     releaseControl,
     isController,
     canWrite,
-    noteLease,
+    noteControlState,
     noteServerSize,
     noteLocalSize,
     handleRejectedWrite,
+    forgetPane,
     render,
+    refreshPaneEffects,
   };
+}
+
+function normalizeConnectionCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : 0;
 }

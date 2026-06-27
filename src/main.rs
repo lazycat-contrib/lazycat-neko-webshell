@@ -16,7 +16,6 @@ mod ai_chat;
 mod assets;
 mod backgrounds;
 mod config;
-mod control_lease;
 mod database;
 mod embedded_frontend;
 mod fonts;

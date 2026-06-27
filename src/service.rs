@@ -14,10 +14,6 @@ use crate::config::{
     APP_ID, APP_NAME, DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, LIGHTOSCTL, MAX_COLS,
     MAX_ROWS,
 };
-use crate::control_lease::{
-    ControlActor, apply_runtime_control_to_session, release_session_control,
-    request_session_control,
-};
 use crate::database::{TunnelProviderProfile, TunnelProviderProfileUpsert};
 use crate::lightos;
 use crate::plugins::{file_transfer, lightos_port_forward, tunnel};
@@ -456,7 +452,6 @@ fn agent_fallback_session_record(
         rows: DEFAULT_ROWS,
         command: "/bin/sh".to_owned(),
         args: Vec::new(),
-        control: None,
         metadata,
     }
 }
@@ -720,12 +715,6 @@ impl CapabilityService for CapabilityServiceImpl {
         } else {
             None
         };
-        let runtime_leases = self
-            .state
-            .control_leases
-            .read()
-            .map_err(|_| ConnectError::internal("control lease store lock poisoned"))?
-            .clone();
         let sessions = self.sessions_read()?;
         let sessions = sessions
             .values()
@@ -736,7 +725,6 @@ impl CapabilityService for CapabilityServiceImpl {
                     .is_none_or(|selectors| selectors.contains(&session.selector))
             })
             .map(SessionRecord::to_proto)
-            .map(|session| apply_runtime_control_to_session(session, &runtime_leases))
             .collect();
         ConnectResponse::ok(ListSessionsResponse {
             sessions,
@@ -891,23 +879,10 @@ impl CapabilityService for CapabilityServiceImpl {
         _ctx: RequestContext,
         request: OwnedRequestControlRequestView,
     ) -> ServiceResult<RequestControlResponse> {
-        let session_id = required_field(request.session_id, "session_id")?;
-        let actor = ControlActor::new(
-            request.actor_id.unwrap_or("anonymous"),
-            request.actor_kind.unwrap_or("human"),
-        )
-        .map_err(|err| ConnectError::invalid_argument(err.to_string()))?;
-        let lease = request_session_control(
-            &self.state,
-            session_id,
-            &actor,
-            request.reason.unwrap_or("attach"),
-        )
-        .map_err(|err| ConnectError::failed_precondition(err.to_string()))?;
-        ConnectResponse::ok(RequestControlResponse {
-            lease: MessageField::some(lease),
-            ..Default::default()
-        })
+        let _ = request;
+        Err(ConnectError::unimplemented(
+            "terminal control is managed by websocket connections",
+        ))
     }
 
     async fn release_control(
@@ -915,15 +890,10 @@ impl CapabilityService for CapabilityServiceImpl {
         _ctx: RequestContext,
         request: OwnedReleaseControlRequestView,
     ) -> ServiceResult<ReleaseControlResponse> {
-        let session_id = required_field(request.session_id, "session_id")?;
-        let lease_id = required_field(request.lease_id, "lease_id")?;
-        release_session_control(&self.state, session_id, lease_id)
-            .map_err(|err| ConnectError::failed_precondition(err.to_string()))?;
-        ConnectResponse::ok(ReleaseControlResponse {
-            session_id: Some(session_id.to_owned()),
-            status: Some("released".to_owned()),
-            ..Default::default()
-        })
+        let _ = request;
+        Err(ConnectError::unimplemented(
+            "terminal control is managed by websocket connections",
+        ))
     }
 }
 
@@ -949,15 +919,6 @@ fn provider_descriptor() -> ProviderDescriptor {
                 description: Some("Opaque plugin descriptors and payloads for future file transfer, remote shell, AI control, and human operation extensions".to_owned()),
                 transports: vec!["connect".to_owned()],
                 schema_json: Some(r#"{"pluginId":"string","operation":"string","contentType":"string","payload":"bytes","metadata":"map<string,string>"}"#.to_owned()),
-                ..Default::default()
-            },
-            Capability {
-                id: Some("control.lease".to_owned()),
-                kind: Some("control".to_owned()),
-                display_name: Some("Control leases".to_owned()),
-                description: Some("Coordinate human, AI, and system actors without encoding actor-specific behavior in the terminal protocol".to_owned()),
-                transports: vec!["connect".to_owned()],
-                schema_json: Some(r#"{"actorId":"string","actorKind":"human|ai|system|custom","status":"active|released"}"#.to_owned()),
                 ..Default::default()
             },
         ],
@@ -1534,7 +1495,6 @@ mod tests {
             rows: DEFAULT_ROWS,
             command: "/bin/sh".to_owned(),
             args: vec!["-lc".to_owned(), "true".to_owned()],
-            control: None,
             metadata,
         }
     }
