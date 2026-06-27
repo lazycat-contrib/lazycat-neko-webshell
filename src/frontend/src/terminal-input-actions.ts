@@ -142,10 +142,10 @@ export function createTerminalInputActionController(options: {
           </button>
         </div>
         <button class="terminal-input-action-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeAttr(options.tr("action.terminalInputActions"))}" title="${escapeAttr(options.tr("action.terminalInputActions"))}">
-          <i data-lucide="circle-plus"></i>
+          <i data-lucide="plus"></i>
         </button>
-        <input class="terminal-input-file-picker" data-terminal-input-file type="file" multiple hidden />
-        <input class="terminal-input-file-picker" data-terminal-input-image type="file" accept="image/*" multiple hidden />
+        <input class="terminal-input-file-picker" data-terminal-input-file type="file" multiple aria-hidden="true" tabindex="-1" />
+        <input class="terminal-input-file-picker" data-terminal-input-image type="file" accept="image/*" multiple aria-hidden="true" tabindex="-1" />
       `;
       bindSurfaceEvents();
     }
@@ -233,10 +233,11 @@ export function createTerminalInputActionController(options: {
     });
 
     imageButton?.addEventListener("click", () => {
+      if (imageButton.disabled) return;
+      openFilePicker(imageInput);
       menuOpen = false;
       menuMode = "main";
       render();
-      imageInput?.click();
     });
     fileButton?.addEventListener("click", () => {
       menuMode = "file-target";
@@ -247,18 +248,20 @@ export function createTerminalInputActionController(options: {
       render();
     });
     currentFileButton?.addEventListener("click", () => {
+      if (currentFileButton.disabled) return;
+      openFilePicker(fileInput);
       menuOpen = false;
       menuMode = "main";
       pendingFileTarget = "current";
       render();
-      fileInput?.click();
     });
     temporaryFileButton?.addEventListener("click", () => {
+      if (temporaryFileButton.disabled) return;
+      openFilePicker(fileInput);
       menuOpen = false;
       menuMode = "main";
       pendingFileTarget = "temporary";
       render();
-      fileInput?.click();
     });
     imageInput?.addEventListener("change", () => {
       const files = Array.from(imageInput.files ?? []);
@@ -358,6 +361,12 @@ export function createTerminalInputActionController(options: {
     menuOpen = !menuOpen;
     if (!menuOpen) menuMode = "main";
     render();
+  }
+
+  function openFilePicker(input: HTMLInputElement | null) {
+    if (!input) return;
+    input.value = "";
+    input.click();
   }
 
   function beginPrimaryHold() {

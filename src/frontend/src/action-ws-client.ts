@@ -25,8 +25,6 @@ type ActionResponse = {
   meta?: ActionResponseMeta;
 };
 
-const UPLOAD_CHUNK_BYTES = 64 * 1024;
-
 export class TerminalActionWSClient {
   private ws?: WebSocket;
   private openPromise?: Promise<void>;
@@ -44,60 +42,6 @@ export class TerminalActionWSClient {
     await this.ensureOpen();
     const done = this.register(id, callbacks);
     this.sendMessage({ id, type, action, payload });
-    return done;
-  }
-
-  async uploadFile(
-    file: File,
-    sessionId: string,
-    remotePath: string,
-    callbacks: ActionCallbacks = {},
-  ): Promise<ActionDone> {
-    const id = newActionId();
-    await this.ensureOpen();
-    const done = this.register(id, callbacks);
-    this.sendMessage({
-      id,
-      type: "transfer",
-      action: "upload_start",
-      payload: {
-        name: file.name,
-        size: file.size,
-        sessionId,
-        remotePath,
-      },
-    });
-
-    if (file.size === 0) {
-      this.sendMessage({
-        id,
-        type: "transfer",
-        action: "upload_chunk",
-        payload: {
-          data: "",
-          offset: 0,
-          final: true,
-        },
-      });
-      return done;
-    }
-
-    let offset = 0;
-    while (offset < file.size) {
-      const nextOffset = Math.min(offset + UPLOAD_CHUNK_BYTES, file.size);
-      const bytes = new Uint8Array(await file.slice(offset, nextOffset).arrayBuffer());
-      this.sendMessage({
-        id,
-        type: "transfer",
-        action: "upload_chunk",
-        payload: {
-          data: bytesToBase64(bytes),
-          offset,
-          final: nextOffset >= file.size,
-        },
-      });
-      offset = nextOffset;
-    }
     return done;
   }
 
@@ -184,14 +128,6 @@ export class TerminalActionWSClient {
     }
     this.pending.clear();
   }
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(binary);
 }
 
 function newActionId(): string {

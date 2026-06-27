@@ -1,4 +1,3 @@
-import type { ActionResponseMeta } from "./action-ws-client";
 import type { PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
 import type { MessageKey } from "./i18n";
 import { metaBoolean, metaNumber, metaString } from "./json-meta";
@@ -27,7 +26,7 @@ export function downloadPluginPayload(payload: Uint8Array, name: string, content
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function transferProgressText(meta: ActionResponseMeta | undefined): string {
+export function transferProgressText(meta: Record<string, unknown> | undefined): string {
   const name = metaString(meta, "name");
   const percent = metaNumber(meta, "percent");
   const done = metaBoolean(meta, "done");

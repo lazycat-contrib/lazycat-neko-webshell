@@ -64,6 +64,16 @@ export function herdrCurrentPaneId(result: JsonRecord | undefined): string {
   return stringField(recordField(result, "pane"), "pane_id");
 }
 
+export function herdrProcessWorkingDirectory(result: JsonRecord | undefined): string {
+  const process = recordField(result, "process")
+    ?? recordField(result, "process_info")
+    ?? recordField(result, "info")
+    ?? result;
+  return stringField(process, "cwd")
+    || stringField(process, "current_working_directory")
+    || stringField(process, "working_directory");
+}
+
 export function herdrFocusedOrFirstPaneId(result: JsonRecord | undefined): string {
   const panes = Array.isArray(result?.panes) ? result.panes : [];
   const records = panes

@@ -15,6 +15,7 @@ use crate::database::{
     AppDatabase, KV_KEY_PLUGINS, KV_KEY_SESSIONS, KV_NAMESPACE_STATE, database_path,
 };
 use crate::notifications::NotificationHub;
+use crate::plugins::file_transfer::FileTransferUploadManager;
 use crate::plugins::lightos_port_forward::LightOsPortForwardManager;
 use crate::plugins::tunnel::TunnelManager;
 use crate::pomodoro::PomodoroManager;
@@ -36,6 +37,7 @@ pub struct AppState {
     pub sessions: Arc<SessionManager>,
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
     pub lightos_port_forwards: Arc<LightOsPortForwardManager>,
+    pub file_uploads: Arc<FileTransferUploadManager>,
     pub public_tunnels: Arc<TunnelManager>,
     pub notifications: Arc<NotificationHub>,
     pub pomodoro: Arc<PomodoroManager>,
@@ -87,6 +89,7 @@ impl AppState {
             )),
             plugins: Arc::new(RwLock::new(plugins)),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
+            file_uploads: Arc::new(FileTransferUploadManager::default()),
             public_tunnels: Arc::new(TunnelManager::default()),
             notifications,
             pomodoro,
@@ -142,6 +145,7 @@ impl AppState {
             )),
             plugins: Arc::new(RwLock::new(HashMap::new())),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
+            file_uploads: Arc::new(FileTransferUploadManager::default()),
             public_tunnels: Arc::new(TunnelManager::default()),
             notifications,
             pomodoro,
@@ -352,8 +356,14 @@ impl PluginStore {
                 warn!(plugin_id = %id, "ignored persisted settings for unknown plugin");
                 continue;
             };
+            let builtin_metadata = plugin.metadata.clone();
             plugin.enabled = record.enabled;
             plugin.metadata.extend(record.metadata);
+            for key in builtin_owned_metadata_keys(id) {
+                if let Some(value) = builtin_metadata.get(*key) {
+                    plugin.metadata.insert((*key).to_owned(), value.to_owned());
+                }
+            }
         }
         Ok(plugins)
     }
@@ -377,6 +387,10 @@ impl PluginStore {
         self.database
             .store_kv(KV_NAMESPACE_STATE, KV_KEY_PLUGINS, &bytes)
     }
+}
+
+fn builtin_owned_metadata_keys(_plugin_id: &str) -> &'static [&'static str] {
+    &["builtin", "runtime", "backends", "requiresRuntime"]
 }
 
 pub fn mark_session_status(state: &AppState, session_id: &str, status: &str) {
@@ -808,13 +822,13 @@ fn builtin_plugins() -> HashMap<String, PluginRecord> {
                 "application/json".to_owned(),
                 "application/octet-stream".to_owned(),
             ],
-            input_schema_json: r#"{"sessionId":"string","operation":"list|stat|read|download|write|upload","metadata":{"path":"string"},"payload":"bytes for write/upload"}"#.to_owned(),
+            input_schema_json: r#"{"sessionId":"string","operation":"list|stat|read|download|write|upload|upload_begin|upload_chunk|upload_finish|upload_cancel","metadata":{"path":"string","uploadId":"string for chunk/finish/cancel","offset":"number for chunk","size":"number for begin"},"payload":"bytes for write/upload/upload_chunk"}"#.to_owned(),
             output_schema_json: r#"{"status":"complete","contentType":"text/plain|application/json|application/octet-stream","payload":"file bytes, directory listing, stat output, or write summary"}"#.to_owned(),
             enabled: true,
             metadata: HashMap::from([
                 ("builtin".to_owned(), "true".to_owned()),
                 ("runtime".to_owned(), "target-shell".to_owned()),
-                ("backends".to_owned(), "webshell,ssh".to_owned()),
+                ("backends".to_owned(), "webshell,herdr,zellij,ssh".to_owned()),
             ]),
         },
         PluginRecord {
@@ -1139,6 +1153,12 @@ mod tests {
         control
             .metadata
             .insert("operator".to_owned(), "codex".to_owned());
+        let file_transfer = plugins
+            .get_mut("file-transfer")
+            .expect("file-transfer builtin plugin");
+        file_transfer
+            .metadata
+            .insert("backends".to_owned(), "webshell,ssh".to_owned());
 
         store.save(&plugins).unwrap();
         let loaded = store.load().unwrap();
@@ -1146,6 +1166,11 @@ mod tests {
         assert_eq!(
             loaded.get("file-transfer").map(|plugin| plugin.enabled),
             Some(true)
+        );
+        let file_transfer = loaded.get("file-transfer").expect("file-transfer loaded");
+        assert_eq!(
+            file_transfer.metadata.get("backends").map(String::as_str),
+            Some("webshell,herdr,zellij,ssh")
         );
         let control = loaded.get("ai-chat").expect("ai-chat loaded");
         assert!(control.enabled);
@@ -1197,7 +1222,7 @@ mod tests {
         );
         assert_eq!(
             plugin.metadata.get("backends").map(String::as_str),
-            Some("webshell,ssh")
+            Some("webshell,herdr,zellij,ssh")
         );
     }
 

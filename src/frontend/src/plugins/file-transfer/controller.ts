@@ -1,6 +1,7 @@
-import type { ActionResponseMeta, TerminalActionWSClient } from "../../action-ws-client";
+import type { Client } from "@connectrpc/connect";
+
 import type { MessageKey } from "../../i18n";
-import { base64ToBytes, metaString } from "../../json-meta";
+import { metaString } from "../../json-meta";
 import { downloadPluginPayload, transferProgressText } from "../../plugin-utils";
 import {
   fileNameFromPath,
@@ -12,9 +13,15 @@ import {
 } from "../../remote-files";
 import type { Tone } from "../../types";
 import { errorMessage } from "../../utils";
+import {
+  invokeFileTransferWithConnect,
+  responsePayloadText,
+  uploadFileWithConnect,
+} from "./connect-upload";
 import { FileBrowserStore } from "./store";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
+type CapabilityClient = Client<typeof import("../../gen/lazycat/webshell/v1/capability_pb").CapabilityService>;
 
 type FileTransferPane = {
   id: string;
@@ -25,7 +32,7 @@ type FileTransferPane = {
 type FileTransferControllerDeps = {
   isEnabled: () => boolean;
   activePane: () => FileTransferPane | undefined;
-  actionClient: Pick<TerminalActionWSClient, "send" | "uploadFile">;
+  capabilityClient: CapabilityClient;
   tr: Translate;
   onOutput: (message: string, tone?: Tone) => void;
   onStatus: (message: string, tone?: Tone) => void;
@@ -45,6 +52,13 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
     deps.onOutput(message, tone);
   }
 
+  function reportProgress(meta: Record<string, unknown> | undefined) {
+    const message = transferProgressText(meta);
+    if (!message) return;
+    output(message, "neutral");
+    deps.onStatus(message, "neutral");
+  }
+
   async function loadDirectory(path: string) {
     if (!deps.isEnabled()) return;
     const sessionId = activeSessionId();
@@ -55,15 +69,10 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
     const directory = store.beginDirectoryLoad(path);
     deps.onRender();
     try {
-      let stream = "";
-      await deps.actionClient.send("transfer", "list", {
-        sessionId,
+      const response = await invokeFileTransferWithConnect(deps.capabilityClient, sessionId, "list", {
         path: directory,
-      }, {
-        onStream: (chunk) => {
-          stream += chunk;
-        },
       });
+      const stream = responsePayloadText(response);
       store.finishDirectoryLoad(directory, parseFileBrowserEntries(directory, stream));
       output("");
     } catch (error) {
@@ -92,8 +101,8 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
     try {
       for (const file of files) {
         const targetPath = uploadTargetPath(targetDirectory, file.name);
-        const done = await deps.actionClient.uploadFile(file, sessionId, targetPath, {
-          onProgress: (meta: ActionResponseMeta) => output(transferProgressText(meta), "neutral"),
+        const done = await uploadFileWithConnect(deps.capabilityClient, file, sessionId, targetPath, {
+          onProgress: reportProgress,
         });
         const message = metaString(done.meta, "content") || transferProgressText(done.meta);
         output(message, "ok");
@@ -200,29 +209,28 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
       }
       output("");
       try {
-        let stream = "";
-        const done = await deps.actionClient.send("transfer", action, {
+        const response = await invokeFileTransferWithConnect(
+          deps.capabilityClient,
           sessionId,
-          path,
-        }, {
-          onStream: (chunk) => {
-            stream += chunk;
-            output(stream, "ok");
-          },
-          onProgress: (meta: ActionResponseMeta) => output(transferProgressText(meta), "neutral"),
-        });
+          action,
+          { path },
+          new Uint8Array(),
+          action === "download" ? "application/octet-stream" : "text/plain",
+        );
         if (action === "download") {
-          const data = metaString(done.meta, "data");
-          if (data) {
-            downloadPluginPayload(
-              base64ToBytes(data),
-              metaString(done.meta, "name") || fileNameFromPath(path),
-              metaString(done.meta, "contentType") || "application/octet-stream",
-            );
+          downloadPluginPayload(
+            response.payload,
+            metaString(response.meta, "name") || fileNameFromPath(path),
+            response.contentType || "application/octet-stream",
+          );
+        } else {
+          const stream = responsePayloadText(response);
+          if (stream) {
+            output(stream, "ok");
+          } else {
+            const content = metaString(response.meta, "content");
+            if (content) output(content, "ok");
           }
-        } else if (!stream) {
-          const content = metaString(done.meta, "content");
-          if (content) output(content, "ok");
         }
         deps.onStatus(deps.tr("status.pluginFileDone", { operation: action }), "ok");
       } catch (error) {
@@ -240,8 +248,16 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
     },
     async uploadToActivePane(files: File[]) {
       const pane = deps.activePane();
-      const directory = normalizeRemotePath(pane?.workingDirectory || "/");
+      const directory = normalizeRemotePath(pane?.workingDirectory || "~");
       await uploadFilesToDirectory(files, directory, store.path === directory || store.loadedPath === directory);
+    },
+    async uploadToDirectory(files: File[], directory: string) {
+      const targetDirectory = normalizeRemotePath(directory);
+      await uploadFilesToDirectory(
+        files,
+        targetDirectory,
+        store.path === targetDirectory || store.loadedPath === targetDirectory,
+      );
     },
     async uploadToTemporaryDirectory(files: File[]): Promise<string[]> {
       if (!files.length) return [];
@@ -257,8 +273,8 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
       try {
         for (const [index, file] of files.entries()) {
           const targetPath = paths[index] ?? uploadTargetPath(directory, file.name);
-          const done = await deps.actionClient.uploadFile(file, sessionId, targetPath, {
-            onProgress: (meta: ActionResponseMeta) => output(transferProgressText(meta), "neutral"),
+          const done = await uploadFileWithConnect(deps.capabilityClient, file, sessionId, targetPath, {
+            onProgress: reportProgress,
           });
           const message = metaString(done.meta, "content") || transferProgressText(done.meta);
           output(message, "ok");

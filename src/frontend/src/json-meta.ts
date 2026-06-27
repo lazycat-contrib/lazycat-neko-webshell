@@ -1,21 +1,22 @@
-import type { ActionResponseMeta } from "./action-ws-client";
 import type { JsonRecord } from "./types";
 
-export function metaString(meta: ActionResponseMeta | undefined, key: string): string {
+type JsonMeta = Record<string, unknown>;
+
+export function metaString(meta: JsonMeta | undefined, key: string): string {
   const value = meta?.[key];
   return typeof value === "string" ? value : "";
 }
 
-export function metaNumber(meta: ActionResponseMeta | undefined, key: string): number {
+export function metaNumber(meta: JsonMeta | undefined, key: string): number {
   const value = meta?.[key];
   return typeof value === "number" ? value : Number.NaN;
 }
 
-export function metaBoolean(meta: ActionResponseMeta | undefined, key: string): boolean {
+export function metaBoolean(meta: JsonMeta | undefined, key: string): boolean {
   return meta?.[key] === true;
 }
 
-export function metaStringArray(meta: ActionResponseMeta | undefined, key: string): string[] {
+export function metaStringArray(meta: JsonMeta | undefined, key: string): string[] {
   const value = meta?.[key];
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");

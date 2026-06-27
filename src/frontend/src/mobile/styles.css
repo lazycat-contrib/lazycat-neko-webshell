@@ -31,6 +31,15 @@ body.mobile-keyboard-visible {
   display: none;
 }
 
+.terminal-input-file-picker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-9999px, -9999px);
+}
+
 body.mobile-controls-enabled .terminal-input-actions-surface {
   bottom: calc(var(--mobile-shortcuts-height) + var(--mobile-shortcuts-bottom-offset) + 10px);
 }
@@ -92,29 +101,24 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 .terminal-input-action-button {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
-  border: 1px solid var(--line);
+  width: 56px;
+  height: 56px;
+  border: 0;
   border-radius: 999px;
-  background:
-    var(--component-wash),
-    var(--surface-raised);
+  background: transparent;
   color: var(--text);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
   touch-action: none;
   pointer-events: auto;
 }
 
 .terminal-input-action-button svg {
-  width: 18px;
-  height: 18px;
+  width: 32px;
+  height: 32px;
+  stroke-width: 1.9;
 }
 
 .terminal-input-action-button[data-state="recording"] {
-  border-color: var(--danger);
-  background:
-    var(--component-wash-hover),
-    color-mix(in srgb, var(--danger) 18%, var(--surface-raised));
   color: var(--danger-fg);
 }
 
@@ -163,6 +167,10 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   font-weight: 560;
   line-height: 1;
   text-align: left;
+}
+
+.terminal-input-menu-item[hidden] {
+  display: none;
 }
 
 .terminal-input-menu-item svg {
@@ -1054,32 +1062,36 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   display: none;
 }
 
+.terminal-input-file-picker {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-9999px, -9999px);
+}
+
 .terminal-input-action-button {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
-  border: 1px solid var(--line);
+  width: 56px;
+  height: 56px;
+  border: 0;
   border-radius: 999px;
-  background:
-    var(--component-wash),
-    var(--surface-raised);
+  background: transparent;
   color: var(--text);
-  box-shadow: var(--shadow-raised);
+  box-shadow: none;
   touch-action: none;
   pointer-events: auto;
 }
 
 .terminal-input-action-button svg {
-  width: 18px;
-  height: 18px;
+  width: 32px;
+  height: 32px;
+  stroke-width: 1.9;
 }
 
 .terminal-input-action-button[data-state="recording"] {
-  border-color: var(--danger);
-  background:
-    var(--component-wash-hover),
-    color-mix(in srgb, var(--danger) 18%, var(--surface-raised));
   color: var(--danger-fg);
 }
 

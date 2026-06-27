@@ -16,7 +16,7 @@ use crate::config::{
 };
 use crate::database::{TunnelProviderProfile, TunnelProviderProfileUpsert};
 use crate::lightos;
-use crate::plugins::{lightos_port_forward, tunnel};
+use crate::plugins::{file_transfer, lightos_port_forward, tunnel};
 use crate::proto::lazycat::webshell::v1::{
     AgentPaneState, AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
     Capability, CapabilityService, CloseSessionResponse, ConfigurePluginResponse, ControlLease,
@@ -935,6 +935,10 @@ async fn invoke_file_transfer_plugin(
             invoke_file_read(state, session, operation, content_type, metadata).await
         }
         "write" | "upload" => invoke_file_write(state, session, operation, payload, metadata).await,
+        "upload_begin" => invoke_file_upload_begin(state, session, metadata),
+        "upload_chunk" => invoke_file_upload_chunk(state, session, payload, metadata),
+        "upload_finish" => invoke_file_upload_finish(state, session, metadata).await,
+        "upload_cancel" => invoke_file_upload_cancel(state, session, metadata),
         "stat" => invoke_file_stat(state, session, operation, metadata).await,
         _ => Err(ConnectError::invalid_argument(format!(
             "unsupported file-transfer operation: {operation}"
@@ -1038,6 +1042,79 @@ printf '{{"path":%s,"bytes":%s}}\n' "$(printf '%s' "$path" | sed 's/\\/\\\\/g; s
         "application/json",
         output,
         plugin_path_metadata(operation, path),
+    )
+}
+
+fn invoke_file_upload_begin(
+    state: &AppState,
+    session: &SessionRecord,
+    metadata: &HashMap<String, String>,
+) -> ServiceResult<InvokePluginResponse> {
+    let path = required_metadata(metadata, "path")?;
+    let size = required_usize_metadata(metadata, "size")?;
+    let name = metadata
+        .get("name")
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| file_name_from_path(path));
+    let progress = state
+        .file_uploads
+        .begin(&session.id, path, name, size)
+        .map_err(|err| map_file_transfer_error(err, "upload_begin"))?;
+    plugin_json_response(
+        "uploading",
+        &progress,
+        plugin_path_metadata("upload_begin", path),
+    )
+}
+
+fn invoke_file_upload_chunk(
+    state: &AppState,
+    session: &SessionRecord,
+    payload: &[u8],
+    metadata: &HashMap<String, String>,
+) -> ServiceResult<InvokePluginResponse> {
+    let upload_id = required_metadata(metadata, "uploadId")?;
+    let offset = required_usize_metadata(metadata, "offset")?;
+    let progress = state
+        .file_uploads
+        .append(&session.id, upload_id, offset, payload)
+        .map_err(|err| map_file_transfer_error(err, "upload_chunk"))?;
+    plugin_json_response(
+        "uploading",
+        &progress,
+        HashMap::from([("operation".to_owned(), "upload_chunk".to_owned())]),
+    )
+}
+
+async fn invoke_file_upload_finish(
+    state: &AppState,
+    session: &SessionRecord,
+    metadata: &HashMap<String, String>,
+) -> ServiceResult<InvokePluginResponse> {
+    let upload_id = required_metadata(metadata, "uploadId")?;
+    let finished = state
+        .file_uploads
+        .finish(&session.id, upload_id)
+        .map_err(|err| map_file_transfer_error(err, "upload_finish"))?;
+    let metadata = HashMap::from([("path".to_owned(), finished.path.clone())]);
+    invoke_file_write(state, session, "upload", &finished.data, &metadata).await
+}
+
+fn invoke_file_upload_cancel(
+    state: &AppState,
+    session: &SessionRecord,
+    metadata: &HashMap<String, String>,
+) -> ServiceResult<InvokePluginResponse> {
+    let upload_id = required_metadata(metadata, "uploadId")?;
+    let result = state
+        .file_uploads
+        .cancel(&session.id, upload_id)
+        .map_err(|err| map_file_transfer_error(err, "upload_cancel"))?;
+    plugin_json_response(
+        "cancelled",
+        &result,
+        HashMap::from([("operation".to_owned(), "upload_cancel".to_owned())]),
     )
 }
 
@@ -1179,6 +1256,33 @@ fn required_metadata<'a>(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ConnectError::invalid_argument(format!("metadata.{key} is required")))
+}
+
+fn required_usize_metadata(
+    metadata: &HashMap<String, String>,
+    key: &str,
+) -> Result<usize, ConnectError> {
+    required_metadata(metadata, key)?
+        .parse::<usize>()
+        .map_err(|_| ConnectError::invalid_argument(format!("metadata.{key} must be a number")))
+}
+
+fn map_file_transfer_error(error: ConnectError, operation: &str) -> ConnectError {
+    let message = error.to_string();
+    if message.contains("file size is outside the supported transfer limit") {
+        ConnectError::invalid_argument(format!(
+            "{message}; max upload size is {} MB",
+            file_transfer::MAX_FILE_TRANSFER_BYTES / 1024 / 1024
+        ))
+    } else {
+        ConnectError::invalid_argument(format!("{operation} failed: {message}"))
+    }
+}
+
+fn file_name_from_path(path: &str) -> &str {
+    path.rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or("upload")
 }
 
 fn plugin_json_response(
