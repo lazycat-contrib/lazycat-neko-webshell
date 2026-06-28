@@ -13,6 +13,8 @@ export type TerminalServerEvent =
     controller_id?: string;
     controller?: boolean;
     connection_count?: number;
+    request_id?: string;
+    control_action?: "take-control" | "release-control";
   }
   | { type: "replay-start"; session_id?: string; pane_id?: string; replay_after?: number }
   | { type: "replay-complete"; session_id?: string; pane_id?: string; last_sequence?: number };

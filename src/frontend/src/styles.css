@@ -1940,9 +1940,24 @@ textarea:focus-visible {
   color: #ffffff;
 }
 
+.terminal-control-action:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
 .terminal-control-action i {
   width: 13px;
   height: 13px;
+}
+
+.terminal-control-action[aria-busy="true"] i {
+  animation: terminal-control-spin 0.9s linear infinite;
+}
+
+@keyframes terminal-control-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .tab-mount {

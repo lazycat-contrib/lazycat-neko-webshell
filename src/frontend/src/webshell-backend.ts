@@ -48,12 +48,12 @@ export function webshellRestartPolicyMessage(enabled: boolean): string {
   return JSON.stringify({ type: "restart-policy", enabled });
 }
 
-export function webshellTakeControlMessage(): string {
-  return JSON.stringify({ type: "take-control" });
+export function webshellTakeControlMessage(requestId?: string): string {
+  return JSON.stringify({ type: "take-control", request_id: requestId });
 }
 
-export function webshellReleaseControlMessage(): string {
-  return JSON.stringify({ type: "release-control" });
+export function webshellReleaseControlMessage(requestId?: string): string {
+  return JSON.stringify({ type: "release-control", request_id: requestId });
 }
 
 export function webshellHistoryRecordingMessage(enabled: boolean): string {

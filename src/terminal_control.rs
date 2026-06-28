@@ -294,6 +294,44 @@ mod tests {
     }
 
     #[test]
+    fn take_control_can_switch_back_to_previous_observer() {
+        let hub = TerminalControlHub::new();
+        let first = hub.connect("session-one").unwrap();
+        let second = hub.connect("session-one").unwrap();
+
+        hub.take_control("session-one", &second.connection_id)
+            .unwrap();
+        let takeover = hub
+            .take_control("session-one", &first.connection_id)
+            .unwrap();
+
+        assert!(takeover.is_controller);
+        assert_eq!(takeover.controller_id, Some(first.connection_id.clone()));
+        assert!(hub.is_controller("session-one", &first.connection_id));
+        assert!(!hub.is_controller("session-one", &second.connection_id));
+    }
+
+    #[test]
+    fn disconnecting_takeover_controller_promotes_only_remaining_connection() {
+        let hub = TerminalControlHub::new();
+        let first = hub.connect("session-one").unwrap();
+        let second = hub.connect("session-one").unwrap();
+
+        hub.take_control("session-one", &second.connection_id)
+            .unwrap();
+        hub.disconnect("session-one", &second.connection_id)
+            .unwrap();
+        let first_snapshot = hub
+            .snapshot("session-one", &first.connection_id)
+            .unwrap()
+            .unwrap();
+
+        assert!(first_snapshot.is_controller);
+        assert_eq!(first_snapshot.controller_id, Some(first.connection_id));
+        assert_eq!(first_snapshot.connection_count, 1);
+    }
+
+    #[test]
     fn disconnecting_controller_promotes_only_remaining_connection() {
         let hub = TerminalControlHub::new();
         let first = hub.connect("session-one").unwrap();

@@ -17,7 +17,7 @@ use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::agent_client::ensure_agent;
@@ -30,6 +30,7 @@ use crate::lightos;
 use crate::proto::lazycat::webshell::v1::{AgentControlType, AgentFrame, AgentFrameType};
 use crate::ssh_backend;
 use crate::state::{AppState, mark_session_status, sync_session_login_user};
+use crate::terminal_control::TerminalControlSnapshot;
 use crate::terminal_manager::{
     ManagedTerminal, OutputBuffer, OutputFrame, TerminalEvent, TerminalSpec,
 };
@@ -71,8 +72,8 @@ enum TerminalClientMessage {
     RestartPolicy { enabled: bool },
     OutputBuffer { limit: usize },
     HistoryRecording { enabled: bool },
-    TakeControl,
-    ReleaseControl,
+    TakeControl { request_id: Option<String> },
+    ReleaseControl { request_id: Option<String> },
     Close,
 }
 
@@ -133,6 +134,10 @@ enum TerminalServerMessage<'a> {
         controller_id: Option<&'a str>,
         controller: bool,
         connection_count: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        control_action: Option<&'a str>,
     },
 }
 
@@ -171,6 +176,23 @@ struct TerminalControlGuard {
     controller_on_attach: bool,
 }
 
+struct TerminalControlLease {
+    state: Arc<AppState>,
+    control: TerminalControlGuard,
+}
+
+impl TerminalControlLease {
+    fn new(state: Arc<AppState>, control: TerminalControlGuard) -> Self {
+        Self { state, control }
+    }
+}
+
+impl Drop for TerminalControlLease {
+    fn drop(&mut self) {
+        self.control.disconnect(&self.state);
+    }
+}
+
 impl TerminalControlGuard {
     fn disabled() -> Self {
         Self {
@@ -192,22 +214,24 @@ impl TerminalControlGuard {
         !self.enabled || self.controller_on_attach
     }
 
-    fn take_control(&self, state: &AppState) {
+    fn take_control(&self, state: &AppState) -> anyhow::Result<Option<TerminalControlSnapshot>> {
         if !self.enabled {
-            return;
+            return Ok(None);
         }
-        let _ = state
+        state
             .terminal_control
-            .take_control(&self.session_id, &self.connection_id);
+            .take_control(&self.session_id, &self.connection_id)
+            .map(Some)
     }
 
-    fn release_control(&self, state: &AppState) {
+    fn release_control(&self, state: &AppState) -> anyhow::Result<Option<TerminalControlSnapshot>> {
         if !self.enabled {
-            return;
+            return Ok(None);
         }
-        let _ = state
+        state
             .terminal_control
-            .release_control(&self.session_id, &self.connection_id);
+            .release_control(&self.session_id, &self.connection_id)
+            .map(Some)
     }
 
     fn disconnect(&self, state: &AppState) {
@@ -386,6 +410,7 @@ async fn serve_open_terminal(
     replay_context: &TerminalReplayContext<'_>,
     control: TerminalControlGuard,
 ) -> anyhow::Result<()> {
+    let _control_lease = TerminalControlLease::new(Arc::clone(&state), control.clone());
     mark_session_status(&state, terminal.session_id(), "running");
     let mut event_rx = terminal.subscribe();
     let mut control_rx = control.subscribe(&state);
@@ -455,7 +480,6 @@ async fn serve_open_terminal(
         }
     }
 
-    control.disconnect(&state);
     Ok(())
 }
 
@@ -465,6 +489,7 @@ async fn serve_agent_terminal(
     state: Arc<AppState>,
     target: AgentTerminalAttachTarget,
 ) -> anyhow::Result<()> {
+    let _control_lease = TerminalControlLease::new(Arc::clone(&state), target.control.clone());
     let agent = match ensure_agent(&target.selector, &target.username).await {
         Ok(agent) => agent,
         Err(err) => {
@@ -474,7 +499,6 @@ async fn serve_agent_terminal(
                 true,
             )
             .await?;
-            target.control.disconnect(&state);
             return Err(err);
         }
     };
@@ -492,24 +516,15 @@ async fn serve_agent_terminal(
         .stderr(Stdio::piped());
     let mut child = match command.spawn() {
         Ok(child) => child,
-        Err(err) => {
-            target.control.disconnect(&state);
-            return Err(anyhow!("failed to start webshell agent attach: {err}"));
-        }
+        Err(err) => return Err(anyhow!("failed to start webshell agent attach: {err}")),
     };
     let mut stdin = match child.stdin.take() {
         Some(stdin) => stdin,
-        None => {
-            target.control.disconnect(&state);
-            return Err(anyhow!("failed to open agent attach stdin"));
-        }
+        None => return Err(anyhow!("failed to open agent attach stdin")),
     };
     let mut stdout = match child.stdout.take() {
         Some(stdout) => stdout,
-        None => {
-            target.control.disconnect(&state);
-            return Err(anyhow!("failed to open agent attach stdout"));
-        }
+        None => return Err(anyhow!("failed to open agent attach stdout")),
     };
     let mut stderr = child.stderr.take();
     let stderr_task = tokio::spawn(async move {
@@ -583,7 +598,6 @@ async fn serve_agent_terminal(
     }
 
     let _ = write_agent_frame_async(&mut stdin, &detach_frame()).await;
-    target.control.disconnect(&state);
     Ok(())
 }
 
@@ -842,14 +856,62 @@ where
             write_agent_frame_async(stdin, &history_recording_frame(enabled)).await?;
             Ok(true)
         }
-        Ok(TerminalClientMessage::TakeControl) => {
-            target.control.take_control(state);
-            send_terminal_control_state(sender, state, &target.control).await?;
+        Ok(TerminalClientMessage::TakeControl { request_id }) => {
+            match target.control.take_control(state) {
+                Ok(Some(snapshot)) => {
+                    debug!(
+                        session_id = snapshot.session_id,
+                        connection_id = snapshot.connection_id,
+                        controller_id = snapshot.controller_id.as_deref().unwrap_or(""),
+                        "terminal control taken"
+                    );
+                    send_terminal_control_snapshot(
+                        sender,
+                        &snapshot,
+                        request_id.as_deref(),
+                        Some("take-control"),
+                    )
+                    .await?;
+                }
+                Ok(None) => {
+                    send_terminal_control_state(sender, state, &target.control).await?;
+                }
+                Err(err) => {
+                    warn!(error = %err, "failed to take terminal control");
+                    send_terminal_error(
+                        sender,
+                        "failed to take terminal control".to_owned(),
+                        false,
+                    )
+                    .await?;
+                }
+            }
             Ok(true)
         }
-        Ok(TerminalClientMessage::ReleaseControl) => {
-            target.control.release_control(state);
-            send_terminal_control_state(sender, state, &target.control).await?;
+        Ok(TerminalClientMessage::ReleaseControl { request_id }) => {
+            match target.control.release_control(state) {
+                Ok(Some(snapshot)) => {
+                    send_terminal_control_snapshot(
+                        sender,
+                        &snapshot,
+                        request_id.as_deref(),
+                        Some("release-control"),
+                    )
+                    .await?;
+                }
+                Ok(None) => {
+                    send_terminal_control_state(sender, state, &target.control).await?;
+                }
+                Err(err) => {
+                    warn!(error = %err, "failed to release terminal control");
+                    send_terminal_error(
+                        sender,
+                        "failed to release terminal control".to_owned(),
+                        false,
+                    )
+                    .await?;
+                }
+            }
             Ok(true)
         }
         Ok(
@@ -1239,14 +1301,62 @@ async fn handle_terminal_control_message(
             terminal.set_history_recording(enabled);
             Ok(true)
         }
-        Ok(TerminalClientMessage::TakeControl) => {
-            control.take_control(state);
-            send_terminal_control_state(sender, state, control).await?;
+        Ok(TerminalClientMessage::TakeControl { request_id }) => {
+            match control.take_control(state) {
+                Ok(Some(snapshot)) => {
+                    debug!(
+                        session_id = snapshot.session_id,
+                        connection_id = snapshot.connection_id,
+                        controller_id = snapshot.controller_id.as_deref().unwrap_or(""),
+                        "terminal control taken"
+                    );
+                    send_terminal_control_snapshot(
+                        sender,
+                        &snapshot,
+                        request_id.as_deref(),
+                        Some("take-control"),
+                    )
+                    .await?;
+                }
+                Ok(None) => {
+                    send_terminal_control_state(sender, state, control).await?;
+                }
+                Err(err) => {
+                    warn!(error = %err, "failed to take terminal control");
+                    send_terminal_error(
+                        sender,
+                        "failed to take terminal control".to_owned(),
+                        false,
+                    )
+                    .await?;
+                }
+            }
             Ok(true)
         }
-        Ok(TerminalClientMessage::ReleaseControl) => {
-            control.release_control(state);
-            send_terminal_control_state(sender, state, control).await?;
+        Ok(TerminalClientMessage::ReleaseControl { request_id }) => {
+            match control.release_control(state) {
+                Ok(Some(snapshot)) => {
+                    send_terminal_control_snapshot(
+                        sender,
+                        &snapshot,
+                        request_id.as_deref(),
+                        Some("release-control"),
+                    )
+                    .await?;
+                }
+                Ok(None) => {
+                    send_terminal_control_state(sender, state, control).await?;
+                }
+                Err(err) => {
+                    warn!(error = %err, "failed to release terminal control");
+                    send_terminal_error(
+                        sender,
+                        "failed to release terminal control".to_owned(),
+                        false,
+                    )
+                    .await?;
+                }
+            }
             Ok(true)
         }
         Ok(TerminalClientMessage::Close) => Ok(false),
@@ -1420,6 +1530,15 @@ async fn send_terminal_control_state(
     else {
         return Ok(());
     };
+    send_terminal_control_snapshot(sender, &snapshot, None, None).await
+}
+
+async fn send_terminal_control_snapshot(
+    sender: &mut TerminalSender,
+    snapshot: &TerminalControlSnapshot,
+    request_id: Option<&str>,
+    control_action: Option<&str>,
+) -> anyhow::Result<()> {
     send_control(
         sender,
         &TerminalServerMessage::ControlState {
@@ -1428,6 +1547,8 @@ async fn send_terminal_control_state(
             controller_id: snapshot.controller_id.as_deref(),
             controller: snapshot.is_controller,
             connection_count: snapshot.connection_count,
+            request_id,
+            control_action,
         },
     )
     .await
@@ -1873,7 +1994,10 @@ mod tests {
     use axum::http::header::{HOST, ORIGIN};
     use axum::http::{HeaderMap, HeaderValue};
 
-    use super::{clipboard_image_stage_script, origin_allowed, sanitize_clipboard_image_extension};
+    use super::{
+        TerminalClientMessage, clipboard_image_stage_script, origin_allowed,
+        sanitize_clipboard_image_extension,
+    };
 
     #[test]
     fn validates_origin_host_match() {
@@ -1901,5 +2025,24 @@ mod tests {
         assert!(script.contains("chmod 1777 \"$dir\""));
         assert!(script.contains("cat > \"$path\""));
         assert!(script.contains("chmod 0644 \"$path\""));
+    }
+
+    #[test]
+    fn parses_terminal_control_messages_with_optional_request_id() {
+        let legacy: TerminalClientMessage =
+            serde_json::from_str(r#"{"type":"take-control"}"#).unwrap();
+        assert!(matches!(
+            legacy,
+            TerminalClientMessage::TakeControl { request_id: None }
+        ));
+
+        let with_request: TerminalClientMessage =
+            serde_json::from_str(r#"{"type":"release-control","request_id":"tc-1"}"#).unwrap();
+        assert!(matches!(
+            with_request,
+            TerminalClientMessage::ReleaseControl {
+                request_id: Some(request_id)
+            } if request_id == "tc-1"
+        ));
     }
 }
