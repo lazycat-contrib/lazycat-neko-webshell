@@ -14,5 +14,5 @@ export function paneRoutesMouseToApplication(
 }
 
 function paneRequiresApplicationMouse(pane: TerminalPane): boolean {
-  return pane.sessionBackend === "herdr";
+  return pane.sessionBackend === "herdr" || pane.sessionBackend === "zellij";
 }

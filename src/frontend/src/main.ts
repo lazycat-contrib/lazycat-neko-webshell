@@ -335,13 +335,18 @@ import {
   updateWorkspaceLocation,
 } from "./workspace-selection";
 import { applyWebshellStyle } from "./webshell-style";
-import { zellijPaneModeInput, zellijSplitKey } from "./zellij-backend";
+import {
+  zellijClosePaneInput,
+  zellijSplitPaneInput,
+  zellijTerminalShortcutInput,
+} from "./zellij-backend";
 
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
 const HERDR_REPLAY_TAIL_FRAMES = 80;
 const HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS = 500;
 const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
+const HERDR_ACTION_REFRESH_DELAYS_MS = [120, 450, 900] as const;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
@@ -496,6 +501,7 @@ let herdrEventSocketSelector = "";
 let herdrEventSocketGeneration = 0;
 let herdrEventReconnectTimer: number | undefined;
 let herdrEventRefreshTimer: number | undefined;
+let herdrActionRefreshTimers: number[] = [];
 let sessionBackendsState: SessionBackendsState | undefined;
 let sessionBackendsGeneration = 0;
 const herdrAutoRestoredSelectors = new Set<string>();
@@ -1859,6 +1865,7 @@ function bindActions() {
   bindSettingsTabs();
   bindLifecycleEvents();
   bindMobileShortcuts();
+  document.addEventListener("keydown", handleGlobalShortcutCapture, true);
   document.addEventListener("keydown", handleTerminalImeFocusCapture, true);
   document.addEventListener("keydown", handleTerminalInterruptCapture, true);
   document.addEventListener("keydown", handleTerminalClipboardCapture, true);
@@ -1922,9 +1929,6 @@ function bindActions() {
       closeSettings();
       closePluginSidebar();
       renderPluginTools();
-      return;
-    }
-    if (handleFontZoomShortcut(event)) {
       return;
     }
     if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) {
@@ -2639,20 +2643,20 @@ async function currentHerdrPaneId(selector: string): Promise<string> {
 }
 
 function splitZellijPane(pane: TerminalPane, placement: SplitPlacement): boolean {
-  const key = zellijSplitKey(placement);
-  if (!key) {
+  const input = zellijSplitPaneInput(placement);
+  if (!input) {
     setBackendActionUnavailable(pane);
     return false;
   }
-  return sendZellijPaneModeKey(pane, key);
+  return sendZellijInput(pane, input);
 }
 
 function closeZellijPane(pane: TerminalPane): boolean {
-  return sendZellijPaneModeKey(pane, "x");
+  return sendZellijInput(pane, zellijClosePaneInput());
 }
 
-function sendZellijPaneModeKey(pane: TerminalPane, key: string): boolean {
-  if (sendPaneInput(pane, zellijPaneModeInput(key))) {
+function sendZellijInput(pane: TerminalPane, input: string): boolean {
+  if (sendPaneInput(pane, input)) {
     focusPaneCanvas(pane);
     return true;
   }
@@ -2677,6 +2681,25 @@ function setBackendActionFailed(pane: TerminalPane, message: string) {
     }),
     "error",
   );
+}
+
+function handleGlobalShortcutCapture(event: KeyboardEvent) {
+  if (event.defaultPrevented) return;
+  if (handleFontZoomShortcut(event) || handleZellijTerminalShortcut(event)) {
+    event.stopImmediatePropagation();
+  }
+}
+
+function handleZellijTerminalShortcut(event: KeyboardEvent): boolean {
+  const data = zellijTerminalShortcutInput(event);
+  if (!data) return false;
+  const pane = paneForShortcutTarget(event.target);
+  if (pane?.sessionBackend !== "zellij") return false;
+  event.preventDefault();
+  if (!sendPaneInput(pane, data)) {
+    setBackendActionFailed(pane, "input unavailable");
+  }
+  return true;
 }
 
 function handleFontZoomShortcut(event: KeyboardEvent): boolean {
@@ -4192,6 +4215,8 @@ async function runHerdrAction(
     herdrState = state;
     renderHerdrDock();
     refreshHerdrTerminalAfterAction(selector, action);
+    scheduleHerdrActionRefresh(selector);
+    void syncHerdrEventBridge({ force: true });
     syncAIChatForActiveTerminal();
     focusActivePaneCanvas();
   } catch (error) {
@@ -4411,11 +4436,39 @@ function herdrEventMessage(event: string, data: JsonRecord): string {
 
 function scheduleHerdrEventRefresh() {
   window.clearTimeout(herdrEventRefreshTimer);
+  const requestSelector = normalizeSelector(selectedSelector);
+  const generation = selectedSelectorGeneration;
   herdrEventRefreshTimer = window.setTimeout(() => {
-    if (!selectedSelector) return;
-    void refreshHerdrState(selectedSelector).then(() => syncAIChatForActiveTerminal());
+    herdrEventRefreshTimer = undefined;
+    if (!requestSelector || !isCurrentSelectorRequest(requestSelector, generation)) return;
+    void refreshHerdrState(requestSelector, generation).then(() => syncAIChatForActiveTerminal());
+    scheduleHerdrActionRefresh(requestSelector, [900]);
     void syncHerdrEventBridge({ force: true });
   }, 300);
+}
+
+function scheduleHerdrActionRefresh(
+  selector: string,
+  delays: readonly number[] = HERDR_ACTION_REFRESH_DELAYS_MS,
+) {
+  const requestSelector = normalizeSelector(selector);
+  if (!requestSelector) return;
+  const generation = selectedSelectorGeneration;
+  for (const delay of delays) {
+    const timer = window.setTimeout(() => {
+      herdrActionRefreshTimers = herdrActionRefreshTimers.filter((item) => item !== timer);
+      if (!isCurrentSelectorRequest(requestSelector, generation)) return;
+      void refreshHerdrState(requestSelector, generation).then(() => syncAIChatForActiveTerminal());
+    }, delay);
+    herdrActionRefreshTimers.push(timer);
+  }
+}
+
+function clearHerdrActionRefreshTimers() {
+  for (const timer of herdrActionRefreshTimers) {
+    window.clearTimeout(timer);
+  }
+  herdrActionRefreshTimers = [];
 }
 
 function scheduleHerdrEventReconnect(selector: string, generation: number) {
@@ -4445,6 +4498,7 @@ function closeHerdrEventSocket() {
 function clearHerdrState() {
   herdrStateGeneration += 1;
   herdrState = undefined;
+  clearHerdrActionRefreshTimers();
   stopHerdrEventBridge();
   renderHerdrWorkspaceMenu();
   renderTabs();
@@ -4947,7 +5001,7 @@ async function createTerminalTab(
     }
     await runWorkspaceAction("create_tab", { selector, sessionBackend: mode, label: options.label });
     if (mode === "herdr") {
-      window.setTimeout(() => void refreshHerdrState(selector), 400);
+      scheduleHerdrActionRefresh(selector);
     }
     return activeTab();
   } catch (error) {
