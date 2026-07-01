@@ -346,7 +346,8 @@ const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
 const HERDR_REPLAY_TAIL_FRAMES = 80;
 const HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS = 500;
 const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
-const HERDR_ACTION_REFRESH_DELAYS_MS = [120, 450, 900] as const;
+const HERDR_ACTION_REFRESH_DELAYS_MS = [120, 450, 900, 1800, 3000] as const;
+const HERDR_EVENT_REFRESH_DELAYS_MS = [0, 300, 900, 1800, 3000] as const;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
@@ -498,6 +499,7 @@ let herdrState: HerdrBridgeState | undefined;
 let herdrStateGeneration = 0;
 let herdrEventSocket: WebSocket | undefined;
 let herdrEventSocketSelector = "";
+let herdrEventSocketOpeningSelector = "";
 let herdrEventSocketGeneration = 0;
 let herdrEventReconnectTimer: number | undefined;
 let herdrEventRefreshTimer: number | undefined;
@@ -2484,6 +2486,7 @@ async function splitHerdrPane(pane: TerminalPane, placement: SplitPlacement): Pr
     mirrorNotification: false,
   });
   await refreshHerdrState(selector);
+  scheduleHerdrActionRefresh(selector);
   await syncHerdrEventBridge({ force: true });
   refreshHerdrPaneTerminalAfterAction(pane);
   return true;
@@ -2505,6 +2508,7 @@ async function resizeHerdrPane(
     mirrorNotification: false,
   });
   await refreshHerdrState(selector);
+  scheduleHerdrActionRefresh(selector);
   await syncHerdrEventBridge({ force: true });
   refreshHerdrPaneTerminalAfterAction(pane);
   return true;
@@ -2519,6 +2523,7 @@ async function closeHerdrPane(pane: TerminalPane): Promise<boolean> {
     mirrorNotification: false,
   });
   await refreshHerdrState(selector);
+  scheduleHerdrActionRefresh(selector);
   await syncHerdrEventBridge({ force: true });
   refreshHerdrPaneTerminalAfterAction(pane);
   return true;
@@ -4213,6 +4218,7 @@ async function runHerdrAction(
       return;
     }
     herdrState = state;
+    renderTabs();
     renderHerdrDock();
     refreshHerdrTerminalAfterAction(selector, action);
     scheduleHerdrActionRefresh(selector);
@@ -4345,20 +4351,28 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   ) {
     return;
   }
+  if (!options.force && herdrEventSocketOpeningSelector === selector) {
+    return;
+  }
 
   closeHerdrEventSocket();
   const generation = ++herdrEventSocketGeneration;
+  herdrEventSocketOpeningSelector = selector;
   const paneIds = await fetchHerdrPaneIds(selector).catch((error) => {
     if (settings.debugMode) {
       setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
     }
     return [];
   });
-  if (generation !== herdrEventSocketGeneration || normalizeSelector(selectedSelector) !== selector) return;
+  if (generation !== herdrEventSocketGeneration || normalizeSelector(selectedSelector) !== selector) {
+    if (herdrEventSocketOpeningSelector === selector) herdrEventSocketOpeningSelector = "";
+    return;
+  }
 
   const socket = new WebSocket(herdrEventSocketUrl(selector));
   herdrEventSocket = socket;
   herdrEventSocketSelector = selector;
+  herdrEventSocketOpeningSelector = "";
   socket.addEventListener("open", () => {
     if (herdrEventSocket !== socket || generation !== herdrEventSocketGeneration) return;
     socket.send(JSON.stringify({
@@ -4441,10 +4455,9 @@ function scheduleHerdrEventRefresh() {
   herdrEventRefreshTimer = window.setTimeout(() => {
     herdrEventRefreshTimer = undefined;
     if (!requestSelector || !isCurrentSelectorRequest(requestSelector, generation)) return;
-    void refreshHerdrState(requestSelector, generation).then(() => syncAIChatForActiveTerminal());
-    scheduleHerdrActionRefresh(requestSelector, [900]);
+    scheduleHerdrActionRefresh(requestSelector, HERDR_EVENT_REFRESH_DELAYS_MS);
     void syncHerdrEventBridge({ force: true });
-  }, 300);
+  }, 120);
 }
 
 function scheduleHerdrActionRefresh(
@@ -4492,6 +4505,7 @@ function closeHerdrEventSocket() {
   const socket = herdrEventSocket;
   herdrEventSocket = undefined;
   herdrEventSocketSelector = "";
+  herdrEventSocketOpeningSelector = "";
   socket?.close();
 }
 
@@ -5002,6 +5016,7 @@ async function createTerminalTab(
     await runWorkspaceAction("create_tab", { selector, sessionBackend: mode, label: options.label });
     if (mode === "herdr") {
       scheduleHerdrActionRefresh(selector);
+      void syncHerdrEventBridge({ force: true });
     }
     return activeTab();
   } catch (error) {
