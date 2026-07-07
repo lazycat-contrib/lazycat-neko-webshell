@@ -27,7 +27,7 @@ const MAX_HERDR_SOCKET_REQUEST_BYTES: usize = 1024 * 1024;
 const HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS: u64 = 5;
 const MIN_SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 14;
 const SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 16;
-const SUPPORTED_HERDR_SOURCE_VERSION: &str = "0.7.2";
+const SUPPORTED_HERDR_SOURCE_VERSION: &str = "0.7.3";
 
 type HerdrSocketSender = SplitSink<WebSocket, Message>;
 
@@ -1224,7 +1224,7 @@ mod tests {
     fn herdr_socket_allowlist_covers_documented_methods() {
         assert_eq!(MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
         assert_eq!(SUPPORTED_HERDR_PROTOCOL_VERSION, 16);
-        assert_eq!(SUPPORTED_HERDR_SOURCE_VERSION, "0.7.2");
+        assert_eq!(SUPPORTED_HERDR_SOURCE_VERSION, "0.7.3");
         assert!(ALLOWED_HERDR_METHODS.len() > 60);
         for method in [
             "session.snapshot",
@@ -1235,7 +1235,7 @@ mod tests {
         ] {
             assert!(
                 is_allowed_herdr_method(method),
-                "{method} should be allowed for Herdr 0.7.2"
+                "{method} should be allowed for Herdr 0.7.3"
             );
         }
         for method in ALLOWED_HERDR_METHODS {
@@ -1263,7 +1263,7 @@ mod tests {
         let ping = parse_herdr_ping(&json!({
             "result": {
                 "type": "pong",
-                "version": "0.7.2",
+                "version": "0.7.3",
                 "protocol": 16,
                 "capabilities": {
                     "live_handoff": true,
@@ -1271,7 +1271,7 @@ mod tests {
                 }
             }
         }));
-        assert_eq!(ping.version.as_deref(), Some("0.7.2"));
+        assert_eq!(ping.version.as_deref(), Some("0.7.3"));
         assert_eq!(ping.protocol, Some(16));
         assert!(
             ping.capabilities
