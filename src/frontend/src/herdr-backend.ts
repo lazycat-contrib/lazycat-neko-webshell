@@ -17,6 +17,8 @@ const HERDR_PANE_RESIZE_DIRECTIONS: Partial<Record<string, HerdrPaneResizeDirect
 
 export const HERDR_PANE_RESIZE_AMOUNT = 0.05;
 
+const SILENT_HERDR_EVENTS = new Set(["layout.updated", "pane.scroll_changed"]);
+
 export function herdrSplitDirection(placement: SplitPlacement): "right" | "down" | undefined {
   return HERDR_SPLIT_DIRECTIONS[placement];
 }
@@ -87,6 +89,7 @@ export function herdrEventSubscriptions(paneIds: string[]): JsonRecord[] {
     { type: "workspace.created" },
     { type: "workspace.updated" },
     { type: "workspace.renamed" },
+    { type: "workspace.moved" },
     { type: "workspace.closed" },
     { type: "workspace.focused" },
     { type: "worktree.created" },
@@ -96,12 +99,14 @@ export function herdrEventSubscriptions(paneIds: string[]): JsonRecord[] {
     { type: "tab.closed" },
     { type: "tab.focused" },
     { type: "tab.renamed" },
+    { type: "tab.moved" },
     { type: "pane.created" },
     { type: "pane.closed" },
     { type: "pane.focused" },
     { type: "pane.moved" },
     { type: "pane.exited" },
     { type: "pane.agent_detected" },
+    { type: "layout.updated" },
   ];
   for (const paneId of paneIds) {
     subscriptions.push({ type: "pane.agent_status_changed", pane_id: paneId });
@@ -125,5 +130,10 @@ export function herdrEventChangesDock(event: string): boolean {
     || event === "pane.closed"
     || event === "pane.focused"
     || event === "pane.moved"
-    || event === "pane.exited";
+    || event === "pane.exited"
+    || event === "layout.updated";
+}
+
+export function herdrEventShowsStatus(event: string): boolean {
+  return !SILENT_HERDR_EVENTS.has(event);
 }

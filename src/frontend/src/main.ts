@@ -60,6 +60,7 @@ import {
   herdrCurrentPaneId,
   herdrEventChangesDock,
   herdrEventSocketUrl,
+  herdrEventShowsStatus,
   herdrEventSubscriptions,
   herdrEventTone,
   herdrFocusedOrFirstPaneId,
@@ -4417,7 +4418,7 @@ function handleHerdrEventMessage(raw: unknown) {
   if (!envelope.event) return;
   const event = envelope.event;
   const data = envelope.data ?? {};
-  const message = herdrEventMessage(event, data);
+  const message = herdrEventShowsStatus(event) ? herdrEventMessage(event, data) : "";
   if (message) {
     setGlobalStatus(message, herdrEventTone(event, data));
   }
@@ -4589,7 +4590,12 @@ function herdrProtocolNotice(
 ): { state: "newer" | "older"; message: string } | undefined {
   const actual = state?.herdr_protocol;
   const expected = state?.supported_protocol;
-  if (typeof actual !== "number" || typeof expected !== "number" || actual === expected) return undefined;
+  if (
+    typeof actual !== "number"
+    || typeof expected !== "number"
+    || actual === expected
+    || state?.protocol_compatible === true
+  ) return undefined;
   const expectedVersion = state?.supported_herdr_version || "?";
   const params = {
     actual: String(actual),

@@ -25,8 +25,9 @@ use crate::validation::validate_selector;
 const HERDR_API_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_HERDR_SOCKET_REQUEST_BYTES: usize = 1024 * 1024;
 const HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS: u64 = 5;
-const SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 14;
-const SUPPORTED_HERDR_SOURCE_VERSION: &str = "0.7.1";
+const MIN_SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 14;
+const SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 16;
+const SUPPORTED_HERDR_SOURCE_VERSION: &str = "0.7.2";
 
 type HerdrSocketSender = SplitSink<WebSocket, Message>;
 
@@ -40,11 +41,13 @@ const ALLOWED_HERDR_METHODS: &[&str] = &[
     "notification.show",
     "client.window_title.set",
     "client.window_title.clear",
+    "session.snapshot",
     "workspace.create",
     "workspace.list",
     "workspace.get",
     "workspace.focus",
     "workspace.rename",
+    "workspace.move",
     "workspace.close",
     "worktree.list",
     "worktree.create",
@@ -55,6 +58,7 @@ const ALLOWED_HERDR_METHODS: &[&str] = &[
     "tab.get",
     "tab.focus",
     "tab.rename",
+    "tab.move",
     "tab.close",
     "pane.split",
     "pane.swap",
@@ -62,6 +66,9 @@ const ALLOWED_HERDR_METHODS: &[&str] = &[
     "pane.zoom",
     "pane.layout",
     "pane.process_info",
+    "layout.export",
+    "layout.apply",
+    "layout.set_split_ratio",
     "pane.neighbor",
     "pane.edges",
     "pane.focus_direction",
@@ -69,6 +76,7 @@ const ALLOWED_HERDR_METHODS: &[&str] = &[
     "pane.list",
     "pane.current",
     "pane.get",
+    "pane.focus",
     "pane.rename",
     "pane.send_text",
     "pane.send_keys",
@@ -81,8 +89,6 @@ const ALLOWED_HERDR_METHODS: &[&str] = &[
     "pane.release_agent",
     "pane.close",
     "pane.wait_for_output",
-    "layout.export",
-    "layout.apply",
     "agent.list",
     "agent.get",
     "agent.read",
@@ -176,6 +182,7 @@ pub struct HerdrBridgeState {
 #[derive(Clone, Debug, Serialize)]
 pub struct HerdrCapabilitiesInfo {
     live_handoff: bool,
+    detached_server_daemon: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -388,6 +395,41 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
         }
     };
 
+    if ping_info
+        .protocol
+        .is_some_and(herdr_protocol_supports_session_snapshot)
+    {
+        match run_herdr_request(target, "session.snapshot", json!({})).await {
+            Ok(response) => {
+                let workspaces = parse_workspaces(&response);
+                let focused_workspace_id =
+                    parse_snapshot_focused_workspace_id(&response).or_else(|| {
+                        workspaces
+                            .iter()
+                            .find(|workspace| workspace.focused)
+                            .or_else(|| workspaces.first())
+                            .map(|workspace| workspace.workspace_id.clone())
+                    });
+                let tabs = parse_tabs(&response)
+                    .into_iter()
+                    .filter(|tab| {
+                        focused_workspace_id
+                            .as_deref()
+                            .is_none_or(|workspace_id| tab.workspace_id == workspace_id)
+                    })
+                    .collect();
+                return build_herdr_state(target, true, None, ping_info, workspaces, tabs);
+            }
+            Err(err) => {
+                warn!(
+                    error = %err.message,
+                    selector = %target.selector,
+                    "failed to read Herdr session snapshot; falling back to list requests"
+                );
+            }
+        }
+    }
+
     let workspaces = match run_herdr_request(target, "workspace.list", json!({})).await {
         Ok(response) => parse_workspaces(&response),
         Err(err) => {
@@ -446,9 +488,7 @@ fn build_herdr_state(
         herdr_protocol: ping_info.protocol,
         supported_herdr_version: SUPPORTED_HERDR_SOURCE_VERSION,
         supported_protocol: SUPPORTED_HERDR_PROTOCOL_VERSION,
-        protocol_compatible: ping_info
-            .protocol
-            .map(|protocol| protocol == SUPPORTED_HERDR_PROTOCOL_VERSION),
+        protocol_compatible: ping_info.protocol.map(herdr_protocol_is_supported),
         capabilities: ping_info.capabilities,
         workspaces,
         tabs,
@@ -918,10 +958,7 @@ fi"#
 }
 
 fn parse_workspaces(response: &Value) -> Vec<HerdrWorkspaceInfo> {
-    response
-        .get("result")
-        .and_then(|result| result.get("workspaces"))
-        .and_then(Value::as_array)
+    herdr_result_collection(response, "workspaces")
         .into_iter()
         .flatten()
         .filter_map(|value| {
@@ -950,10 +987,7 @@ fn parse_workspaces(response: &Value) -> Vec<HerdrWorkspaceInfo> {
 }
 
 fn parse_tabs(response: &Value) -> Vec<HerdrTabInfo> {
-    response
-        .get("result")
-        .and_then(|result| result.get("tabs"))
-        .and_then(Value::as_array)
+    herdr_result_collection(response, "tabs")
         .into_iter()
         .flatten()
         .filter_map(|value| {
@@ -974,6 +1008,25 @@ fn parse_tabs(response: &Value) -> Vec<HerdrTabInfo> {
             })
         })
         .collect()
+}
+
+fn herdr_result_collection<'a>(response: &'a Value, key: &str) -> Option<&'a Vec<Value>> {
+    let result = response.get("result")?;
+    result.get(key).and_then(Value::as_array).or_else(|| {
+        result
+            .get("snapshot")
+            .and_then(|snapshot| snapshot.get(key))
+            .and_then(Value::as_array)
+    })
+}
+
+fn parse_snapshot_focused_workspace_id(response: &Value) -> Option<String> {
+    response
+        .get("result")
+        .and_then(|result| result.get("snapshot"))
+        .and_then(|snapshot| snapshot.get("focused_workspace_id"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn parse_herdr_ping(response: &Value) -> HerdrPingInfo {
@@ -1004,7 +1057,19 @@ fn parse_herdr_capabilities(value: &Value) -> Option<HerdrCapabilitiesInfo> {
             .get("live_handoff")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        detached_server_daemon: value
+            .get("detached_server_daemon")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     })
+}
+
+fn herdr_protocol_is_supported(protocol: u32) -> bool {
+    (MIN_SUPPORTED_HERDR_PROTOCOL_VERSION..=SUPPORTED_HERDR_PROTOCOL_VERSION).contains(&protocol)
+}
+
+fn herdr_protocol_supports_session_snapshot(protocol: u32) -> bool {
+    protocol >= 16
 }
 
 fn json_usize(value: &Value, key: &str) -> usize {
@@ -1065,9 +1130,11 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        ALLOWED_HERDR_METHODS, SUPPORTED_HERDR_PROTOCOL_VERSION, SUPPORTED_HERDR_SOURCE_VERSION,
-        is_allowed_herdr_method, parse_herdr_ping, parse_tabs, parse_workspaces, shell_quote,
-        validate_herdr_wire_request,
+        ALLOWED_HERDR_METHODS, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
+        SUPPORTED_HERDR_PROTOCOL_VERSION, SUPPORTED_HERDR_SOURCE_VERSION,
+        herdr_protocol_is_supported, herdr_protocol_supports_session_snapshot,
+        is_allowed_herdr_method, parse_herdr_ping, parse_snapshot_focused_workspace_id, parse_tabs,
+        parse_workspaces, shell_quote, validate_herdr_wire_request,
     };
 
     #[test]
@@ -1109,15 +1176,68 @@ mod tests {
     }
 
     #[test]
+    fn parses_workspace_and_tab_lists_from_herdr_snapshot_response() {
+        let response = json!({
+            "result": {
+                "type": "session_snapshot",
+                "snapshot": {
+                    "focused_workspace_id": "w1",
+                    "workspaces": [{
+                        "workspace_id": "w1",
+                        "number": 1,
+                        "label": "repo",
+                        "focused": true,
+                        "active_tab_id": "w1:t1",
+                        "tab_count": 1,
+                        "pane_count": 1
+                    }],
+                    "tabs": [{
+                        "tab_id": "w1:t1",
+                        "workspace_id": "w1",
+                        "number": 1,
+                        "label": "main",
+                        "focused": true,
+                        "pane_count": 1
+                    }]
+                }
+            }
+        });
+
+        let workspaces = parse_workspaces(&response);
+        let tabs = parse_tabs(&response);
+        assert_eq!(
+            parse_snapshot_focused_workspace_id(&response).as_deref(),
+            Some("w1")
+        );
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0].workspace_id, "w1");
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].tab_id, "w1:t1");
+    }
+
+    #[test]
     fn shell_quote_handles_single_quotes() {
         assert_eq!(shell_quote("dev'user"), "'dev'\"'\"'user'");
     }
 
     #[test]
     fn herdr_socket_allowlist_covers_documented_methods() {
-        assert_eq!(SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
-        assert_eq!(SUPPORTED_HERDR_SOURCE_VERSION, "0.7.1");
+        assert_eq!(MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
+        assert_eq!(SUPPORTED_HERDR_PROTOCOL_VERSION, 16);
+        assert_eq!(SUPPORTED_HERDR_SOURCE_VERSION, "0.7.2");
         assert!(ALLOWED_HERDR_METHODS.len() > 60);
+        for method in [
+            "session.snapshot",
+            "workspace.move",
+            "tab.move",
+            "layout.set_split_ratio",
+            "pane.focus",
+        ] {
+            assert!(
+                is_allowed_herdr_method(method),
+                "{method} should be allowed for Herdr 0.7.2"
+            );
+        }
         for method in ALLOWED_HERDR_METHODS {
             assert!(
                 is_allowed_herdr_method(method),
@@ -1129,23 +1249,39 @@ mod tests {
     }
 
     #[test]
+    fn classifies_supported_herdr_protocols() {
+        assert!(!herdr_protocol_is_supported(13));
+        assert!(herdr_protocol_is_supported(14));
+        assert!(herdr_protocol_is_supported(16));
+        assert!(!herdr_protocol_is_supported(17));
+        assert!(!herdr_protocol_supports_session_snapshot(14));
+        assert!(herdr_protocol_supports_session_snapshot(16));
+    }
+
+    #[test]
     fn parses_herdr_ping_protocol_metadata() {
         let ping = parse_herdr_ping(&json!({
             "result": {
                 "type": "pong",
-                "version": "0.7.0",
-                "protocol": 14,
+                "version": "0.7.2",
+                "protocol": 16,
                 "capabilities": {
-                    "live_handoff": true
+                    "live_handoff": true,
+                    "detached_server_daemon": true
                 }
             }
         }));
-        assert_eq!(ping.version.as_deref(), Some("0.7.0"));
-        assert_eq!(ping.protocol, Some(14));
+        assert_eq!(ping.version.as_deref(), Some("0.7.2"));
+        assert_eq!(ping.protocol, Some(16));
         assert!(
             ping.capabilities
                 .as_ref()
                 .is_some_and(|capabilities| capabilities.live_handoff)
+        );
+        assert!(
+            ping.capabilities
+                .as_ref()
+                .is_some_and(|capabilities| capabilities.detached_server_daemon)
         );
     }
 

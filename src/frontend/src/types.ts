@@ -95,6 +95,7 @@ export type HerdrTabInfo = {
 
 export type HerdrCapabilitiesInfo = {
   live_handoff: boolean;
+  detached_server_daemon: boolean;
 };
 
 export type HerdrBridgeState = {
