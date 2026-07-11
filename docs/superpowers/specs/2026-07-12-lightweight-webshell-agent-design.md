@@ -1,5 +1,11 @@
 # Lightweight WebShell Agent Design
 
+> Superseded on 2026-07-12 by `2026-07-12-official-lightos-webshell-contract-design.md`.
+> Device evidence showed that `v0.5.19` and `v0.5.21` failed alike, while the
+> official Go provider worked on the same LightOS system. The first repair must
+> therefore restore the official account-scoped instance discovery and selector
+> contract before changing the terminal-agent architecture.
+
 ## Context
 
 Native WebShell workspaces are owned by an agent inside the selected LightOS target. The provider currently installs that agent by copying `std::env::current_exe()` into the target. The released `v0.5.19` provider executable is 80,122,128 bytes, so a missing or unusable agent makes the initial workspace request synchronously transfer roughly 80 MB through `lightosctl exec -i`.
