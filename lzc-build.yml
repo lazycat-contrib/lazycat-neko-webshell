@@ -1,27 +1,5 @@
 icon: ./icon.png
-buildscript: |
-  set -eu
-  CONTENT_DIR="./dist/content"
-  rm -rf "$CONTENT_DIR"
-  mkdir -p "$CONTENT_DIR"
-  npm ci
-  npm run build
-  command -v musl-gcc >/dev/null || {
-    echo "missing musl-gcc; install musl-tools before building the release" >&2
-    exit 1
-  }
-  rustup target list --installed | grep -q '^x86_64-unknown-linux-musl$' ||
-    rustup target add x86_64-unknown-linux-musl
-  RUST_LLD="$(find "$(rustc --print sysroot)" -name rust-lld -type f -print -quit)"
-  test -n "$RUST_LLD" || {
-    echo "missing rust-lld in the active Rust toolchain" >&2
-    exit 1
-  }
-  CC_x86_64_unknown_linux_musl=musl-gcc \
-    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$RUST_LLD" \
-    RUSTFLAGS="-C target-feature=+crt-static" \
-    cargo build --release --target x86_64-unknown-linux-musl
-  cp target/x86_64-unknown-linux-musl/release/lazycat-neko-webshell "$CONTENT_DIR/lazycat-neko-webshell"
+buildscript: ./scripts/build-release.sh
 contentdir: ./dist/content
 resource_exports:
   - kind: lightos.webshell

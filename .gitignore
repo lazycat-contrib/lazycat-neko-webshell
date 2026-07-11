@@ -1,5 +1,7 @@
 /target/
 /dist/
+/.lazycat-action/
+/.lazycat-build/
 /node_modules/
 /src/frontend/dist/
 /src/frontend/src/gen/
