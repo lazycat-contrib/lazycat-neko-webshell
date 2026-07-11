@@ -20,6 +20,9 @@ export function destroyPaneTransport(pane: TerminalPane) {
 }
 
 export function disposePaneTerminalRuntime(pane: TerminalPane) {
+  pane.touchKeyboardGuardDispose?.();
+  pane.touchKeyboardGuardDispose = undefined;
+  pane.touchKeyboardGuardInstalled = false;
   try {
     pane.term?.restty?.disconnectPty();
   } catch {

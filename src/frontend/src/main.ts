@@ -112,6 +112,12 @@ import {
 } from "./pane-selection";
 import { createPaneTransport } from "./pane-transport";
 import {
+  clearPanePendingInput,
+  flushPanePendingInput,
+  paneReplayAfter,
+  queuePanePendingInput,
+} from "./pane-input-buffer";
+import {
   destroyPaneTransport,
   disposePaneTerminalRuntime,
   replacePaneTransport,
@@ -5359,7 +5365,7 @@ async function openSocketPrepared(pane: TerminalPane) {
   }
   if (pane.closing || !pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
-  const replayAfter = replayAfterForPane(pane);
+  const replayAfter = paneReplayAfter(pane, HERDR_REPLAY_TAIL_FRAMES);
   pane.lastReplayAfter = replayAfter;
   const url = webshellTerminalSocketUrl({
     selector: pane.selector,
@@ -5413,12 +5419,6 @@ async function openSocketPrepared(pane: TerminalPane) {
     pane.transport?.notifyError(tr("status.socketError"));
     setPaneStatus(pane, tr("status.socketError"), "error");
   });
-}
-
-function replayAfterForPane(pane: TerminalPane): number {
-  const sequence = Number.isFinite(pane.lastOutputSequence) ? Math.max(0, Math.trunc(pane.lastOutputSequence)) : 0;
-  if (pane.sessionBackend !== "herdr" || sequence <= 0) return sequence;
-  return Math.max(0, sequence - HERDR_REPLAY_TAIL_FRAMES);
 }
 
 function beginReplayInputLock(pane: TerminalPane, socket: WebSocket) {
@@ -6405,38 +6405,27 @@ function isInterruptInput(data: string): boolean {
   return data === "\x03";
 }
 
-function queuePaneInput(pane: TerminalPane, data: string): boolean {
-  const bytes = terminalEncoder.encode(data).byteLength;
-  if (bytes <= 0 || bytes > MAX_PENDING_INPUT_BYTES) return false;
-  while (pane.pendingInputBytes + bytes > MAX_PENDING_INPUT_BYTES) {
-    const dropped = pane.pendingInput.shift();
-    if (!dropped) break;
-    pane.pendingInputBytes = Math.max(0, pane.pendingInputBytes - terminalEncoder.encode(dropped).byteLength);
-  }
-  pane.pendingInput.push(data);
-  pane.pendingInputBytes += bytes;
-  return true;
-}
-
 function flushPendingInput(pane: TerminalPane) {
   if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying) return;
-  while (pane.pendingInput.length) {
-    const data = pane.pendingInput.shift() ?? "";
-    pane.pendingInputBytes = Math.max(0, pane.pendingInputBytes - terminalEncoder.encode(data).byteLength);
-    try {
-      pane.socket.send(terminalEncoder.encode(data));
-    } catch {
-      pane.pendingInput.unshift(data);
-      pane.pendingInputBytes += terminalEncoder.encode(data).byteLength;
-      scheduleReconnect(pane);
-      return;
-    }
+  const flushed = flushPanePendingInput(pane, (data) => {
+    pane.socket?.send(terminalEncoder.encode(data));
+    return pane.socket?.readyState === WebSocket.OPEN;
+  }, terminalInputByteLength);
+  if (!flushed) {
+    scheduleReconnect(pane);
   }
 }
 
 function clearPendingInput(pane: TerminalPane) {
-  pane.pendingInput = [];
-  pane.pendingInputBytes = 0;
+  clearPanePendingInput(pane);
+}
+
+function queuePaneInput(pane: TerminalPane, data: string): boolean {
+  return queuePanePendingInput(pane, data, MAX_PENDING_INPUT_BYTES, terminalInputByteLength);
+}
+
+function terminalInputByteLength(data: string): number {
+  return terminalEncoder.encode(data).byteLength;
 }
 
 function activeTab(): TerminalTab | undefined {

@@ -26,6 +26,9 @@ type ActionSender = Arc<Mutex<SplitSink<WebSocket, Message>>>;
 type ActionReceiver = SplitStream<WebSocket>;
 
 const MAX_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PENDING_UPLOADS: usize = 4;
+const MAX_PENDING_UPLOAD_BYTES: usize = MAX_TRANSFER_BYTES;
+const MAX_UPLOAD_PREALLOCATE_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Deserialize)]
 struct ActionMessage {
@@ -180,16 +183,13 @@ async fn handle_upload_start(
         .await?;
         return Ok(());
     }
+    if let Err(error_message) = pending_upload_allowed(uploads, size) {
+        send_error(sender, &message.id, error_message).await?;
+        return Ok(());
+    }
     uploads.insert(
         message.id.clone(),
-        UploadState {
-            session_id,
-            remote_path,
-            name: name.clone(),
-            size,
-            received: 0,
-            data: Vec::with_capacity(size),
-        },
+        new_upload_state(session_id, remote_path, name.clone(), size),
     );
     send_transfer_progress(
         sender,
@@ -197,6 +197,41 @@ async fn handle_upload_start(
         json!({ "name": name, "percent": 0, "done": false }),
     )
     .await
+}
+
+fn pending_upload_allowed(
+    uploads: &HashMap<String, UploadState>,
+    size: usize,
+) -> Result<(), &'static str> {
+    if uploads.len() >= MAX_PENDING_UPLOADS {
+        return Err("too many pending uploads");
+    }
+    let pending_bytes = uploads
+        .values()
+        .try_fold(0usize, |total, upload| total.checked_add(upload.size));
+    if pending_bytes
+        .and_then(|total| total.checked_add(size))
+        .is_none_or(|total| total > MAX_PENDING_UPLOAD_BYTES)
+    {
+        return Err("pending uploads exceed the connection limit");
+    }
+    Ok(())
+}
+
+fn new_upload_state(
+    session_id: String,
+    remote_path: String,
+    name: String,
+    size: usize,
+) -> UploadState {
+    UploadState {
+        session_id,
+        remote_path,
+        name,
+        size,
+        received: 0,
+        data: Vec::with_capacity(size.min(MAX_UPLOAD_PREALLOCATE_BYTES)),
+    }
 }
 
 async fn handle_upload_chunk(
@@ -523,4 +558,45 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
         .ok()
         .and_then(|uri| uri.authority().map(|authority| authority.as_str() == host))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn upload(size: usize) -> UploadState {
+        UploadState {
+            session_id: "session".to_owned(),
+            remote_path: "/tmp/file".to_owned(),
+            name: "file".to_owned(),
+            size,
+            received: 0,
+            data: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rejects_too_many_pending_uploads() {
+        let uploads = (0..MAX_PENDING_UPLOADS)
+            .map(|index| (index.to_string(), upload(1)))
+            .collect::<HashMap<_, _>>();
+        assert!(pending_upload_allowed(&uploads, 1).is_err());
+    }
+
+    #[test]
+    fn rejects_pending_upload_bytes_above_the_connection_limit() {
+        let uploads = HashMap::from([("one".to_owned(), upload(MAX_PENDING_UPLOAD_BYTES))]);
+        assert!(pending_upload_allowed(&uploads, 1).is_err());
+    }
+
+    #[test]
+    fn upload_buffer_does_not_preallocate_the_declared_file_size() {
+        let upload = new_upload_state(
+            "session".to_owned(),
+            "/tmp/file".to_owned(),
+            "file".to_owned(),
+            MAX_TRANSFER_BYTES,
+        );
+        assert!(upload.data.capacity() <= MAX_UPLOAD_PREALLOCATE_BYTES);
+    }
 }

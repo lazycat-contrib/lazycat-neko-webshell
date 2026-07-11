@@ -393,6 +393,7 @@ export type TerminalPane = {
   viewportGuardInstalled?: boolean;
   scrollbackFallbackInstalled?: boolean;
   touchKeyboardGuardInstalled?: boolean;
+  touchKeyboardGuardDispose?: () => void;
   exited: boolean;
   closing: boolean;
   cols: number;

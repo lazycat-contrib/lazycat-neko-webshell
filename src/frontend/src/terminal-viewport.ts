@@ -1,4 +1,5 @@
 import type { TerminalPane } from "./types";
+import { installTouchKeyboardReadOnlyGuard } from "./mobile/touch-keyboard-guard";
 
 export type PaneViewportGuardOptions = {
   scheduleSizeRefresh: () => void;
@@ -34,53 +35,14 @@ export function installPaneTouchKeyboardGuard(
   options: PaneTouchKeyboardGuardOptions,
 ) {
   if (pane.touchKeyboardGuardInstalled) return;
-  let touchPointerId: number | undefined;
-  let startX = 0;
-  let startY = 0;
-  let suppressInput: HTMLTextAreaElement | null = null;
-  let suppressInputReadOnly = false;
-  let scrollLocked = false;
-
-  const restoreInput = () => {
-    if (!suppressInput) return;
-    suppressInput.readOnly = suppressInputReadOnly;
-    suppressInput = null;
-  };
-
-  const stopTouch = (pointerId: number) => {
-    if (touchPointerId !== pointerId) return;
-    touchPointerId = undefined;
-    scrollLocked = false;
-    restoreInput();
-  };
-
-  pane.mount.addEventListener("pointerdown", (event) => {
-    if (event.pointerType !== "touch") return;
-    touchPointerId = event.pointerId;
-    startX = event.clientX;
-    startY = event.clientY;
-    scrollLocked = false;
-    suppressInput = paneImeInput(pane);
-    if (suppressInput) {
-      suppressInputReadOnly = suppressInput.readOnly;
-      suppressInput.readOnly = true;
-    }
-  }, { capture: true, passive: true });
-
-  pane.mount.addEventListener("pointermove", (event) => {
-    if (touchPointerId !== event.pointerId || scrollLocked) return;
-    const dx = event.clientX - startX;
-    const dy = event.clientY - startY;
-    const absDx = Math.abs(dx);
-    const absDy = Math.abs(dy);
-    if (Math.hypot(dx, dy) < options.scrollLockThresholdPx) return;
-    if (absDy < absDx * options.scrollAxisRatio) return;
-    scrollLocked = true;
-  }, { capture: true, passive: true });
-
-  pane.mount.addEventListener("pointerup", (event) => stopTouch(event.pointerId), true);
-  pane.mount.addEventListener("pointercancel", (event) => stopTouch(event.pointerId), true);
-  pane.mount.addEventListener("lostpointercapture", (event) => stopTouch(event.pointerId), true);
+  pane.touchKeyboardGuardDispose = installTouchKeyboardReadOnlyGuard({
+    pane: pane.mount,
+    globalTarget: window,
+    visibilityTarget: document,
+    input: () => paneImeInput(pane),
+    scrollLockThresholdPx: options.scrollLockThresholdPx,
+    scrollAxisRatio: options.scrollAxisRatio,
+  });
   pane.touchKeyboardGuardInstalled = true;
 }
 
