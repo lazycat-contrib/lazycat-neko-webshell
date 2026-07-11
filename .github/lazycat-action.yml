@@ -1,0 +1,32 @@
+version: 1
+
+project:
+  root: .
+  build_config: lzc-build.yml
+  package_file: package.yml
+  output: .lazycat-build/neko-webshell.lpk
+
+update:
+  strategy: publish
+  version_source:
+    type: git
+
+build:
+  toolchains:
+    - kind: node
+      version: 24.x
+    - kind: rust
+      version: 1.96.1
+  run_buildscript: true
+
+stores:
+  official:
+    enabled: true
+    skip_if_version_exists: true
+    create_if_missing: false
+    changelog_locales: [zh, en]
+  private:
+    enabled: true
+    skip_if_version_exists: true
+    name: Neko Webshell
+    summary: Published from GitHub Actions
