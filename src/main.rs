@@ -21,6 +21,7 @@ mod embedded_frontend;
 mod fonts;
 mod herdr;
 mod lightos;
+mod lightos_admin;
 mod notifications;
 mod plugins;
 mod pomodoro;

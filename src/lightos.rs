@@ -21,6 +21,8 @@ const TARGET_SSH_KEY_MAX_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug, Deserialize)]
 struct LightOsInstance {
     #[serde(default)]
+    selector: String,
+    #[serde(default)]
     name: String,
     #[serde(default)]
     owner_deploy_id: String,
@@ -508,6 +510,10 @@ fn parse_lightos_instances(output: &[u8]) -> Result<Vec<LightOsInstance>, Connec
 }
 
 fn selector_for_instance(item: &LightOsInstance) -> Option<String> {
+    let selector = item.selector.trim();
+    if !selector.is_empty() && validate_selector(selector).is_ok() {
+        return Some(selector.to_owned());
+    }
     let name = item.name.trim();
     let owner_deploy_id = item.owner_deploy_id.trim();
     if name.is_empty() || owner_deploy_id.is_empty() {
@@ -598,6 +604,19 @@ mod tests {
             Some("admin")
         );
         assert_eq!(instances.get(1).and_then(selector_for_instance), None);
+    }
+
+    #[test]
+    fn parses_explicit_lightos_selector() {
+        let instances = parse_lightos_instances(
+            br#"[{"selector":" alpha@deploy-a ","status":"running","username":"alice"}]"#,
+        )
+        .expect("lightos instances parse");
+
+        assert_eq!(
+            instances.first().and_then(selector_for_instance).as_deref(),
+            Some("alpha@deploy-a")
+        );
     }
 
     #[test]

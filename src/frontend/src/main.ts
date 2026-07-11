@@ -52,6 +52,7 @@ import {
   STATUS_REFRESH_MS,
 } from "./config";
 import { createConfirmDialog } from "./confirm-dialog";
+import { statusForEmptyWorkspace } from "./empty-workspace-status";
 import { resttyFontSourcesFor, storedFontToResttyPreset } from "./font-registry";
 import { clamp, clampFloatingPoint, floatingViewportBounds } from "./floating-position";
 import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
@@ -6160,7 +6161,11 @@ function updateActiveDetails() {
     elements.emptyState.hidden = false;
     elements.targetLabel.textContent = selectedSelector ? selectorLabel(selectedSelector) : tr("status.instance");
     elements.instanceStatusDot.dataset.status = selectedInstance()?.status ?? "unknown";
-    setGlobalStatus(tr("status.idle"));
+    const status = statusForEmptyWorkspace({
+      message: elements.statusLine.textContent ?? "",
+      tone: (elements.statusLine.dataset.tone as Tone | undefined) ?? "neutral",
+    }, tr("status.idle"));
+    setGlobalStatus(status.message, status.tone);
     document.title = tr("app.title");
     mobileSymbolAgent.reset();
     terminalControl.render();

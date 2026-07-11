@@ -5,6 +5,13 @@ content_dir="./dist/content"
 rm -rf "${content_dir}"
 mkdir -p "${content_dir}"
 
+{
+  printf 'LIGHTOS_REQUIRE_COOKIE_AUTH=%s\n' "${LIGHTOS_REQUIRE_COOKIE_AUTH:-true}"
+  if [[ -n "${LIGHTOS_ADMIN_INTERNAL_BASE_URL:-}" ]]; then
+    printf 'LIGHTOS_ADMIN_INTERNAL_BASE_URL=%s\n' "${LIGHTOS_ADMIN_INTERNAL_BASE_URL}"
+  fi
+} > "${content_dir}/.env"
+
 npm ci
 npm run build
 

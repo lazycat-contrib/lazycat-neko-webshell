@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::http::header::{CONTENT_SECURITY_POLICY, HeaderName};
 use axum::routing::{delete, get, post};
@@ -21,6 +22,7 @@ use crate::herdr::{
     get_herdr_state, herdr_ws, post_herdr_action, post_herdr_output_sequence, post_herdr_socket,
 };
 use crate::lightos::{self, AdminInfo};
+use crate::lightos_admin;
 use crate::notifications::{get_notifications, post_notification_dismiss, post_notification_read};
 use crate::pomodoro::{
     get_pomodoro_state, post_notification_action, post_pomodoro_dismiss, post_pomodoro_start,
@@ -160,15 +162,12 @@ async fn lightos_admin_info() -> Result<Json<AdminInfo>, (StatusCode, String)> {
 
 async fn list_instances(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<Instance>>, (StatusCode, String)> {
     let mut instances = if lightos_features_enabled() {
-        lightos::list_instances().await.map_err(|err| {
-            (
-                StatusCode::BAD_GATEWAY,
-                err.message
-                    .unwrap_or_else(|| "failed to list LightOS instances".to_owned()),
-            )
-        })?
+        lightos_admin::list_visible_instances(&headers)
+            .await
+            .map_err(|error| (error.status, error.message))?
     } else {
         Vec::new()
     };
