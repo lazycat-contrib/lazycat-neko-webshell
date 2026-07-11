@@ -166,6 +166,9 @@ pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<Agen
         }
         Err(_) => {}
     }
+    if try_recover_installed_agent(&client).await? {
+        return Ok(client);
+    }
     ensure_agent_binary_installed(selector).await?;
     match ping_agent(&client).await {
         Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
@@ -188,6 +191,48 @@ pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<Agen
     start_agent(&client).await?;
     wait_for_agent(&client).await?;
     Ok(client)
+}
+
+async fn try_recover_installed_agent(client: &AgentClient) -> anyhow::Result<bool> {
+    if !installed_agent_binary_exists(&client.selector)
+        .await
+        .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+    if let Err(err) = restart_agent(client).await {
+        warn!(
+            selector = %client.selector,
+            error = %err,
+            "failed to restart installed webshell agent; reinstalling agent"
+        );
+        return Ok(false);
+    }
+    match wait_for_agent_response(client).await {
+        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => Ok(true),
+        Ok(response) if agent_protocol_version_is_stale(response.version.as_deref()) => {
+            warn!(
+                selector = %client.selector,
+                running_protocol = response.version.as_deref().unwrap_or(""),
+                expected_protocol = AGENT_PROTOCOL_VERSION,
+                "installed webshell agent protocol is stale; upgrading agent"
+            );
+            Ok(false)
+        }
+        Ok(response) => bail!(
+            "unsupported newer webshell agent protocol: running {}, provider expects {}",
+            response.version.unwrap_or_default(),
+            AGENT_PROTOCOL_VERSION
+        ),
+        Err(err) => {
+            warn!(
+                selector = %client.selector,
+                error = %err,
+                "installed webshell agent did not restart; reinstalling agent"
+            );
+            Ok(false)
+        }
+    }
 }
 
 async fn ping_agent(client: &AgentClient) -> anyhow::Result<AgentResponse> {
@@ -229,6 +274,46 @@ async fn wait_for_agent(client: &AgentClient) -> anyhow::Result<()> {
         last_error.as_ref(),
         &log_tail,
     ))
+}
+
+async fn wait_for_agent_response(client: &AgentClient) -> anyhow::Result<AgentResponse> {
+    let mut last_error = None;
+    for _ in 0..25 {
+        match ping_agent(client).await {
+            Ok(response) => return Ok(response),
+            Err(err) => last_error = Some(err),
+        }
+        sleep(Duration::from_millis(120)).await;
+    }
+    let log_tail = read_agent_log_tail(client, AGENT_LOG_TAIL_LINES).await;
+    Err(agent_startup_timeout_error(
+        client,
+        last_error.as_ref(),
+        &log_tail,
+    ))
+}
+
+async fn installed_agent_binary_exists(selector: &str) -> anyhow::Result<bool> {
+    let output = run_target_shell(
+        selector,
+        &installed_agent_probe_script(),
+        None,
+        Duration::from_secs(8),
+    )
+    .await?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == AGENT_READY_MARKER)
+}
+
+fn installed_agent_probe_script() -> String {
+    format!(
+        r#"agent={}
+if [ -x "$agent" ]; then
+  printf '%s\n' {}
+fi
+"#,
+        shell_quote(AGENT_INSTALL_PATH),
+        shell_quote(AGENT_READY_MARKER),
+    )
 }
 
 async fn run_agent_request(
@@ -629,6 +714,14 @@ mod tests {
             binary_manifest(b"abc"),
             "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn installed_agent_probe_checks_the_existing_binary_without_matching_provider_hash() {
+        let script = installed_agent_probe_script();
+        assert!(script.contains("[ -x \"$agent\" ]"));
+        assert!(script.contains(AGENT_READY_MARKER));
+        assert!(!script.contains(AGENT_MANIFEST_PATH));
     }
 
     #[test]
