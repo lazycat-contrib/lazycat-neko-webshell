@@ -224,7 +224,7 @@ fn current_deploy_uid() -> Option<String> {
         .find_map(|name| non_empty_env(name))
 }
 
-fn resolve_admin_base_url(public_base_url: &str) -> String {
+pub(crate) fn resolve_admin_base_url(public_base_url: &str) -> String {
     let configured = lightos_config_value(LIGHTOS_ADMIN_INTERNAL_BASE_URL_ENV);
     if !configured.is_empty() {
         return configured;
@@ -235,7 +235,7 @@ fn resolve_admin_base_url(public_base_url: &str) -> String {
     public_base_url.trim().to_owned()
 }
 
-fn build_admin_url(base_url: &str, request_path: &str) -> Result<Url, url::ParseError> {
+pub(crate) fn build_admin_url(base_url: &str, request_path: &str) -> Result<Url, url::ParseError> {
     let mut url = Url::parse(base_url.trim())?;
     let base_path = url.path().trim_end_matches('/');
     let request_path = request_path.trim().trim_start_matches('/');
@@ -250,7 +250,10 @@ fn build_admin_url(base_url: &str, request_path: &str) -> Result<Url, url::Parse
     Ok(url)
 }
 
-fn build_upstream_headers(source: &HeaderMap, account_id: &str) -> Result<HeaderMap, String> {
+pub(crate) fn build_upstream_headers(
+    source: &HeaderMap,
+    account_id: &str,
+) -> Result<HeaderMap, String> {
     let mut target = HeaderMap::new();
     for name in [
         "accept",

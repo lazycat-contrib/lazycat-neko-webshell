@@ -1,11 +1,12 @@
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::lightos;
+use crate::lightos_admin;
 use crate::ssh_backend;
 use crate::state::AppState;
 use crate::tty_init::lightos_features_enabled;
@@ -33,9 +34,28 @@ pub struct SessionBackendInfo {
 
 pub async fn get_session_backends(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<SessionBackendsQuery>,
 ) -> Result<Json<SessionBackendsState>, SessionBackendsError> {
     let selector = query.name.trim();
+    if lightos_admin::is_client_selector(selector) {
+        crate::client_terminal::authorize_client(&headers, selector)
+            .await
+            .map_err(|error| SessionBackendsError {
+                status: error.status,
+                message: error.to_string(),
+            })?;
+        return Ok(Json(SessionBackendsState {
+            selector: selector.to_owned(),
+            backends: vec![SessionBackendInfo {
+                id: "webshell",
+                label: "WebShell native",
+                available: true,
+                supports_terminal_transfer: false,
+                lightos_only: false,
+            }],
+        }));
+    }
     validate_selector(selector).map_err(|err| SessionBackendsError {
         status: StatusCode::BAD_REQUEST,
         message: err.message.unwrap_or_else(|| "invalid selector".to_owned()),

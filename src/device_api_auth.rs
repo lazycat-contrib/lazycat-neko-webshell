@@ -47,7 +47,7 @@ struct DeviceAuthMaterial {
 pub(crate) async fn resolve_auth_token(
     device_api_url: &Url,
 ) -> Result<SecretString, DeviceApiAuthError> {
-    if device_api_url.scheme() != "https" || device_api_url.host_str().is_none() {
+    if !matches!(device_api_url.scheme(), "http" | "https") || device_api_url.host_str().is_none() {
         return Err(DeviceApiAuthError::InvalidUrl);
     }
     let material = load_auth_material(
@@ -204,6 +204,9 @@ fn sign_subject_serial(key_der: &[u8], message: &[u8]) -> Result<Vec<u8>, Device
 
 fn auth_endpoint(device_api_url: &Url) -> Result<Url, DeviceApiAuthError> {
     let mut endpoint = device_api_url.clone();
+    endpoint
+        .set_scheme("https")
+        .map_err(|()| DeviceApiAuthError::InvalidUrl)?;
     endpoint.set_path(REQUEST_AUTH_TOKEN_PATH);
     endpoint.set_query(None);
     endpoint.set_fragment(None);

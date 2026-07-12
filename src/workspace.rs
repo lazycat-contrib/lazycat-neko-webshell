@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use buffa::MessageField;
@@ -15,6 +16,7 @@ use crate::agent_client::ensure_agent;
 use crate::config::{DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, MAX_COLS, MAX_ROWS};
 use crate::database::{AppDatabase, KV_KEY_WORKSPACES, KV_NAMESPACE_STATE};
 use crate::lightos;
+use crate::lightos_admin;
 use crate::proto::lazycat::webshell::v1::{
     AgentLayoutNode, AgentLayoutNodeType, AgentSplitAxis, AgentSplitDirection,
     AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
@@ -139,21 +141,21 @@ pub struct WorkspaceQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct WorkspaceActionRequest {
-    name: String,
-    action: WorkspaceAction,
-    tab_id: Option<String>,
-    pane_id: Option<String>,
-    direction: Option<SplitDirection>,
-    label: Option<String>,
-    layout: Option<WorkspaceLayoutNode>,
-    active_pane_id: Option<String>,
-    cols: Option<u16>,
-    rows: Option<u16>,
-    output_limit: Option<usize>,
-    auto_restart: Option<bool>,
-    session_backend: Option<SessionBackend>,
-    pinned: Option<bool>,
-    pinned_order: Option<u32>,
+    pub(crate) name: String,
+    pub(crate) action: WorkspaceAction,
+    pub(crate) tab_id: Option<String>,
+    pub(crate) pane_id: Option<String>,
+    pub(crate) direction: Option<SplitDirection>,
+    pub(crate) label: Option<String>,
+    pub(crate) layout: Option<WorkspaceLayoutNode>,
+    pub(crate) active_pane_id: Option<String>,
+    pub(crate) cols: Option<u16>,
+    pub(crate) rows: Option<u16>,
+    pub(crate) output_limit: Option<usize>,
+    pub(crate) auto_restart: Option<bool>,
+    pub(crate) session_backend: Option<SessionBackend>,
+    pub(crate) pinned: Option<bool>,
+    pub(crate) pinned_order: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -307,18 +309,27 @@ impl WorkspaceStore {
 
 pub async fn get_workspace(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(query): Query<WorkspaceQuery>,
 ) -> Response {
     let selector = query.name.trim();
-    let login_user = match authorize_workspace_selector(&state, selector, true).await {
-        Ok(login_user) => login_user,
-        Err(response) => return response.into_response(),
-    };
     let (cols, rows) = match request_size(query.cols, query.rows) {
         Ok(size) => size,
         Err(response) => return response.into_response(),
     };
     let output_limit = normalize_output_frame_limit(query.output_limit);
+
+    if lightos_admin::is_client_selector(selector) {
+        return match crate::client_terminal::get_workspace(&headers, selector, cols, rows).await {
+            Ok(workspace) => Json(workspace).into_response(),
+            Err(error) => error.into_response(),
+        };
+    }
+
+    let login_user = match authorize_workspace_selector(&state, selector, true).await {
+        Ok(login_user) => login_user,
+        Err(response) => return response.into_response(),
+    };
 
     if ssh_backend::is_ssh_selector(selector) {
         return Json(optional_backend_workspace_state(&state, selector)).into_response();
@@ -342,15 +353,28 @@ pub async fn get_workspace(
 
 pub async fn put_workspace_action(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<WorkspaceActionRequest>,
 ) -> Response {
     let selector = request.name.trim().to_owned();
-    let login_user = match authorize_workspace_selector(&state, &selector, true).await {
-        Ok(login_user) => login_user,
-        Err(response) => return response.into_response(),
-    };
     let (cols, rows) = match request_size(request.cols, request.rows) {
         Ok(size) => size,
+        Err(response) => return response.into_response(),
+    };
+
+    if lightos_admin::is_client_selector(&selector) {
+        return match crate::client_terminal::apply_workspace_action(
+            &headers, &selector, cols, rows, &request,
+        )
+        .await
+        {
+            Ok(workspace) => Json(workspace).into_response(),
+            Err(error) => error.into_response(),
+        };
+    }
+
+    let login_user = match authorize_workspace_selector(&state, &selector, true).await {
+        Ok(login_user) => login_user,
         Err(response) => return response.into_response(),
     };
     let output_limit = normalize_output_frame_limit(request.output_limit);

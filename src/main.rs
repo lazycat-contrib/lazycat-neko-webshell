@@ -15,6 +15,7 @@ mod agent_workspace;
 mod ai_chat;
 mod assets;
 mod backgrounds;
+mod client_terminal;
 mod config;
 mod database;
 mod device_api_auth;
