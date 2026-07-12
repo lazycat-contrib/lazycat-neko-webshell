@@ -10,7 +10,6 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::time::timeout;
 
 use crate::config::LIGHTOSCTL;
-use crate::proto::lazycat::webshell::v1::{Instance, InstanceKind};
 use crate::validation::validate_selector;
 
 const TARGET_SSH_CONFIG_READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -40,25 +39,6 @@ pub struct AdminInfo {
     pub domain: String,
     #[serde(default)]
     pub base_url: String,
-}
-
-pub async fn list_instances() -> Result<Vec<Instance>, ConnectError> {
-    let mut items = load_lightos_instances().await?;
-    items.sort_by_key(|item| item.status != "running");
-    Ok(items
-        .into_iter()
-        .filter_map(|item| {
-            let selector = selector_for_instance(&item)?;
-            Some(Instance {
-                selector: Some(selector),
-                name: Some(item.name),
-                owner_deploy_id: Some(item.owner_deploy_id),
-                status: Some(item.status),
-                kind: Some(InstanceKind::INSTANCE_KIND_LIGHTOS.into()),
-                ..Default::default()
-            })
-        })
-        .collect())
 }
 
 pub async fn authorized_selectors() -> Result<HashSet<String>, ConnectError> {

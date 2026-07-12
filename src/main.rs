@@ -22,6 +22,7 @@ mod device_api_auth;
 mod embedded_frontend;
 mod fonts;
 mod herdr;
+mod http_body;
 mod lightos;
 mod lightos_admin;
 mod notifications;

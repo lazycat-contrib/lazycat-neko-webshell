@@ -21,6 +21,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 
 use crate::device_api_auth;
+use crate::http_body::read_limited_body;
 use crate::lightos;
 use crate::lightos_admin::{
     self, build_admin_url, build_upstream_headers, current_request_account_id,
@@ -481,12 +482,18 @@ fn translate_remote_control(
         ));
     }
     let translated = if kind == "history-replay-start" {
+        let allow_generated_input = value
+            .get("allow_generated_input")
+            .or_else(|| value.get("allowGeneratedInput"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         serde_json::json!({
             "type": "replay-start",
             "session_id": pane_id,
             "selector": selector,
             "pane_id": pane_id,
             "replay_after": replay_after,
+            "allow_generated_input": allow_generated_input,
         })
     } else {
         serde_json::json!({
@@ -532,6 +539,7 @@ async fn client_terminal_json(
     let client = reqwest::Client::builder()
         .timeout(CLIENT_TERMINAL_TIMEOUT)
         .danger_accept_invalid_certs(true)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?;
     let mut request = client
@@ -553,15 +561,13 @@ async fn client_terminal_json(
         ))
     })?;
     let status = response.status();
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?;
-    if bytes.len() > MAX_WORKSPACE_RESPONSE_BYTES {
-        return Err(ClientTerminalError::bad_gateway(
-            "remote workspace response is too large",
-        ));
-    }
+    let bytes = read_limited_body(
+        response,
+        MAX_WORKSPACE_RESPONSE_BYTES,
+        "remote workspace response",
+    )
+    .await
+    .map_err(ClientTerminalError::bad_gateway)?;
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
         return Err(ClientTerminalError::forbidden(
             "instance is not accessible by current account",
@@ -622,6 +628,7 @@ async fn request_terminal_ticket(
     upstream_headers.insert("content-type", HeaderValue::from_static("application/json"));
     let client = reqwest::Client::builder()
         .timeout(CLIENT_TERMINAL_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?;
     let response = client
@@ -632,15 +639,13 @@ async fn request_terminal_ticket(
         .await
         .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?;
     let status = response.status();
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?;
-    if body.len() > MAX_TICKET_RESPONSE_BYTES {
-        return Err(ClientTerminalError::bad_gateway(
-            "client terminal ticket response is too large",
-        ));
-    }
+    let body = read_limited_body(
+        response,
+        MAX_TICKET_RESPONSE_BYTES,
+        "client terminal ticket response",
+    )
+    .await
+    .map_err(ClientTerminalError::bad_gateway)?;
     if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
         return Err(ClientTerminalError::forbidden(
             "instance is not accessible by current account",
@@ -926,6 +931,7 @@ mod tests {
         assert_eq!(start["selector"], "client:client-a");
         assert_eq!(start["session_id"], "pane-1");
         assert_eq!(start["replay_after"], 12);
+        assert_eq!(start["allow_generated_input"], true);
 
         let complete = translate_remote_control(
             r#"{"type":"history-replay-complete","selector":"remote","pane_id":"pane-1"}"#,

@@ -20,7 +20,9 @@ fn main() {
 
 fn embed_webshell_agent() -> std::io::Result<()> {
     const ENV_NAME: &str = "NEKO_WEBSHELL_AGENT_BINARY";
+    const AGENT_ONLY_ENV_NAME: &str = "NEKO_WEBSHELL_BUILD_AGENT_ONLY";
     println!("cargo:rerun-if-env-changed={ENV_NAME}");
+    println!("cargo:rerun-if-env-changed={AGENT_ONLY_ENV_NAME}");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR"));
     let generated = if let Some(path) = env::var_os(ENV_NAME).filter(|value| !value.is_empty()) {
         let path = PathBuf::from(path);
@@ -29,6 +31,13 @@ fn embed_webshell_agent() -> std::io::Result<()> {
             "pub static EMBEDDED_AGENT_BINARY: &[u8] = include_bytes!({:?});\n",
             path.display().to_string()
         )
+    } else if env::var("PROFILE").as_deref() == Ok("release")
+        && env::var(AGENT_ONLY_ENV_NAME).as_deref() != Ok("1")
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "release provider builds require NEKO_WEBSHELL_AGENT_BINARY; use scripts/build-release.sh",
+        ));
     } else {
         "pub static EMBEDDED_AGENT_BINARY: &[u8] = &[];\n".to_owned()
     };

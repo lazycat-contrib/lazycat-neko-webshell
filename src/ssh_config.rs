@@ -418,7 +418,10 @@ Host DemoServerC
         assert_eq!(document.hosts[0].patterns, vec!["DemoServerA"]);
         assert_eq!(document.hosts[0].host_name, "host-a.example.net");
         assert_eq!(document.hosts[0].user, "ubuntu");
-        assert_eq!(document.hosts[0].identity_files, vec!["~/.ssh/demo_a_key.pem"]);
+        assert_eq!(
+            document.hosts[0].identity_files,
+            vec!["~/.ssh/demo_a_key.pem"]
+        );
         assert_eq!(document.hosts[2].patterns, vec!["DemoServerC"]);
         assert_eq!(document.hosts[2].user, "ecs-user");
     }

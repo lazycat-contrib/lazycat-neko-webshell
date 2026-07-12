@@ -5,6 +5,13 @@ type RemoteReplayPane = {
   lastOutputSequence: number;
 };
 
+export type RemoteReplayInputPolicy = "normal" | "suppress" | "immediate";
+
+const generatedTerminalResponsePattern =
+  /^(?:\x1b)?(?:\[\d{1,4};\d{1,4}R|\[\d{1,4}R|\[0n|\[\?[\d;]{1,16}c|\[>[\d;]{1,16}c)/;
+const generatedTerminalResponseTailPattern =
+  /^(?:\[\d{1,4};\d{1,4}R|\[\d{1,4}R|\d{1,4};\d{1,4}R|;\d{1,4}R|\d{1,4}R|\dR)+$/;
+
 export type RemoteClientNewTabCapabilities = {
   lightosDirectAvailable: boolean;
   sshAvailable: boolean;
@@ -29,6 +36,30 @@ export function remoteClientNewTabCapabilities(
     lightosDirectAvailable: lightosDirectAvailable && !remoteClient,
     sshAvailable: !remoteClient,
   };
+}
+
+export function remoteClientReplayInputPolicy(
+  selector: string,
+  replaying: boolean,
+  allowGeneratedInput: boolean,
+  data: string,
+): RemoteReplayInputPolicy {
+  if (!replaying || !isRemoteClientSelector(selector) || !isGeneratedTerminalResponse(data)) {
+    return "normal";
+  }
+  return allowGeneratedInput ? "immediate" : "suppress";
+}
+
+function isGeneratedTerminalResponse(data: string): boolean {
+  if (!data) return false;
+  if (generatedTerminalResponseTailPattern.test(data)) return true;
+  let remaining = data;
+  while (remaining) {
+    const match = generatedTerminalResponsePattern.exec(remaining);
+    if (!match) return false;
+    remaining = remaining.slice(match[0].length);
+  }
+  return true;
 }
 
 export function resetRemoteClientTerminalForReplay(pane: RemoteReplayPane): boolean {

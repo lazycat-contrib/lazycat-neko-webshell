@@ -6,6 +6,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use reqwest::Url;
 use serde::Deserialize;
 
+use crate::http_body::read_limited_body;
 use crate::lightos;
 use crate::proto::lazycat::webshell::v1::{Instance, InstanceKind};
 use crate::validation::validate_selector;
@@ -25,6 +26,7 @@ const DEPLOY_UID_ENV_NAMES: [&str; 7] = [
     "LAZYCAT_DEPLOY_ID",
     LAZYCAT_APP_ID_ENV,
 ];
+const MAX_ADMIN_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Debug)]
 pub struct LightOsAdminError {
@@ -89,6 +91,7 @@ pub async fn list_visible_instances(
     let base_url = resolve_admin_base_url(&info.base_url);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
     list_visible_instances_from(&client, &base_url, headers, &account_id).await
@@ -138,6 +141,7 @@ pub(crate) async fn list_visible_client_instances(
     let base_url = resolve_admin_base_url(&info.base_url);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
     list_visible_client_instances_from(&client, &base_url, headers, &account_id).await
@@ -161,7 +165,7 @@ async fn fetch_admin_json(
     client: &reqwest::Client,
     url: Url,
     headers: HeaderMap,
-) -> Result<bytes::Bytes, LightOsAdminError> {
+) -> Result<Vec<u8>, LightOsAdminError> {
     let response = client
         .get(url)
         .headers(headers)
@@ -169,10 +173,9 @@ async fn fetch_admin_json(
         .await
         .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
     let status = response.status();
-    let body = response
-        .bytes()
+    let body = read_limited_body(response, MAX_ADMIN_RESPONSE_BYTES, "LightOS admin response")
         .await
-        .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
+        .map_err(LightOsAdminError::bad_gateway)?;
     if status != StatusCode::OK {
         let detail = String::from_utf8_lossy(&body).trim().to_owned();
         return Err(LightOsAdminError::bad_gateway(if detail.is_empty() {

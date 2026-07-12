@@ -128,6 +128,7 @@ import {
   filterRemoteClientPluginTools,
   isRemoteClientSelector,
   remoteClientNewTabCapabilities,
+  remoteClientReplayInputPolicy,
   resetRemoteClientTerminalForReplay,
 } from "./remote-client-terminal";
 import {
@@ -5162,6 +5163,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     pendingInput: [],
     pendingInputBytes: 0,
     replaying: false,
+    allowGeneratedInputDuringReplay: false,
     lastOutputSequence: 0,
     aiContextText: "",
     exited: false,
@@ -5460,6 +5462,7 @@ function clearReplayInputLock(pane: TerminalPane) {
   window.clearTimeout(pane.replayTimer);
   pane.replayTimer = undefined;
   pane.replaying = false;
+  pane.allowGeneratedInputDuringReplay = false;
 }
 
 function finishReplayInputLock(pane: TerminalPane) {
@@ -5648,6 +5651,7 @@ function handleServerText(pane: TerminalPane, text: string) {
       pane.lastReplayAfter = Math.max(0, Math.trunc(event.replay_after));
     }
     resetRemoteClientTerminalForReplay(pane);
+    pane.allowGeneratedInputDuringReplay = event.allow_generated_input === true;
     pane.replaying = true;
   } else if (event.type === "error") {
     clearReplayInputLock(pane);
@@ -6410,6 +6414,18 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
     return false;
   }
   if (terminalTransfer.consumePaneInput(pane, data)) {
+    return true;
+  }
+  const replayPolicy = remoteClientReplayInputPolicy(
+    pane.selector,
+    pane.replaying,
+    pane.allowGeneratedInputDuringReplay,
+    data,
+  );
+  if (replayPolicy === "suppress") return true;
+  if (replayPolicy === "immediate") {
+    if (pane.socket?.readyState !== WebSocket.OPEN) return false;
+    pane.socket.send(terminalEncoder.encode(data));
     return true;
   }
   if (isInterruptInput(data) && pane.socket?.readyState === WebSocket.OPEN) {

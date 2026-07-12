@@ -56,6 +56,7 @@ fi
 CC_x86_64_unknown_linux_musl=musl-gcc \
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="${rust_lld}" \
   RUSTFLAGS="-C target-feature=+crt-static" \
+  NEKO_WEBSHELL_BUILD_AGENT_ONLY=1 \
   cargo build --release --locked --target x86_64-unknown-linux-musl \
     --bin lazycat-neko-webshell-agent
 

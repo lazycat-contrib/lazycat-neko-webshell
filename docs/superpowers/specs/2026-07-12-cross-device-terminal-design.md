@@ -25,6 +25,8 @@ The provider keeps three boundaries explicit:
 2. `client_terminal.rs` is the remote-terminal adapter. It re-authorizes every `client:<id>` request against the current account-visible list, obtains a short-lived terminal ticket, resolves the device API auth token, converts workspace JSON, and proxies WebSocket frames.
 3. `device_api_auth.rs` implements the minimal official SDK authentication contract in Rust. It reads the mounted LazyCat certificates, signs the application certificate subject serial number, sends the protobuf `RequestAuthToken` gRPC request to the device API, and returns only the short-lived token.
 
+Transport compatibility currently matches the official Go provider and LazyCat SDK: device HTTP and WebSocket clients accept the platform's self-signed or hostname-mismatched certificates. This is a deliberate interoperability exception, not strict peer-identity verification. Credential-bearing HTTP clients must not follow redirects, and tickets, device tokens, certificate material, and signed authentication payloads must never be logged. Tightening certificate verification requires a documented LightOS device-certificate identity contract and real-device compatibility testing first.
+
 Normal LightOS selectors continue to use the embedded instance-local agent. Remote selectors never enter `lightosctl`, agent install, Herdr, zellij, or local workspace persistence paths.
 
 ## Internal protobuf contract

@@ -198,10 +198,19 @@ pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<Agen
 }
 
 async fn try_recover_installed_agent(client: &AgentClient) -> anyhow::Result<bool> {
-    if !installed_agent_binary_exists(&client.selector)
+    let binary_exists = installed_agent_binary_exists(&client.selector)
         .await
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if !binary_exists {
+        return Ok(false);
+    }
+    let expected_manifest = agent_payload_manifest().await?;
+    let manifest_matches = installed_manifest_matches(&client.selector, &expected_manifest).await?;
+    if !should_restart_installed_agent(binary_exists, manifest_matches) {
+        warn!(
+            selector = %client.selector,
+            "installed webshell agent payload is stale; installing embedded lightweight agent"
+        );
         return Ok(false);
     }
     if let Err(err) = restart_agent(client).await {
@@ -374,6 +383,26 @@ async fn load_agent_payload() -> anyhow::Result<Vec<u8>> {
         tokio::fs::read(&path)
             .await
             .with_context(|| format!("failed to read lightweight agent at {}", path.display()))
+    }
+}
+
+async fn agent_payload_manifest() -> anyhow::Result<String> {
+    #[cfg(not(debug_assertions))]
+    {
+        if EMBEDDED_AGENT_BINARY.is_empty() {
+            bail!("embedded webshell agent payload is empty");
+        }
+        Ok(binary_manifest(EMBEDDED_AGENT_BINARY))
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        let provider = std::env::current_exe().context("failed to resolve current executable")?;
+        let path = sibling_agent_path(&provider);
+        let payload = tokio::fs::read(&path)
+            .await
+            .with_context(|| format!("failed to read lightweight agent at {}", path.display()))?;
+        Ok(binary_manifest(&payload))
     }
 }
 
@@ -676,6 +705,10 @@ fn binary_manifest(payload: &[u8]) -> String {
     format!("sha256:{}", hex_lower(&hasher.finalize()))
 }
 
+fn should_restart_installed_agent(binary_exists: bool, manifest_matches: bool) -> bool {
+    binary_exists && manifest_matches
+}
+
 fn hex_lower(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -791,6 +824,13 @@ mod tests {
         assert!(script.contains("[ -x \"$agent\" ]"));
         assert!(script.contains(AGENT_READY_MARKER));
         assert!(!script.contains(AGENT_MANIFEST_PATH));
+    }
+
+    #[test]
+    fn recovery_restarts_only_the_embedded_agent_payload() {
+        assert!(should_restart_installed_agent(true, true));
+        assert!(!should_restart_installed_agent(true, false));
+        assert!(!should_restart_installed_agent(false, true));
     }
 
     #[test]

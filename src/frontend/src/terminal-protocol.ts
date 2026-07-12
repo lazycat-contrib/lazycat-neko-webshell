@@ -16,7 +16,13 @@ export type TerminalServerEvent =
     request_id?: string;
     control_action?: "take-control" | "release-control";
   }
-  | { type: "replay-start"; session_id?: string; pane_id?: string; replay_after?: number }
+  | {
+    type: "replay-start";
+    session_id?: string;
+    pane_id?: string;
+    replay_after?: number;
+    allow_generated_input?: boolean;
+  }
   | { type: "replay-complete"; session_id?: string; pane_id?: string; last_sequence?: number };
 
 export function parseTerminalServerMessage(text: string): TerminalServerEvent | undefined {

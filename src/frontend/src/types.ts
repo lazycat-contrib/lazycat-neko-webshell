@@ -382,6 +382,7 @@ export type TerminalPane = {
   pendingInput: string[];
   pendingInputBytes: number;
   replaying: boolean;
+  allowGeneratedInputDuringReplay: boolean;
   lastReplayAfter?: number;
   lastOutputSequence: number;
   aiContextText: string;

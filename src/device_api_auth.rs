@@ -5,11 +5,13 @@ use std::time::Duration;
 use buffa::Message;
 use ed25519_dalek::Signer as _;
 use reqwest::Url;
+use rsa::pkcs1::DecodeRsaPrivateKey as _;
 use rsa::pkcs8::DecodePrivateKey as _;
 use secrecy::SecretString;
 use thiserror::Error;
 use x509_parser::parse_x509_certificate;
 
+use crate::http_body::read_limited_body;
 use crate::proto::cloud::lazycat::apis::localdevice::{
     RequestAuthTokenRequest, RequestAuthTokenResponse,
 };
@@ -41,7 +43,12 @@ struct DeviceAuthMaterial {
     app_cert_pem: Vec<u8>,
     app_key_pem: Vec<u8>,
     app_cert_der: Vec<u8>,
-    app_key_der: Vec<u8>,
+    app_key_der: PrivateKeyDer,
+}
+
+enum PrivateKeyDer {
+    Pkcs8(Vec<u8>),
+    Pkcs1(Vec<u8>),
 }
 
 pub(crate) async fn resolve_auth_token(
@@ -80,6 +87,7 @@ pub(crate) async fn resolve_auth_token(
         .identity(identity)
         .add_root_certificate(box_cert)
         .danger_accept_invalid_certs(true)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| DeviceApiAuthError::Credential(error.to_string()))?;
     let response = client
@@ -105,10 +113,13 @@ pub(crate) async fn resolve_auth_token(
             status.to_str().unwrap_or("unknown")
         )));
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|error| DeviceApiAuthError::Response(error.to_string()))?;
+    let bytes = read_limited_body(
+        response,
+        MAX_GRPC_MESSAGE_BYTES + 5,
+        "device authentication response",
+    )
+    .await
+    .map_err(DeviceApiAuthError::Response)?;
     let decoded: RequestAuthTokenResponse = decode_grpc_response(&bytes)?;
     let token = decoded
         .token
@@ -131,7 +142,7 @@ fn load_auth_material(
     let app_key_pem = std::fs::read(app_key_path)
         .map_err(|error| DeviceApiAuthError::Credential(error.to_string()))?;
     let app_cert_der = first_certificate_der(&app_cert_pem)?;
-    let app_key_der = first_pkcs8_key_der(&app_key_pem)?;
+    let app_key_der = first_private_key_der(&app_key_pem)?;
     Ok(DeviceAuthMaterial {
         box_cert_pem,
         app_cert_pem,
@@ -151,19 +162,22 @@ fn first_certificate_der(pem: &[u8]) -> Result<Vec<u8>, DeviceApiAuthError> {
         .ok_or_else(|| DeviceApiAuthError::Credential("app certificate is missing".to_owned()))
 }
 
-fn first_pkcs8_key_der(pem: &[u8]) -> Result<Vec<u8>, DeviceApiAuthError> {
+fn first_private_key_der(pem: &[u8]) -> Result<PrivateKeyDer, DeviceApiAuthError> {
     let mut reader = Cursor::new(pem);
     loop {
         let item = rustls_pemfile::read_one(&mut reader)
             .map_err(|error| DeviceApiAuthError::Credential(error.to_string()))?;
         match item {
             Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
-                return Ok(key.secret_pkcs8_der().to_vec());
+                return Ok(PrivateKeyDer::Pkcs8(key.secret_pkcs8_der().to_vec()));
+            }
+            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
+                return Ok(PrivateKeyDer::Pkcs1(key.secret_pkcs1_der().to_vec()));
             }
             Some(_) => {}
             None => {
                 return Err(DeviceApiAuthError::Credential(
-                    "PKCS#8 application key is missing".to_owned(),
+                    "application private key is missing".to_owned(),
                 ));
             }
         }
@@ -188,18 +202,36 @@ fn certificate_subject_serial(certificate_der: &[u8]) -> Result<String, DeviceAp
         })
 }
 
-fn sign_subject_serial(key_der: &[u8], message: &[u8]) -> Result<Vec<u8>, DeviceApiAuthError> {
-    if let Ok(key) = ed25519_dalek::SigningKey::from_pkcs8_der(key_der) {
-        return Ok(key.sign(message).to_bytes().to_vec());
-    }
-    if let Ok(key) = rsa::RsaPrivateKey::from_pkcs8_der(key_der) {
-        return key
-            .sign(rsa::Pkcs1v15Sign::new_unprefixed(), message)
-            .map_err(|error| DeviceApiAuthError::Signature(error.to_string()));
+fn sign_subject_serial(
+    key_der: &PrivateKeyDer,
+    message: &[u8],
+) -> Result<Vec<u8>, DeviceApiAuthError> {
+    match key_der {
+        PrivateKeyDer::Pkcs8(key_der) => {
+            if let Ok(key) = ed25519_dalek::SigningKey::from_pkcs8_der(key_der) {
+                return Ok(key.sign(message).to_bytes().to_vec());
+            }
+            if let Ok(key) = rsa::RsaPrivateKey::from_pkcs8_der(key_der) {
+                return sign_rsa_subject_serial(&key, message);
+            }
+        }
+        PrivateKeyDer::Pkcs1(key_der) => {
+            if let Ok(key) = rsa::RsaPrivateKey::from_pkcs1_der(key_der) {
+                return sign_rsa_subject_serial(&key, message);
+            }
+        }
     }
     Err(DeviceApiAuthError::Signature(
-        "unsupported PKCS#8 application key".to_owned(),
+        "unsupported application private key".to_owned(),
     ))
+}
+
+fn sign_rsa_subject_serial(
+    key: &rsa::RsaPrivateKey,
+    message: &[u8],
+) -> Result<Vec<u8>, DeviceApiAuthError> {
+    key.sign(rsa::Pkcs1v15Sign::new_unprefixed(), message)
+        .map_err(|error| DeviceApiAuthError::Signature(error.to_string()))
 }
 
 fn auth_endpoint(device_api_url: &Url) -> Result<Url, DeviceApiAuthError> {
@@ -256,13 +288,13 @@ mod tests {
 
     use super::{
         auth_endpoint, certificate_subject_serial, decode_grpc_response, encode_grpc_request,
-        first_certificate_der, first_pkcs8_key_der, sign_subject_serial,
+        first_certificate_der, first_private_key_der, sign_subject_serial,
     };
     use crate::proto::cloud::lazycat::apis::localdevice::{
         RequestAuthTokenRequest, RequestAuthTokenResponse,
     };
 
-    const TEST_CERTIFICATE: &[u8] = br#"-----BEGIN CERTIFICATE-----
+    const TEST_CERTIFICATE: &[u8] = br"-----BEGIN CERTIFICATE-----
 MIIBjTCCAT+gAwIBAgIURRF9ld3m2w2chhT+8aREz8AEtQIwBQYDK2VwMDwxFTAT
 BgNVBAMMDExhenlDYXQgVGVzdDEjMCEGA1UEBRMaY2xvdWQubGF6eWNhdC5hcHAu
 dGVzdC5ib3gwHhcNMjYwNzEyMDAyMDM2WhcNMjYwNzEzMDAyMDM2WjA8MRUwEwYD
@@ -273,11 +305,27 @@ gBSYxUASl6M6yAs6ePBOUjlaUma7JDAPBgNVHRMBAf8EBTADAQH/MAUGAytlcANB
 AICgoyqw11ZgyEpME3p9aeR7oQSa1J3rF7A2dELkBigo3CwfQI8R5wxH+S5EODbO
 zSoT75z2Ej4IuMb8fQuGOAg=
 -----END CERTIFICATE-----
-"#;
-    const TEST_PRIVATE_KEY: &[u8] = br#"-----BEGIN PRIVATE KEY-----
+";
+    const TEST_PRIVATE_KEY: &[u8] = br"-----BEGIN PRIVATE KEY-----
 MC4CAQAwBQYDK2VwBCIEIOPLhoJvUyNema3Oa/LQBHbNYdcteXVD4crUbB/dsIzb
 -----END PRIVATE KEY-----
-"#;
+";
+    const TEST_RSA_PKCS1_PRIVATE_KEY: &[u8] = br"-----BEGIN RSA PRIVATE KEY-----
+MIICXAIBAAKBgQDUgWcgE1gUTSUHst5qatBiZNoh5Ul6bkY1ouGfAvvR1hlJ1Eyp
+VIBl40sOFaGm1mwAV1qU8BZ/IVksA6tFm6vFYODCUV+I+b7JR5796o0kbz4H73a2
+OwU1B6ORiMd5Skl4mUVWPr1NPeI4Mu6Y9k01I018npHbPRy7mp9/x+qePQIDAQAB
+AoGAV6ll/DJepElKnElqPOYBPoWyAkeOryWsatXdUvYtIVu7pNwiH7wPF3jS7mV4
+ANX1SZK/eC8uaJU+Lsz4q0dTbOEClWr9A+noKmoLLmjsrxHKUYLMsALrQPhvsWrB
+HgEDwS/QsNCaue/IzrehXsvkdqFe7w4lmL5Luo1ZaO2EZTUCQQD4NVBQgIEMXrs6
+A14WgHTSbwSCubxviE4xiBcOw+b/QWdvO/+iX1F4Bn2lu4adv4Nvx/v+/cRG8l9g
+/xRY/um3AkEA2y0rXf8rng91naqx7EfGHcj4G6Hu+a0Z3AAYSULsOIzGrI09CByy
+mXgWxwldgCHfcGhrIKM4924MLmCpLsOHqwJBAPD/SwEvFJ3/KQkWFfgBN+zO0HFh
+iF4+2bVsLv8uJY74YUb22ao9pKvGmZ8e6oEmX6dcZQhcO4SrdwKGCaqzsBcCQB4X
+l4qyTCTJbpaVJxSPzi2suBPjKdJx58kC4lK8s34YJfbu9WA1wHe9uzLcoE/FVs4y
+J/M1Nc8S9u0vLEtVYT0CQF0vl5MDYCD/Q/RLrw9znMtKjBRCprSGv6ojqBylVTB8
+TtMMDqzcdLsiTL80pikKa9GF9KRtjp5luS8/INs84RA=
+-----END RSA PRIVATE KEY-----
+";
 
     #[test]
     fn grpc_frame_round_trips_official_auth_messages() {
@@ -310,18 +358,31 @@ MC4CAQAwBQYDK2VwBCIEIOPLhoJvUyNema3Oa/LQBHbNYdcteXVD4crUbB/dsIzb
     #[test]
     fn signs_the_application_certificate_subject_serial() {
         let certificate_der = first_certificate_der(TEST_CERTIFICATE).expect("certificate DER");
-        let key_der = first_pkcs8_key_der(TEST_PRIVATE_KEY).expect("private key DER");
+        let key_der = first_private_key_der(TEST_PRIVATE_KEY).expect("private key DER");
         let subject_serial =
             certificate_subject_serial(&certificate_der).expect("subject serial number");
         assert_eq!(subject_serial, "cloud.lazycat.app.test.box");
 
         let signature =
             sign_subject_serial(&key_der, subject_serial.as_bytes()).expect("signature");
+        let super::PrivateKeyDer::Pkcs8(key_der) = key_der else {
+            panic!("expected PKCS#8 key");
+        };
         let key = ed25519_dalek::SigningKey::from_pkcs8_der(&key_der).expect("signing key");
         let signature = ed25519_dalek::Signature::from_slice(&signature).expect("signature bytes");
         key.verifying_key()
             .verify_strict(subject_serial.as_bytes(), &signature)
             .expect("valid signature");
+    }
+
+    #[test]
+    fn signs_with_the_official_sdk_compatible_pkcs1_rsa_key_format() {
+        let key_der = first_private_key_der(TEST_RSA_PKCS1_PRIVATE_KEY).expect("PKCS#1 key DER");
+
+        let signature =
+            sign_subject_serial(&key_der, b"cloud.lazycat.app.test.box").expect("RSA signature");
+
+        assert!(!signature.is_empty());
     }
 
     #[test]

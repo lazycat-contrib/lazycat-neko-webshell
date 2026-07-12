@@ -5,6 +5,7 @@ import {
   filterRemoteClientPluginTools,
   isRemoteClientSelector,
   remoteClientNewTabCapabilities,
+  remoteClientReplayInputPolicy,
   resetRemoteClientTerminalForReplay,
 } from "./remote-client-terminal.ts";
 
@@ -42,6 +43,25 @@ test("remote clients expose only their native WebShell backend", () => {
     lightosDirectAvailable: true,
     sshAvailable: true,
   });
+});
+
+test("suppresses generated terminal responses on secondary remote replays", () => {
+  assert.equal(
+    remoteClientReplayInputPolicy("client:client-a", true, false, "\x1b[12;34R"),
+    "suppress",
+  );
+  assert.equal(
+    remoteClientReplayInputPolicy("client:client-a", true, true, "\x1b[?1;2c"),
+    "immediate",
+  );
+  assert.equal(
+    remoteClientReplayInputPolicy("client:client-a", true, false, "ls\r"),
+    "normal",
+  );
+  assert.equal(
+    remoteClientReplayInputPolicy("alpha@deploy-a", true, false, "\x1b[12;34R"),
+    "normal",
+  );
 });
 
 test("resets terminal state only for remote history replay", () => {

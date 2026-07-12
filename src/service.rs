@@ -16,6 +16,7 @@ use crate::config::{
 };
 use crate::database::{TunnelProviderProfile, TunnelProviderProfileUpsert};
 use crate::lightos;
+use crate::lightos_admin;
 use crate::plugins::{file_transfer, lightos_port_forward, tunnel};
 use crate::proto::lazycat::webshell::v1::{
     AgentPaneState, AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
@@ -580,11 +581,13 @@ fn plugin_available_in_current_runtime(plugin: &PluginRecord) -> bool {
 impl CapabilityService for CapabilityServiceImpl {
     async fn list_instances(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         _request: OwnedListInstancesRequestView,
     ) -> ServiceResult<ListInstancesResponse> {
         let mut instances = if lightos_features_enabled() {
-            lightos::list_instances().await?
+            lightos_admin::list_visible_instances(&ctx.headers)
+                .await
+                .map_err(lightos_admin_connect_error)?
         } else {
             Vec::new()
         };
@@ -894,6 +897,14 @@ impl CapabilityService for CapabilityServiceImpl {
         Err(ConnectError::unimplemented(
             "terminal control is managed by websocket connections",
         ))
+    }
+}
+
+fn lightos_admin_connect_error(error: lightos_admin::LightOsAdminError) -> ConnectError {
+    match error.status {
+        axum::http::StatusCode::UNAUTHORIZED => ConnectError::unauthenticated(error.message),
+        axum::http::StatusCode::FORBIDDEN => ConnectError::permission_denied(error.message),
+        _ => ConnectError::unavailable(error.message),
     }
 }
 
