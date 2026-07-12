@@ -1,10 +1,9 @@
 # Lightweight WebShell Agent Design
 
-> Superseded on 2026-07-12 by `2026-07-12-official-lightos-webshell-contract-design.md`.
-> Device evidence showed that `v0.5.19` and `v0.5.21` failed alike, while the
-> official Go provider worked on the same LightOS system. The first repair must
-> therefore restore the official account-scoped instance discovery and selector
-> contract before changing the terminal-agent architecture.
+> Sequenced after `2026-07-12-official-lightos-webshell-contract-design.md`.
+> Device evidence showed that the official account-scoped instance/selector
+> contract had to be repaired first. That dependency is now satisfied; this
+> design covers the second independent reliability layer.
 
 ## Context
 
@@ -57,7 +56,7 @@ The release build embeds the lightweight agent bytes into `lazycat-neko-webshell
 
 `agent_client` reads the compile-time embedded agent payload. Hash comparison and atomic target installation operate on those bytes and never on `std::env::current_exe()`.
 
-The agent protocol advances from `v4` to `v5`. An installed `v4` full-provider agent is therefore stale and receives a one-time atomic replacement at the existing `/usr/local/bin/lazycat-neko-webshell-agent` path. Installed `v5` agents remain reusable; unsupported newer protocols remain rejected.
+The wire protocol remains at `v4` because the extraction does not change any protobuf message or command behavior. A compatible running full-provider `v4` agent remains reusable so active terminal sessions are not destroyed during upgrade. New installs use the lightweight payload, and an old full-provider agent is naturally replaced after it stops or its installed manifest no longer matches.
 
 The transfer helper applies one timeout to the complete spawn/write/wait operation so a blocked stdin write cannot hang workspace loading indefinitely.
 
@@ -71,7 +70,7 @@ Native create/update actions continue to report agent errors; they must not sile
 
 1. The browser requests the selected workspace.
 2. The provider authorizes the selector and pings an existing compatible agent.
-3. If needed, the provider installs the embedded lightweight `v5` agent and starts it.
+3. If needed, the provider installs the embedded lightweight `v4` agent and starts it.
 4. On success, native agent state is merged with optional backend tabs.
 5. On native-agent failure, optional backend tabs are returned and the failure is logged.
 6. The browser applies the returned workspace, then refreshes backend availability and Herdr state as it does today.

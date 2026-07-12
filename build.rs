@@ -12,6 +12,24 @@ fn main() {
         .expect("connectrpc code generation failed");
 
     embed_frontend_assets().expect("frontend asset embedding failed");
+    embed_webshell_agent().expect("webshell agent embedding failed");
+}
+
+fn embed_webshell_agent() -> std::io::Result<()> {
+    const ENV_NAME: &str = "NEKO_WEBSHELL_AGENT_BINARY";
+    println!("cargo:rerun-if-env-changed={ENV_NAME}");
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR"));
+    let generated = if let Some(path) = env::var_os(ENV_NAME).filter(|value| !value.is_empty()) {
+        let path = PathBuf::from(path);
+        println!("cargo:rerun-if-changed={}", path.display());
+        format!(
+            "pub static EMBEDDED_AGENT_BINARY: &[u8] = include_bytes!({:?});\n",
+            path.display().to_string()
+        )
+    } else {
+        "pub static EMBEDDED_AGENT_BINARY: &[u8] = &[];\n".to_owned()
+    };
+    fs::write(out_dir.join("embedded_agent.rs"), generated)
 }
 
 fn embed_frontend_assets() -> std::io::Result<()> {

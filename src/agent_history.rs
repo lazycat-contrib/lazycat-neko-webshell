@@ -29,6 +29,7 @@ impl AgentHistory {
         }
     }
 
+    #[cfg(test)]
     pub fn push(&mut self, data: Vec<u8>) -> AgentHistoryFrame {
         self.push_recorded(data, true)
     }

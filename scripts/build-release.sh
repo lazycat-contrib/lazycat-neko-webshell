@@ -56,7 +56,24 @@ fi
 CC_x86_64_unknown_linux_musl=musl-gcc \
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="${rust_lld}" \
   RUSTFLAGS="-C target-feature=+crt-static" \
-  cargo build --release --locked --target x86_64-unknown-linux-musl
+  cargo build --release --locked --target x86_64-unknown-linux-musl \
+    --bin lazycat-neko-webshell-agent
 
-cp target/x86_64-unknown-linux-musl/release/lazycat-neko-webshell \
+agent_binary="${PWD}/target/x86_64-unknown-linux-musl/release/lazycat-neko-webshell-agent"
+CC_x86_64_unknown_linux_musl=musl-gcc \
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="${rust_lld}" \
+  RUSTFLAGS="-C target-feature=+crt-static" \
+  NEKO_WEBSHELL_AGENT_BINARY="${agent_binary}" \
+  cargo build --release --locked --target x86_64-unknown-linux-musl \
+    --bin lazycat-neko-webshell
+
+agent_bytes="$(stat -c '%s' "${agent_binary}")"
+provider_binary="target/x86_64-unknown-linux-musl/release/lazycat-neko-webshell"
+provider_bytes="$(stat -c '%s' "${provider_binary}")"
+if ((agent_bytes <= 0 || agent_bytes >= provider_bytes)); then
+  echo "invalid lightweight agent size: agent=${agent_bytes} provider=${provider_bytes}" >&2
+  exit 1
+fi
+
+cp "${provider_binary}" \
   "${content_dir}/lazycat-neko-webshell"

@@ -1,3 +1,4 @@
+#[cfg(debug_assertions)]
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -26,6 +27,9 @@ const AGENT_INSTALL_PATH: &str = "/usr/local/bin/lazycat-neko-webshell-agent";
 const AGENT_MANIFEST_PATH: &str = "/usr/local/lib/lazycat-neko-webshell/agent.sha256";
 const AGENT_READY_MARKER: &str = "lazycat-neko-webshell-agent-ready";
 const AGENT_LOG_TAIL_LINES: usize = 80;
+
+#[cfg(not(debug_assertions))]
+include!(concat!(env!("OUT_DIR"), "/embedded_agent.rs"));
 
 #[derive(Clone, Debug)]
 pub struct AgentClient {
@@ -346,14 +350,36 @@ async fn run_agent_request(
 }
 
 async fn ensure_agent_binary_installed(selector: &str) -> anyhow::Result<()> {
-    let payload = tokio::fs::read(current_exe()?)
-        .await
-        .context("failed to read current executable")?;
+    let payload = load_agent_payload().await?;
     let manifest = binary_manifest(&payload);
     if installed_manifest_matches(selector, &manifest).await? {
         return Ok(());
     }
     install_agent_binary(selector, &manifest, &payload).await
+}
+
+async fn load_agent_payload() -> anyhow::Result<Vec<u8>> {
+    #[cfg(not(debug_assertions))]
+    {
+        if EMBEDDED_AGENT_BINARY.is_empty() {
+            bail!("embedded webshell agent payload is empty");
+        }
+        Ok(EMBEDDED_AGENT_BINARY.to_vec())
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        let provider = std::env::current_exe().context("failed to resolve current executable")?;
+        let path = sibling_agent_path(&provider);
+        tokio::fs::read(&path)
+            .await
+            .with_context(|| format!("failed to read lightweight agent at {}", path.display()))
+    }
+}
+
+#[cfg(debug_assertions)]
+fn sibling_agent_path(provider: &std::path::Path) -> PathBuf {
+    provider.with_file_name("lazycat-neko-webshell-agent")
 }
 
 async fn installed_manifest_matches(selector: &str, manifest: &str) -> anyhow::Result<bool> {
@@ -556,28 +582,41 @@ async fn run_target_shell(
     }
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|err| anyhow!("failed to enter target instance: {err}"))?;
-    if let Some(payload) = stdin_payload {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("failed to open target command stdin"))?;
-        stdin
-            .write_all(payload)
-            .await
-            .map_err(|err| anyhow!("failed to write target command stdin: {err}"))?;
-        drop(stdin);
-    }
-    let output = timeout(duration, child.wait_with_output())
-        .await
-        .map_err(|_| anyhow!("target command timed out"))?
-        .map_err(|err| anyhow!("target command failed: {err}"))?;
+    let output = run_command_with_input_timeout(command, stdin_payload, duration).await?;
     if !output.status.success() {
         bail!("target command failed: {}", command_output_detail(&output));
     }
     Ok(output)
+}
+
+async fn run_command_with_input_timeout(
+    mut command: Command,
+    stdin_payload: Option<&[u8]>,
+    duration: Duration,
+) -> anyhow::Result<std::process::Output> {
+    command.kill_on_drop(true);
+    timeout(duration, async move {
+        let mut child = command
+            .spawn()
+            .map_err(|err| anyhow!("failed to enter target instance: {err}"))?;
+        if let Some(payload) = stdin_payload {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow!("failed to open target command stdin"))?;
+            stdin
+                .write_all(payload)
+                .await
+                .map_err(|err| anyhow!("failed to write target command stdin: {err}"))?;
+            drop(stdin);
+        }
+        child
+            .wait_with_output()
+            .await
+            .map_err(|err| anyhow!("target command failed: {err}"))
+    })
+    .await
+    .map_err(|_| anyhow!("target command timed out"))?
 }
 
 fn response_state(response: AgentResponse) -> anyhow::Result<AgentWorkspaceState> {
@@ -629,10 +668,6 @@ fn agent_protocol_generation(version: &str) -> Option<u32> {
         .strip_prefix("lazycat-neko-webshell-agent-v")?
         .parse()
         .ok()
-}
-
-fn current_exe() -> anyhow::Result<PathBuf> {
-    std::env::current_exe().context("failed to resolve current executable")
 }
 
 fn binary_manifest(payload: &[u8]) -> String {
@@ -714,6 +749,40 @@ mod tests {
             binary_manifest(b"abc"),
             "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn debug_agent_payload_uses_a_dedicated_sibling_binary() {
+        let provider = PathBuf::from("/lzcapp/pkg/content/lazycat-neko-webshell");
+
+        assert_eq!(
+            sibling_agent_path(&provider),
+            PathBuf::from("/lzcapp/pkg/content/lazycat-neko-webshell-agent")
+        );
+        assert_ne!(sibling_agent_path(&provider), provider);
+    }
+
+    #[tokio::test]
+    async fn command_timeout_covers_stdin_backpressure() {
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", "sleep 5"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let payload = vec![0_u8; 8 * 1024 * 1024];
+        let started = std::time::Instant::now();
+
+        let error = run_command_with_input_timeout(
+            command,
+            Some(payload.as_slice()),
+            Duration::from_millis(50),
+        )
+        .await
+        .expect_err("blocked stdin write must time out");
+
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
