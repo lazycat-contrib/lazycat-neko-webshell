@@ -24,6 +24,7 @@ import {
   validateTerminalBackgroundFile,
 } from "./appearance-settings";
 import { updateViewportMetrics as applyViewportMetrics } from "./app-viewport";
+import { createAppOverlaysController } from "./app-overlays-controller";
 import { TerminalActionWSClient } from "./action-ws-client";
 import { appendAIContextText } from "./ai-context";
 import {
@@ -91,7 +92,7 @@ import { createMobileQuickPhraseSettingsController } from "./mobile/quick-phrase
 import { createMobileKeyboardController } from "./mobile/keyboard-controller";
 import { formatMobileClockTime } from "./mobile/clock";
 import { createMobileClockController } from "./mobile/clock-controller";
-import { blurActiveElement, isMobileOverlayMode, prepareMobileOverlay } from "./mobile/overlay";
+import { isMobileOverlayMode, prepareMobileOverlay } from "./mobile/overlay";
 import { createMobileSymbolAgentController } from "./mobile/symbol-agent-controller";
 import { createMobileTerminalGestureController, isCoarseTouchPointer } from "./mobile/terminal-gestures";
 import {
@@ -441,6 +442,38 @@ const paneMenuController = createPaneMenuController({
   findPaneById,
   tabForPane,
   visiblePaneCount: (tab) => visiblePanes(tab).length,
+});
+const {
+  openSettings,
+  closeSettings,
+  toggleSettingsMenu,
+  closeSettingsMenu,
+  togglePluginSidebar,
+  openPluginSidebar,
+  closePluginSidebar,
+  toggleShortcutHelp,
+  closeShortcutHelp,
+  openAboutDialog,
+  closeAboutDialog,
+  toggleFullscreen,
+  closeMobileOverlaysBeforeViewportChange,
+  restoreTerminalFocusAfterOverlay,
+  toggleInstanceMenu,
+  closeInstanceMenu,
+} = createAppOverlaysController({
+  elements,
+  activateSettingsTab,
+  pluginsLoaded: () => pluginsLoaded,
+  pluginsLoading: () => pluginsLoading,
+  loadPlugins: () => void loadPlugins(),
+  renderPluginTools,
+  closePaneMenu: () => paneMenuController.close(),
+  closeNewTabMenu,
+  closeHerdrWorkspaceMenu,
+  closeNotificationsMenu,
+  closeNotificationModal,
+  focusActivePaneCanvas,
+  handleViewportChange,
 });
 const mobileSymbolAgent = createMobileSymbolAgentController({
   activeHerdrPane: () => {
@@ -2224,187 +2257,6 @@ function applyRuntimeChrome() {
     closeHerdrWorkspaceMenu();
     clearHerdrState();
   }
-}
-
-function openSettings(tabId?: string) {
-  prepareMobileOverlay();
-  elements.settingsPage.hidden = false;
-  elements.webshell.classList.add("settings-open");
-  setAppBackgroundInert(true);
-  closeInstanceMenu();
-  closeSettingsMenu();
-  if (tabId) {
-    activateSettingsTab(tabId);
-  }
-  if (!pluginsLoaded && !pluginsLoading) {
-    void loadPlugins();
-  }
-  requestAnimationFrame(() => elements.closeSettings.focus());
-}
-
-function closeSettings(options: { restoreFocus?: boolean } = {}) {
-  elements.settingsPage.hidden = true;
-  elements.webshell.classList.remove("settings-open");
-  setAppBackgroundInert(false);
-  if (options.restoreFocus !== false) {
-    restoreTerminalFocusAfterOverlay();
-  }
-}
-
-function setAppBackgroundInert(inert: boolean) {
-  for (const element of [elements.topbar, elements.terminalStage]) {
-    if ("inert" in element) {
-      element.inert = inert;
-    }
-    element.setAttribute("aria-hidden", String(inert));
-  }
-}
-
-function toggleSettingsMenu() {
-  const open = elements.settingsMenu.hidden;
-  if (open) {
-    prepareMobileOverlay();
-  }
-  closeShortcutHelp();
-  elements.settingsMenu.hidden = !open;
-  elements.settingsButton.setAttribute("aria-expanded", String(open));
-}
-
-function closeSettingsMenu() {
-  elements.settingsMenu.hidden = true;
-  elements.settingsButton.setAttribute("aria-expanded", "false");
-}
-
-function togglePluginSidebar() {
-  if (elements.pluginSidebar.hidden) {
-    openPluginSidebar();
-  } else {
-    closePluginSidebar();
-  }
-}
-
-function openPluginSidebar() {
-  prepareMobileOverlay();
-  closeSettingsMenu();
-  closeShortcutHelp();
-  closeInstanceMenu();
-  paneMenuController.close();
-  if (!elements.settingsPage.hidden) {
-    closeSettings({ restoreFocus: false });
-  }
-  elements.pluginSidebar.hidden = false;
-  elements.webshell.classList.add("plugins-open");
-  elements.pluginsButton.setAttribute("aria-expanded", "true");
-  if (!pluginsLoaded && !pluginsLoading) {
-    void loadPlugins();
-  } else {
-    renderPluginTools();
-  }
-}
-
-function closePluginSidebar(options: { restoreFocus?: boolean } = {}) {
-  elements.pluginSidebar.hidden = true;
-  elements.webshell.classList.remove("plugins-open");
-  elements.pluginsButton.setAttribute("aria-expanded", "false");
-  if (options.restoreFocus !== false) {
-    restoreTerminalFocusAfterOverlay();
-  }
-}
-
-function toggleShortcutHelp() {
-  const open = elements.shortcutHelp.hidden;
-  if (open) {
-    prepareMobileOverlay();
-  }
-  closeSettingsMenu();
-  closeInstanceMenu();
-  paneMenuController.close();
-  closeAboutDialog();
-  elements.shortcutHelp.hidden = !open;
-  elements.shortcutHelpButton.setAttribute("aria-expanded", String(open));
-  if (open) {
-    requestAnimationFrame(() => elements.shortcutHelpClose.focus());
-  }
-}
-
-function closeShortcutHelp() {
-  elements.shortcutHelp.hidden = true;
-  elements.shortcutHelpButton.setAttribute("aria-expanded", "false");
-}
-
-function openAboutDialog() {
-  prepareMobileOverlay();
-  closeShortcutHelp();
-  closeInstanceMenu();
-  paneMenuController.close();
-  elements.aboutDialog.hidden = false;
-  requestAnimationFrame(() => elements.aboutClose.focus());
-}
-
-function closeAboutDialog() {
-  elements.aboutDialog.hidden = true;
-}
-
-async function toggleFullscreen() {
-  const mobileMode = isMobileOverlayMode();
-  if (mobileMode) {
-    closeMobileOverlaysBeforeViewportChange();
-  }
-  try {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-    } else {
-      await elements.webshell.requestFullscreen();
-    }
-  } catch {
-    if (!mobileMode) {
-      focusActivePaneCanvas();
-    }
-  } finally {
-    handleViewportChange();
-  }
-}
-
-function closeMobileOverlaysBeforeViewportChange() {
-  blurActiveElement();
-  closeSettingsMenu();
-  closeInstanceMenu();
-  closeNewTabMenu();
-  closeHerdrWorkspaceMenu();
-  closeNotificationsMenu();
-  paneMenuController.close();
-  closeShortcutHelp();
-  closeAboutDialog();
-  closeNotificationModal();
-  if (!elements.settingsPage.hidden) {
-    closeSettings({ restoreFocus: false });
-  }
-  if (!elements.pluginSidebar.hidden) {
-    closePluginSidebar({ restoreFocus: false });
-  }
-}
-
-function restoreTerminalFocusAfterOverlay() {
-  if (!isMobileOverlayMode()) {
-    focusActivePaneCanvas();
-  }
-}
-
-function toggleInstanceMenu() {
-  const open = elements.instanceMenu.hidden;
-  if (open) {
-    prepareMobileOverlay();
-  }
-  closeSettingsMenu();
-  elements.instanceMenu.hidden = !open;
-  elements.instanceSwitcher.classList.toggle("is-open", open);
-  elements.instanceButton.setAttribute("aria-expanded", String(open));
-}
-
-function closeInstanceMenu() {
-  elements.instanceMenu.hidden = true;
-  elements.instanceSwitcher.classList.remove("is-open");
-  elements.instanceButton.setAttribute("aria-expanded", "false");
 }
 
 function openActivePaneMenu() {
