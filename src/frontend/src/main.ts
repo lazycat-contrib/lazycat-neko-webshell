@@ -284,6 +284,7 @@ import { applyPaneMouseMode } from "./terminal-mouse-mode";
 import { installPaneScrollbackFallback } from "./terminal-scrollback";
 import { observeTerminalTitleChunk } from "./terminal-title";
 import { createTerminalInputActionController } from "./terminal-input-actions";
+import { createTerminalClipboardController } from "./terminal-clipboard-controller";
 import {
   normalizeFontHintTarget,
   renderTerminalFontRenderingSettings,
@@ -741,6 +742,40 @@ let pomodoroPollingTimer: number | undefined;
 let notificationsPollingTimer: number | undefined;
 const pluginSaveInFlight = new Set<string>();
 let terminalResizeTimers: number[] = [];
+const {
+  paneForShortcutTarget,
+  handleTerminalClipboardCapture,
+  handleTerminalPasteEvent,
+  scheduleCopySelection,
+  copySelection,
+  pasteIntoPane,
+  pasteImageFileIntoPane,
+  pasteTextIntoPane,
+} = createTerminalClipboardController({
+  settings: () => settings,
+  activePane,
+  paneForEventTarget,
+  settingsOpen: () => !elements.settingsPage.hidden,
+  hasActiveTab: () => Boolean(activeTabId),
+  canWrite: (pane, writeOptions) => terminalControl.canWrite(pane, writeOptions),
+  pasteIntoHerdrPane,
+  pasteTextIntoHerdrPane,
+  pasteClipboardImageIntoHerdrPane,
+  connectPanePty,
+  focusPaneCanvas,
+  scheduleReconnect,
+  setGlobalStatus,
+  tr,
+  errorMessage,
+  fallbackCopyText,
+  imageUploadProgress,
+  clipboardImageFile,
+  readClipboardImagePayload,
+  imageFilePayload,
+  clipboardImagePayloadIsValid,
+  imageFilePayloadErrorCode: (error) => error instanceof ImageFilePayloadError ? error.code : undefined,
+  maxClipboardImageBytes: MAX_CLIPBOARD_IMAGE_BYTES,
+});
 
 updateViewportMetrics();
 init().catch((error) => setGlobalStatus(tr("status.startupFailed", { message: errorMessage(error) }), "error"));
@@ -6079,58 +6114,6 @@ function handleTerminalInterruptCapture(event: KeyboardEvent) {
   focusPaneCanvas(pane);
 }
 
-function handleTerminalClipboardCapture(event: KeyboardEvent) {
-  const shortcut = terminalClipboardShortcut(event);
-  if (!shortcut) return;
-  const pane = paneForShortcutTarget(event.target);
-  if (!pane) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  if (shortcut === "copy") {
-    void copySelection(false, pane);
-  } else {
-    void pasteIntoPane(pane, false);
-  }
-}
-
-function handleTerminalPasteEvent(event: ClipboardEvent) {
-  const pane = paneForShortcutTarget(event.target);
-  if (!pane) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  const imageFile = clipboardImageFile(event.clipboardData);
-  if (imageFile) {
-    void pasteImageFileIntoPane(pane, imageFile, false);
-    return;
-  }
-  const text = event.clipboardData?.getData("text/plain") ?? "";
-  if (text) {
-    if (pane.sessionBackend === "herdr") {
-      void pasteTextIntoHerdrPane(pane, text, false);
-    } else {
-      pasteTextIntoPane(pane, text);
-    }
-  } else {
-    void pasteIntoPane(pane, false);
-  }
-}
-
-function terminalClipboardShortcut(event: KeyboardEvent): "copy" | "paste" | undefined {
-  if (event.altKey || event.repeat) return undefined;
-  const key = event.key.toLowerCase();
-  const code = event.code;
-  const superShortcut = event.metaKey && !isApplePlatform() && !event.ctrlKey && !event.shiftKey;
-  const ctrlShiftShortcut = event.ctrlKey && event.shiftKey && !event.metaKey;
-  if (!superShortcut && !ctrlShiftShortcut) return undefined;
-  if (key === "c" || code === "KeyC") return "copy";
-  if (key === "v" || code === "KeyV") return "paste";
-  return undefined;
-}
-
-function isApplePlatform(): boolean {
-  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
-}
-
 function isCtrlCKeyEvent(event: KeyboardEvent): boolean {
   return event.ctrlKey
     && !event.altKey
@@ -6142,16 +6125,6 @@ function isCtrlCKeyEvent(event: KeyboardEvent): boolean {
 function paneForEventTarget(target: EventTarget | null): TerminalPane | undefined {
   if (!(target instanceof Node)) return undefined;
   return allPanes().find((pane) => pane.mount.contains(target));
-}
-
-function paneForShortcutTarget(target: EventTarget | null): TerminalPane | undefined {
-  const targetedPane = paneForEventTarget(target);
-  if (targetedPane) return targetedPane;
-  if (target instanceof Element && target.closest("input, textarea, select, button, [contenteditable='true']")) {
-    return undefined;
-  }
-  if (!elements.settingsPage.hidden || !activeTabId) return undefined;
-  return activePane();
 }
 
 function hasPaneImePreedit(pane: TerminalPane): boolean {
@@ -6277,144 +6250,6 @@ function findPaneById(id: string): TerminalPane | undefined {
 
 function tabForPane(pane: TerminalPane): TerminalTab | undefined {
   return tabForPaneInTabs(tabs, pane);
-}
-
-function scheduleCopySelection() {
-  requestAnimationFrame(() => void copySelection(false));
-}
-
-async function copySelection(report: boolean, pane = activePane()): Promise<boolean> {
-  const restty = pane?.term?.restty;
-  if (settings.useResttyClipboard && restty) {
-    try {
-      if (await restty.copySelectionToClipboard()) {
-        if (report) setGlobalStatus(tr("status.selectionCopied"), "ok");
-        return true;
-      }
-    } catch (error) {
-      if (report) setGlobalStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
-      return false;
-    }
-  }
-
-  const text = window.getSelection()?.toString() ?? "";
-  if (!text) {
-    if (report) setGlobalStatus(tr("status.noSelection"));
-    return false;
-  }
-
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-    } else {
-      fallbackCopyText(text);
-    }
-    if (report) setGlobalStatus(tr("status.selectionCopied"), "ok");
-    return true;
-  } catch (error) {
-    if (report) setGlobalStatus(tr("status.copyFailed", { message: errorMessage(error) }), "error");
-    return false;
-  }
-}
-
-async function pasteIntoPane(pane: TerminalPane | undefined, report: boolean): Promise<boolean> {
-  if (!pane?.term?.restty) return false;
-  if (pane.sessionBackend === "herdr") {
-    return pasteIntoHerdrPane(pane, report);
-  }
-  const imagePayload = await readClipboardImagePayload();
-  if (imagePayload) {
-    return sendClipboardImageIntoPane(pane, imagePayload, report);
-  }
-
-  if (settings.useResttyClipboard) {
-    try {
-      if (await pane.term.restty.pasteFromClipboard()) {
-        focusPaneCanvas(pane);
-        return true;
-      }
-    } catch (error) {
-      if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
-      return false;
-    }
-  }
-
-  try {
-    const text = await navigator.clipboard?.readText?.() ?? "";
-    if (!text) return false;
-    return pasteTextIntoPane(pane, text);
-  } catch (error) {
-    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
-    return false;
-  }
-}
-
-async function pasteImageFileIntoPane(pane: TerminalPane, file: File, report: boolean): Promise<boolean> {
-  try {
-    const payload = await imageFilePayload(file);
-    if (pane.sessionBackend === "herdr") {
-      return pasteClipboardImageIntoHerdrPane(pane, payload, report);
-    }
-    return sendClipboardImageIntoPane(pane, payload, report);
-  } catch (error) {
-    if (report) setGlobalStatus(tr("status.imageUploadFailed", { message: imageUploadErrorMessage(error) }), "error");
-    return false;
-  }
-}
-
-function imageUploadErrorMessage(error: unknown): string {
-  if (error instanceof ImageFilePayloadError) {
-    if (error.code === "unsupported-heic") return tr("status.imageUploadHeicUnsupported");
-    if (error.code === "decode-failed") return tr("status.imageUploadDecodeFailed");
-    return tr("status.imageUploadTooLarge", {
-      size: Math.floor(MAX_CLIPBOARD_IMAGE_BYTES / (1024 * 1024)),
-    });
-  }
-  return errorMessage(error);
-}
-
-function sendClipboardImageIntoPane(
-  pane: TerminalPane | undefined,
-  payload: ClipboardImagePayload,
-  report: boolean,
-): boolean {
-  if (!pane || pane.closing || pane.exited || !pane.sessionId) return false;
-  if (!terminalControl.canWrite(pane, { report })) return false;
-  if (!clipboardImagePayloadIsValid(payload)) return false;
-  if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying) {
-    connectPanePty(pane);
-    if (report) setGlobalStatus(tr("status.pasteFailed", { message: "terminal is reconnecting" }), "error");
-    return false;
-  }
-  imageUploadProgress.start();
-  if (report) setGlobalStatus(tr("status.imageUploadStarted"));
-  try {
-    pane.socket.send(JSON.stringify({
-      type: "clipboard-image",
-      extension: payload.extension,
-      size: payload.data.byteLength,
-    }));
-    imageUploadProgress.set(0.35);
-    pane.socket.send(payload.data);
-    imageUploadProgress.set(0.9);
-    imageUploadProgress.finish();
-    if (report) setGlobalStatus(tr("status.imageUploadDone"), "ok");
-    focusPaneCanvas(pane);
-    return true;
-  } catch (error) {
-    imageUploadProgress.fail();
-    if (report) setGlobalStatus(tr("status.imageUploadFailed", { message: errorMessage(error) }), "error");
-    scheduleReconnect(pane);
-    return false;
-  }
-}
-
-function pasteTextIntoPane(pane: TerminalPane | undefined, text: string): boolean {
-  if (!pane?.term?.restty || !text) return false;
-  if (!terminalControl.canWrite(pane)) return false;
-  pane.term.restty.sendKeyInput(text);
-  focusPaneCanvas(pane);
-  return true;
 }
 
 function fallbackCopyText(text: string) {
