@@ -347,10 +347,17 @@ async fn run_agent_request(
         "--request",
         encoded.as_str(),
     ]);
-    let output = timeout(Duration::from_secs(8), command.output())
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    let output = run_command_with_input_timeout(command, None, Duration::from_secs(8))
         .await
-        .map_err(|_| anyhow!("agent request timed out"))?
-        .map_err(|err| anyhow!("failed to run agent request: {err}"))?;
+        .map_err(|err| {
+            if err.to_string().contains("timed out") {
+                anyhow!("agent request timed out")
+            } else {
+                anyhow!("failed to run agent request: {err}")
+            }
+        })?;
     if !output.status.success() {
         bail!("agent request failed: {}", command_output_detail(&output));
     }
@@ -816,6 +823,49 @@ mod tests {
 
         assert!(error.to_string().contains("timed out"));
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn command_timeout_kills_the_spawned_process() {
+        let pid_path = std::env::temp_dir().join(format!(
+            "lazycat-neko-webshell-timeout-pid-{}",
+            std::process::id()
+        ));
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-c",
+                &format!(
+                    "printf '%s' \"$$\" > {}; exec sleep 5",
+                    shell_quote(&pid_path.display().to_string())
+                ),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let error = run_command_with_input_timeout(command, None, Duration::from_millis(100))
+            .await
+            .expect_err("command must time out");
+        assert!(error.to_string().contains("timed out"));
+
+        let pid = tokio::fs::read_to_string(&pid_path)
+            .await
+            .expect("timed command pid")
+            .trim()
+            .to_owned();
+        let process_path = std::path::PathBuf::from(format!("/proc/{pid}"));
+        for _ in 0..20 {
+            if !process_path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let _ = tokio::fs::remove_file(pid_path).await;
+
+        assert!(
+            !process_path.exists(),
+            "timed out process {pid} is still alive"
+        );
     }
 
     #[test]

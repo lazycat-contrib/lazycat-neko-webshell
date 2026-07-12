@@ -64,6 +64,48 @@ test("suppresses generated terminal responses on secondary remote replays", () =
   );
 });
 
+test("covers every automatic reply emitted by the bundled Restty terminal", () => {
+  const generatedReplies = [
+    "\x1b]10;rgb:ffff/ffff/ffff\x07",
+    "\x1b]11;rgb:0000/0000/0000\x07",
+    "\x1b]12;rgb:ffff/ffff/ffff\x07",
+    "\x1b]52;c;Y2xpcGJvYXJk\x07",
+    "\x1b]52;;Y2xpcGJvYXJk\x07",
+    "\x1b]52;clipboard-target-longer-than-sixteen;Y2xpcGJvYXJk\x07",
+    "\x1b[4;1080;1920t",
+    "\x1b[6;20;10t",
+    "\x1b[8;32;120t",
+    "\x1bP>|ghostty 1.0\x1b\\",
+  ];
+
+  for (const reply of generatedReplies) {
+    assert.equal(
+      remoteClientReplayInputPolicy("client:client-a", true, false, reply),
+      "suppress",
+      JSON.stringify(reply),
+    );
+    assert.equal(
+      remoteClientReplayInputPolicy("client:client-a", true, true, reply),
+      "immediate",
+      JSON.stringify(reply),
+    );
+  }
+
+  assert.equal(
+    remoteClientReplayInputPolicy(
+      "client:client-a",
+      true,
+      false,
+      generatedReplies.join(""),
+    ),
+    "suppress",
+  );
+  assert.equal(
+    remoteClientReplayInputPolicy("client:client-a", true, false, "printf '\\e[8;32;120t'\r"),
+    "normal",
+  );
+});
+
 test("resets terminal state only for remote history replay", () => {
   let resets = 0;
   const remotePane = {

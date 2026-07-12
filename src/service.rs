@@ -10,6 +10,7 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::agent_client::ensure_agent;
+use crate::client_terminal;
 use crate::config::{
     APP_ID, APP_NAME, DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, LIGHTOSCTL, MAX_COLS,
     MAX_ROWS,
@@ -613,7 +614,7 @@ impl CapabilityService for CapabilityServiceImpl {
 
     async fn create_session(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: OwnedCreateSessionRequestView,
     ) -> ServiceResult<CreateSessionResponse> {
         let selector = request
@@ -629,8 +630,6 @@ impl CapabilityService for CapabilityServiceImpl {
         if !lightos_features_enabled() {
             return Err(ConnectError::not_found("LightOS integration is disabled"));
         }
-        validate_selector(selector)?;
-        let login_user = lightos::login_user_for_selector(selector, true).await?;
         let cols = normalize_dimension(request.cols, DEFAULT_COLS, MAX_COLS, "cols")?;
         let rows = normalize_dimension(request.rows, DEFAULT_ROWS, MAX_ROWS, "rows")?;
         let metadata: HashMap<String, String> = request
@@ -639,6 +638,24 @@ impl CapabilityService for CapabilityServiceImpl {
             .map(|entry| (entry.0.to_owned(), entry.1.to_owned()))
             .collect();
         let output_limit = output_frame_limit_from_metadata(&metadata);
+        if lightos_admin::is_client_selector(selector) {
+            let session = client_terminal::create_session(
+                &ctx.headers,
+                selector,
+                cols,
+                rows,
+                output_limit,
+                metadata,
+            )
+            .await
+            .map_err(client_terminal_connect_error)?;
+            return ConnectResponse::ok(CreateSessionResponse {
+                session: MessageField::some(session),
+                ..Default::default()
+            });
+        }
+        validate_selector(selector)?;
+        let login_user = lightos::login_user_for_selector(selector, true).await?;
         let agent = ensure_agent(selector, &login_user)
             .await
             .map_err(|err| ConnectError::unavailable(err.to_string()))?;
@@ -666,10 +683,36 @@ impl CapabilityService for CapabilityServiceImpl {
 
     async fn close_session(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: OwnedCloseSessionRequestView,
     ) -> ServiceResult<CloseSessionResponse> {
         let session_id = required_field(request.session_id, "session_id")?.to_owned();
+        let requested_selector = request
+            .selector
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(selector) =
+            requested_selector.filter(|value| lightos_admin::is_client_selector(value))
+        {
+            if !lightos_features_enabled() {
+                return Err(ConnectError::not_found("LightOS integration is disabled"));
+            }
+            client_terminal::close_session(
+                &ctx.headers,
+                selector,
+                &session_id,
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                DEFAULT_OUTPUT_FRAME_LIMIT,
+            )
+            .await
+            .map_err(client_terminal_connect_error)?;
+            return ConnectResponse::ok(CloseSessionResponse {
+                session_id: Some(session_id),
+                status: Some("closed".to_owned()),
+                ..Default::default()
+            });
+        }
         match close_workspace_session(&self.state, &session_id) {
             Ok(closed) => {
                 self.state
@@ -684,15 +727,9 @@ impl CapabilityService for CapabilityServiceImpl {
             Err(WorkspaceSessionError::NotFound(_)) => {}
             Err(error) => return Err(connect_workspace_error(error)),
         }
-        let selector = request
-            .selector
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                ConnectError::invalid_argument(
-                    "selector is required to close agent-managed sessions",
-                )
-            })?;
+        let selector = requested_selector.ok_or_else(|| {
+            ConnectError::invalid_argument("selector is required to close agent-managed sessions")
+        })?;
         close_agent_session(selector, &session_id).await?;
         ConnectResponse::ok(CloseSessionResponse {
             session_id: Some(session_id),
@@ -703,13 +740,26 @@ impl CapabilityService for CapabilityServiceImpl {
 
     async fn list_sessions(
         &self,
-        _ctx: RequestContext,
+        ctx: RequestContext,
         request: OwnedListSessionsRequestView,
     ) -> ServiceResult<ListSessionsResponse> {
         let selector = request
             .selector
             .map(str::trim)
             .filter(|value| !value.is_empty());
+        if let Some(selector) = selector.filter(|value| lightos_admin::is_client_selector(value)) {
+            if !lightos_features_enabled() {
+                return Err(ConnectError::not_found("LightOS integration is disabled"));
+            }
+            let sessions =
+                client_terminal::list_sessions(&ctx.headers, selector, DEFAULT_COLS, DEFAULT_ROWS)
+                    .await
+                    .map_err(client_terminal_connect_error)?;
+            return ConnectResponse::ok(ListSessionsResponse {
+                sessions,
+                ..Default::default()
+            });
+        }
         if let Some(selector) = selector {
             authorize_selector_for_listing(&self.state, selector).await?;
         }
@@ -904,6 +954,17 @@ fn lightos_admin_connect_error(error: lightos_admin::LightOsAdminError) -> Conne
     match error.status {
         axum::http::StatusCode::UNAUTHORIZED => ConnectError::unauthenticated(error.message),
         axum::http::StatusCode::FORBIDDEN => ConnectError::permission_denied(error.message),
+        _ => ConnectError::unavailable(error.message),
+    }
+}
+
+fn client_terminal_connect_error(error: client_terminal::ClientTerminalError) -> ConnectError {
+    match error.status {
+        axum::http::StatusCode::BAD_REQUEST => ConnectError::invalid_argument(error.message),
+        axum::http::StatusCode::UNAUTHORIZED => ConnectError::unauthenticated(error.message),
+        axum::http::StatusCode::FORBIDDEN => ConnectError::permission_denied(error.message),
+        axum::http::StatusCode::NOT_FOUND => ConnectError::not_found(error.message),
+        axum::http::StatusCode::GATEWAY_TIMEOUT => ConnectError::deadline_exceeded(error.message),
         _ => ConnectError::unavailable(error.message),
     }
 }
@@ -1439,6 +1500,28 @@ mod tests {
                 .map(String::as_str),
             Some("dev")
         );
+    }
+
+    #[tokio::test]
+    async fn proto_create_session_routes_remote_clients_through_account_authentication() {
+        let service = CapabilityServiceImpl::new(Arc::new(test_app_state()));
+        let request = OwnedCreateSessionRequestView::from_owned(
+            &crate::proto::lazycat::webshell::v1::CreateSessionRequest {
+                selector: Some("client:client-a".to_owned()),
+                cols: Some(120),
+                rows: Some(32),
+                ..Default::default()
+            },
+        )
+        .expect("owned create-session request");
+
+        let error = service
+            .create_session(RequestContext::default(), request)
+            .await
+            .expect_err("missing account context must be rejected");
+
+        assert_eq!(error.code, connectrpc::ErrorCode::Unauthenticated);
+        assert_eq!(error.message.as_deref(), Some("account id is required"));
     }
 
     #[tokio::test]

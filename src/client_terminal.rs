@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,6 +28,7 @@ use crate::lightos_admin::{
     self, build_admin_url, build_upstream_headers, current_request_account_id,
     list_visible_client_instances, parse_client_selector, resolve_admin_base_url,
 };
+use crate::proto::lazycat::webshell::v1::Session;
 use crate::workspace::{
     SessionBackend, SplitDirection, WorkspaceAction, WorkspaceActionRequest, WorkspaceLayoutNode,
     WorkspacePaneState, WorkspaceState, WorkspaceTabState,
@@ -42,7 +44,7 @@ type RemoteWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 #[error("{message}")]
 pub(crate) struct ClientTerminalError {
     pub status: StatusCode,
-    message: String,
+    pub(crate) message: String,
 }
 
 impl ClientTerminalError {
@@ -294,6 +296,56 @@ pub(crate) async fn apply_workspace_action(
         ClientTerminalError::bad_gateway(format!("invalid remote workspace response: {error}"))
     })?;
     Ok(convert_remote_workspace(selector, remote))
+}
+
+pub(crate) async fn create_session(
+    headers: &HeaderMap,
+    selector: &str,
+    cols: u16,
+    rows: u16,
+    output_limit: usize,
+    metadata: HashMap<String, String>,
+) -> Result<Session, ClientTerminalError> {
+    let request = remote_session_action_request(
+        selector,
+        WorkspaceAction::CreateTab,
+        cols,
+        rows,
+        output_limit,
+    );
+    let workspace = apply_workspace_action(headers, selector, cols, rows, &request).await?;
+    workspace_active_session(&workspace, metadata)
+        .ok_or_else(|| ClientTerminalError::bad_gateway("remote client did not create a session"))
+}
+
+pub(crate) async fn close_session(
+    headers: &HeaderMap,
+    selector: &str,
+    session_id: &str,
+    cols: u16,
+    rows: u16,
+    output_limit: usize,
+) -> Result<(), ClientTerminalError> {
+    let mut request = remote_session_action_request(
+        selector,
+        WorkspaceAction::ClosePane,
+        cols,
+        rows,
+        output_limit,
+    );
+    request.pane_id = Some(session_id.to_owned());
+    apply_workspace_action(headers, selector, cols, rows, &request).await?;
+    Ok(())
+}
+
+pub(crate) async fn list_sessions(
+    headers: &HeaderMap,
+    selector: &str,
+    cols: u16,
+    rows: u16,
+) -> Result<Vec<Session>, ClientTerminalError> {
+    let workspace = get_workspace(headers, selector, cols, rows).await?;
+    Ok(workspace_sessions(&workspace))
 }
 
 pub(crate) async fn connect_terminal(
@@ -568,10 +620,8 @@ async fn client_terminal_json(
     )
     .await
     .map_err(ClientTerminalError::bad_gateway)?;
-    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return Err(ClientTerminalError::forbidden(
-            "instance is not accessible by current account",
-        ));
+    if let Some(error) = remote_access_error(status) {
+        return Err(error);
     }
     if !status.is_success() {
         let detail = redact_sensitive_text(
@@ -646,10 +696,8 @@ async fn request_terminal_ticket(
     )
     .await
     .map_err(ClientTerminalError::bad_gateway)?;
-    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return Err(ClientTerminalError::forbidden(
-            "instance is not accessible by current account",
-        ));
+    if let Some(error) = remote_access_error(status) {
+        return Err(error);
     }
     if !status.is_success() {
         return Err(ClientTerminalError::bad_gateway(format!(
@@ -659,6 +707,15 @@ async fn request_terminal_ticket(
     serde_json::from_slice(&body).map_err(|error| {
         ClientTerminalError::bad_gateway(format!("invalid client terminal ticket: {error}"))
     })
+}
+
+fn remote_access_error(status: StatusCode) -> Option<ClientTerminalError> {
+    let message = "instance is not accessible by current account";
+    match status {
+        StatusCode::UNAUTHORIZED => Some(ClientTerminalError::unauthorized(message)),
+        StatusCode::FORBIDDEN => Some(ClientTerminalError::forbidden(message)),
+        _ => None,
+    }
 }
 
 fn validate_ticket(
@@ -789,6 +846,84 @@ fn convert_remote_workspace(selector: &str, remote: RemoteWorkspaceState) -> Wor
     }
 }
 
+fn remote_session_action_request(
+    selector: &str,
+    action: WorkspaceAction,
+    cols: u16,
+    rows: u16,
+    output_limit: usize,
+) -> WorkspaceActionRequest {
+    WorkspaceActionRequest {
+        name: selector.to_owned(),
+        action,
+        tab_id: None,
+        pane_id: None,
+        direction: None,
+        label: None,
+        layout: None,
+        active_pane_id: None,
+        cols: Some(cols),
+        rows: Some(rows),
+        output_limit: Some(output_limit),
+        auto_restart: None,
+        session_backend: Some(SessionBackend::Webshell),
+        pinned: None,
+        pinned_order: None,
+    }
+}
+
+fn workspace_active_session(
+    workspace: &WorkspaceState,
+    metadata: HashMap<String, String>,
+) -> Option<Session> {
+    let tab = workspace
+        .active_tab_id
+        .as_deref()
+        .and_then(|tab_id| workspace.tabs.iter().find(|tab| tab.id == tab_id))
+        .or_else(|| workspace.tabs.last())?;
+    let pane = tab
+        .active_pane_id
+        .as_deref()
+        .and_then(|pane_id| tab.panes.iter().find(|pane| pane.id == pane_id))
+        .or_else(|| tab.panes.last())?;
+    Some(session_from_workspace_pane(
+        &workspace.selector,
+        pane,
+        metadata,
+    ))
+}
+
+fn workspace_sessions(workspace: &WorkspaceState) -> Vec<Session> {
+    workspace
+        .tabs
+        .iter()
+        .flat_map(|tab| &tab.panes)
+        .map(|pane| {
+            session_from_workspace_pane(
+                &workspace.selector,
+                pane,
+                HashMap::from([("sessionBackend".to_owned(), "webshell".to_owned())]),
+            )
+        })
+        .collect()
+}
+
+fn session_from_workspace_pane(
+    selector: &str,
+    pane: &WorkspacePaneState,
+    metadata: HashMap<String, String>,
+) -> Session {
+    Session {
+        id: Some(pane.session_id.clone()),
+        selector: Some(selector.to_owned()),
+        status: Some(pane.status.clone()),
+        cols: Some(i32::from(pane.cols)),
+        rows: Some(i32::from(pane.rows)),
+        metadata,
+        ..Default::default()
+    }
+}
+
 fn remote_workspace_action(
     request: &WorkspaceActionRequest,
     cols: u16,
@@ -850,11 +985,16 @@ fn non_empty(value: String) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use axum::http::StatusCode;
+
     use super::{
         ClientTerminalTicket, RemoteWorkspaceState, authorize_client_id, client_terminal_url,
-        convert_remote_workspace, redact_sensitive_text, remote_workspace_action,
-        sanitize_client_terminal_url, translate_remote_control, validate_ticket,
-        websocket_terminal_url,
+        convert_remote_workspace, redact_sensitive_text, remote_access_error,
+        remote_session_action_request, remote_workspace_action, sanitize_client_terminal_url,
+        translate_remote_control, validate_ticket, websocket_terminal_url,
+        workspace_active_session, workspace_sessions,
     };
     use crate::lightos_admin::ClientInstanceSummary;
     use crate::workspace::{SessionBackend, WorkspaceAction, WorkspaceActionRequest};
@@ -899,6 +1039,19 @@ mod tests {
             "device-auth-secret",
         );
         assert_eq!(redacted, "request ticket=[REDACTED] token=[REDACTED]");
+    }
+
+    #[test]
+    fn preserves_remote_authentication_and_authorization_statuses() {
+        let unauthorized = remote_access_error(StatusCode::UNAUTHORIZED)
+            .expect("401 must produce an access error");
+        assert_eq!(unauthorized.status, StatusCode::UNAUTHORIZED);
+
+        let forbidden =
+            remote_access_error(StatusCode::FORBIDDEN).expect("403 must produce an access error");
+        assert_eq!(forbidden.status, StatusCode::FORBIDDEN);
+
+        assert!(remote_access_error(StatusCode::BAD_GATEWAY).is_none());
     }
 
     #[test]
@@ -995,6 +1148,56 @@ mod tests {
         assert_eq!(workspace.tabs[0].panes[0].session_backend, "webshell");
         assert_eq!(workspace.tabs[0].panes[0].status, "running");
         assert_eq!(workspace.tabs[0].panes[1].status, "exited");
+    }
+
+    #[test]
+    fn remote_workspace_sessions_preserve_proto_selector_and_active_pane() {
+        let remote = serde_json::from_value::<RemoteWorkspaceState>(serde_json::json!({
+            "selector": "client-a",
+            "active_tab_id": "tab-a",
+            "tabs": [{
+                "id": "tab-a",
+                "label": "Shell",
+                "active_pane_id": "pane-b",
+                "panes": [
+                    {"id": "pane-a", "cols": 80, "rows": 24},
+                    {"id": "pane-b", "cols": 120, "rows": 32}
+                ]
+            }]
+        }))
+        .expect("remote workspace");
+        let workspace = convert_remote_workspace("client:client-a", remote);
+
+        let active = workspace_active_session(&workspace, HashMap::new()).expect("active session");
+        assert_eq!(active.id.as_deref(), Some("pane-b"));
+        assert_eq!(active.selector.as_deref(), Some("client:client-a"));
+        assert_eq!(active.cols, Some(120));
+        assert_eq!(active.rows, Some(32));
+
+        let sessions = workspace_sessions(&workspace);
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().all(|session| {
+            session.selector.as_deref() == Some("client:client-a")
+                && session.metadata.get("sessionBackend").map(String::as_str) == Some("webshell")
+        }));
+    }
+
+    #[test]
+    fn remote_proto_create_session_uses_native_workspace_action() {
+        let request = remote_session_action_request(
+            "client:client-a",
+            WorkspaceAction::CreateTab,
+            120,
+            32,
+            4096,
+        );
+
+        assert_eq!(request.name, "client:client-a");
+        assert_eq!(request.action, WorkspaceAction::CreateTab);
+        assert_eq!(request.session_backend, Some(SessionBackend::Webshell));
+        assert_eq!(request.cols, Some(120));
+        assert_eq!(request.rows, Some(32));
+        assert_eq!(request.output_limit, Some(4096));
     }
 
     #[test]

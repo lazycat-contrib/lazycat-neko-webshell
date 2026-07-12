@@ -61,6 +61,12 @@ CC_x86_64_unknown_linux_musl=musl-gcc \
     --bin lazycat-neko-webshell-agent
 
 agent_binary="${PWD}/target/x86_64-unknown-linux-musl/release/lazycat-neko-webshell-agent"
+expected_agent_protocol="lazycat-neko-webshell-agent-v4"
+actual_agent_protocol="$("${agent_binary}" version)"
+if [[ "${actual_agent_protocol}" != "${expected_agent_protocol}" ]]; then
+  echo "invalid lightweight agent protocol: expected=${expected_agent_protocol} actual=${actual_agent_protocol}" >&2
+  exit 1
+fi
 CC_x86_64_unknown_linux_musl=musl-gcc \
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="${rust_lld}" \
   RUSTFLAGS="-C target-feature=+crt-static" \
@@ -71,7 +77,8 @@ CC_x86_64_unknown_linux_musl=musl-gcc \
 agent_bytes="$(stat -c '%s' "${agent_binary}")"
 provider_binary="target/x86_64-unknown-linux-musl/release/lazycat-neko-webshell"
 provider_bytes="$(stat -c '%s' "${provider_binary}")"
-if ((agent_bytes <= 0 || agent_bytes >= provider_bytes)); then
+max_agent_bytes=$((16 * 1024 * 1024))
+if ((agent_bytes <= 0 || agent_bytes > max_agent_bytes || agent_bytes * 3 >= provider_bytes)); then
   echo "invalid lightweight agent size: agent=${agent_bytes} provider=${provider_bytes}" >&2
   exit 1
 fi

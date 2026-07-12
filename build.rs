@@ -21,11 +21,22 @@ fn main() {
 fn embed_webshell_agent() -> std::io::Result<()> {
     const ENV_NAME: &str = "NEKO_WEBSHELL_AGENT_BINARY";
     const AGENT_ONLY_ENV_NAME: &str = "NEKO_WEBSHELL_BUILD_AGENT_ONLY";
+    const MAX_AGENT_BINARY_BYTES: u64 = 16 * 1024 * 1024;
     println!("cargo:rerun-if-env-changed={ENV_NAME}");
     println!("cargo:rerun-if-env-changed={AGENT_ONLY_ENV_NAME}");
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR"));
     let generated = if let Some(path) = env::var_os(ENV_NAME).filter(|value| !value.is_empty()) {
         let path = PathBuf::from(path);
+        let metadata = fs::metadata(&path)?;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_AGENT_BINARY_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "embedded agent payload must be a non-empty file no larger than {MAX_AGENT_BINARY_BYTES} bytes: {}",
+                    path.display()
+                ),
+            ));
+        }
         println!("cargo:rerun-if-changed={}", path.display());
         format!(
             "pub static EMBEDDED_AGENT_BINARY: &[u8] = include_bytes!({:?});\n",

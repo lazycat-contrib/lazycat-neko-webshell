@@ -178,11 +178,19 @@ async fn fetch_admin_json(
         .map_err(LightOsAdminError::bad_gateway)?;
     if status != StatusCode::OK {
         let detail = String::from_utf8_lossy(&body).trim().to_owned();
-        return Err(LightOsAdminError::bad_gateway(if detail.is_empty() {
+        let message = if detail.is_empty() {
             status.to_string()
         } else {
             detail
-        }));
+        };
+        return Err(LightOsAdminError {
+            status: if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+                status
+            } else {
+                StatusCode::BAD_GATEWAY
+            },
+            message,
+        });
     }
     Ok(body)
 }
@@ -466,8 +474,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        account_id_from, build_admin_url, build_upstream_headers, list_visible_instances_from,
-        parse_client_instances, parse_visible_instances,
+        account_id_from, build_admin_url, build_upstream_headers, fetch_admin_json,
+        list_visible_instances_from, parse_client_instances, parse_visible_instances,
     };
     use crate::proto::lazycat::webshell::v1::InstanceKind;
 
@@ -638,5 +646,28 @@ mod tests {
 
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].selector.as_deref(), Some("alpha@deploy-a"));
+    }
+
+    #[tokio::test]
+    async fn preserves_upstream_authentication_status() {
+        let app = Router::new().route(
+            "/forbidden",
+            get(|| async { (StatusCode::FORBIDDEN, "account denied") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener");
+        let address = listener.local_addr().expect("listener address");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test server");
+        });
+        let url = reqwest::Url::parse(&format!("http://{address}/forbidden")).expect("test URL");
+
+        let error = fetch_admin_json(&reqwest::Client::new(), url, HeaderMap::new())
+            .await
+            .expect_err("forbidden response must remain forbidden");
+
+        assert_eq!(error.status, StatusCode::FORBIDDEN);
+        assert_eq!(error.message, "account denied");
     }
 }

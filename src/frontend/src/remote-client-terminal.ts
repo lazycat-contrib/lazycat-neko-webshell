@@ -7,10 +7,16 @@ type RemoteReplayPane = {
 
 export type RemoteReplayInputPolicy = "normal" | "suppress" | "immediate";
 
-const generatedTerminalResponsePattern =
-  /^(?:\x1b)?(?:\[\d{1,4};\d{1,4}R|\[\d{1,4}R|\[0n|\[\?[\d;]{1,16}c|\[>[\d;]{1,16}c)/;
-const generatedTerminalResponseTailPattern =
-  /^(?:\[\d{1,4};\d{1,4}R|\[\d{1,4}R|\d{1,4};\d{1,4}R|;\d{1,4}R|\d{1,4}R|\dR)+$/;
+// Restty 0.1.35 emits these replies directly through PtyTransport.sendInput.
+// Keep this grammar aligned with its cursor/device, window, color, clipboard,
+// and terminal-version response paths so replay observers never answer twice.
+const generatedTerminalResponsePatterns = [
+  /^\x1b\[(?:\d{1,6};\d{1,6}R|\d{1,6}R|0n|\?[\d;]{1,32}c|>[\d;]{1,32}c)/,
+  /^\x1b\[(?:4|6|8);\d{1,8};\d{1,8}t/,
+  /^\x1bP>\|ghostty [ -~]{1,64}\x1b\\/,
+  /^\x1b\](?:10|11|12);rgb:[\da-fA-F]{4}\/[\da-fA-F]{4}\/[\da-fA-F]{4}\x07/,
+  /^\x1b\]52;[^;\x07\x1b]*;[A-Za-z\d+/=]*\x07/,
+] as const;
 
 export type RemoteClientNewTabCapabilities = {
   lightosDirectAvailable: boolean;
@@ -52,10 +58,11 @@ export function remoteClientReplayInputPolicy(
 
 function isGeneratedTerminalResponse(data: string): boolean {
   if (!data) return false;
-  if (generatedTerminalResponseTailPattern.test(data)) return true;
   let remaining = data;
   while (remaining) {
-    const match = generatedTerminalResponsePattern.exec(remaining);
+    const match = generatedTerminalResponsePatterns
+      .map((pattern) => pattern.exec(remaining))
+      .find((candidate) => candidate !== null);
     if (!match) return false;
     remaining = remaining.slice(match[0].length);
   }
