@@ -53,7 +53,7 @@ jobs:
 
       - name: Build and validate LPK
         id: lazycat
-        uses: ca-x/lazycat-github-action@v1
+        uses: ca-x/lazycat-github-action@v1.1.12
         env:
           LAZYCAT_WORKFLOW_TOOLCHAINS: node,rust
           LAZYCAT_WORKFLOW_NODE_VERSION: 24.x
@@ -71,7 +71,7 @@ jobs:
 
   publish-tag:
     if: github.ref_type == 'tag'
-    uses: ca-x/lazycat-github-action/.github/workflows/lazycat.yml@v1
+    uses: ca-x/lazycat-github-action/.github/workflows/lazycat.yml@v1.1.12
     with:
       operation: auto
       config: .github/lazycat-action.yml
