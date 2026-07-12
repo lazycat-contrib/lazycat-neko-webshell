@@ -28,6 +28,7 @@
   --shadow-inset-strong: inset 0 0 0 1px #ffffff12;
   --focus-gap: var(--bg);
   --focus-ring: #47a8ff;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --body-wash: linear-gradient(transparent, transparent);
   --body-grid-x: linear-gradient(transparent, transparent);
   --body-grid-y: linear-gradient(transparent, transparent);
@@ -1735,7 +1736,32 @@ textarea:focus-visible {
 
 .instance-list {
   display: grid;
+  gap: 12px;
+}
+
+.instance-group,
+.instance-group-items {
+  display: grid;
   gap: 6px;
+}
+
+.instance-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 20px;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.instance-group-heading small {
+  color: var(--menu-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .instance-row {
@@ -1744,7 +1770,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 38px;
+  min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background:
@@ -1754,6 +1780,7 @@ textarea:focus-visible {
   text-align: left;
   padding: 8px 9px;
   box-shadow: var(--shadow-inset-soft);
+  transition: transform 120ms var(--ease-out), border-color 160ms ease;
 }
 
 .instance-row.selected {
@@ -1771,15 +1798,43 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.instance-row:hover {
-  border-color: var(--line-strong);
-  background: var(--surface-2);
+.instance-row-copy {
+  min-width: 0;
+}
+
+.instance-row small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.instance-row:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.instance-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .instance-row:hover:not(:disabled) {
+    border-color: var(--line-strong);
+    background: var(--surface-2);
+  }
 }
 
 .instance-row em {
   font-style: normal;
   font-size: 11px;
   text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .instance-row {
+    transition: none;
+  }
 }
 
 .ok {

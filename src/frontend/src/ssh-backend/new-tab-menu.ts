@@ -10,6 +10,7 @@ export type SshNewTabMenuContext = {
   selectedSelector: string;
   selectedLabel: string;
   lightosDirectAvailable: boolean;
+  sshAvailable: boolean;
 };
 
 export type SshNewTabMenuRenderOptions = {
@@ -107,7 +108,9 @@ export function createSshNewTabMenuController(options: SshNewTabMenuControllerOp
       targetDraft = "";
     }
     lastRender = renderOptions;
-    refreshData(renderOptions.context, { force: options.root.hidden });
+    if (renderOptions.context.sshAvailable) {
+      refreshData(renderOptions.context, { force: options.root.hidden });
+    }
     options.root.innerHTML = renderSshNewTabMenu({
       ...renderOptions,
       stage,
@@ -232,6 +235,13 @@ function renderSshNewTabMenu(state: SshNewTabMenuRenderOptions & {
   error: string;
   tr: Translate;
 }): string {
+  if (!state.context.sshAvailable) {
+    return `
+      <div class="new-tab-menu-section">
+        ${state.backendHtml}
+      </div>
+    `;
+  }
   return `
     <div class="new-tab-menu-section">
       ${state.backendHtml}

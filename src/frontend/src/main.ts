@@ -125,6 +125,12 @@ import {
 } from "./pane-runtime";
 import { createPaneMenuController } from "./pane-menu-controller";
 import {
+  filterRemoteClientPluginTools,
+  isRemoteClientSelector,
+  remoteClientNewTabCapabilities,
+  resetRemoteClientTerminalForReplay,
+} from "./remote-client-terminal";
+import {
   AI_CHAT_PLUGIN_ID,
   FILE_TRANSFER_PLUGIN_ID,
   LIGHTOS_PORT_FORWARD_PLUGIN_ID,
@@ -365,6 +371,10 @@ const AI_TERMINAL_CONTEXT_LINES = 40;
 const POMODORO_REFRESH_MS = 5000;
 const NOTIFICATIONS_REFRESH_MS = 5000;
 const TUNNEL_PROVIDER_PROFILES_METADATA = "tunnelProviderProfiles";
+const REMOTE_CLIENT_UNSUPPORTED_PLUGIN_IDS = new Set([
+  FILE_TRANSFER_PLUGIN_ID,
+  LIGHTOS_PORT_FORWARD_PLUGIN_ID,
+]);
 type AISettingsTab = "ai" | "mcp" | "voice";
 type AIConfigDialogState =
   | { type: "ai"; profileId?: string; isNew?: boolean }
@@ -3331,7 +3341,12 @@ function pluginControlsDisabled(plugin: PluginDescriptor): boolean {
 }
 
 function renderPluginTools() {
-  const tools = enabledPluginTools(plugins, activePane()?.sessionBackend);
+  const active = activePane();
+  const tools = filterRemoteClientPluginTools(
+    active?.selector ?? "",
+    enabledPluginTools(plugins, active?.sessionBackend),
+    REMOTE_CLIENT_UNSUPPORTED_PLUGIN_IDS,
+  );
   if (!tools.length) {
     activePluginToolId = "";
     syncPluginToolTabs(elements.pluginToolTabs, tools, activePluginToolId, tr);
@@ -4011,7 +4026,9 @@ function reconcileSelectedInstance(): { selected: boolean; explicitFallback: boo
 }
 
 function updateSelectedInstanceChrome() {
-  elements.targetLabel.textContent = selectedSelector ? selectorLabel(selectedSelector) : tr("status.noTarget");
+  elements.targetLabel.textContent = selectedSelector
+    ? selectedInstance()?.name || selectorLabel(selectedSelector)
+    : tr("status.noTarget");
   elements.instanceStatusDot.dataset.status = selectedSelector ? selectedInstance()?.status ?? "unknown" : "unknown";
 }
 
@@ -4160,7 +4177,7 @@ async function refreshHerdrState(
     return false;
   }
   const requestSelector = normalizeSelector(selector);
-  if (!requestSelector) {
+  if (!requestSelector || isRemoteClientSelector(requestSelector)) {
     clearHerdrState();
     return false;
   }
@@ -4667,12 +4684,20 @@ function renderNewTabMenu() {
     tr("status.defaultBackend"),
   );
   const instance = selectedInstance();
+  const capabilities = remoteClientNewTabCapabilities(
+    selectedSelector,
+    Boolean(
+      runtimeInfo.lightosFeaturesEnabled
+      && selectedSelector
+      && !isSshSelector(selectedSelector)
+    ),
+  );
   sshNewTabMenu.render({
     backendHtml,
     context: {
       selectedSelector,
       selectedLabel: instance?.name || selectorLabel(selectedSelector || ""),
-      lightosDirectAvailable: Boolean(runtimeInfo.lightosFeaturesEnabled && selectedSelector && !isSshSelector(selectedSelector)),
+      ...capabilities,
     },
   });
 }
@@ -5622,6 +5647,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     if (typeof event.replay_after === "number" && Number.isFinite(event.replay_after)) {
       pane.lastReplayAfter = Math.max(0, Math.trunc(event.replay_after));
     }
+    resetRemoteClientTerminalForReplay(pane);
     pane.replaying = true;
   } else if (event.type === "error") {
     clearReplayInputLock(pane);

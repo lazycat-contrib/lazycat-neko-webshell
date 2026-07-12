@@ -253,6 +253,9 @@ export type MessageKey =
   | "interfaceStyle.porcelain"
   | "interfaceStyle.spectrum"
   | "interfaceStyle.steel"
+  | "instanceGroup.lightos"
+  | "instanceGroup.remote"
+  | "instanceGroup.ssh"
   | "layout.horizontal"
   | "layout.vertical"
   | "label.currentTime"
@@ -1002,6 +1005,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "interfaceStyle.porcelain": "Porcelain",
     "interfaceStyle.spectrum": "Spectrum",
     "interfaceStyle.steel": "Steel",
+    "instanceGroup.lightos": "LightOS instances",
+    "instanceGroup.remote": "Remote devices",
+    "instanceGroup.ssh": "SSH profiles",
     "layout.horizontal": "Horizontal",
     "layout.vertical": "Vertical",
     "label.currentTime": "Current time",
@@ -1772,6 +1778,9 @@ const messages: Record<Language, Record<MessageKey, string>> = {
     "interfaceStyle.porcelain": "瓷白",
     "interfaceStyle.spectrum": "五彩缤纷",
     "interfaceStyle.steel": "钢铁风",
+    "instanceGroup.lightos": "LightOS 实例",
+    "instanceGroup.remote": "远程设备",
+    "instanceGroup.ssh": "SSH 配置",
     "layout.horizontal": "横向",
     "layout.vertical": "竖向",
     "label.currentTime": "当前时间",
