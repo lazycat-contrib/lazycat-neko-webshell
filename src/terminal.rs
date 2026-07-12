@@ -25,8 +25,10 @@ use crate::agent_protocol::{
     detach_frame, history_recording_frame, input_frame, read_agent_frame_async, resize_frame,
     write_agent_frame_async,
 };
+use crate::client_terminal;
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
 use crate::lightos;
+use crate::lightos_admin;
 use crate::proto::lazycat::webshell::v1::{AgentControlType, AgentFrame, AgentFrameType};
 use crate::ssh_backend;
 use crate::state::{AppState, mark_session_status, sync_session_login_user};
@@ -270,6 +272,46 @@ pub async fn terminal_ws(
 ) -> Response {
     if !origin_allowed(&headers) {
         return (StatusCode::FORBIDDEN, "invalid websocket origin").into_response();
+    }
+
+    if query
+        .name
+        .as_deref()
+        .is_some_and(lightos_admin::is_client_selector)
+    {
+        let selector = query.name.as_deref().unwrap_or_default().trim();
+        let backend = query.backend.as_deref().unwrap_or("webshell").trim();
+        if backend != "webshell" {
+            return (
+                StatusCode::BAD_REQUEST,
+                "remote clients support the native WebShell backend only",
+            )
+                .into_response();
+        }
+        let pane_id = query.pane_id.as_deref().unwrap_or_default().trim();
+        let cols = query.cols.unwrap_or(DEFAULT_COLS);
+        let rows = query.rows.unwrap_or(DEFAULT_ROWS);
+        if let Err(error) = validate_size(cols, rows) {
+            return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
+        }
+        let remote = match client_terminal::connect_terminal(
+            &headers,
+            selector,
+            pane_id,
+            cols,
+            rows,
+            query.after.unwrap_or(0),
+        )
+        .await
+        {
+            Ok(remote) => remote,
+            Err(error) => return error.into_response(),
+        };
+        return ws.on_upgrade(move |socket| async move {
+            if let Err(error) = client_terminal::relay_terminal_socket(socket, remote).await {
+                warn!(error = %error, "remote client terminal websocket ended with error");
+            }
+        });
     }
 
     ws.on_upgrade(move |socket| async move {

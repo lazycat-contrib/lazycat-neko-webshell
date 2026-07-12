@@ -1,11 +1,24 @@
+use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
+use axum::extract::ws::{Message as BrowserMessage, WebSocket};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use futures::{SinkExt, StreamExt};
 use reqwest::{Method, Url};
+use rustls23::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls23::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
+use rustls23::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls23::{DigitallySignedStruct, SignatureScheme};
 use secrecy::ExposeSecret as _;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::net::TcpStream;
+use tokio::time::timeout;
+use tokio_tungstenite::tungstenite::Message as RemoteMessage;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 
 use crate::device_api_auth;
 use crate::lightos;
@@ -21,6 +34,8 @@ use crate::workspace::{
 const CLIENT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TICKET_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_WORKSPACE_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+
+type RemoteWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 #[derive(Debug, Error)]
 #[error("{message}")]
@@ -87,6 +102,68 @@ struct ClientTerminalDialInfo {
     ticket: ClientTerminalTicket,
     device_api_url: Url,
     auth_token: secrecy::SecretString,
+}
+
+pub(crate) struct RemoteTerminalConnection {
+    socket: RemoteWebSocket,
+    selector: String,
+    pane_id: String,
+    replay_after: u64,
+}
+
+struct SkipServerCertificateVerification(CryptoProvider);
+
+impl fmt::Debug for SkipServerCertificateVerification {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SkipServerCertificateVerification")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ServerCertVerifier for SkipServerCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls23::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signed: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls23::Error> {
+        verify_tls12_signature(
+            message,
+            certificate,
+            signed,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signed: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls23::Error> {
+        verify_tls13_signature(
+            message,
+            certificate,
+            signed,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,6 +293,212 @@ pub(crate) async fn apply_workspace_action(
         ClientTerminalError::bad_gateway(format!("invalid remote workspace response: {error}"))
     })?;
     Ok(convert_remote_workspace(selector, remote))
+}
+
+pub(crate) async fn connect_terminal(
+    headers: &HeaderMap,
+    selector: &str,
+    pane_id: &str,
+    cols: u16,
+    rows: u16,
+    replay_after: u64,
+) -> Result<RemoteTerminalConnection, ClientTerminalError> {
+    let pane_id = pane_id.trim();
+    if pane_id.is_empty() || pane_id.len() > 256 || pane_id.chars().any(char::is_control) {
+        return Err(ClientTerminalError::bad_request("pane_id is required"));
+    }
+    let dial = client_terminal_dial_info(headers, selector).await?;
+    let mut url = client_terminal_url(&dial.ticket, "/ws")?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("pane", pane_id);
+        query.append_pair("cols", &cols.to_string());
+        query.append_pair("rows", &rows.to_string());
+        query.append_pair("ticket", &dial.ticket.ticket);
+    }
+    let safe_url = sanitize_client_terminal_url(&url);
+    let websocket_url = websocket_terminal_url(&url)?;
+    let mut request = websocket_url
+        .as_str()
+        .into_client_request()
+        .map_err(|_| ClientTerminalError::bad_gateway("invalid remote terminal request"))?;
+    request.headers_mut().insert(
+        "lzc_dapi_auth_token",
+        tokio_tungstenite::tungstenite::http::HeaderValue::from_str(
+            dial.auth_token.expose_secret(),
+        )
+        .map_err(|_| ClientTerminalError::bad_gateway("invalid device auth token"))?,
+    );
+    let connector = websocket_tls_connector()?;
+    let (socket, _) = timeout(
+        CLIENT_TERMINAL_TIMEOUT,
+        tokio_tungstenite::connect_async_tls_with_config(request, None, true, Some(connector)),
+    )
+    .await
+    .map_err(|_| {
+        ClientTerminalError::new(
+            StatusCode::GATEWAY_TIMEOUT,
+            format!("remote client terminal connection timed out: {safe_url}"),
+        )
+    })?
+    .map_err(|_| {
+        ClientTerminalError::bad_gateway(format!(
+            "remote client terminal connection failed: {safe_url}"
+        ))
+    })?;
+    Ok(RemoteTerminalConnection {
+        socket,
+        selector: selector.to_owned(),
+        pane_id: pane_id.to_owned(),
+        replay_after,
+    })
+}
+
+pub(crate) async fn relay_terminal_socket(
+    browser: WebSocket,
+    remote: RemoteTerminalConnection,
+) -> anyhow::Result<()> {
+    let RemoteTerminalConnection {
+        socket,
+        selector,
+        pane_id,
+        replay_after,
+    } = remote;
+    let (mut browser_sink, mut browser_stream) = browser.split();
+    let (mut remote_sink, mut remote_stream) = socket.split();
+
+    let browser_to_remote = async {
+        while let Some(message) = browser_stream.next().await {
+            let message = message?;
+            let Some(message) = browser_message_to_remote(message) else {
+                break;
+            };
+            remote_sink.send(message).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let remote_to_browser = async {
+        while let Some(message) = remote_stream.next().await {
+            let message = message?;
+            let Some(message) =
+                remote_message_to_browser(message, &selector, &pane_id, replay_after)?
+            else {
+                break;
+            };
+            browser_sink.send(message).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+
+    tokio::select! {
+        result = browser_to_remote => result,
+        result = remote_to_browser => result,
+    }
+}
+
+fn browser_message_to_remote(message: BrowserMessage) -> Option<RemoteMessage> {
+    match message {
+        BrowserMessage::Text(text) => Some(RemoteMessage::Text(text.as_str().into())),
+        BrowserMessage::Binary(bytes) => Some(RemoteMessage::Binary(bytes)),
+        BrowserMessage::Ping(bytes) => Some(RemoteMessage::Ping(bytes)),
+        BrowserMessage::Pong(bytes) => Some(RemoteMessage::Pong(bytes)),
+        BrowserMessage::Close(_) => Some(RemoteMessage::Close(None)),
+    }
+}
+
+fn remote_message_to_browser(
+    message: RemoteMessage,
+    selector: &str,
+    pane_id: &str,
+    replay_after: u64,
+) -> Result<Option<BrowserMessage>, ClientTerminalError> {
+    match message {
+        RemoteMessage::Text(text) => Ok(Some(BrowserMessage::Text(
+            translate_remote_control(text.as_str(), selector, pane_id, replay_after)?.into(),
+        ))),
+        RemoteMessage::Binary(bytes) => Ok(Some(BrowserMessage::Binary(bytes))),
+        RemoteMessage::Ping(bytes) => Ok(Some(BrowserMessage::Ping(bytes))),
+        RemoteMessage::Pong(bytes) => Ok(Some(BrowserMessage::Pong(bytes))),
+        RemoteMessage::Close(_) => Ok(Some(BrowserMessage::Close(None))),
+        RemoteMessage::Frame(_) => Ok(None),
+    }
+}
+
+fn websocket_tls_connector() -> Result<Connector, ClientTerminalError> {
+    let provider = rustls23::crypto::ring::default_provider();
+    let verifier = Arc::new(SkipServerCertificateVerification(provider.clone()));
+    let config = rustls23::ClientConfig::builder_with_provider(Arc::new(provider))
+        .with_safe_default_protocol_versions()
+        .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    Ok(Connector::Rustls(Arc::new(config)))
+}
+
+fn websocket_terminal_url(url: &Url) -> Result<Url, ClientTerminalError> {
+    let mut websocket = url.clone();
+    let scheme = match url.scheme() {
+        "https" => "wss",
+        "http" => "ws",
+        _ => {
+            return Err(ClientTerminalError::bad_gateway(
+                "invalid remote terminal URL",
+            ));
+        }
+    };
+    websocket
+        .set_scheme(scheme)
+        .map_err(|()| ClientTerminalError::bad_gateway("invalid remote terminal URL"))?;
+    Ok(websocket)
+}
+
+fn translate_remote_control(
+    text: &str,
+    selector: &str,
+    pane_id: &str,
+    replay_after: u64,
+) -> Result<String, ClientTerminalError> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Ok(text.to_owned());
+    };
+    let Some(kind) = value.get("type").and_then(serde_json::Value::as_str) else {
+        return Ok(text.to_owned());
+    };
+    if !matches!(kind, "history-replay-start" | "history-replay-complete") {
+        return Ok(text.to_owned());
+    }
+    let remote_pane = value
+        .get("pane_id")
+        .or_else(|| value.get("paneId"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    if !remote_pane.is_empty() && remote_pane != pane_id {
+        return Err(ClientTerminalError::bad_gateway(
+            "remote terminal replay identity mismatch",
+        ));
+    }
+    let translated = if kind == "history-replay-start" {
+        serde_json::json!({
+            "type": "replay-start",
+            "session_id": pane_id,
+            "selector": selector,
+            "pane_id": pane_id,
+            "replay_after": replay_after,
+        })
+    } else {
+        serde_json::json!({
+            "type": "replay-complete",
+            "session_id": pane_id,
+            "selector": selector,
+            "pane_id": pane_id,
+            "last_sequence": replay_after,
+        })
+    };
+    serde_json::to_string(&translated)
+        .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))
 }
 
 async fn client_terminal_json(
@@ -565,7 +848,8 @@ mod tests {
     use super::{
         ClientTerminalTicket, RemoteWorkspaceState, authorize_client_id, client_terminal_url,
         convert_remote_workspace, redact_sensitive_text, remote_workspace_action,
-        sanitize_client_terminal_url, validate_ticket,
+        sanitize_client_terminal_url, translate_remote_control, validate_ticket,
+        websocket_terminal_url,
     };
     use crate::lightos_admin::ClientInstanceSummary;
     use crate::workspace::{SessionBackend, WorkspaceAction, WorkspaceActionRequest};
@@ -610,6 +894,69 @@ mod tests {
             "device-auth-secret",
         );
         assert_eq!(redacted, "request ticket=[REDACTED] token=[REDACTED]");
+    }
+
+    #[test]
+    fn converts_remote_terminal_urls_to_websocket_urls() {
+        let secure = reqwest::Url::parse("https://device.example/terminal?ticket=secret")
+            .expect("secure URL");
+        let plain = reqwest::Url::parse("http://127.0.0.1:8080/terminal").expect("plain URL");
+
+        assert_eq!(
+            websocket_terminal_url(&secure).expect("wss URL").scheme(),
+            "wss"
+        );
+        assert_eq!(
+            websocket_terminal_url(&plain).expect("ws URL").scheme(),
+            "ws"
+        );
+    }
+
+    #[test]
+    fn translates_official_history_replay_controls_for_the_current_frontend() {
+        let start = translate_remote_control(
+            r#"{"type":"history-replay-start","selector":"remote","pane_id":"pane-1","allow_generated_input":true}"#,
+            "client:client-a",
+            "pane-1",
+            12,
+        )
+        .expect("translated start");
+        let start: serde_json::Value = serde_json::from_str(&start).expect("start JSON");
+        assert_eq!(start["type"], "replay-start");
+        assert_eq!(start["selector"], "client:client-a");
+        assert_eq!(start["session_id"], "pane-1");
+        assert_eq!(start["replay_after"], 12);
+
+        let complete = translate_remote_control(
+            r#"{"type":"history-replay-complete","selector":"remote","pane_id":"pane-1"}"#,
+            "client:client-a",
+            "pane-1",
+            12,
+        )
+        .expect("translated complete");
+        let complete: serde_json::Value = serde_json::from_str(&complete).expect("complete JSON");
+        assert_eq!(complete["type"], "replay-complete");
+        assert_eq!(complete["last_sequence"], 12);
+
+        assert_eq!(
+            translate_remote_control(
+                r#"{"type":"process-exit","exit_code":7}"#,
+                "client:client-a",
+                "pane-1",
+                12,
+            )
+            .expect("unchanged process exit"),
+            r#"{"type":"process-exit","exit_code":7}"#
+        );
+
+        let error = translate_remote_control(
+            r#"{"type":"history-replay-start","pane_id":"pane-other"}"#,
+            "client:client-a",
+            "pane-1",
+            12,
+        )
+        .expect_err("mismatched replay must be rejected");
+        assert!(error.to_string().contains("identity mismatch"));
     }
 
     #[test]
