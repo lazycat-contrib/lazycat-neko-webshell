@@ -1,0 +1,17 @@
+edition = "2023";
+
+package cloud.lazycat.apis.localdevice;
+
+service PermissionManager {
+  rpc RequestAuthToken(RequestAuthTokenRequest) returns (RequestAuthTokenResponse);
+}
+
+message RequestAuthTokenRequest {
+  bytes box_cert = 1;
+  bytes app_cert = 2;
+  bytes signature = 3;
+}
+
+message RequestAuthTokenResponse {
+  string token = 1;
+}

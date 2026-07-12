@@ -17,6 +17,7 @@ mod assets;
 mod backgrounds;
 mod config;
 mod database;
+mod device_api_auth;
 mod embedded_frontend;
 mod fonts;
 mod herdr;
