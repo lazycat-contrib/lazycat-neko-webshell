@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::config::{DEFAULT_SSH_KEY_DIR, ENV_SSH_CONFIG_FILE, ENV_SSH_KEY_DIR};
 use crate::database::{AppDatabase, SshProfileRecord, SshProfileRecordUpsert};
 use crate::lightos;
-use crate::proto::lazycat::webshell::v1::Instance;
+use crate::proto::lazycat::webshell::v1::{Instance, InstanceKind};
 use crate::ssh_config::{self, SshConfigDocument};
 use crate::state::AppState;
 use crate::tty_init::lightos_features_enabled;
@@ -305,6 +305,7 @@ pub fn list_profile_instances(database: &AppDatabase) -> io::Result<Vec<Instance
             name: Some(profile.name),
             owner_deploy_id: Some(SSH_OWNER_DEPLOY_ID.to_owned()),
             status: Some("running".to_owned()),
+            kind: Some(InstanceKind::INSTANCE_KIND_SSH.into()),
             ..Default::default()
         })
         .collect())

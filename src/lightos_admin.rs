@@ -7,7 +7,7 @@ use reqwest::Url;
 use serde::Deserialize;
 
 use crate::lightos;
-use crate::proto::lazycat::webshell::v1::Instance;
+use crate::proto::lazycat::webshell::v1::{Instance, InstanceKind};
 use crate::validation::validate_selector;
 
 const LIGHTOS_USER_ID_HEADER: &str = "x-hc-user-id";
@@ -60,6 +60,20 @@ struct VisibleInstance {
     status: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub(crate) struct ClientInstanceSummary {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub platform: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub owner_user_id: String,
+}
+
 pub async fn list_visible_instances(
     headers: &HeaderMap,
 ) -> Result<Vec<Instance>, LightOsAdminError> {
@@ -86,10 +100,68 @@ async fn list_visible_instances_from(
     source_headers: &HeaderMap,
     account_id: &str,
 ) -> Result<Vec<Instance>, LightOsAdminError> {
-    let url = build_admin_url(base_url, "/api/webshell/instances")
+    let headers = build_upstream_headers(source_headers, account_id)
+        .map_err(LightOsAdminError::bad_gateway)?;
+    let webshell_url = build_admin_url(base_url, "/api/webshell/instances")
+        .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
+    let client_url = build_admin_url(base_url, "/api/client-instances")
+        .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
+    let webshell = fetch_admin_json(client, webshell_url, headers.clone()).await?;
+    let client_instances = fetch_admin_json(client, client_url, headers).await?;
+    let mut instances =
+        parse_visible_instances(&webshell).map_err(LightOsAdminError::bad_gateway)?;
+    instances
+        .extend(parse_client_instances(&client_instances).map_err(LightOsAdminError::bad_gateway)?);
+    instances.sort_by_key(|instance| instance.status.as_deref() != Some("running"));
+    let mut seen = HashSet::new();
+    instances.retain(|instance| {
+        instance
+            .selector
+            .as_deref()
+            .is_some_and(|selector| seen.insert(selector.to_owned()))
+    });
+    Ok(instances)
+}
+
+pub(crate) async fn list_visible_client_instances(
+    headers: &HeaderMap,
+) -> Result<Vec<ClientInstanceSummary>, LightOsAdminError> {
+    let account_id = current_request_account_id(headers)
+        .ok_or_else(|| LightOsAdminError::unauthorized("account id is required"))?;
+    let info = lightos::admin_info().await.map_err(|error| {
+        LightOsAdminError::bad_gateway(
+            error
+                .message
+                .unwrap_or_else(|| "failed to resolve LightOS admin info".to_owned()),
+        )
+    })?;
+    let base_url = resolve_admin_base_url(&info.base_url);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
+    list_visible_client_instances_from(&client, &base_url, headers, &account_id).await
+}
+
+pub(crate) async fn list_visible_client_instances_from(
+    client: &reqwest::Client,
+    base_url: &str,
+    source_headers: &HeaderMap,
+    account_id: &str,
+) -> Result<Vec<ClientInstanceSummary>, LightOsAdminError> {
+    let url = build_admin_url(base_url, "/api/client-instances")
         .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
     let headers = build_upstream_headers(source_headers, account_id)
         .map_err(LightOsAdminError::bad_gateway)?;
+    let body = fetch_admin_json(client, url, headers).await?;
+    parse_client_instance_summaries(&body).map_err(LightOsAdminError::bad_gateway)
+}
+
+async fn fetch_admin_json(
+    client: &reqwest::Client,
+    url: Url,
+    headers: HeaderMap,
+) -> Result<bytes::Bytes, LightOsAdminError> {
     let response = client
         .get(url)
         .headers(headers)
@@ -109,10 +181,10 @@ async fn list_visible_instances_from(
             detail
         }));
     }
-    parse_visible_instances(&body).map_err(LightOsAdminError::bad_gateway)
+    Ok(body)
 }
 
-fn current_request_account_id(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn current_request_account_id(headers: &HeaderMap) -> Option<String> {
     account_id_from(
         headers,
         lightos_cookie_auth_required(),
@@ -186,6 +258,8 @@ fn build_upstream_headers(source: &HeaderMap, account_id: &str) -> Result<Header
         "authorization",
         "content-type",
         "cookie",
+        "lzc-auth-token",
+        "lzc-api-auth-token",
         "x-csrf-token",
         "x-requested-with",
     ] {
@@ -263,8 +337,59 @@ fn instance_from_visible(item: VisibleInstance) -> Option<Instance> {
             legacy_owner.to_owned()
         }),
         status: Some(item.status.trim().to_owned()),
+        kind: Some(InstanceKind::INSTANCE_KIND_LIGHTOS.into()),
         ..Default::default()
     })
+}
+
+fn parse_client_instance_summaries(output: &[u8]) -> Result<Vec<ClientInstanceSummary>, String> {
+    serde_json::from_slice(output)
+        .map_err(|error| format!("invalid LightOS client instances JSON: {error}"))
+}
+
+fn parse_client_instances(output: &[u8]) -> Result<Vec<Instance>, String> {
+    Ok(parse_client_instance_summaries(output)?
+        .into_iter()
+        .filter_map(instance_from_client)
+        .collect())
+}
+
+fn instance_from_client(item: ClientInstanceSummary) -> Option<Instance> {
+    let id = item.id.trim();
+    let selector = format!("client:{id}");
+    if parse_client_selector(&selector).is_none() {
+        return None;
+    }
+    let name = item.name.trim();
+    let status = item.status.trim();
+    Some(Instance {
+        selector: Some(selector),
+        name: Some(if name.is_empty() { "PC Client" } else { name }.to_owned()),
+        owner_deploy_id: Some(String::new()),
+        status: Some(if status.is_empty() { "running" } else { status }.to_owned()),
+        kind: Some(InstanceKind::INSTANCE_KIND_REMOTE_CLIENT.into()),
+        platform: Some(item.platform.trim().to_owned()),
+        owner_user_id: Some(item.owner_user_id.trim().to_owned()),
+        ..Default::default()
+    })
+}
+
+pub(crate) fn is_client_selector(selector: &str) -> bool {
+    selector.trim().starts_with("client:")
+}
+
+pub(crate) fn parse_client_selector(selector: &str) -> Option<&str> {
+    let value = selector.trim();
+    let id = value.strip_prefix("client:")?;
+    if id.is_empty()
+        || id.len() > 256
+        || !id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    {
+        return None;
+    }
+    Some(id)
 }
 
 fn lightos_config_value(name: &str) -> String {
@@ -336,8 +461,9 @@ mod tests {
 
     use super::{
         account_id_from, build_admin_url, build_upstream_headers, list_visible_instances_from,
-        parse_visible_instances,
+        parse_client_instances, parse_visible_instances,
     };
+    use crate::proto::lazycat::webshell::v1::InstanceKind;
 
     #[test]
     fn account_id_prefers_lightos_user_header() {
@@ -421,29 +547,70 @@ mod tests {
         assert_eq!(instances[0].name.as_deref(), Some("alpha"));
         assert_eq!(instances[0].owner_deploy_id.as_deref(), Some("deploy-a"));
         assert_eq!(instances[1].selector.as_deref(), Some("beta@deploy-b"));
+        assert_eq!(
+            instances[0].kind.as_ref().and_then(|kind| kind.as_known()),
+            Some(InstanceKind::INSTANCE_KIND_LIGHTOS)
+        );
+    }
+
+    #[test]
+    fn parses_remote_client_instances_with_typed_selectors() {
+        let instances = parse_client_instances(
+            br#"[
+                {"id":"client-a","name":"Alice PC","platform":"darwin","status":"running","owner_user_id":"alice"},
+                {"id":"","name":"invalid","platform":"linux","status":"running"}
+            ]"#,
+        )
+        .expect("client instances");
+
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].selector.as_deref(), Some("client:client-a"));
+        assert_eq!(instances[0].name.as_deref(), Some("Alice PC"));
+        assert_eq!(instances[0].platform.as_deref(), Some("darwin"));
+        assert_eq!(instances[0].owner_user_id.as_deref(), Some("alice"));
+        assert_eq!(
+            instances[0].kind.as_ref().and_then(|kind| kind.as_known()),
+            Some(InstanceKind::INSTANCE_KIND_REMOTE_CLIENT)
+        );
     }
 
     #[tokio::test]
     async fn loads_visible_instances_from_official_admin_endpoint_with_account_context() {
-        let app = Router::new().route(
-            "/root/api/webshell/instances",
-            get(|headers: HeaderMap| async move {
-                let authorized = headers
-                    .get("x-hc-user-id")
-                    .and_then(|value| value.to_str().ok())
-                    == Some("login-user-a")
-                    && headers.get("cookie").and_then(|value| value.to_str().ok())
-                        == Some("session=abc");
-                if !authorized {
-                    return StatusCode::UNAUTHORIZED.into_response();
-                }
-                Json(json!([{
-                    "selector": "alpha@deploy-a",
-                    "status": "running"
-                }]))
-                .into_response()
-            }),
-        );
+        let app = Router::new()
+            .route(
+                "/root/api/webshell/instances",
+                get(|headers: HeaderMap| async move {
+                    let authorized = headers
+                        .get("x-hc-user-id")
+                        .and_then(|value| value.to_str().ok())
+                        == Some("login-user-a")
+                        && headers.get("cookie").and_then(|value| value.to_str().ok())
+                            == Some("session=abc");
+                    if !authorized {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    Json(json!([{
+                        "selector": "alpha@deploy-a",
+                        "status": "running"
+                    }]))
+                    .into_response()
+                }),
+            )
+            .route(
+                "/root/api/client-instances",
+                get(|headers: HeaderMap| async move {
+                    let authorized = headers
+                        .get("x-hc-user-id")
+                        .and_then(|value| value.to_str().ok())
+                        == Some("login-user-a")
+                        && headers.get("cookie").and_then(|value| value.to_str().ok())
+                            == Some("session=abc");
+                    if !authorized {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    Json(json!([])).into_response()
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test listener");

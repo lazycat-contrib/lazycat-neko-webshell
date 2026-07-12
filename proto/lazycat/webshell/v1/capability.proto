@@ -30,6 +30,16 @@ message Instance {
   string name = 2;
   string owner_deploy_id = 3;
   string status = 4;
+  InstanceKind kind = 5;
+  string platform = 6;
+  string owner_user_id = 7;
+}
+
+enum InstanceKind {
+  INSTANCE_KIND_UNSPECIFIED = 0;
+  INSTANCE_KIND_LIGHTOS = 1;
+  INSTANCE_KIND_REMOTE_CLIENT = 2;
+  INSTANCE_KIND_SSH = 3;
 }
 
 message GetProviderRequest {}

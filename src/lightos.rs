@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::time::timeout;
 
 use crate::config::LIGHTOSCTL;
-use crate::proto::lazycat::webshell::v1::Instance;
+use crate::proto::lazycat::webshell::v1::{Instance, InstanceKind};
 use crate::validation::validate_selector;
 
 const TARGET_SSH_CONFIG_READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -54,6 +54,7 @@ pub async fn list_instances() -> Result<Vec<Instance>, ConnectError> {
                 name: Some(item.name),
                 owner_deploy_id: Some(item.owner_deploy_id),
                 status: Some(item.status),
+                kind: Some(InstanceKind::INSTANCE_KIND_LIGHTOS.into()),
                 ..Default::default()
             })
         })
