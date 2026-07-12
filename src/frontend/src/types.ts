@@ -106,6 +106,8 @@ export type HerdrBridgeState = {
   herdr_protocol?: number;
   supported_herdr_version: string;
   supported_protocol: number;
+  socket_schema_version: number;
+  socket_source_revision: string;
   protocol_compatible?: boolean;
   capabilities?: HerdrCapabilitiesInfo;
   workspaces: HerdrWorkspaceInfo[];

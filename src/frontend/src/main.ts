@@ -72,6 +72,8 @@ import {
   selectHerdrTerminalPane,
 } from "./herdr-backend";
 import type { HerdrPaneResizeDirection } from "./herdr-backend";
+import { isHerdrSocketMethod } from "./herdr-socket-api";
+import { createHerdrWheelInputBatcher } from "./herdr-wheel-input-batcher";
 import {
   renderHerdrWorkspaceMenuView,
   syncHerdrTabButtons,
@@ -702,6 +704,9 @@ const terminalTransfer = createTerminalTransferController({
   tr,
   onStatus: setGlobalStatus,
   onRender: renderPluginTools,
+});
+const herdrWheelInputBatcher = createHerdrWheelInputBatcher({
+  sendNow: sendHerdrWheelInputNow,
 });
 const whiteNoise = createWhiteNoiseController({
   isEnabled: () => pluginIsEnabled(WHITE_NOISE_PLUGIN_ID),
@@ -4148,6 +4153,7 @@ async function runHerdrSocketRequest(
 ): Promise<HerdrSocketEnvelope> {
   const selector = normalizeSelector(options.selector ?? selectedSelector);
   if (!selector) throw new Error(tr("status.selectRunningInstance"));
+  if (!isHerdrSocketMethod(method)) throw new Error(`Unsupported Herdr socket method: ${method}`);
   const envelope = await runHerdrSocketApiRequest(selector, method, params, { id: options.id });
   if (method === "notification.show" && options.mirrorNotification !== false) {
     mirrorHerdrNotification(params, envelope);
@@ -5251,6 +5257,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     clearReplayInputLock(pane);
     flushPaneDecoder(pane);
     terminalControl.forgetPane(pane);
+    herdrWheelInputBatcher.clear(pane);
     pane.transport?.notifyDisconnect();
     scheduleReconnect(pane);
   });
@@ -5259,6 +5266,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     pendingPaneSocketOpens.delete(pane.id);
     terminalTransfer.resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
+    herdrWheelInputBatcher.clear(pane);
     pane.transport?.notifyError(tr("status.socketError"));
     setPaneStatus(pane, tr("status.socketError"), "error");
   });
@@ -5266,6 +5274,7 @@ async function openSocketPrepared(pane: TerminalPane) {
 
 function beginReplayInputLock(pane: TerminalPane, socket: WebSocket) {
   window.clearTimeout(pane.replayTimer);
+  herdrWheelInputBatcher.clear(pane);
   pane.replaying = true;
   pane.replayTimer = window.setTimeout(() => {
     if (pane.socket !== socket || pane.closing || !pane.replaying) return;
@@ -5456,6 +5465,7 @@ function handleServerText(pane: TerminalPane, text: string) {
   } else if (event.type === "control-state") {
     terminalControl.noteControlState(pane, event);
   } else if (event.type === "replay-start") {
+    herdrWheelInputBatcher.clear(pane);
     if (!matchesPaneReplay(pane, event)) {
       clearReplayInputLock(pane);
       pane.socket?.close();
@@ -6169,6 +6179,19 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
   if (terminalTransfer.consumePaneInput(pane, data)) {
     return true;
   }
+  if (herdrWheelInputBatcher.handle(pane, data)) {
+    return true;
+  }
+  return sendPaneInputDirect(pane, data);
+}
+
+function sendHerdrWheelInputNow(pane: TerminalPane, data: string): boolean {
+  if (!canConnectPanePty(pane) || !terminalControl.canWrite(pane, { report: false })) return false;
+  if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying || pane.closing) return false;
+  return sendPaneInputDirect(pane, data);
+}
+
+function sendPaneInputDirect(pane: TerminalPane, data: string): boolean {
   const replayPolicy = remoteClientReplayInputPolicy(
     pane.selector,
     pane.replaying,
@@ -6217,6 +6240,7 @@ function flushPendingInput(pane: TerminalPane) {
 }
 
 function clearPendingInput(pane: TerminalPane) {
+  herdrWheelInputBatcher.clear(pane);
   clearPanePendingInput(pane);
 }
 

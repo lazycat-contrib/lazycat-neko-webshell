@@ -119,19 +119,21 @@ function dispatchHerdrTouchWheel(
   if (!notches) return true;
   const direction = notches > 0 ? 1 : -1;
   const count = Math.min(4, Math.abs(notches));
+  // Restty encodes one wheel notch per dispatch. Reuse the event while preserving the notch count.
+  const wheelEvent = new WheelEvent("wheel", {
+    bubbles: true,
+    cancelable: true,
+    clientX: sourceEvent.clientX,
+    clientY: sourceEvent.clientY,
+    ctrlKey: sourceEvent.ctrlKey,
+    altKey: sourceEvent.altKey,
+    shiftKey: sourceEvent.shiftKey,
+    metaKey: sourceEvent.metaKey,
+    deltaMode: WheelEvent.DOM_DELTA_PIXEL,
+    deltaY: direction * thresholdPx,
+  });
   for (let index = 0; index < count; index += 1) {
-    canvas.dispatchEvent(new WheelEvent("wheel", {
-      bubbles: true,
-      cancelable: true,
-      clientX: sourceEvent.clientX,
-      clientY: sourceEvent.clientY,
-      ctrlKey: sourceEvent.ctrlKey,
-      altKey: sourceEvent.altKey,
-      shiftKey: sourceEvent.shiftKey,
-      metaKey: sourceEvent.metaKey,
-      deltaMode: WheelEvent.DOM_DELTA_PIXEL,
-      deltaY: direction * thresholdPx,
-    }));
+    canvas.dispatchEvent(wheelEvent);
   }
   return true;
 }

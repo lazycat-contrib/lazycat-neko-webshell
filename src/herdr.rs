@@ -1,3 +1,4 @@
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -26,93 +27,28 @@ const HERDR_API_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_HERDR_SOCKET_REQUEST_BYTES: usize = 1024 * 1024;
 const HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS: u64 = 5;
 const MIN_SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 14;
-const SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 16;
-const SUPPORTED_HERDR_SOURCE_VERSION: &str = "0.7.3";
+const HERDR_SOCKET_CONTRACT_JSON: &str = include_str!("herdr_socket_contract.json");
+static HERDR_SOCKET_CONTRACT: LazyLock<HerdrSocketContract> = LazyLock::new(|| {
+    let contract: HerdrSocketContract = serde_json::from_str(HERDR_SOCKET_CONTRACT_JSON)
+        .expect("embedded Herdr socket contract must be valid JSON");
+    assert!(
+        !contract.methods.is_empty() && !contract.subscriptions.is_empty(),
+        "embedded Herdr socket contract must list methods and subscriptions"
+    );
+    contract
+});
 
 type HerdrSocketSender = SplitSink<WebSocket, Message>;
 
-const ALLOWED_HERDR_METHODS: &[&str] = &[
-    "ping",
-    "server.stop",
-    "server.live_handoff",
-    "server.reload_config",
-    "server.agent_manifests",
-    "server.reload_agent_manifests",
-    "notification.show",
-    "client.window_title.set",
-    "client.window_title.clear",
-    "session.snapshot",
-    "workspace.create",
-    "workspace.list",
-    "workspace.get",
-    "workspace.focus",
-    "workspace.rename",
-    "workspace.move",
-    "workspace.close",
-    "worktree.list",
-    "worktree.create",
-    "worktree.open",
-    "worktree.remove",
-    "tab.create",
-    "tab.list",
-    "tab.get",
-    "tab.focus",
-    "tab.rename",
-    "tab.move",
-    "tab.close",
-    "pane.split",
-    "pane.swap",
-    "pane.move",
-    "pane.zoom",
-    "pane.layout",
-    "pane.process_info",
-    "layout.export",
-    "layout.apply",
-    "layout.set_split_ratio",
-    "pane.neighbor",
-    "pane.edges",
-    "pane.focus_direction",
-    "pane.resize",
-    "pane.list",
-    "pane.current",
-    "pane.get",
-    "pane.focus",
-    "pane.rename",
-    "pane.send_text",
-    "pane.send_keys",
-    "pane.send_input",
-    "pane.read",
-    "pane.report_agent",
-    "pane.report_agent_session",
-    "pane.report_metadata",
-    "pane.clear_agent_authority",
-    "pane.release_agent",
-    "pane.close",
-    "pane.wait_for_output",
-    "agent.list",
-    "agent.get",
-    "agent.read",
-    "agent.explain",
-    "agent.send",
-    "agent.rename",
-    "agent.focus",
-    "agent.start",
-    "events.subscribe",
-    "events.wait",
-    "integration.install",
-    "integration.uninstall",
-    "plugin.link",
-    "plugin.list",
-    "plugin.unlink",
-    "plugin.enable",
-    "plugin.disable",
-    "plugin.action.list",
-    "plugin.action.invoke",
-    "plugin.log.list",
-    "plugin.pane.open",
-    "plugin.pane.focus",
-    "plugin.pane.close",
-];
+#[derive(Debug, Deserialize)]
+struct HerdrSocketContract {
+    source_version: String,
+    source_revision: String,
+    protocol: u32,
+    schema_version: u32,
+    methods: Vec<String>,
+    subscriptions: Vec<String>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct HerdrQuery {
@@ -169,8 +105,10 @@ pub struct HerdrBridgeState {
     herdr_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     herdr_protocol: Option<u32>,
-    supported_herdr_version: &'static str,
+    supported_herdr_version: String,
     supported_protocol: u32,
+    socket_schema_version: u32,
+    socket_source_revision: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     protocol_compatible: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -486,8 +424,10 @@ fn build_herdr_state(
         message,
         herdr_version: ping_info.version,
         herdr_protocol: ping_info.protocol,
-        supported_herdr_version: SUPPORTED_HERDR_SOURCE_VERSION,
-        supported_protocol: SUPPORTED_HERDR_PROTOCOL_VERSION,
+        supported_herdr_version: HERDR_SOCKET_CONTRACT.source_version.clone(),
+        supported_protocol: HERDR_SOCKET_CONTRACT.protocol,
+        socket_schema_version: HERDR_SOCKET_CONTRACT.schema_version,
+        socket_source_revision: HERDR_SOCKET_CONTRACT.source_revision.clone(),
         protocol_compatible: ping_info.protocol.map(herdr_protocol_is_supported),
         capabilities: ping_info.capabilities,
         workspaces,
@@ -748,7 +688,11 @@ fn validate_herdr_method(method: &str) -> Result<(), HerdrBridgeError> {
 }
 
 fn is_allowed_herdr_method(method: &str) -> bool {
-    ALLOWED_HERDR_METHODS.contains(&method.trim())
+    let method = method.trim();
+    HERDR_SOCKET_CONTRACT
+        .methods
+        .iter()
+        .any(|allowed| allowed == method)
 }
 
 fn authorize_herdr_output_sequence_session(
@@ -1065,7 +1009,7 @@ fn parse_herdr_capabilities(value: &Value) -> Option<HerdrCapabilitiesInfo> {
 }
 
 fn herdr_protocol_is_supported(protocol: u32) -> bool {
-    (MIN_SUPPORTED_HERDR_PROTOCOL_VERSION..=SUPPORTED_HERDR_PROTOCOL_VERSION).contains(&protocol)
+    (MIN_SUPPORTED_HERDR_PROTOCOL_VERSION..=HERDR_SOCKET_CONTRACT.protocol).contains(&protocol)
 }
 
 fn herdr_protocol_supports_session_snapshot(protocol: u32) -> bool {
@@ -1130,11 +1074,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        ALLOWED_HERDR_METHODS, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
-        SUPPORTED_HERDR_PROTOCOL_VERSION, SUPPORTED_HERDR_SOURCE_VERSION,
-        herdr_protocol_is_supported, herdr_protocol_supports_session_snapshot,
-        is_allowed_herdr_method, parse_herdr_ping, parse_snapshot_focused_workspace_id, parse_tabs,
-        parse_workspaces, shell_quote, validate_herdr_wire_request,
+        HERDR_SOCKET_CONTRACT, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, herdr_protocol_is_supported,
+        herdr_protocol_supports_session_snapshot, is_allowed_herdr_method, parse_herdr_ping,
+        parse_snapshot_focused_workspace_id, parse_tabs, parse_workspaces, shell_quote,
+        validate_herdr_wire_request,
     };
 
     #[test]
@@ -1223,9 +1166,15 @@ mod tests {
     #[test]
     fn herdr_socket_allowlist_covers_documented_methods() {
         assert_eq!(MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
-        assert_eq!(SUPPORTED_HERDR_PROTOCOL_VERSION, 16);
-        assert_eq!(SUPPORTED_HERDR_SOURCE_VERSION, "0.7.3");
-        assert!(ALLOWED_HERDR_METHODS.len() > 60);
+        assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 16);
+        assert_eq!(HERDR_SOCKET_CONTRACT.schema_version, 1);
+        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.7.3");
+        assert_eq!(
+            HERDR_SOCKET_CONTRACT.source_revision,
+            "3661d99c2e4a4247392fc1a1eed5f37453393f8e"
+        );
+        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 80);
+        assert_eq!(HERDR_SOCKET_CONTRACT.subscriptions.len(), 24);
         for method in [
             "session.snapshot",
             "workspace.move",
@@ -1238,7 +1187,7 @@ mod tests {
                 "{method} should be allowed for Herdr 0.7.3"
             );
         }
-        for method in ALLOWED_HERDR_METHODS {
+        for method in &HERDR_SOCKET_CONTRACT.methods {
             assert!(
                 is_allowed_herdr_method(method),
                 "{method} should be allowed"

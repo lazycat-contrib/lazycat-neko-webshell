@@ -1,4 +1,5 @@
 import { boolField, recordField, stringField } from "./json-meta";
+export { herdrEventSubscriptions } from "./herdr-socket-api";
 import type { JsonRecord, SplitPlacement, TerminalPane, TerminalTab, Tone } from "./types";
 
 export type HerdrPaneResizeDirection = "left" | "right" | "up" | "down";
@@ -82,36 +83,6 @@ export function herdrFocusedOrFirstPaneId(result: JsonRecord | undefined): strin
     .filter((item): item is JsonRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item));
   const focusedPane = records.find((item) => boolField(item, "focused"));
   return stringField(focusedPane ?? records[0], "pane_id");
-}
-
-export function herdrEventSubscriptions(paneIds: string[]): JsonRecord[] {
-  const subscriptions: JsonRecord[] = [
-    { type: "workspace.created" },
-    { type: "workspace.updated" },
-    { type: "workspace.renamed" },
-    { type: "workspace.moved" },
-    { type: "workspace.closed" },
-    { type: "workspace.focused" },
-    { type: "worktree.created" },
-    { type: "worktree.opened" },
-    { type: "worktree.removed" },
-    { type: "tab.created" },
-    { type: "tab.closed" },
-    { type: "tab.focused" },
-    { type: "tab.renamed" },
-    { type: "tab.moved" },
-    { type: "pane.created" },
-    { type: "pane.closed" },
-    { type: "pane.focused" },
-    { type: "pane.moved" },
-    { type: "pane.exited" },
-    { type: "pane.agent_detected" },
-    { type: "layout.updated" },
-  ];
-  for (const paneId of paneIds) {
-    subscriptions.push({ type: "pane.agent_status_changed", pane_id: paneId });
-  }
-  return subscriptions;
 }
 
 export function herdrEventTone(event: string, data: JsonRecord): Tone {
