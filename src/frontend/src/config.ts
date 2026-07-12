@@ -1,4 +1,5 @@
 import type { FontPreset, InterfaceStyleId, Settings, TerminalTheme } from "./types";
+import { DEFAULT_AI_PROVIDER } from "./plugins/ai-chat/settings/provider-profile-state";
 import { defaultAiVoiceProviderProfiles } from "./plugins/ai-chat/voice-profiles";
 import { defaultAiVoiceSpeechProviderProfiles } from "./plugins/ai-chat/voice-speech-profiles";
 
@@ -179,7 +180,7 @@ export const DEFAULT_SETTINGS: Settings = {
   herdrActiveBackgroundLight: "#f0f7ff",
   autoRestartSessions: false,
   debugMode: false,
-  aiProvider: "openai-compatible",
+  aiProvider: DEFAULT_AI_PROVIDER,
   aiBaseUrl: "",
   aiApiKey: "",
   aiModel: "",

@@ -160,6 +160,25 @@ import {
   newAiVoiceProviderProfile,
 } from "./plugins/ai-chat/voice-profiles";
 import {
+  normalizeAIConfigDialogType,
+  normalizeAISettingsTab,
+  type AIConfigDialogState,
+  type AISettingsTab,
+} from "./plugins/ai-chat/settings/dialog-state";
+import {
+  activeAiProviderProfile as activeAiProviderProfileInSettings,
+  aiProviderConnectionChanged,
+  aiProviderProfileById as aiProviderProfileByIdInSettings,
+  newAiProviderProfile as newAiProviderProfileInSettings,
+  normalizeAiProviderValue,
+  removeAiProviderProfile as removeAiProviderProfileFromSettings,
+  sanitizeAiProviderProfile,
+  selectAiProviderProfile as selectAiProviderProfileInSettings,
+  syncActiveAiProviderProfile as syncActiveAiProviderProfileInSettings,
+  updateActiveAiProviderProfile as updateActiveAiProviderProfileInSettings,
+  upsertAiProviderProfile as upsertAiProviderProfileInSettings,
+} from "./plugins/ai-chat/settings/provider-profile-state";
+import {
   readAiVoiceProviderProfileFromFields,
   readAiVoiceReplyProviderProfileFromFields,
 } from "./plugins/ai-chat/settings/voice-dialog-reader";
@@ -368,7 +387,6 @@ const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
-const MAX_AI_PROVIDER_PROFILES = 12;
 const AI_TERMINAL_CONTEXT_LINES = 40;
 const POMODORO_REFRESH_MS = 5000;
 const NOTIFICATIONS_REFRESH_MS = 5000;
@@ -377,12 +395,6 @@ const REMOTE_CLIENT_UNSUPPORTED_PLUGIN_IDS = new Set([
   FILE_TRANSFER_PLUGIN_ID,
   LIGHTOS_PORT_FORWARD_PLUGIN_ID,
 ]);
-type AISettingsTab = "ai" | "mcp" | "voice";
-type AIConfigDialogState =
-  | { type: "ai"; profileId?: string; isNew?: boolean }
-  | { type: "mcp"; index: number }
-  | { type: "voice"; profileId?: string; isNew?: boolean }
-  | { type: "voice-reply"; profileId?: string; isNew?: boolean };
 const capabilityClient = createClient(
   CapabilityService,
   createConnectTransport({
@@ -3392,51 +3404,20 @@ async function copyNetworkUrl(url: string) {
   }
 }
 
-function normalizeAiProviderValue(value: string): string {
-  return value === "openai-responses" || value === "anthropic"
-    ? value
-    : DEFAULT_SETTINGS.aiProvider;
-}
-
-function normalizeAISettingsTab(value: string | undefined): AISettingsTab {
-  return value === "mcp" || value === "voice" ? value : "ai";
-}
-
-function normalizeAIConfigDialogType(value: string | undefined): AIConfigDialogState["type"] {
-  if (value === "mcp" || value === "voice" || value === "voice-reply") return value;
-  return "ai";
-}
-
 function aiProviderProfileById(profileId: string | undefined): AiProviderProfile | undefined {
-  if (!profileId) return undefined;
-  return settings.aiProviderProfiles.find((profile) => profile.id === profileId);
+  return aiProviderProfileByIdInSettings(settings, profileId);
 }
 
 function activeAiProviderProfile(): AiProviderProfile | undefined {
-  return aiProviderProfileById(settings.aiActiveProviderProfileId) ?? settings.aiProviderProfiles[0];
+  return activeAiProviderProfileInSettings(settings);
 }
 
 function newAiProviderProfile(profileId = newId()): AiProviderProfile {
-  return {
-    id: profileId,
-    name: `Provider ${settings.aiProviderProfiles.length + 1}`,
-    provider: DEFAULT_SETTINGS.aiProvider,
-    baseUrl: "",
-    apiKey: "",
-    model: "",
-  };
+  return newAiProviderProfileInSettings(settings, profileId);
 }
 
 function syncActiveAiProviderProfile() {
-  settings.aiProviderProfiles = settings.aiProviderProfiles
-    .slice(0, MAX_AI_PROVIDER_PROFILES)
-    .map((profile, index) => sanitizeAiProviderProfile(profile, index));
-  const activeProfile = activeAiProviderProfile();
-  settings.aiActiveProviderProfileId = activeProfile?.id ?? "";
-  settings.aiProvider = activeProfile?.provider ?? DEFAULT_SETTINGS.aiProvider;
-  settings.aiBaseUrl = activeProfile?.baseUrl ?? "";
-  settings.aiApiKey = activeProfile?.apiKey ?? "";
-  settings.aiModel = activeProfile?.model ?? "";
+  syncActiveAiProviderProfileInSettings(settings);
 }
 
 function aiVoiceProviderProfileById(profileId: string | undefined): AiVoiceProviderProfile | undefined {
@@ -3497,51 +3478,12 @@ function removeAiVoiceReplyProviderProfile(profileId: string) {
   renderPluginSettings();
 }
 
-function sanitizeAiProviderProfile(profile: AiProviderProfile, index: number): AiProviderProfile {
-  return {
-    id: profile.id.trim() || (index === 0 ? "default" : `provider-${index + 1}`),
-    name: profile.name.trim().slice(0, 48) || `Provider ${index + 1}`,
-    provider: normalizeAiProviderValue(profile.provider),
-    baseUrl: profile.baseUrl.trim(),
-    apiKey: profile.apiKey,
-    model: profile.model.trim(),
-  };
-}
-
 function updateActiveAiProviderProfile(patch: Partial<Omit<AiProviderProfile, "id">>) {
-  const activeProfile = activeAiProviderProfile() ?? {
-    id: settings.aiActiveProviderProfileId || "default",
-    name: "Default",
-    provider: settings.aiProvider,
-    baseUrl: settings.aiBaseUrl,
-    apiKey: settings.aiApiKey,
-    model: settings.aiModel,
-  };
-  const nextProfile = sanitizeAiProviderProfile({ ...activeProfile, ...patch }, 0);
-  const profiles = settings.aiProviderProfiles.length ? [...settings.aiProviderProfiles] : [activeProfile];
-  const existingIndex = profiles.findIndex((profile) => profile.id === activeProfile.id);
-  if (existingIndex >= 0) {
-    profiles[existingIndex] = nextProfile;
-  } else {
-    profiles.unshift(nextProfile);
-  }
-  settings.aiProviderProfiles = profiles;
-  settings.aiActiveProviderProfileId = nextProfile.id;
-  syncActiveAiProviderProfile();
+  updateActiveAiProviderProfileInSettings(settings, patch);
 }
 
 function upsertAiProviderProfile(profile: AiProviderProfile) {
-  const existingIndex = settings.aiProviderProfiles.findIndex((item) => item.id === profile.id);
-  const sanitized = sanitizeAiProviderProfile(profile, existingIndex >= 0 ? existingIndex : settings.aiProviderProfiles.length);
-  const profiles = [...settings.aiProviderProfiles];
-  if (existingIndex >= 0) {
-    profiles[existingIndex] = sanitized;
-  } else {
-    profiles.push(sanitized);
-  }
-  settings.aiProviderProfiles = profiles.slice(0, MAX_AI_PROVIDER_PROFILES);
-  settings.aiActiveProviderProfileId = sanitized.id;
-  syncActiveAiProviderProfile();
+  upsertAiProviderProfileInSettings(settings, profile);
 }
 
 function readAiProviderProfileFromDialog(existing: AiProviderProfile | undefined, isNew: boolean): AiProviderProfile {
@@ -3585,17 +3527,9 @@ function readAiVoiceReplyProviderProfileFromDialog(
   });
 }
 
-function aiProviderConnectionChanged(previous: AiProviderProfile, next: AiProviderProfile): boolean {
-  return previous.provider !== next.provider
-    || previous.baseUrl !== next.baseUrl
-    || previous.apiKey !== next.apiKey;
-}
-
 function selectAiProviderProfile(profileId: string) {
   if (aiChat.isStreaming()) return;
-  if (!aiProviderProfileById(profileId)) return;
-  settings.aiActiveProviderProfileId = profileId;
-  syncActiveAiProviderProfile();
+  if (!selectAiProviderProfileInSettings(settings, profileId)) return;
   aiProviderPickerOpen = false;
   aiChat.clearModelOptions();
   aiChat.selectSessionForCurrentModel();
@@ -3604,14 +3538,8 @@ function selectAiProviderProfile(profileId: string) {
 }
 
 function removeAiProviderProfile(profileId: string) {
-  if (aiChat.isStreaming() || settings.aiProviderProfiles.length <= 1) return;
-  const nextProfiles = settings.aiProviderProfiles.filter((profile) => profile.id !== profileId);
-  if (nextProfiles.length === settings.aiProviderProfiles.length) return;
-  settings.aiProviderProfiles = nextProfiles;
-  if (settings.aiActiveProviderProfileId === profileId) {
-    settings.aiActiveProviderProfileId = nextProfiles[0]?.id ?? "";
-  }
-  syncActiveAiProviderProfile();
+  if (aiChat.isStreaming()) return;
+  if (!removeAiProviderProfileFromSettings(settings, profileId)) return;
   aiConfigDialog = undefined;
   aiProviderPickerOpen = false;
   aiChat.clearModelOptions();
