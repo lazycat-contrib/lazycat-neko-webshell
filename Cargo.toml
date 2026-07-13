@@ -53,6 +53,10 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 [build-dependencies]
 connectrpc-build = "0.4.2"
 
+[dev-dependencies]
+h2 = "0.4.14"
+tokio-rustls = "0.26.4"
+
 [lints.rust]
 unsafe_code = "warn"
 

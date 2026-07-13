@@ -62,6 +62,13 @@ pub(crate) async fn resolve_auth_token(
         Path::new(APP_CERT_PATH),
         Path::new(APP_KEY_PATH),
     )?;
+    request_auth_token(device_api_url, material).await
+}
+
+async fn request_auth_token(
+    device_api_url: &Url,
+    material: DeviceAuthMaterial,
+) -> Result<SecretString, DeviceApiAuthError> {
     let subject_serial = certificate_subject_serial(&material.app_cert_der)?;
     let signature = sign_subject_serial(&material.app_key_der, subject_serial.as_bytes())?;
     let request = RequestAuthTokenRequest {
@@ -283,12 +290,21 @@ fn decode_grpc_response<M: Message>(frame: &[u8]) -> Result<M, DeviceApiAuthErro
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+    use std::sync::Arc;
+
     use buffa::Message as _;
+    use bytes::Bytes;
     use ed25519_dalek::pkcs8::DecodePrivateKey as _;
+    use reqwest::Url;
+    use secrecy::ExposeSecret as _;
+    use tokio::net::TcpListener;
+    use tokio_rustls::TlsAcceptor;
 
     use super::{
-        auth_endpoint, certificate_subject_serial, decode_grpc_response, encode_grpc_request,
-        first_certificate_der, first_private_key_der, sign_subject_serial,
+        DeviceAuthMaterial, REQUEST_AUTH_TOKEN_PATH, auth_endpoint, certificate_subject_serial,
+        decode_grpc_response, encode_grpc_request, first_certificate_der, first_private_key_der,
+        request_auth_token, sign_subject_serial,
     };
     use crate::proto::cloud::lazycat::apis::localdevice::{
         RequestAuthTokenRequest, RequestAuthTokenResponse,
@@ -396,5 +412,103 @@ TtMMDqzcdLsiTL80pikKa9GF9KRtjp5luS8/INs84RA=
             "https://device.example/cloud.lazycat.apis.localdevice.PermissionManager/RequestAuthToken"
         );
         assert!(!endpoint.as_str().contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn requests_device_auth_tokens_over_http2() {
+        let _ = rustls23::crypto::ring::default_provider().install_default();
+        let certificates = rustls_pemfile::certs(&mut Cursor::new(TEST_CERTIFICATE))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("server certificates");
+        let private_key = rustls_pemfile::private_key(&mut Cursor::new(TEST_PRIVATE_KEY))
+            .expect("server private key")
+            .expect("server private key is present");
+        let mut server_config = rustls23::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certificates, private_key)
+            .expect("server TLS config");
+        server_config.alpn_protocols = vec![b"h2".to_vec()];
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener");
+        let address = listener.local_addr().expect("test address");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accepted connection");
+            let tls = TlsAcceptor::from(Arc::new(server_config))
+                .accept(stream)
+                .await
+                .expect("TLS handshake");
+            let mut connection = h2::server::handshake(tls).await.expect("HTTP/2 handshake");
+            let (request, mut respond) = connection
+                .accept()
+                .await
+                .expect("HTTP/2 request")
+                .expect("request stream");
+            assert_eq!(request.uri().path(), REQUEST_AUTH_TOKEN_PATH);
+
+            let mut body = request.into_body();
+            let mut request_frame = Vec::new();
+            while let Some(chunk) = body.data().await {
+                request_frame.extend_from_slice(&chunk.expect("request data"));
+            }
+            let decoded = decode_grpc_response::<RequestAuthTokenRequest>(&request_frame)
+                .expect("decoded auth request");
+            assert!(
+                decoded
+                    .box_cert
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+            );
+            assert!(
+                decoded
+                    .app_cert
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+            );
+            assert!(
+                decoded
+                    .signature
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+            );
+
+            let response_frame = encode_grpc_request(&RequestAuthTokenResponse {
+                token: Some("device-token".to_owned()),
+                ..Default::default()
+            })
+            .expect("response frame");
+            let response = http::Response::builder()
+                .status(200)
+                .header("content-type", "application/grpc")
+                .body(())
+                .expect("response");
+            let mut stream = respond
+                .send_response(response, false)
+                .expect("response stream");
+            stream
+                .send_data(Bytes::from(response_frame), false)
+                .expect("response data");
+            let mut trailers = http::HeaderMap::new();
+            trailers.insert("grpc-status", http::HeaderValue::from_static("0"));
+            stream.send_trailers(trailers).expect("response trailers");
+        });
+
+        let app_cert_der = first_certificate_der(TEST_CERTIFICATE).expect("certificate DER");
+        let app_key_der = first_private_key_der(TEST_PRIVATE_KEY).expect("private key DER");
+        let material = DeviceAuthMaterial {
+            box_cert_pem: TEST_CERTIFICATE.to_vec(),
+            app_cert_pem: TEST_CERTIFICATE.to_vec(),
+            app_key_pem: TEST_PRIVATE_KEY.to_vec(),
+            app_cert_der,
+            app_key_der,
+        };
+        let url = Url::parse(&format!("https://{address}")).expect("device API URL");
+        let token = request_auth_token(&url, material)
+            .await
+            .expect("device auth token");
+
+        assert_eq!(token.expose_secret(), "device-token");
+        server.await.expect("HTTP/2 server task");
     }
 }

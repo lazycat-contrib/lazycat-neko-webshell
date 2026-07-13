@@ -121,7 +121,7 @@ async fn request_auth_token(
 
 - [ ] **Step 2: Run existing device-auth tests after the refactor**
 
-Run: `cargo test device_api_auth::tests --lib`
+Run: `cargo test device_api_auth::tests`
 
 Expected: all existing device-auth tests pass.
 
@@ -226,7 +226,7 @@ The server must use the existing test certificate and private key constants. It 
 
 - [ ] **Step 5: Run the new test and verify RED**
 
-Run: `cargo test device_api_auth::tests::requests_device_auth_tokens_over_http2 --lib -- --nocapture`
+Run: `cargo test device_api_auth::tests::requests_device_auth_tokens_over_http2 -- --nocapture`
 
 Expected: FAIL because the current reqwest dependency negotiates HTTP/1.1 and cannot complete the HTTP/2-only exchange.
 
@@ -290,7 +290,7 @@ fn device_api_origin(device_api_url: &Url) -> String {
 
 - [ ] **Step 4: Run the transport test and verify GREEN**
 
-Run: `cargo test device_api_auth::tests::requests_device_auth_tokens_over_http2 --lib -- --nocapture`
+Run: `cargo test device_api_auth::tests::requests_device_auth_tokens_over_http2 -- --nocapture`
 
 Expected: PASS and return `device-token`.
 
@@ -318,7 +318,7 @@ git commit -m "fix: use http2 for remote device auth"
 
 - [ ] **Step 1: Run focused remote-terminal tests**
 
-Run: `cargo test device_api_auth::tests --lib && cargo test client_terminal::tests --lib && cargo test lightos_admin::tests --lib`
+Run: `cargo test device_api_auth::tests && cargo test client_terminal::tests && cargo test lightos_admin::tests`
 
 Expected: all selected tests pass.
 
