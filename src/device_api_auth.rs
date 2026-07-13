@@ -69,6 +69,8 @@ async fn request_auth_token(
     device_api_url: &Url,
     material: DeviceAuthMaterial,
 ) -> Result<SecretString, DeviceApiAuthError> {
+    let device_origin = device_api_origin(device_api_url);
+    tracing::debug!(%device_origin, "requesting device API auth token");
     let subject_serial = certificate_subject_serial(&material.app_cert_der)?;
     let signature = sign_subject_serial(&material.app_key_der, subject_serial.as_bytes())?;
     let request = RequestAuthTokenRequest {
@@ -95,6 +97,7 @@ async fn request_auth_token(
         .add_root_certificate(box_cert)
         .danger_accept_invalid_certs(true)
         .redirect(reqwest::redirect::Policy::none())
+        .http2_prior_knowledge()
         .build()
         .map_err(|error| DeviceApiAuthError::Credential(error.to_string()))?;
     let response = client
@@ -134,7 +137,12 @@ async fn request_auth_token(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| DeviceApiAuthError::Response("missing auth token".to_owned()))?;
+    tracing::debug!(%device_origin, "resolved device API auth token");
     Ok(SecretString::from(token.to_owned()))
+}
+
+fn device_api_origin(device_api_url: &Url) -> String {
+    device_api_url.origin().ascii_serialization()
 }
 
 fn load_auth_material(
@@ -492,6 +500,11 @@ TtMMDqzcdLsiTL80pikKa9GF9KRtjp5luS8/INs84RA=
             let mut trailers = http::HeaderMap::new();
             trailers.insert("grpc-status", http::HeaderValue::from_static("0"));
             stream.send_trailers(trailers).expect("response trailers");
+            drop(stream);
+            drop(respond);
+            connection.graceful_shutdown();
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_secs(1), connection.accept()).await;
         });
 
         let app_cert_der = first_certificate_der(TEST_CERTIFICATE).expect("certificate DER");
@@ -504,11 +517,11 @@ TtMMDqzcdLsiTL80pikKa9GF9KRtjp5luS8/INs84RA=
             app_key_der,
         };
         let url = Url::parse(&format!("https://{address}")).expect("device API URL");
-        let token = request_auth_token(&url, material)
-            .await
-            .expect("device auth token");
+        let token = request_auth_token(&url, material).await;
+        let server_result = server.await;
+        server_result.expect("HTTP/2 server task");
+        let token = token.unwrap_or_else(|error| panic!("device auth token: {error:?}"));
 
         assert_eq!(token.expose_secret(), "device-token");
-        server.await.expect("HTTP/2 server task");
     }
 }
