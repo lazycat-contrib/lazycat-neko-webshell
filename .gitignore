@@ -2,6 +2,7 @@
 /dist/
 /.lazycat-action/
 /.lazycat-build/
+/.worktrees/
 /node_modules/
 /src/frontend/dist/
 /src/frontend/src/gen/
