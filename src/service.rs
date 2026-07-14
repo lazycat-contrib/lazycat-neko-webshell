@@ -646,6 +646,7 @@ impl CapabilityService for CapabilityServiceImpl {
                 rows,
                 output_limit,
                 metadata,
+                self.state.remote_programs.as_ref(),
             )
             .await
             .map_err(client_terminal_connect_error)?;
@@ -704,6 +705,7 @@ impl CapabilityService for CapabilityServiceImpl {
                 DEFAULT_COLS,
                 DEFAULT_ROWS,
                 DEFAULT_OUTPUT_FRAME_LIMIT,
+                self.state.remote_programs.as_ref(),
             )
             .await
             .map_err(client_terminal_connect_error)?;
@@ -751,10 +753,15 @@ impl CapabilityService for CapabilityServiceImpl {
             if !lightos_features_enabled() {
                 return Err(ConnectError::not_found("LightOS integration is disabled"));
             }
-            let sessions =
-                client_terminal::list_sessions(&ctx.headers, selector, DEFAULT_COLS, DEFAULT_ROWS)
-                    .await
-                    .map_err(client_terminal_connect_error)?;
+            let sessions = client_terminal::list_sessions(
+                &ctx.headers,
+                selector,
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                self.state.remote_programs.as_ref(),
+            )
+            .await
+            .map_err(client_terminal_connect_error)?;
             return ConnectResponse::ok(ListSessionsResponse {
                 sessions,
                 ..Default::default()

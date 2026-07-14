@@ -29,6 +29,7 @@ mod plugins;
 mod pomodoro;
 mod preferences;
 mod proto;
+mod remote_program;
 mod router;
 mod service;
 mod session_backend;

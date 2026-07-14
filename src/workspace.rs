@@ -126,6 +126,8 @@ pub struct WorkspacePaneState {
     pub status: String,
     pub session_backend: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub program_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub herdr_output_sequence: Option<u64>,
     pub cols: u16,
     pub rows: u16,
@@ -320,7 +322,15 @@ pub async fn get_workspace(
     let output_limit = normalize_output_frame_limit(query.output_limit);
 
     if lightos_admin::is_client_selector(selector) {
-        return match crate::client_terminal::get_workspace(&headers, selector, cols, rows).await {
+        return match crate::client_terminal::get_workspace(
+            &headers,
+            selector,
+            cols,
+            rows,
+            state.remote_programs.as_ref(),
+        )
+        .await
+        {
             Ok(workspace) => Json(workspace).into_response(),
             Err(error) => error.into_response(),
         };
@@ -364,7 +374,12 @@ pub async fn put_workspace_action(
 
     if lightos_admin::is_client_selector(&selector) {
         return match crate::client_terminal::apply_workspace_action(
-            &headers, &selector, cols, rows, &request,
+            &headers,
+            &selector,
+            cols,
+            rows,
+            &request,
+            state.remote_programs.as_ref(),
         )
         .await
         {
@@ -715,6 +730,7 @@ fn workspace_state_from_agent(state: AgentWorkspaceState) -> WorkspaceState {
                         session_backend: pane
                             .session_backend
                             .unwrap_or_else(|| "webshell".to_owned()),
+                        program_kind: None,
                         cols: i32_to_u16(pane.cols, DEFAULT_COLS),
                         rows: i32_to_u16(pane.rows, DEFAULT_ROWS),
                         herdr_output_sequence: None,
@@ -1122,6 +1138,7 @@ impl WorkspaceRecord {
                                     |session| session.status.clone(),
                                 ),
                                 session_backend: session_backend_from_session(session),
+                                program_kind: None,
                                 herdr_output_sequence: None,
                                 cols: session.map_or(pane.cols, |session| session.cols),
                                 rows: session.map_or(pane.rows, |session| session.rows),
@@ -2300,6 +2317,7 @@ mod tests {
                     session_id: "agent-session".to_owned(),
                     status: "running".to_owned(),
                     session_backend: "webshell".to_owned(),
+                    program_kind: None,
                     herdr_output_sequence: None,
                     cols: DEFAULT_COLS,
                     rows: DEFAULT_ROWS,

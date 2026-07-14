@@ -30,6 +30,7 @@ use crate::lightos_admin::{
     list_visible_client_instances, parse_client_selector, resolve_admin_base_url,
 };
 use crate::proto::lazycat::webshell::v1::Session;
+use crate::remote_program::{RemoteProgramKind, RemoteProgramStore};
 use crate::workspace::{
     SessionBackend, SplitAxis, SplitDirection, WorkspaceAction, WorkspaceActionRequest,
     WorkspaceLayoutNode, WorkspacePaneState, WorkspaceState, WorkspaceTabState,
@@ -316,6 +317,7 @@ pub(crate) async fn get_workspace(
     selector: &str,
     cols: u16,
     rows: u16,
+    remote_programs: &RemoteProgramStore,
 ) -> Result<WorkspaceState, ClientTerminalError> {
     let query = [("cols", cols.to_string()), ("rows", rows.to_string())];
     let body =
@@ -323,7 +325,7 @@ pub(crate) async fn get_workspace(
     let remote = serde_json::from_slice::<RemoteWorkspaceState>(&body).map_err(|error| {
         ClientTerminalError::bad_gateway(format!("invalid remote workspace response: {error}"))
     })?;
-    let workspace = convert_remote_workspace(selector, remote);
+    let workspace = convert_remote_workspace(selector, remote, remote_programs)?;
     info!(
         selector,
         tabs = workspace.tabs.len(),
@@ -339,6 +341,7 @@ pub(crate) async fn apply_workspace_action(
     cols: u16,
     rows: u16,
     request: &WorkspaceActionRequest,
+    remote_programs: &RemoteProgramStore,
 ) -> Result<WorkspaceState, ClientTerminalError> {
     let outbound = remote_workspace_action(request, cols, rows)?;
     let payload = serde_json::to_vec(&outbound).map_err(|error| {
@@ -357,7 +360,7 @@ pub(crate) async fn apply_workspace_action(
     let remote = serde_json::from_slice::<RemoteWorkspaceState>(&body).map_err(|error| {
         ClientTerminalError::bad_gateway(format!("invalid remote workspace response: {error}"))
     })?;
-    let workspace = convert_remote_workspace(selector, remote);
+    let workspace = convert_remote_workspace(selector, remote, remote_programs)?;
     info!(
         selector,
         action = ?request.action,
@@ -375,6 +378,7 @@ pub(crate) async fn create_session(
     rows: u16,
     output_limit: usize,
     metadata: HashMap<String, String>,
+    remote_programs: &RemoteProgramStore,
 ) -> Result<Session, ClientTerminalError> {
     let request = remote_session_action_request(
         selector,
@@ -383,7 +387,8 @@ pub(crate) async fn create_session(
         rows,
         output_limit,
     );
-    let workspace = apply_workspace_action(headers, selector, cols, rows, &request).await?;
+    let workspace =
+        apply_workspace_action(headers, selector, cols, rows, &request, remote_programs).await?;
     workspace_active_session(&workspace, metadata)
         .ok_or_else(|| ClientTerminalError::bad_gateway("remote client did not create a session"))
 }
@@ -395,8 +400,9 @@ pub(crate) async fn close_session(
     cols: u16,
     rows: u16,
     output_limit: usize,
+    remote_programs: &RemoteProgramStore,
 ) -> Result<(), ClientTerminalError> {
-    let workspace = get_workspace(headers, selector, cols, rows).await?;
+    let workspace = get_workspace(headers, selector, cols, rows, remote_programs).await?;
     let tab_id = workspace_tab_id_for_pane(&workspace, session_id).ok_or_else(|| {
         ClientTerminalError::new(StatusCode::NOT_FOUND, "remote terminal session not found")
     })?;
@@ -409,7 +415,7 @@ pub(crate) async fn close_session(
     );
     request.tab_id = Some(tab_id.to_owned());
     request.pane_id = Some(session_id.to_owned());
-    apply_workspace_action(headers, selector, cols, rows, &request).await?;
+    apply_workspace_action(headers, selector, cols, rows, &request, remote_programs).await?;
     Ok(())
 }
 
@@ -418,8 +424,9 @@ pub(crate) async fn list_sessions(
     selector: &str,
     cols: u16,
     rows: u16,
+    remote_programs: &RemoteProgramStore,
 ) -> Result<Vec<Session>, ClientTerminalError> {
-    let workspace = get_workspace(headers, selector, cols, rows).await?;
+    let workspace = get_workspace(headers, selector, cols, rows, remote_programs).await?;
     Ok(workspace_sessions(&workspace))
 }
 
@@ -1079,8 +1086,28 @@ fn redact_sensitive_text(text: &str, ticket: &str, auth_token: &str) -> String {
     redacted
 }
 
-fn convert_remote_workspace(selector: &str, remote: RemoteWorkspaceState) -> WorkspaceState {
-    WorkspaceState {
+fn convert_remote_workspace(
+    selector: &str,
+    remote: RemoteWorkspaceState,
+    remote_programs: &RemoteProgramStore,
+) -> Result<WorkspaceState, ClientTerminalError> {
+    let pane_ids = remote
+        .tabs
+        .iter()
+        .flat_map(|tab| &tab.panes)
+        .map(|pane| pane.id.trim())
+        .filter(|pane_id| !pane_id.is_empty())
+        .collect::<Vec<_>>();
+    remote_programs
+        .reconcile_selector(selector, pane_ids)
+        .map_err(|error| {
+            warn!(error = %error, selector, "failed to reconcile remote terminal program metadata");
+            ClientTerminalError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to update remote terminal metadata",
+            )
+        })?;
+    Ok(WorkspaceState {
         selector: selector.to_owned(),
         active_tab_id: non_empty(remote.active_tab_id),
         tabs: remote
@@ -1107,6 +1134,11 @@ fn convert_remote_workspace(selector: &str, remote: RemoteWorkspaceState) -> Wor
                         .filter(|pane| !pane.id.trim().is_empty())
                         .map(|pane| WorkspacePaneState {
                             session_id: pane.id.clone(),
+                            program_kind: remote_programs.program_kind(selector, &pane.id).map(
+                                |kind| match kind {
+                                    RemoteProgramKind::Herdr => "herdr".to_owned(),
+                                },
+                            ),
                             id: pane.id,
                             status: if pane.exited { "exited" } else { "running" }.to_owned(),
                             session_backend: "webshell".to_owned(),
@@ -1118,7 +1150,7 @@ fn convert_remote_workspace(selector: &str, remote: RemoteWorkspaceState) -> Wor
                 }
             })
             .collect(),
-    }
+    })
 }
 
 fn remote_session_action_request(
@@ -1321,6 +1353,7 @@ fn non_empty(value: String) -> Option<String> {
 mod tests {
     use std::collections::HashMap;
     use std::future::pending;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use axum::http::StatusCode;
@@ -1334,7 +1367,9 @@ mod tests {
         validate_ticket, websocket_terminal_url, workspace_active_session, workspace_sessions,
         workspace_tab_id_for_pane,
     };
+    use crate::database::AppDatabase;
     use crate::lightos_admin::ClientInstanceSummary;
+    use crate::remote_program::{RemoteProgramKind, RemoteProgramStore};
     use crate::workspace::{
         SessionBackend, SplitAxis, WorkspaceAction, WorkspaceActionRequest, WorkspaceLayoutNode,
     };
@@ -1346,6 +1381,17 @@ mod tests {
             terminal_service_name: "cloud.lazycat.lightos.client-terminal.client-a".to_owned(),
             ticket: "terminal-secret".to_owned(),
         }
+    }
+
+    fn remote_program_store() -> RemoteProgramStore {
+        let database = Arc::new(
+            AppDatabase::open(std::env::temp_dir().join(format!(
+                "lazycat-neko-webshell-client-terminal-programs-{}.db",
+                uuid::Uuid::new_v4()
+            )))
+            .expect("test database"),
+        );
+        RemoteProgramStore::load(database).expect("test remote programs")
     }
 
     #[test]
@@ -1568,13 +1614,22 @@ mod tests {
         )
         .expect("remote workspace");
 
-        let workspace = convert_remote_workspace("client:client-a", remote);
+        let store = remote_program_store();
+        store
+            .mark_pending("client:client-a", "pane-2", RemoteProgramKind::Herdr)
+            .expect("pending Herdr metadata");
+        let workspace = convert_remote_workspace("client:client-a", remote, &store)
+            .expect("converted workspace");
 
         assert_eq!(workspace.selector, "client:client-a");
         assert_eq!(workspace.active_tab_id.as_deref(), Some("tab-1"));
         assert_eq!(workspace.tabs[0].custom_label.as_deref(), Some("Build"));
         assert_eq!(workspace.tabs[0].panes[0].session_id, "pane-1");
         assert_eq!(workspace.tabs[0].panes[0].session_backend, "webshell");
+        assert_eq!(
+            workspace.tabs[0].panes[1].program_kind.as_deref(),
+            Some("herdr")
+        );
         assert_eq!(workspace.tabs[0].panes[0].status, "running");
         assert_eq!(workspace.tabs[0].panes[1].status, "exited");
         assert_eq!(
@@ -1614,7 +1669,9 @@ mod tests {
             }]
         }))
         .expect("remote workspace");
-        let workspace = convert_remote_workspace("client:client-a", remote);
+        let store = remote_program_store();
+        let workspace = convert_remote_workspace("client:client-a", remote, &store)
+            .expect("converted workspace");
 
         let active = workspace_active_session(&workspace, HashMap::new()).expect("active session");
         assert_eq!(active.id.as_deref(), Some("pane-b"));
