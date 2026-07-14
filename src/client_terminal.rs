@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
+use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,7 +31,7 @@ use crate::lightos_admin::{
     list_visible_client_instances, parse_client_selector, resolve_admin_base_url,
 };
 use crate::proto::lazycat::webshell::v1::Session;
-use crate::remote_program::{RemoteProgramKind, RemoteProgramStore};
+use crate::remote_program::{RemoteBootstrapState, RemoteProgramKind, RemoteProgramStore};
 use crate::workspace::{
     SessionBackend, SplitAxis, SplitDirection, WorkspaceAction, WorkspaceActionRequest,
     WorkspaceLayoutNode, WorkspacePaneState, WorkspaceState, WorkspaceTabState,
@@ -39,6 +40,7 @@ use crate::workspace::{
 const CLIENT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TICKET_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_WORKSPACE_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+const REMOTE_HERDR_LAUNCH: &str = "if command -v herdr >/dev/null 2>&1; then exec herdr; elif [ -x \"$HOME/.local/bin/herdr\" ]; then exec \"$HOME/.local/bin/herdr\"; else printf '%s\\n' 'Herdr is not installed on this remote device.'; exit 127; fi\r";
 
 type RemoteWebSocketRequest = tokio_tungstenite::tungstenite::http::Request<()>;
 
@@ -131,6 +133,8 @@ pub(crate) struct RemoteTerminalConnection {
     safe_url: String,
     ticket: secrecy::SecretString,
     auth_token: secrecy::SecretString,
+    program_state: Option<(RemoteProgramKind, RemoteBootstrapState)>,
+    remote_programs: Arc<RemoteProgramStore>,
 }
 
 pub(crate) struct RemoteTerminalConnectOptions<'a> {
@@ -146,6 +150,62 @@ struct RemoteWebSocketFailure {
     user_message: String,
     technical_message: String,
     error_code: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RemoteBootstrapEvent {
+    ReplayStart,
+    ReplayComplete,
+    TerminalOutput,
+    ControlRejected,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RemoteBootstrapAction {
+    None,
+    SendHerdr,
+    RevertPending,
+}
+
+struct RemoteHerdrBootstrap {
+    pending: bool,
+    attempted: bool,
+    output_seen: bool,
+}
+
+impl RemoteHerdrBootstrap {
+    const fn pending() -> Self {
+        Self {
+            pending: true,
+            attempted: false,
+            output_seen: false,
+        }
+    }
+
+    fn observe(&mut self, event: RemoteBootstrapEvent) -> RemoteBootstrapAction {
+        match event {
+            RemoteBootstrapEvent::ReplayComplete if self.pending && !self.attempted => {
+                self.attempted = true;
+                RemoteBootstrapAction::SendHerdr
+            }
+            RemoteBootstrapEvent::TerminalOutput if self.attempted => {
+                self.output_seen = true;
+                RemoteBootstrapAction::None
+            }
+            RemoteBootstrapEvent::ControlRejected if self.attempted && !self.output_seen => {
+                self.pending = true;
+                RemoteBootstrapAction::RevertPending
+            }
+            RemoteBootstrapEvent::ReplayStart
+            | RemoteBootstrapEvent::ReplayComplete
+            | RemoteBootstrapEvent::TerminalOutput
+            | RemoteBootstrapEvent::ControlRejected => RemoteBootstrapAction::None,
+        }
+    }
+
+    fn mark_sent(&mut self) {
+        self.pending = false;
+    }
 }
 
 struct SkipServerCertificateVerification(CryptoProvider);
@@ -344,6 +404,38 @@ pub(crate) async fn apply_workspace_action(
     remote_programs: &RemoteProgramStore,
 ) -> Result<WorkspaceState, ClientTerminalError> {
     let outbound = remote_workspace_action(request, cols, rows)?;
+    let mut remote =
+        request_remote_workspace_action(headers, selector, cols, rows, &outbound).await?;
+    if request.session_backend == Some(SessionBackend::Herdr) {
+        let (tab_id, pane_id) = remote_workspace_active_ids(&remote).ok_or_else(|| {
+            ClientTerminalError::bad_gateway(
+                "remote client did not return the created Herdr terminal",
+            )
+        })?;
+        remote_programs
+            .mark_pending(selector, pane_id, RemoteProgramKind::Herdr)
+            .map_err(|error| remote_program_persistence_error(selector, pane_id, &error))?;
+        let rename = remote_herdr_rename_action(tab_id, cols, rows);
+        remote = request_remote_workspace_action(headers, selector, cols, rows, &rename).await?;
+    }
+    let workspace = convert_remote_workspace(selector, remote, remote_programs)?;
+    info!(
+        selector,
+        action = ?request.action,
+        tabs = workspace.tabs.len(),
+        active_tab = workspace.active_tab_id.as_deref().unwrap_or_default(),
+        "remote client workspace action decoded"
+    );
+    Ok(workspace)
+}
+
+async fn request_remote_workspace_action(
+    headers: &HeaderMap,
+    selector: &str,
+    cols: u16,
+    rows: u16,
+    outbound: &RemoteWorkspaceActionRequest,
+) -> Result<RemoteWorkspaceState, ClientTerminalError> {
     let payload = serde_json::to_vec(&outbound).map_err(|error| {
         ClientTerminalError::bad_request(format!("invalid workspace action: {error}"))
     })?;
@@ -357,18 +449,9 @@ pub(crate) async fn apply_workspace_action(
         Some(payload),
     )
     .await?;
-    let remote = serde_json::from_slice::<RemoteWorkspaceState>(&body).map_err(|error| {
+    serde_json::from_slice::<RemoteWorkspaceState>(&body).map_err(|error| {
         ClientTerminalError::bad_gateway(format!("invalid remote workspace response: {error}"))
-    })?;
-    let workspace = convert_remote_workspace(selector, remote, remote_programs)?;
-    info!(
-        selector,
-        action = ?request.action,
-        tabs = workspace.tabs.len(),
-        active_tab = workspace.active_tab_id.as_deref().unwrap_or_default(),
-        "remote client workspace action decoded"
-    );
-    Ok(workspace)
+    })
 }
 
 pub(crate) async fn create_session(
@@ -435,6 +518,7 @@ pub(crate) async fn connect_terminal(
     selector: &str,
     pane_id: &str,
     options: RemoteTerminalConnectOptions<'_>,
+    remote_programs: Arc<RemoteProgramStore>,
 ) -> Result<RemoteTerminalConnection, ClientTerminalError> {
     let pane_id = pane_id.trim();
     if pane_id.is_empty() || pane_id.len() > 256 || pane_id.chars().any(char::is_control) {
@@ -478,6 +562,7 @@ pub(crate) async fn connect_terminal(
         .map_err(|_| ClientTerminalError::bad_gateway("invalid device auth token"))?,
     );
     let connector = websocket_tls_connector()?;
+    let program_state = remote_programs.program_state(selector, pane_id);
     Ok(RemoteTerminalConnection {
         request,
         connector,
@@ -487,9 +572,12 @@ pub(crate) async fn connect_terminal(
         safe_url,
         ticket: secrecy::SecretString::from(dial.ticket.ticket),
         auth_token: dial.auth_token,
+        program_state,
+        remote_programs,
     })
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn relay_terminal_socket(
     mut browser: WebSocket,
     remote: RemoteTerminalConnection,
@@ -503,6 +591,8 @@ pub(crate) async fn relay_terminal_socket(
         safe_url,
         ticket,
         auth_token,
+        program_state,
+        remote_programs,
     } = remote;
     let socket = match timeout(
         CLIENT_TERMINAL_TIMEOUT,
@@ -545,13 +635,20 @@ pub(crate) async fn relay_terminal_socket(
     };
     info!(selector, pane_id, target = %safe_url, "remote client terminal websocket connected");
     let (mut browser_sink, mut browser_stream) = browser.split();
-    let (mut remote_sink, mut remote_stream) = socket.split();
+    let (remote_sink, mut remote_stream) = socket.split();
+    let remote_sink = Arc::new(tokio::sync::Mutex::new(remote_sink));
+    let browser_remote_sink = Arc::clone(&remote_sink);
+    let mut bootstrap = matches!(
+        program_state,
+        Some((RemoteProgramKind::Herdr, RemoteBootstrapState::Pending))
+    )
+    .then(RemoteHerdrBootstrap::pending);
 
     let browser_to_remote = async {
         while let Some(message) = browser_stream.next().await {
             let message = message?;
             let message = browser_message_to_remote(message);
-            remote_sink.send(message).await?;
+            browser_remote_sink.lock().await.send(message).await?;
         }
         Ok::<(), anyhow::Error>(())
     };
@@ -559,12 +656,49 @@ pub(crate) async fn relay_terminal_socket(
     let remote_to_browser = async {
         while let Some(message) = remote_stream.next().await {
             let message = message?;
+            let bootstrap_action = bootstrap
+                .as_mut()
+                .and_then(|state| {
+                    remote_bootstrap_event(&message).map(|event| state.observe(event))
+                })
+                .unwrap_or(RemoteBootstrapAction::None);
             let Some(message) =
                 remote_message_to_browser(message, &selector, &pane_id, replay_after)?
             else {
                 break;
             };
-            browser_sink.send(message).await?;
+            match bootstrap_action {
+                RemoteBootstrapAction::SendHerdr => {
+                    let mut sink = remote_sink.lock().await;
+                    browser_sink.send(message).await?;
+                    sink.send(remote_herdr_launch_message()?).await?;
+                    if let Some(state) = bootstrap.as_mut() {
+                        state.mark_sent();
+                    }
+                    if let Err(error) = remote_programs.mark_sent(&selector, &pane_id) {
+                        warn!(
+                            error = %error,
+                            selector,
+                            pane_id,
+                            "failed to persist completed remote Herdr bootstrap"
+                        );
+                    }
+                }
+                RemoteBootstrapAction::RevertPending => {
+                    browser_sink.send(message).await?;
+                    if let Err(error) =
+                        remote_programs.mark_pending_after_rejection(&selector, &pane_id)
+                    {
+                        warn!(
+                            error = %error,
+                            selector,
+                            pane_id,
+                            "failed to restore pending remote Herdr bootstrap"
+                        );
+                    }
+                }
+                RemoteBootstrapAction::None => browser_sink.send(message).await?,
+            }
         }
         Ok::<(), anyhow::Error>(())
     };
@@ -573,6 +707,37 @@ pub(crate) async fn relay_terminal_socket(
         result = browser_to_remote => result,
         result = remote_to_browser => result,
     }
+}
+
+fn remote_bootstrap_event(message: &RemoteMessage) -> Option<RemoteBootstrapEvent> {
+    match message {
+        RemoteMessage::Binary(bytes) if !bytes.is_empty() => {
+            Some(RemoteBootstrapEvent::TerminalOutput)
+        }
+        RemoteMessage::Text(text) => {
+            let value = serde_json::from_str::<serde_json::Value>(text.as_str()).ok()?;
+            match value.get("type").and_then(serde_json::Value::as_str) {
+                Some("history-replay-start") => Some(RemoteBootstrapEvent::ReplayStart),
+                Some("history-replay-complete") => Some(RemoteBootstrapEvent::ReplayComplete),
+                Some("error")
+                    if value.get("message").and_then(serde_json::Value::as_str)
+                        == Some("terminal control is held by another client") =>
+                {
+                    Some(RemoteBootstrapEvent::ControlRejected)
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn remote_herdr_launch_message() -> Result<RemoteMessage, serde_json::Error> {
+    serde_json::to_string(&serde_json::json!({
+        "type": "input",
+        "data": REMOTE_HERDR_LAUNCH,
+    }))
+    .map(|message| RemoteMessage::Text(message.into()))
 }
 
 fn remote_websocket_error_response(
@@ -1153,6 +1318,45 @@ fn convert_remote_workspace(
     })
 }
 
+fn remote_workspace_active_ids(remote: &RemoteWorkspaceState) -> Option<(&str, &str)> {
+    let active_tab_id = remote.active_tab_id.trim();
+    let tab = remote
+        .tabs
+        .iter()
+        .find(|tab| !active_tab_id.is_empty() && tab.id.trim() == active_tab_id)
+        .or_else(|| {
+            remote
+                .tabs
+                .iter()
+                .rev()
+                .find(|tab| !tab.id.trim().is_empty())
+        })?;
+    let active_pane_id = tab.active_pane_id.trim();
+    let pane = tab
+        .panes
+        .iter()
+        .find(|pane| !active_pane_id.is_empty() && pane.id.trim() == active_pane_id)
+        .or_else(|| {
+            tab.panes
+                .iter()
+                .rev()
+                .find(|pane| !pane.id.trim().is_empty())
+        })?;
+    Some((tab.id.trim(), pane.id.trim()))
+}
+
+fn remote_program_persistence_error(
+    selector: &str,
+    pane_id: &str,
+    error: &io::Error,
+) -> ClientTerminalError {
+    warn!(error = %error, selector, pane_id, "failed to persist remote terminal program metadata");
+    ClientTerminalError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "failed to update remote terminal metadata",
+    )
+}
+
 fn remote_session_action_request(
     selector: &str,
     action: WorkspaceAction,
@@ -1244,10 +1448,10 @@ fn remote_workspace_action(
     cols: u16,
     rows: u16,
 ) -> Result<RemoteWorkspaceActionRequest, ClientTerminalError> {
-    if request
-        .session_backend
-        .is_some_and(|backend| backend != SessionBackend::Webshell)
-    {
+    if request.session_backend.is_some_and(|backend| {
+        backend != SessionBackend::Webshell
+            && !(backend == SessionBackend::Herdr && request.action == WorkspaceAction::CreateTab)
+    }) {
         return Err(ClientTerminalError::bad_request(
             "remote clients support the native WebShell backend only",
         ));
@@ -1283,6 +1487,20 @@ fn remote_workspace_action(
         cols,
         rows,
     })
+}
+
+fn remote_herdr_rename_action(tab_id: &str, cols: u16, rows: u16) -> RemoteWorkspaceActionRequest {
+    RemoteWorkspaceActionRequest {
+        action: "rename_tab",
+        tab_id: tab_id.to_owned(),
+        pane_id: String::new(),
+        direction: String::new(),
+        label: "Herdr".to_owned(),
+        layout: None,
+        active_pane_id: String::new(),
+        cols,
+        rows,
+    }
 }
 
 fn remote_split_direction(direction: SplitDirection) -> &'static str {
@@ -1359,19 +1577,21 @@ mod tests {
     use axum::http::StatusCode;
 
     use super::{
-        ClientTerminalTicket, RemoteWorkspaceState, authorize_client_id,
-        await_client_terminal_boundary, classify_remote_websocket_failure, client_terminal_url,
-        convert_remote_workspace, redact_sensitive_text, remote_access_error,
-        remote_session_action_request, remote_websocket_failure_payload, remote_workspace_action,
-        sanitize_client_terminal_url, terminal_theme_color, translate_remote_control,
-        validate_ticket, websocket_terminal_url, workspace_active_session, workspace_sessions,
-        workspace_tab_id_for_pane,
+        ClientTerminalTicket, RemoteBootstrapAction, RemoteBootstrapEvent, RemoteHerdrBootstrap,
+        RemoteWorkspaceState, authorize_client_id, await_client_terminal_boundary,
+        classify_remote_websocket_failure, client_terminal_url, convert_remote_workspace,
+        redact_sensitive_text, remote_access_error, remote_herdr_launch_message,
+        remote_herdr_rename_action, remote_session_action_request,
+        remote_websocket_failure_payload, remote_workspace_action, sanitize_client_terminal_url,
+        terminal_theme_color, translate_remote_control, validate_ticket, websocket_terminal_url,
+        workspace_active_session, workspace_sessions, workspace_tab_id_for_pane,
     };
     use crate::database::AppDatabase;
     use crate::lightos_admin::ClientInstanceSummary;
     use crate::remote_program::{RemoteProgramKind, RemoteProgramStore};
     use crate::workspace::{
-        SessionBackend, SplitAxis, WorkspaceAction, WorkspaceActionRequest, WorkspaceLayoutNode,
+        SessionBackend, SplitAxis, SplitDirection, WorkspaceAction, WorkspaceActionRequest,
+        WorkspaceLayoutNode,
     };
 
     fn ticket() -> ClientTerminalTicket {
@@ -1712,6 +1932,95 @@ mod tests {
     }
 
     #[test]
+    fn remote_herdr_create_uses_native_create_tab() {
+        let mut request = remote_session_action_request(
+            "client:client-a",
+            WorkspaceAction::CreateTab,
+            120,
+            32,
+            5000,
+        );
+        request.session_backend = Some(SessionBackend::Herdr);
+        let outbound = remote_workspace_action(&request, 120, 32).unwrap();
+        assert_eq!(outbound.action, "create_tab");
+        let rename = remote_herdr_rename_action("tab-1", 120, 32);
+        assert_eq!(rename.action, "rename_tab");
+        assert_eq!(rename.tab_id, "tab-1");
+        assert_eq!(rename.label, "Herdr");
+    }
+
+    #[test]
+    fn remote_herdr_is_rejected_for_non_create_actions() {
+        let mut request = remote_session_action_request(
+            "client:client-a",
+            WorkspaceAction::SplitPane,
+            120,
+            32,
+            5000,
+        );
+        request.session_backend = Some(SessionBackend::Herdr);
+        request.tab_id = Some("tab-1".to_owned());
+        request.pane_id = Some("pane-1".to_owned());
+        request.direction = Some(SplitDirection::Right);
+        let error = remote_workspace_action(&request, 120, 32)
+            .expect_err("remote Herdr split must remain unsupported");
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn remote_herdr_bootstrap_waits_for_replay_complete_and_runs_once() {
+        let mut bootstrap = RemoteHerdrBootstrap::pending();
+        assert_eq!(
+            bootstrap.observe(RemoteBootstrapEvent::ReplayStart),
+            RemoteBootstrapAction::None,
+        );
+        assert_eq!(
+            bootstrap.observe(RemoteBootstrapEvent::ReplayComplete),
+            RemoteBootstrapAction::SendHerdr,
+        );
+        bootstrap.mark_sent();
+        assert_eq!(
+            bootstrap.observe(RemoteBootstrapEvent::ControlRejected),
+            RemoteBootstrapAction::RevertPending,
+        );
+        assert_eq!(
+            bootstrap.observe(RemoteBootstrapEvent::ReplayComplete),
+            RemoteBootstrapAction::None,
+        );
+
+        let mut running = RemoteHerdrBootstrap::pending();
+        assert_eq!(
+            running.observe(RemoteBootstrapEvent::ReplayComplete),
+            RemoteBootstrapAction::SendHerdr,
+        );
+        running.mark_sent();
+        assert_eq!(
+            running.observe(RemoteBootstrapEvent::TerminalOutput),
+            RemoteBootstrapAction::None,
+        );
+        assert_eq!(
+            running.observe(RemoteBootstrapEvent::ControlRejected),
+            RemoteBootstrapAction::None,
+        );
+    }
+
+    #[test]
+    fn remote_herdr_bootstrap_uses_normal_terminal_input() {
+        let tokio_tungstenite::tungstenite::Message::Text(payload) =
+            remote_herdr_launch_message().expect("bootstrap message")
+        else {
+            panic!("bootstrap must be a text control message");
+        };
+        let value =
+            serde_json::from_str::<serde_json::Value>(payload.as_str()).expect("bootstrap JSON");
+        assert_eq!(value["type"], "input");
+        assert_eq!(
+            value["data"],
+            "if command -v herdr >/dev/null 2>&1; then exec herdr; elif [ -x \"$HOME/.local/bin/herdr\" ]; then exec \"$HOME/.local/bin/herdr\"; else printf '%s\\n' 'Herdr is not installed on this remote device.'; exit 127; fi\r"
+        );
+    }
+
+    #[test]
     fn authorizes_only_visible_remote_clients() {
         let visible = vec![ClientInstanceSummary {
             id: "client-a".to_owned(),
@@ -1730,7 +2039,7 @@ mod tests {
     }
 
     #[test]
-    fn forwards_only_native_remote_workspace_actions() {
+    fn forwards_only_supported_remote_workspace_actions() {
         let request = WorkspaceActionRequest {
             name: "client:client-a".to_owned(),
             action: WorkspaceAction::CreateTab,
@@ -1798,11 +2107,11 @@ mod tests {
         );
 
         let unsupported = WorkspaceActionRequest {
-            session_backend: Some(SessionBackend::Herdr),
+            session_backend: Some(SessionBackend::Zellij),
             ..request
         };
         let error = remote_workspace_action(&unsupported, 120, 32)
-            .expect_err("Herdr must not be forwarded to a remote client");
+            .expect_err("zellij must not be forwarded to a remote client");
         assert!(error.to_string().contains("native WebShell"));
     }
 

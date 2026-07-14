@@ -98,12 +98,16 @@ impl RemoteProgramStore {
             .map(|entry| entry.program_kind)
     }
 
-    pub fn bootstrap_state(&self, selector: &str, pane_id: &str) -> Option<RemoteBootstrapState> {
+    pub fn program_state(
+        &self,
+        selector: &str,
+        pane_id: &str,
+    ) -> Option<(RemoteProgramKind, RemoteBootstrapState)> {
         self.entries
             .read()
             .ok()?
             .get(&entry_key(selector.trim(), pane_id.trim()))
-            .map(|entry| entry.bootstrap)
+            .map(|entry| (entry.program_kind, entry.bootstrap))
     }
 
     pub fn reconcile_selector<I, S>(&self, selector: &str, pane_ids: I) -> io::Result<()>
@@ -219,7 +223,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{RemoteProgramKind, RemoteProgramStore};
+    use super::{RemoteBootstrapState, RemoteProgramKind, RemoteProgramStore};
     use crate::database::AppDatabase;
 
     fn test_database() -> Arc<AppDatabase> {
@@ -257,10 +261,22 @@ mod tests {
             store.program_kind("client:second", "pane-1"),
             Some(RemoteProgramKind::Herdr)
         );
+        store.mark_sent("client:second", "pane-1").unwrap();
+        assert_eq!(
+            store.program_state("client:second", "pane-1"),
+            Some((RemoteProgramKind::Herdr, RemoteBootstrapState::Sent))
+        );
         let reloaded = RemoteProgramStore::load(database).unwrap();
         assert_eq!(
-            reloaded.program_kind("client:second", "pane-1"),
-            Some(RemoteProgramKind::Herdr)
+            reloaded.program_state("client:second", "pane-1"),
+            Some((RemoteProgramKind::Herdr, RemoteBootstrapState::Sent))
+        );
+        reloaded
+            .mark_pending_after_rejection("client:second", "pane-1")
+            .unwrap();
+        assert_eq!(
+            reloaded.program_state("client:second", "pane-1"),
+            Some((RemoteProgramKind::Herdr, RemoteBootstrapState::Pending))
         );
     }
 }

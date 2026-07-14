@@ -2775,7 +2775,9 @@ function currentTheme(): TerminalTheme {
 function updateSessionBackendSettings() {
   const selectable = selectableSessionBackends(sessionBackendsState);
   const hasOptionalBackend = selectable.some((backend) => backend.id !== "webshell");
-  const hasHerdr = runtimeInfo.lightosFeaturesEnabled && selectable.some((backend) => backend.id === "herdr");
+  const hasHerdr = runtimeInfo.lightosFeaturesEnabled
+    && !isRemoteClientSelector(selectedSelector)
+    && selectable.some((backend) => backend.id === "herdr");
   elements.sessionBackendSettings.hidden = !hasOptionalBackend;
   elements.herdrHighlightSettings.hidden = !hasHerdr;
   elements.herdrActiveBackgroundDark.value = normalizeHexColorInput(
@@ -2807,7 +2809,9 @@ function updateSessionBackendSettings() {
 }
 
 function updateHerdrWorkspaceEntry() {
-  const hasHerdr = runtimeInfo.lightosFeaturesEnabled && sessionBackendInstalled(sessionBackendsState, "herdr");
+  const hasHerdr = runtimeInfo.lightosFeaturesEnabled
+    && !isRemoteClientSelector(selectedSelector)
+    && sessionBackendInstalled(sessionBackendsState, "herdr");
   elements.herdrWorkspaceSwitcher.hidden = !hasHerdr;
   if (!hasHerdr) {
     closeHerdrWorkspaceMenu();
@@ -4987,7 +4991,8 @@ async function createTerminalTab(
     ? requestedMode
     : preferredBackendForNewTab();
   try {
-    if (mode === "herdr") {
+    const remoteHerdr = isRemoteClientSelector(selector) && mode === "herdr";
+    if (mode === "herdr" && !remoteHerdr) {
       const existing = findPaneBySessionBackend(selector, "herdr");
       if (existing) {
         activatePane(existing.tab.id, existing.pane.id);
@@ -5002,7 +5007,7 @@ async function createTerminalTab(
       }
     }
     await runWorkspaceAction("create_tab", { selector, sessionBackend: mode, label: options.label });
-    if (mode === "herdr") {
+    if (mode === "herdr" && !remoteHerdr) {
       scheduleHerdrActionRefresh(selector);
       void syncHerdrEventBridge({ force: true });
     }

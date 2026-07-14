@@ -309,6 +309,7 @@ pub async fn terminal_ws(
                 background: query.bg.as_deref(),
                 cursor: query.cursor.as_deref(),
             },
+            Arc::clone(&state.remote_programs),
         )
         .await
         {

@@ -29,6 +29,12 @@ type RemoteProcessExit = {
   message?: string;
 };
 
+type RemoteHerdrPane = {
+  selector: string;
+  sessionBackend: string;
+  programKind?: string;
+};
+
 type RemoteKeepaliveSocket = {
   readyState: number;
   send(message: string): void;
@@ -56,6 +62,12 @@ export function isRemoteClientSelector(value: unknown): boolean {
       && id.length <= 256
       && [...id].every((character) => /[A-Za-z0-9._-]/.test(character)),
   );
+}
+
+export function isRemoteHerdrPane(pane: RemoteHerdrPane): boolean {
+  return isRemoteClientSelector(pane.selector)
+    && pane.sessionBackend === "webshell"
+    && pane.programKind === "herdr";
 }
 
 export function remoteClientNewTabCapabilities(

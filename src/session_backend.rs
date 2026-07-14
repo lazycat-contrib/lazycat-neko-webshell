@@ -47,13 +47,7 @@ pub async fn get_session_backends(
             })?;
         return Ok(Json(SessionBackendsState {
             selector: selector.to_owned(),
-            backends: vec![SessionBackendInfo {
-                id: "webshell",
-                label: "WebShell native",
-                available: true,
-                supports_terminal_transfer: false,
-                lightos_only: false,
-            }],
+            backends: remote_client_backends(),
         }));
     }
     validate_selector(selector).map_err(|err| SessionBackendsError {
@@ -137,6 +131,25 @@ pub async fn get_session_backends(
     }))
 }
 
+fn remote_client_backends() -> Vec<SessionBackendInfo> {
+    vec![
+        SessionBackendInfo {
+            id: "webshell",
+            label: "WebShell native",
+            available: true,
+            supports_terminal_transfer: false,
+            lightos_only: false,
+        },
+        SessionBackendInfo {
+            id: "herdr",
+            label: "Herdr",
+            available: true,
+            supports_terminal_transfer: false,
+            lightos_only: false,
+        },
+    ]
+}
+
 #[derive(Debug)]
 pub struct SessionBackendsError {
     status: StatusCode,
@@ -146,5 +159,23 @@ pub struct SessionBackendsError {
 impl IntoResponse for SessionBackendsError {
     fn into_response(self) -> Response {
         (self.status, self.message).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remote_client_backends;
+
+    #[test]
+    fn remote_clients_advertise_native_webshell_and_herdr() {
+        let backends = remote_client_backends();
+        assert_eq!(
+            backends
+                .iter()
+                .map(|backend| backend.id)
+                .collect::<Vec<_>>(),
+            vec!["webshell", "herdr"]
+        );
+        assert!(backends.iter().all(|backend| !backend.lightos_only));
     }
 }

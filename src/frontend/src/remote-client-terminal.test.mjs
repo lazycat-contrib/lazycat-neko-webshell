@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   filterRemoteClientPluginTools,
   installRemoteClientKeepalive,
+  isRemoteHerdrPane,
   isRemoteClientSelector,
   remoteClientNewTabCapabilities,
   remoteClientProcessExitShouldRetry,
@@ -39,7 +40,7 @@ test("hides LightOS-only tools for remote client terminals", () => {
   );
 });
 
-test("remote clients expose only their native WebShell backend", () => {
+test("remote clients keep native WebShell transport capabilities", () => {
   assert.deepEqual(remoteClientNewTabCapabilities("client:client-a", true), {
     lightosDirectAvailable: false,
     sshAvailable: false,
@@ -48,6 +49,23 @@ test("remote clients expose only their native WebShell backend", () => {
     lightosDirectAvailable: true,
     sshAvailable: true,
   });
+});
+
+test("recognizes remote Herdr metadata without matching local Herdr panes", () => {
+  assert.equal(isRemoteHerdrPane({
+    selector: "client:client-a",
+    sessionBackend: "webshell",
+    programKind: "herdr",
+  }), true);
+  assert.equal(isRemoteHerdrPane({
+    selector: "alpha@deploy-a",
+    sessionBackend: "herdr",
+    programKind: "herdr",
+  }), false);
+  assert.equal(isRemoteHerdrPane({
+    selector: "client:client-a",
+    sessionBackend: "webshell",
+  }), false);
 });
 
 test("retries transient remote process exits but not missing panes", () => {
