@@ -72,6 +72,17 @@ export function readRememberedTabId(selector: string): string {
   }
 }
 
+export function rememberTabId(selector: string, workspaceTabId: string) {
+  const normalizedSelector = normalizeSelector(selector);
+  const normalizedTabId = normalizeSelector(workspaceTabId);
+  if (!normalizedSelector || !normalizedTabId) return;
+  try {
+    window.localStorage.setItem(lastTabStorageKey(normalizedSelector), normalizedTabId);
+  } catch {
+    // localStorage is best-effort; workspace persistence remains server-owned.
+  }
+}
+
 export function readRememberedSelector(): string {
   try {
     return normalizeSelector(window.localStorage.getItem(LAST_SELECTOR_STORAGE_KEY) ?? "");

@@ -104,6 +104,7 @@ import { createNotificationController } from "./notifications/controller";
 import { createNotificationDom } from "./notifications/dom";
 import { notificationDisplayTitle, notificationTone } from "./notifications/presenter";
 import { renderNewTabMenuView, syncTabsView, type TabViewItem } from "./navigation-views";
+import { forgetOpenSelector, readOpenSelectors, rememberOpenSelector } from "./open-workspaces";
 import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
 import {
   allTabPanes,
@@ -275,6 +276,7 @@ import { openOrCreateOpenSshProfile, sshCommandForTarget } from "./ssh-backend/t
 import { consumeSshUrlOpenRequest, hasSshUrlOpenRequest, replaceSshUrlOpenParams } from "./ssh-backend/url-open";
 import { paneLayoutNode } from "./split-layout";
 import { bindTabWheelSwitch } from "./tab-wheel-switch";
+import { createSelectorRequestTracker } from "./selector-request-tracker";
 import {
   isHerdrTab,
   defaultTabDisplayName as defaultDisplayNameForTab,
@@ -366,14 +368,24 @@ import {
   runWorkspaceActionRequest,
   saveHerdrOutputSequence,
 } from "./workspace-api";
+import { resolveWorkspaceActionTarget } from "./workspace-action-target";
+import {
+  activeTabAfterSelectorReconcile,
+  replaceSelectorTabs,
+  selectorTabIdForWorkspaceId,
+} from "./workspace-collection";
+import {
+  workspaceEntityId,
+  workspaceLayoutToView,
+} from "./workspace-identity";
 import {
   instanceSelector,
   isRunningInstance,
-  lastTabStorageKey,
   normalizeSelector,
   readRememberedSelector,
   readRememberedTabId,
   rememberSelector,
+  rememberTabId,
   requestedTabIdFromLocation,
   updateWorkspaceLocation,
 } from "./workspace-selection";
@@ -582,6 +594,7 @@ const herdrAutoRestoredSelectors = new Set<string>();
 const pendingHerdrOutputSequences = new Map<string, { selector: string; sequence: number }>();
 const herdrOutputSequenceTimers = new Map<string, number>();
 const pendingPaneSocketOpens = new Set<string>();
+const workspaceRequestTracker = createSelectorRequestTracker();
 let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
 let pluginsLoading = false;
@@ -815,7 +828,11 @@ async function init() {
   const sshUrlOpen = await prepareSshUrlOpen();
   await loadInstances();
   if (selectedSelector) {
-    await loadWorkspace(selectedSelector);
+    await loadWorkspace(selectedSelector, { activateSelector: true });
+  }
+  for (const selector of readOpenSelectors()) {
+    if (normalizeSelector(selector) === normalizeSelector(selectedSelector)) continue;
+    void loadWorkspace(selector, { activateSelector: false, background: true });
   }
   if (sshUrlOpen) {
     setGlobalStatus(tr("status.sshUrlProfileReady", { name: sshUrlOpen.profile.name }), "ok");
@@ -836,6 +853,7 @@ async function prepareSshUrlOpen() {
     selectedSelectorExplicit = true;
     setSelectedSelector(result.profile.selector, { updateLocation: false });
     rememberSelector(result.profile.selector);
+    rememberOpenSelector(result.profile.selector);
     replaceSshUrlOpenParams(result.profile.selector);
     return result;
   } catch (error) {
@@ -850,10 +868,11 @@ async function openSshProfileFromSettings(selector: string) {
   selectedSelectorExplicit = true;
   setSelectedSelector(normalized, { updateLocation: true, replaceLocation: false, tabId: "" });
   rememberSelector(normalized);
+  rememberOpenSelector(normalized);
   updateSelectedInstanceChrome();
   await loadInstances();
   setSelectedSelector(normalized, { updateLocation: true, replaceLocation: true, tabId: "" });
-  await loadWorkspace(normalized);
+  await loadWorkspace(normalized, { activateSelector: true });
   await createTerminalTab(normalized, "ssh");
 }
 
@@ -923,8 +942,13 @@ function setSelectedSelector(
     selectedSelectorGeneration += 1;
   }
   if (options.updateLocation !== false && selectedSelector) {
+    const selectedTab = activeTab();
+    const selectedWorkspaceTabId = selectedTab
+      && normalizeSelector(selectedTab.selector) === selectedSelector
+      ? selectedTab.workspaceTabId
+      : undefined;
     updateWorkspaceLocation(selectedSelector, {
-      activeTabId,
+      activeTabId: selectedWorkspaceTabId,
       replace: options.replaceLocation ?? true,
       tabId: options.tabId,
     });
@@ -937,17 +961,14 @@ function isCurrentSelectorRequest(selector: string, generation: number): boolean
 }
 
 function rememberActiveTab() {
-  if (!selectedSelector || !activeTabId) return;
-  try {
-    window.localStorage.setItem(lastTabStorageKey(selectedSelector), activeTabId);
-  } catch {
-    // localStorage is best-effort; workspace persistence remains server-owned.
-  }
-  updateWorkspaceLocation(selectedSelector, { activeTabId, replace: true, tabId: activeTabId });
-}
-
-function firstExistingTabId(candidates: Array<string | undefined>): string | undefined {
-  return candidates.map(normalizeSelector).find((tabId) => tabs.some((tab) => tab.id === tabId));
+  const tab = activeTab();
+  if (!tab || normalizeSelector(tab.selector) !== normalizeSelector(selectedSelector)) return;
+  rememberTabId(tab.selector, tab.workspaceTabId);
+  updateWorkspaceLocation(tab.selector, {
+    activeTabId: tab.workspaceTabId,
+    replace: true,
+    tabId: tab.workspaceTabId,
+  });
 }
 
 function applyI18n() {
@@ -2085,8 +2106,9 @@ function bindLifecycleEvents() {
     const nextTabId = normalizeSelector(nextParams.get("tab") ?? "");
     selectedSelectorExplicit = nextParams.has("name") && Boolean(nextSelector);
     if (nextSelector === selectedSelector) {
-      if (nextTabId && tabs.some((tab) => tab.id === nextTabId)) {
-        activateTab(nextTabId, { updateLocation: false });
+      const viewTabId = selectorTabIdForWorkspaceId(tabs, nextSelector, nextTabId);
+      if (viewTabId) {
+        activateTab(viewTabId, { updateLocation: false });
       }
       return;
     }
@@ -2094,7 +2116,12 @@ function bindLifecycleEvents() {
     reconcileSelectedInstance();
     renderInstances();
     if (selectedSelector) {
-      void loadWorkspace(selectedSelector);
+      const viewTabId = selectorTabIdForWorkspaceId(tabs, selectedSelector, nextTabId);
+      if (viewTabId) {
+        activateTab(viewTabId, { updateLocation: false });
+      } else {
+        void loadWorkspace(selectedSelector, { activateSelector: true });
+      }
     }
   });
   window.addEventListener("focus", () => {
@@ -3824,9 +3851,12 @@ function reconcileSelectedInstance(): { selected: boolean; explicitFallback: boo
   const current = normalizeSelector(selectedSelector);
   const selected = current ? instances.find((instance) => instanceSelector(instance) === current) : undefined;
   if (selected && isRunningInstance(selected)) {
+    const selectedTab = activeTab();
     setSelectedSelector(current, {
       replaceLocation: true,
-      tabId: activeTabId ?? requestedTabIdFromLocation(),
+      tabId: selectedTab && normalizeSelector(selectedTab.selector) === current
+        ? selectedTab.workspaceTabId
+        : requestedTabIdFromLocation(),
       updateLocation: true,
     });
     rememberSelector(current);
@@ -3866,21 +3896,44 @@ function renderInstances() {
       selectedSelectorExplicit = true;
       setSelectedSelector(selector, { updateLocation: true, replaceLocation: false, tabId: "" });
       rememberSelector(selector);
+      rememberOpenSelector(selector);
       updateSelectedInstanceChrome();
       closeInstanceMenu();
       renderInstances();
       if (selectedSelector) {
-        void loadWorkspace(selectedSelector);
+        const rememberedTabId = selectorTabIdForWorkspaceId(
+          tabs,
+          selectedSelector,
+          readRememberedTabId(selectedSelector),
+        );
+        const existingTabId = rememberedTabId
+          ?? tabs.find((tab) => normalizeSelector(tab.selector) === selectedSelector)?.id;
+        if (existingTabId) {
+          activateTab(existingTabId);
+        }
+        void loadWorkspace(selectedSelector, { activateSelector: true });
       }
     });
   });
 }
 
-async function loadWorkspace(selector: string, options: { allowReconcileRetry?: boolean } = {}) {
+type LoadWorkspaceOptions = {
+  activateSelector?: boolean;
+  allowReconcileRetry?: boolean;
+  background?: boolean;
+};
+
+async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {}) {
   const requestSelector = normalizeSelector(selector);
-  const generation = selectedSelectorGeneration;
-  clearSessionBackendsState();
-  clearHerdrState();
+  if (!requestSelector) return;
+  const requestGeneration = workspaceRequestTracker.begin(requestSelector);
+  const selectedGeneration = selectedSelectorGeneration;
+  const activateRequested = options.activateSelector
+    ?? requestSelector === normalizeSelector(selectedSelector);
+  if (activateRequested && isCurrentSelectorRequest(requestSelector, selectedGeneration)) {
+    clearSessionBackendsState();
+    clearHerdrState();
+  }
   try {
     const workspace = await fetchWorkspace(requestSelector, {
       cols: INITIAL_COLS,
@@ -3889,27 +3942,45 @@ async function loadWorkspace(selector: string, options: { allowReconcileRetry?: 
       autoRestart: settings.autoRestartSessions,
       selectRunningInstanceMessage: tr("status.selectRunningInstance"),
     });
+    if (!workspaceRequestTracker.isCurrent(requestSelector, requestGeneration)) return;
+    const activateSelector = activateRequested
+      && isCurrentSelectorRequest(requestSelector, selectedGeneration);
     const applied = await applyWorkspaceState(workspace, {
-      generation,
+      activateSelector,
+      requestGeneration,
       replayFromStart: true,
       selector: requestSelector,
     });
     if (applied) {
-      void refreshSessionBackends(requestSelector, generation);
-      void refreshHerdrState(requestSelector, generation);
+      rememberOpenSelector(requestSelector);
+      if (activateSelector) {
+        const activeGeneration = selectedSelectorGeneration;
+        void refreshSessionBackends(requestSelector, activeGeneration);
+        void refreshHerdrState(requestSelector, activeGeneration);
+      }
     }
   } catch (error) {
+    if (!workspaceRequestTracker.isCurrent(requestSelector, requestGeneration)) return;
+    const activeRequest = activateRequested
+      && isCurrentSelectorRequest(requestSelector, selectedGeneration);
     if (
-      options.allowReconcileRetry !== false
-      && isCurrentSelectorRequest(requestSelector, generation)
+      activeRequest
+      && options.allowReconcileRetry !== false
       && reconcileSelectedInstance().selected
       && selectedSelector !== requestSelector
     ) {
       renderInstances();
-      await loadWorkspace(selectedSelector, { allowReconcileRetry: false });
+      await loadWorkspace(selectedSelector, {
+        activateSelector: true,
+        allowReconcileRetry: false,
+      });
       return;
     }
-    if (!isCurrentSelectorRequest(requestSelector, generation)) return;
+    if (options.background) {
+      forgetOpenSelector(requestSelector);
+      return;
+    }
+    if (!activeRequest) return;
     clearHerdrState();
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
   }
@@ -3931,28 +4002,35 @@ async function runWorkspaceAction(
     apply?: boolean;
   } = {},
 ): Promise<WorkspaceState | undefined> {
-  const selector = options.selector ?? activeTab()?.selector ?? selectedSelector;
+  const selector = normalizeSelector(options.selector ?? activeTab()?.selector ?? selectedSelector);
   if (!selector) return undefined;
+  const requestGeneration = workspaceRequestTracker.begin(selector);
+  const selectedGeneration = selectedSelectorGeneration;
+  const target = resolveWorkspaceActionTarget(tabs, selector, options);
   const workspace = await runWorkspaceActionRequest(action, {
     selector,
     cols: INITIAL_COLS,
     rows: INITIAL_ROWS,
     outputLimit: settings.outputBufferLimit,
     autoRestart: settings.autoRestartSessions,
-    tabId: options.tabId,
-    paneId: options.paneId,
+    tabId: target.tabId,
+    paneId: target.paneId,
     direction: options.direction,
     label: options.label,
-    layout: options.layout,
-    activePaneId: options.activePaneId,
+    layout: target.layout,
+    activePaneId: target.activePaneId,
     sessionBackend: options.sessionBackend,
     pinned: options.pinned,
     pinnedOrder: options.pinnedOrder,
   });
-  if (options.apply !== false) {
+  if (
+    options.apply !== false
+    && workspaceRequestTracker.isCurrent(selector, requestGeneration)
+  ) {
     await applyWorkspaceState(workspace, {
-      generation: selectedSelectorGeneration,
+      activateSelector: isCurrentSelectorRequest(selector, selectedGeneration),
       preferStateActiveTab: true,
+      requestGeneration,
       selector,
     });
   }
@@ -4630,8 +4708,9 @@ function focusedHerdrWorkspace(): HerdrWorkspaceInfo | undefined {
 }
 
 type ApplyWorkspaceOptions = {
-  generation?: number;
+  activateSelector?: boolean;
   preferStateActiveTab?: boolean;
+  requestGeneration?: number;
   replayFromStart?: boolean;
   selector?: string;
 };
@@ -4644,32 +4723,50 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
   }
   const workspaceSelector = responseSelector || expectedSelector;
   if (!workspaceSelector) return false;
-  if (options.generation !== undefined && !isCurrentSelectorRequest(workspaceSelector, options.generation)) {
+  if (
+    options.requestGeneration !== undefined
+    && !workspaceRequestTracker.isCurrent(workspaceSelector, options.requestGeneration)
+  ) {
     return false;
   }
-  setSelectedSelector(workspaceSelector, { updateLocation: false });
-  const existingPanes = new Map(allPanes().map((pane) => [pane.id, pane]));
+  const previousActiveTabId = activeTabId;
+  const existingSelectorTabs = tabs.filter((tab) => (
+    normalizeSelector(tab.selector) === workspaceSelector
+  ));
+  const existingSelectorPanes = new Map(
+    allPanes()
+      .filter((pane) => normalizeSelector(pane.selector) === workspaceSelector)
+      .map((pane) => [pane.id, pane]),
+  );
   const retainedPaneIds = new Set<string>();
-  tabs = [];
-  const requestedTabId = requestedTabIdFromLocation();
-  const rememberedTabId = readRememberedTabId(workspaceSelector);
-  const stateActiveTabId = workspace.active_tab_id;
-  const preferredTabIds = options.preferStateActiveTab
-    ? [stateActiveTabId, requestedTabId, rememberedTabId]
-    : [requestedTabId, rememberedTabId, stateActiveTabId];
-  activeTabId = undefined;
-  elements.terminalStage.replaceChildren();
+  const replacementTabs: TerminalTab[] = [];
+  const requestedWorkspaceTabId = options.activateSelector
+    ? requestedTabIdFromLocation()
+    : "";
+  const rememberedWorkspaceTabId = readRememberedTabId(workspaceSelector);
+  const stateActiveWorkspaceTabId = workspace.active_tab_id;
+  const preferredWorkspaceTabIds = options.preferStateActiveTab
+    ? [stateActiveWorkspaceTabId, requestedWorkspaceTabId, rememberedWorkspaceTabId]
+    : [requestedWorkspaceTabId, rememberedWorkspaceTabId, stateActiveWorkspaceTabId];
   for (const tabState of workspace.tabs) {
     const tab = makeTab(workspaceSelector, tabState.id);
     tab.customTitle = tabState.custom_label?.trim() || undefined;
     tab.pinned = tabState.pinned === true;
     tab.pinnedOrder = typeof tabState.pinned_order === "number" ? tabState.pinned_order : undefined;
-    tab.activePaneId = tabState.active_pane_id;
-    tab.layout = tabState.layout;
-    tabs = [...tabs, tab];
+    tab.activePaneId = tabState.active_pane_id
+      ? workspaceEntityId(workspaceSelector, "pane", tabState.active_pane_id)
+      : undefined;
+    tab.layout = workspaceLayoutToView(workspaceSelector, tabState.layout);
+    replacementTabs.push(tab);
     elements.terminalStage.appendChild(tab.mount);
     for (const paneState of tabState.panes) {
-      const pane = await restoreWorkspacePane(tab, paneState, existingPanes.get(paneState.id), options);
+      const paneId = workspaceEntityId(workspaceSelector, "pane", paneState.id);
+      const pane = await restoreWorkspacePane(
+        tab,
+        paneState,
+        existingSelectorPanes.get(paneId),
+        options,
+      );
       retainedPaneIds.add(pane.id);
     }
     if (!tab.activePaneId) {
@@ -4680,18 +4777,41 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
     }
     renderPaneLayout(tab);
   }
-  restoreTerminalStageChrome();
-  activeTabId = firstExistingTabId(preferredTabIds);
-  if (!activeTabId || !tabs.some((tab) => tab.id === activeTabId)) {
-    activeTabId = tabs[0]?.id;
+  tabs = replaceSelectorTabs(
+    tabs,
+    workspaceSelector,
+    replacementTabs,
+    previousActiveTabId,
+  );
+  for (const tab of existingSelectorTabs) {
+    tab.mount.remove();
   }
+  restoreTerminalStageChrome();
+  const preferredTabId = preferredWorkspaceTabIds
+    .map((workspaceTabId) => (
+      selectorTabIdForWorkspaceId(tabs, workspaceSelector, workspaceTabId)
+    ))
+    .find(Boolean);
+  activeTabId = activeTabAfterSelectorReconcile(
+    previousActiveTabId,
+    tabs,
+    workspaceSelector,
+    preferredTabId,
+    options.activateSelector === true,
+  );
   if (activeTabId) {
-    activateTab(activeTabId, { sync: false });
+    activateTab(activeTabId, {
+      sync: false,
+      updateLocation: options.activateSelector === true,
+    });
   } else {
+    if (options.activateSelector) {
+      setSelectedSelector(workspaceSelector, { updateLocation: false });
+    }
     renderTabs();
     updateActiveDetails();
   }
-  for (const [paneId, pane] of existingPanes) {
+  for (const [paneId, pane] of existingSelectorPanes) {
     if (!retainedPaneIds.has(paneId)) {
       disposePaneLocal(pane);
     }
@@ -4734,11 +4854,13 @@ async function restoreWorkspacePane(
     pane = makePane(tab, paneState.id);
   }
   pane.tabId = tab.id;
+  pane.workspacePaneId = paneState.id;
   pane.selector = tab.selector;
   pane.label = tab.label;
   pane.sessionId = paneState.session_id;
   pane.sessionStatus = paneState.status;
   pane.sessionBackend = nextBackend;
+  pane.programKind = paneState.program_kind;
   restoreHerdrOutputSequence(pane, paneState.herdr_output_sequence);
   pane.serverCols = paneState.cols || INITIAL_COLS;
   pane.serverRows = paneState.rows || INITIAL_ROWS;
@@ -4900,7 +5022,8 @@ function preferredBackendForNewTab(): SessionMode {
 }
 
 function makeTab(selector: string, restoredId?: string): TerminalTab {
-  const id = restoredId || newId();
+  const workspaceTabId = restoredId || newId();
+  const id = workspaceEntityId(selector, "tab", workspaceTabId);
   const mount = document.createElement("div");
   mount.className = "tab-mount";
   mount.dataset.tabId = id;
@@ -4908,7 +5031,7 @@ function makeTab(selector: string, restoredId?: string): TerminalTab {
   mount.setAttribute("aria-label", selector);
   return {
     id,
-    workspaceTabId: id,
+    workspaceTabId,
     selector,
     label: selectorLabel(selector),
     mount,
@@ -4920,7 +5043,8 @@ function makeTab(selector: string, restoredId?: string): TerminalTab {
 }
 
 function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
-  const id = restoredId || newId();
+  const workspacePaneId = restoredId || newId();
+  const id = workspaceEntityId(tab.selector, "pane", workspacePaneId);
   const mount = createTerminalPaneMount(id, `${tab.label} pane`, {
     onPointerDown: (event) => {
       const current = findPaneById(id);
@@ -4979,7 +5103,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
   });
   const pane: TerminalPane = {
     id,
-    workspacePaneId: id,
+    workspacePaneId,
     tabId: tab.id,
     selector: tab.selector,
     label: tab.label,
@@ -5226,7 +5350,7 @@ async function openSocketPrepared(pane: TerminalPane) {
   const url = webshellTerminalSocketUrl({
     selector: pane.selector,
     sessionId: pane.sessionId,
-    paneId: pane.id,
+    paneId: pane.workspacePaneId,
     sessionBackend: pane.sessionBackend,
     cols: attach.cols,
     rows: attach.rows,
@@ -5561,7 +5685,7 @@ function handleServerText(pane: TerminalPane, text: string) {
 
 function matchesPaneReplay(pane: TerminalPane, event: { session_id?: string; pane_id?: string }): boolean {
   if (event.session_id && event.session_id !== pane.sessionId) return false;
-  if (event.pane_id && event.pane_id !== pane.id) return false;
+  if (event.pane_id && event.pane_id !== pane.workspacePaneId) return false;
   return true;
 }
 
@@ -5641,7 +5765,10 @@ async function remountTerminalsForTouchMode() {
 }
 
 function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: boolean } = {}) {
+  const tab = tabs.find((item) => item.id === tabId);
+  if (!tab) return;
   activeTabId = tabId;
+  followActiveTabSelector(tab);
   for (const tab of tabs) {
     const active = tab.id === tabId;
     tab.mount.classList.toggle("active", active);
@@ -5656,9 +5783,27 @@ function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: 
     rememberActiveTab();
   }
   if (options.sync !== false) {
-    const tab = tabs.find((item) => item.id === tabId);
-    void runWorkspaceAction("activate_tab", { selector: tab?.selector, tabId, apply: false }).catch(() => undefined);
+    void runWorkspaceAction("activate_tab", { selector: tab.selector, tabId, apply: false }).catch(() => undefined);
   }
+}
+
+function followActiveTabSelector(tab: TerminalTab) {
+  const normalizedSelector = normalizeSelector(tab.selector);
+  const selectorChanged = normalizedSelector !== normalizeSelector(selectedSelector);
+  const backendStateMismatch = normalizeSelector(sessionBackendsState?.selector) !== normalizedSelector;
+  if (selectorChanged) {
+    setSelectedSelector(normalizedSelector, { updateLocation: false });
+    rememberSelector(normalizedSelector);
+    rememberOpenSelector(normalizedSelector);
+    updateSelectedInstanceChrome();
+    renderInstances();
+  }
+  if (!selectorChanged && !backendStateMismatch) return;
+  clearSessionBackendsState();
+  clearHerdrState();
+  const generation = selectedSelectorGeneration;
+  void refreshSessionBackends(normalizedSelector, generation);
+  void refreshHerdrState(normalizedSelector, generation);
 }
 
 function activateAdjacentTab(direction: -1 | 1) {
@@ -5674,6 +5819,7 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   const tab = tabs.find((item) => item.id === tabId);
   if (!tab) return;
   activeTabId = tabId;
+  followActiveTabSelector(tab);
   tab.activePaneId = paneId;
   updatePaneActiveState(tab);
   renderTabs();

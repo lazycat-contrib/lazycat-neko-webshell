@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   activeTabAfterSelectorReconcile,
   replaceSelectorTabs,
+  selectorTabIdForWorkspaceId,
 } from "./workspace-collection.ts";
 
 const tab = (id, selector) => ({ id, selector });
@@ -27,5 +28,20 @@ test("background reconciliation preserves the active tab", () => {
       false,
     ),
     "local-1",
+  );
+});
+
+test("resolves a raw workspace tab only inside its selector", () => {
+  const tabs = [
+    { id: "view-local", selector: "app@box", workspaceTabId: "tab-1" },
+    { id: "view-remote", selector: "client:pc", workspaceTabId: "tab-1" },
+  ];
+  assert.equal(
+    selectorTabIdForWorkspaceId(tabs, "client:pc", "tab-1"),
+    "view-remote",
+  );
+  assert.equal(
+    selectorTabIdForWorkspaceId(tabs, "client:other", "tab-1"),
+    undefined,
   );
 });

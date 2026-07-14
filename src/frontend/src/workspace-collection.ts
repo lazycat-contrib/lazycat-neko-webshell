@@ -33,3 +33,19 @@ export function activeTabAfterSelectorReconcile<
     ?? tabs.find((tab) => tab.id === previous)?.id
     ?? tabs[0]?.id;
 }
+
+export function selectorTabIdForWorkspaceId<
+  T extends Pick<TerminalTab, "id" | "selector" | "workspaceTabId">,
+>(
+  tabs: T[],
+  selector: string,
+  workspaceTabId: string | undefined,
+): string | undefined {
+  const normalizedSelector = normalizeSelector(selector);
+  const normalizedWorkspaceTabId = normalizeSelector(workspaceTabId);
+  if (!normalizedSelector || !normalizedWorkspaceTabId) return undefined;
+  return tabs.find((tab) => (
+    normalizeSelector(tab.selector) === normalizedSelector
+    && tab.workspaceTabId === normalizedWorkspaceTabId
+  ))?.id;
+}
