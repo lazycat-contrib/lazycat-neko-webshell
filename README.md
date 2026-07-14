@@ -189,6 +189,7 @@ unzip -o /tmp/sounds.zip -d /lzcapp/var
 - 数据保存：SQLite，保存工作区、会话元数据、最近输出、Herdr 回放位置、内置工具设置、SSH profiles 和 Tunnel 认证配置。
 - 文件能力：通过当前会话的目标实例执行文件读写和上传。
 - 网络能力：LightOS 端口转发、Cloudflare Quick Tunnel、ngrok。
+- LazyCat Rust SDK：[GitHub 源码](https://github.com/lib-x/lzc-sdk-rs)、[crates.io](https://crates.io/crates/lzc-sdk)、[API 文档](https://docs.rs/lzc-sdk)。
 - 可选集成：SSH backend、Herdr socket bridge、zellij 后端检测。
 - 打包目标：LazyCat LPK，导出 LightOS WebShell provider。
 

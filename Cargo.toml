@@ -20,7 +20,7 @@ connectrpc = { version = "0.4.2", features = ["axum"] }
 futures = "0.3.31"
 http = "1.4.0"
 http-body = "1.0.1"
-lzc-sdk = { git = "https://github.com/lib-x/lzc-sdk-rs", tag = "v0.1.0", default-features = false, features = ["gateway"] }
+lzc-sdk = { version = "0.1.1", default-features = false, features = ["gateway"] }
 mime_guess = "2.0.5"
 ngrok = "0.18.0"
 portable-pty = "0.9.0"

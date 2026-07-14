@@ -190,6 +190,7 @@ This section is for developers and package maintainers. You do not need it for n
 - Storage: SQLite for workspaces, session metadata, recent output, Herdr replay cursors, built-in tool settings, SSH profiles, and tunnel authentication configs.
 - File capability: file reads, writes, and uploads through the active target instance session.
 - Network capability: LightOS port forwarding, Cloudflare Quick Tunnel, and ngrok.
+- LazyCat Rust SDK: [GitHub source](https://github.com/lib-x/lzc-sdk-rs), [crates.io](https://crates.io/crates/lzc-sdk), and [API documentation](https://docs.rs/lzc-sdk).
 - Optional integrations: SSH backend, Herdr socket bridge, and zellij backend detection.
 - Package target: LazyCat LPK, exported as a LightOS WebShell provider.
 

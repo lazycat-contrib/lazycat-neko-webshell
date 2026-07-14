@@ -7,10 +7,9 @@ fn device_authentication_is_owned_by_the_shared_rust_sdk() {
     let manifest = read(root.join("Cargo.toml"));
     assert!(
         manifest.contains("lzc-sdk = {")
-            && manifest.contains("git = \"https://github.com/lib-x/lzc-sdk-rs\"")
-            && manifest.contains("tag = \"v0.1.0\"")
+            && manifest.contains("version = \"0.1.1\"")
             && manifest.contains("features = [\"gateway\"]"),
-        "Neko must consume the released shared Rust SDK"
+        "Neko must consume the crates.io release of the shared Rust SDK"
     );
 
     let sdk_dependency = manifest
@@ -19,8 +18,8 @@ fn device_authentication_is_owned_by_the_shared_rust_sdk() {
         .and_then(|value| value.split('}').next())
         .expect("lzc-sdk dependency table");
     assert!(
-        !sdk_dependency.contains("path ="),
-        "the SDK dependency must not contain a local path"
+        !sdk_dependency.contains("path =") && !sdk_dependency.contains("git ="),
+        "the SDK dependency must come from crates.io rather than a local path or Git"
     );
 
     assert!(
