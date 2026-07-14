@@ -1,5 +1,5 @@
 import type { SessionBackendId, Tone } from "./types";
-import { escapeAttr, escapeHtml } from "./utils";
+import { escapeAttr, escapeHtml } from "./utils.ts";
 
 export type NewTabMenuItem = {
   id: SessionBackendId;
@@ -19,6 +19,8 @@ export type TabViewItem = {
   displayName: string;
   title: string;
   tone: Tone;
+  icon?: string;
+  iconOnly?: boolean;
 };
 
 export type TabViewLabels = {
@@ -75,12 +77,14 @@ export function syncTabsView(container: HTMLElement, items: TabViewItem[], label
 function renderTabView(tab: TabViewItem, labels: TabViewLabels): string {
   const label = tab.renaming
     ? `<input class="tab-rename" data-rename-tab="${escapeAttr(tab.id)}" value="${escapeAttr(tab.displayName)}" aria-label="${escapeAttr(labels.rename)}" spellcheck="false" />`
-    : tab.pinned
+    : tab.iconOnly && tab.icon
+      ? `<span class="tab-remote-icon" aria-hidden="true"><i data-lucide="${escapeAttr(tab.icon)}"></i></span>`
+      : tab.pinned
       ? `<span class="tab-pin-glyph" aria-hidden="true">${escapeHtml(tab.pinnedGlyph)}</span>`
       : `<span class="tab-title">${escapeHtml(tab.displayName)}</span>`;
   const pinLabel = tab.pinned ? labels.unpin : labels.pin;
   return `
-      <div class="tab ${tab.active ? "active" : ""} ${tab.named ? "named" : ""} ${tab.pinned ? "pinned" : ""}" data-tab-view-id="${escapeAttr(tab.id)}" data-tab-structure="${escapeAttr(tabStructureSignature(tab))}">
+      <div class="tab ${tab.active ? "active" : ""} ${tab.named ? "named" : ""} ${tab.pinned ? "pinned" : ""} ${tab.iconOnly ? "icon-only" : ""}" data-tab-view-id="${escapeAttr(tab.id)}" data-tab-structure="${escapeAttr(tabStructureSignature(tab))}">
         <div class="tab-main" id="tab-${escapeAttr(tab.id)}" role="tab" tabindex="0" aria-selected="${tab.active}" aria-label="${escapeAttr(tab.title)}" data-tab-id="${escapeAttr(tab.id)}" title="${escapeAttr(tab.title)}">
           <span class="tab-status" data-tone="${tab.tone}"></span>
           ${label}
@@ -123,6 +127,7 @@ function patchTabElement(element: HTMLElement | undefined, tab: TabViewItem, lab
   element.classList.toggle("active", tab.active);
   element.classList.toggle("named", tab.named);
   element.classList.toggle("pinned", tab.pinned);
+  element.classList.toggle("icon-only", tab.iconOnly === true);
   element.dataset.tabViewId = tab.id;
   element.dataset.tabStructure = tabStructureSignature(tab);
 
@@ -143,6 +148,9 @@ function patchTabElement(element: HTMLElement | undefined, tab: TabViewItem, lab
 
   const glyph = element.querySelector<HTMLElement>(".tab-pin-glyph");
   if (glyph && glyph.textContent !== tab.pinnedGlyph) glyph.textContent = tab.pinnedGlyph;
+
+  const icon = element.querySelector<HTMLElement>(".tab-remote-icon [data-lucide]");
+  if (icon && tab.iconOnly && tab.icon) setAttribute(icon, "data-lucide", tab.icon);
 
   const rename = element.querySelector<HTMLInputElement>(".tab-rename[data-rename-tab]");
   if (rename) {
@@ -199,6 +207,7 @@ function tabElements(container: HTMLElement): HTMLElement[] {
 
 function tabStructureSignature(tab: TabViewItem): string {
   if (tab.renaming) return "rename";
+  if (tab.iconOnly && tab.icon) return `icon:${tab.icon}`;
   if (tab.pinned) return "pinned";
   return "normal";
 }

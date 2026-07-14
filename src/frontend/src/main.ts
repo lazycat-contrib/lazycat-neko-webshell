@@ -285,6 +285,7 @@ import {
   tabDisplayName as displayNameForTab,
   tabHasTextTitle as tabHasDisplayTextTitle,
   tabPinnedGlyph as pinnedGlyphForTab,
+  remoteTabTitle,
   tabTone as toneForTab,
 } from "./tab-labels";
 import { applyPaneMouseMode } from "./terminal-mouse-mode";
@@ -5886,20 +5887,29 @@ function renderTabs() {
 function tabViewItems(): TabViewItem[] {
   const pinned = sortedPinnedTabs();
   return tabs.map((tab) => {
+    const remote = isRemoteClientSelector(tab.selector);
     const displayName = tabDisplayName(tab);
     const pinnedIndex = tab.pinned ? pinned.findIndex((item) => item.id === tab.id) : -1;
     return {
       id: tab.id,
       active: tab.id === activeTabId,
       renaming: renamingTabId === tab.id,
-      named: !tab.pinned && tabHasTextTitle(tab, displayName),
+      named: !remote && !tab.pinned && tabHasTextTitle(tab, displayName),
       pinned: tab.pinned,
       pinnedGlyph: tabPinnedGlyph(tab, displayName),
       canMovePinnedPrevious: pinnedIndex > 0,
       canMovePinnedNext: pinnedIndex >= 0 && pinnedIndex < pinned.length - 1,
       displayName,
-      title: tab.pinned ? displayName : tabCurrentTitle(tab),
+      title: remote
+        ? remoteTabTitle(
+          tab,
+          activePane(tab),
+          instanceForSelector(tab.selector)?.name || selectorLabel(tab.selector),
+        )
+        : tab.pinned ? displayName : tabCurrentTitle(tab),
       tone: tabTone(tab),
+      icon: remote ? "monitor-smartphone" : undefined,
+      iconOnly: remote,
     };
   });
 }
@@ -5914,7 +5924,7 @@ function tabDisplayName(tab: TerminalTab): string {
 }
 
 function tabHasTextTitle(tab: TerminalTab, displayName = tabDisplayName(tab)): boolean {
-  return tabHasDisplayTextTitle(tab, displayName);
+  return !isRemoteClientSelector(tab.selector) && tabHasDisplayTextTitle(tab, displayName);
 }
 
 function tabPinnedGlyph(tab: TerminalTab, displayName = tabDisplayName(tab)): string {

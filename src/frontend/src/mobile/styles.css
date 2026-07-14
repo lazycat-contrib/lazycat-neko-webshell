@@ -304,6 +304,12 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
     max-width: min(188px, 54vw);
   }
 
+  .tab.icon-only,
+  .tab.icon-only.active {
+    min-width: 70px;
+    max-width: 70px;
+  }
+
   .tab.named .tab-main {
     max-width: 100%;
   }
@@ -311,6 +317,12 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   .tab.active .tab-main {
     justify-content: flex-start;
     padding: 0 38px 0 10px;
+  }
+
+  .tab.icon-only .tab-main,
+  .tab.icon-only.active .tab-main {
+    justify-content: center;
+    padding: 0 34px 0 8px;
   }
 
   .tab:not(.active) .tab-title {

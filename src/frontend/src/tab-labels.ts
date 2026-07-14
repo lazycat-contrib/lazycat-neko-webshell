@@ -50,6 +50,18 @@ export function tabCurrentTitle(tab: TerminalTab, activePane: TerminalPane | und
   return activePane?.title || tab.label;
 }
 
+export function remoteTabTitle(
+  tab: Pick<TerminalTab, "customTitle" | "label">,
+  activePane: Pick<TerminalPane, "programKind" | "title"> | undefined,
+  deviceName: string,
+): string {
+  const device = deviceName.trim() || tab.label.trim();
+  const detail = activePane?.programKind === "herdr"
+    ? "Herdr"
+    : activePane?.title.trim() || tab.customTitle?.trim() || "WebShell";
+  return detail && detail !== device ? `${device} — ${detail}` : device;
+}
+
 export function defaultTabDisplayName(tab: TerminalTab, tabs: TerminalTab[], tr: Translate): string {
   if (tab.panes.some((pane) => pane.sessionBackend === "webshell")) {
     return tr("tab.terminalSession", { index: tabBackendOrdinal(tab, tabs, "webshell") });
