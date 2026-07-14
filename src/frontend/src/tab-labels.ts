@@ -3,6 +3,22 @@ import type { SessionBackendId, TerminalPane, TerminalTab, Tone } from "./types"
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
+export type TabLabelPresentationInput = {
+  active: boolean;
+  remote: boolean;
+  pinned: boolean;
+  sourceName: string;
+  terminalName: string;
+  terminalHasText: boolean;
+};
+
+export type TabLabelPresentation = {
+  displayName: string;
+  title: string;
+  iconOnly: boolean;
+  named: boolean;
+};
+
 export function tabDisplayName(
   tab: TerminalTab,
   tabs: TerminalTab[],
@@ -50,16 +66,48 @@ export function tabCurrentTitle(tab: TerminalTab, activePane: TerminalPane | und
   return activePane?.title || tab.label;
 }
 
+export function remoteTabDetail(
+  tab: Pick<TerminalTab, "customTitle" | "label">,
+  activePane: Pick<TerminalPane, "programKind" | "title"> | undefined,
+  fallbackName: string,
+): string {
+  return activePane?.programKind === "herdr"
+    ? "Herdr"
+    : activePane?.title.trim()
+      || tab.customTitle?.trim()
+      || fallbackName.trim()
+      || "WebShell";
+}
+
+export function tabLabelPresentation(input: TabLabelPresentationInput): TabLabelPresentation {
+  const terminalName = input.terminalName.trim();
+  const title = contextualTabLabel(input.sourceName, terminalName);
+  const iconOnly = input.remote && !input.active;
+  return {
+    displayName: input.active && !input.pinned ? title : terminalName || title,
+    title,
+    iconOnly,
+    named: !input.pinned && !iconOnly && (input.active ? Boolean(title) : input.terminalHasText),
+  };
+}
+
 export function remoteTabTitle(
   tab: Pick<TerminalTab, "customTitle" | "label">,
   activePane: Pick<TerminalPane, "programKind" | "title"> | undefined,
   deviceName: string,
 ): string {
-  const device = deviceName.trim() || tab.label.trim();
-  const detail = activePane?.programKind === "herdr"
-    ? "Herdr"
-    : activePane?.title.trim() || tab.customTitle?.trim() || "WebShell";
-  return detail && detail !== device ? `${device} — ${detail}` : device;
+  return contextualTabLabel(
+    deviceName.trim() || tab.label.trim(),
+    remoteTabDetail(tab, activePane, "WebShell"),
+  );
+}
+
+function contextualTabLabel(sourceName: string, terminalName: string): string {
+  const source = sourceName.trim();
+  const terminal = terminalName.trim();
+  if (!source) return terminal;
+  if (!terminal || terminal === source) return source;
+  return `${source} · ${terminal}`;
 }
 
 export function defaultTabDisplayName(tab: TerminalTab, tabs: TerminalTab[], tr: Translate): string {
