@@ -35,11 +35,14 @@ export type SplitContainerNode = {
 
 export type SplitNode = SplitPaneNode | SplitContainerNode;
 
+export type RemoteProgramKind = "herdr";
+
 export type WorkspacePaneState = {
   id: string;
   session_id: string;
   status: string;
   session_backend?: SessionBackendId;
+  program_kind?: RemoteProgramKind;
   herdr_output_sequence?: number;
   cols: number;
   rows: number;
@@ -362,6 +365,8 @@ export type Settings = {
 
 export type TerminalPane = {
   id: string;
+  workspacePaneId: string;
+  programKind?: RemoteProgramKind;
   tabId: string;
   selector: string;
   label: string;
@@ -406,6 +411,7 @@ export type TerminalPane = {
 
 export type TerminalTab = {
   id: string;
+  workspaceTabId: string;
   selector: string;
   label: string;
   customTitle?: string;

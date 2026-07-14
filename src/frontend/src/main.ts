@@ -4908,6 +4908,7 @@ function makeTab(selector: string, restoredId?: string): TerminalTab {
   mount.setAttribute("aria-label", selector);
   return {
     id,
+    workspaceTabId: id,
     selector,
     label: selectorLabel(selector),
     mount,
@@ -4978,6 +4979,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
   });
   const pane: TerminalPane = {
     id,
+    workspacePaneId: id,
     tabId: tab.id,
     selector: tab.selector,
     label: tab.label,

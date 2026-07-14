@@ -1,5 +1,5 @@
 import type { Instance } from "./gen/lazycat/webshell/v1/capability_pb";
-export { isRemoteClientSelector } from "./remote-client-terminal";
+export { isRemoteClientSelector } from "./remote-client-terminal.ts";
 
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
