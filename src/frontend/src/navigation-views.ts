@@ -75,13 +75,16 @@ export function syncTabsView(container: HTMLElement, items: TabViewItem[], label
 }
 
 function renderTabView(tab: TabViewItem, labels: TabViewLabels): string {
+  const icon = tab.icon
+    ? `<span class="tab-remote-icon" aria-hidden="true"><i data-lucide="${escapeAttr(tab.icon)}"></i></span>`
+    : "";
   const label = tab.renaming
     ? `<input class="tab-rename" data-rename-tab="${escapeAttr(tab.id)}" value="${escapeAttr(tab.displayName)}" aria-label="${escapeAttr(labels.rename)}" spellcheck="false" />`
     : tab.iconOnly && tab.icon
-      ? `<span class="tab-remote-icon" aria-hidden="true"><i data-lucide="${escapeAttr(tab.icon)}"></i></span>`
+      ? icon
       : tab.pinned
       ? `<span class="tab-pin-glyph" aria-hidden="true">${escapeHtml(tab.pinnedGlyph)}</span>`
-      : `<span class="tab-title">${escapeHtml(tab.displayName)}</span>`;
+      : `${icon}<span class="tab-title">${escapeHtml(tab.displayName)}</span>`;
   const pinLabel = tab.pinned ? labels.unpin : labels.pin;
   return `
       <div class="tab ${tab.active ? "active" : ""} ${tab.named ? "named" : ""} ${tab.pinned ? "pinned" : ""} ${tab.iconOnly ? "icon-only" : ""}" data-tab-view-id="${escapeAttr(tab.id)}" data-tab-structure="${escapeAttr(tabStructureSignature(tab))}">
@@ -150,7 +153,7 @@ function patchTabElement(element: HTMLElement | undefined, tab: TabViewItem, lab
   if (glyph && glyph.textContent !== tab.pinnedGlyph) glyph.textContent = tab.pinnedGlyph;
 
   const icon = element.querySelector<HTMLElement>(".tab-remote-icon [data-lucide]");
-  if (icon && tab.iconOnly && tab.icon) setAttribute(icon, "data-lucide", tab.icon);
+  if (icon && tab.icon) setAttribute(icon, "data-lucide", tab.icon);
 
   const rename = element.querySelector<HTMLInputElement>(".tab-rename[data-rename-tab]");
   if (rename) {
@@ -207,8 +210,9 @@ function tabElements(container: HTMLElement): HTMLElement[] {
 
 function tabStructureSignature(tab: TabViewItem): string {
   if (tab.renaming) return "rename";
-  if (tab.iconOnly && tab.icon) return `icon:${tab.icon}`;
+  if (tab.iconOnly && tab.icon) return `icon-only:${tab.icon}`;
   if (tab.pinned) return "pinned";
+  if (tab.icon) return `icon-title:${tab.icon}`;
   return "normal";
 }
 
