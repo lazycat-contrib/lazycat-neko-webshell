@@ -42,6 +42,11 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: true,
+    // Some LazyCat/XCoder build shells cap RLIMIT_NOFILE at 1024. Rollup's
+    // default parallel file queue can exhaust that limit while loading icons.
+    rollupOptions: {
+      maxParallelFileOps: 128,
+    },
   },
   server: {
     host: "127.0.0.1",

@@ -1,3 +1,5 @@
+import type { TerminalThemeSocketColors } from "./terminal-theme-wire";
+
 export type WebshellSocketUrlOptions = {
   selector: string;
   sessionId: string;
@@ -9,6 +11,7 @@ export type WebshellSocketUrlOptions = {
   after: number;
   outputLimit: number;
   controlMode?: "single";
+  theme?: TerminalThemeSocketColors;
 };
 
 export function webshellTerminalSocketUrl(options: WebshellSocketUrlOptions): URL {
@@ -33,11 +36,20 @@ export function webshellTerminalSocketUrl(options: WebshellSocketUrlOptions): UR
   if (options.controlMode) {
     url.searchParams.set("control_mode", options.controlMode);
   }
+  if (options.theme) {
+    url.searchParams.set("fg", options.theme.foreground);
+    url.searchParams.set("bg", options.theme.background);
+    url.searchParams.set("cursor", options.theme.cursor);
+  }
   return url;
 }
 
 export function webshellResizeMessage(cols: number, rows: number): string {
   return JSON.stringify({ type: "resize", cols, rows });
+}
+
+export function webshellGeneratedInputMessage(data: string): string {
+  return JSON.stringify({ type: "input", data, generated: true });
 }
 
 export function webshellOutputBufferMessage(limit: number): string {

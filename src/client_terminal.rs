@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,6 +8,7 @@ use axum::extract::ws::{Message as BrowserMessage, WebSocket};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
+use lzc_sdk::{ClientCredentials, CredentialPaths, TokenProvider};
 use reqwest::{Method, Url};
 use rustls23::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls23::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
@@ -15,13 +17,12 @@ use rustls23::{DigitallySignedStruct, SignatureScheme};
 use secrecy::ExposeSecret as _;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::net::TcpStream;
 use tokio::time::timeout;
+use tokio_tungstenite::Connector;
 use tokio_tungstenite::tungstenite::Message as RemoteMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
-use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
+use tracing::{info, warn};
 
-use crate::device_api_auth;
 use crate::http_body::read_limited_body;
 use crate::lightos;
 use crate::lightos_admin::{
@@ -30,15 +31,28 @@ use crate::lightos_admin::{
 };
 use crate::proto::lazycat::webshell::v1::Session;
 use crate::workspace::{
-    SessionBackend, SplitDirection, WorkspaceAction, WorkspaceActionRequest, WorkspaceLayoutNode,
-    WorkspacePaneState, WorkspaceState, WorkspaceTabState,
+    SessionBackend, SplitAxis, SplitDirection, WorkspaceAction, WorkspaceActionRequest,
+    WorkspaceLayoutNode, WorkspacePaneState, WorkspaceState, WorkspaceTabState,
 };
 
 const CLIENT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TICKET_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_WORKSPACE_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 
-type RemoteWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type RemoteWebSocketRequest = tokio_tungstenite::tungstenite::http::Request<()>;
+
+async fn await_client_terminal_boundary<T, F>(
+    duration: Duration,
+    future: F,
+    timeout_message: &'static str,
+) -> Result<T, ClientTerminalError>
+where
+    F: Future<Output = T>,
+{
+    timeout(duration, future)
+        .await
+        .map_err(|_| ClientTerminalError::new(StatusCode::GATEWAY_TIMEOUT, timeout_message))
+}
 
 #[derive(Debug, Error)]
 #[error("{message}")]
@@ -108,10 +122,29 @@ struct ClientTerminalDialInfo {
 }
 
 pub(crate) struct RemoteTerminalConnection {
-    socket: RemoteWebSocket,
+    request: RemoteWebSocketRequest,
+    connector: Connector,
     selector: String,
     pane_id: String,
     replay_after: u64,
+    safe_url: String,
+    ticket: secrecy::SecretString,
+    auth_token: secrecy::SecretString,
+}
+
+pub(crate) struct RemoteTerminalConnectOptions<'a> {
+    pub cols: u16,
+    pub rows: u16,
+    pub replay_after: u64,
+    pub foreground: Option<&'a str>,
+    pub background: Option<&'a str>,
+    pub cursor: Option<&'a str>,
+}
+
+struct RemoteWebSocketFailure {
+    user_message: String,
+    technical_message: String,
+    error_code: &'static str,
 }
 
 struct SkipServerCertificateVerification(CryptoProvider);
@@ -172,8 +205,6 @@ impl ServerCertVerifier for SkipServerCertificateVerification {
 #[derive(Debug, Deserialize)]
 pub(crate) struct RemoteWorkspaceState {
     #[serde(default)]
-    selector: String,
-    #[serde(default)]
     active_tab_id: String,
     #[serde(default)]
     tabs: Vec<RemoteWorkspaceTab>,
@@ -189,9 +220,35 @@ struct RemoteWorkspaceTab {
     custom_label: bool,
     #[serde(default)]
     active_pane_id: String,
-    layout: Option<WorkspaceLayoutNode>,
+    layout: Option<RemoteWorkspaceLayoutNode>,
     #[serde(default)]
     panes: Vec<RemoteWorkspacePane>,
+}
+
+// The Go client-terminal wire schema uses leaf/direction/size, while the local
+// workspace model uses pane/axis. Keep the translation at this boundary.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum RemoteWorkspaceLayoutNode {
+    Leaf {
+        #[serde(rename = "paneId")]
+        pane_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<f64>,
+    },
+    Split {
+        direction: RemoteSplitDirection,
+        children: Vec<RemoteWorkspaceLayoutNode>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<f64>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RemoteSplitDirection {
+    Vertical,
+    Horizontal,
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,8 +261,6 @@ struct RemoteWorkspacePane {
     rows: u16,
     #[serde(default)]
     exited: bool,
-    #[serde(default)]
-    exit_code: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -220,7 +275,7 @@ struct RemoteWorkspaceActionRequest {
     #[serde(skip_serializing_if = "String::is_empty")]
     label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    layout: Option<WorkspaceLayoutNode>,
+    layout: Option<RemoteWorkspaceLayoutNode>,
     #[serde(skip_serializing_if = "String::is_empty")]
     active_pane_id: String,
     cols: u16,
@@ -268,7 +323,14 @@ pub(crate) async fn get_workspace(
     let remote = serde_json::from_slice::<RemoteWorkspaceState>(&body).map_err(|error| {
         ClientTerminalError::bad_gateway(format!("invalid remote workspace response: {error}"))
     })?;
-    Ok(convert_remote_workspace(selector, remote))
+    let workspace = convert_remote_workspace(selector, remote);
+    info!(
+        selector,
+        tabs = workspace.tabs.len(),
+        active_tab = workspace.active_tab_id.as_deref().unwrap_or_default(),
+        "remote client workspace decoded"
+    );
+    Ok(workspace)
 }
 
 pub(crate) async fn apply_workspace_action(
@@ -295,7 +357,15 @@ pub(crate) async fn apply_workspace_action(
     let remote = serde_json::from_slice::<RemoteWorkspaceState>(&body).map_err(|error| {
         ClientTerminalError::bad_gateway(format!("invalid remote workspace response: {error}"))
     })?;
-    Ok(convert_remote_workspace(selector, remote))
+    let workspace = convert_remote_workspace(selector, remote);
+    info!(
+        selector,
+        action = ?request.action,
+        tabs = workspace.tabs.len(),
+        active_tab = workspace.active_tab_id.as_deref().unwrap_or_default(),
+        "remote client workspace action decoded"
+    );
+    Ok(workspace)
 }
 
 pub(crate) async fn create_session(
@@ -326,6 +396,10 @@ pub(crate) async fn close_session(
     rows: u16,
     output_limit: usize,
 ) -> Result<(), ClientTerminalError> {
+    let workspace = get_workspace(headers, selector, cols, rows).await?;
+    let tab_id = workspace_tab_id_for_pane(&workspace, session_id).ok_or_else(|| {
+        ClientTerminalError::new(StatusCode::NOT_FOUND, "remote terminal session not found")
+    })?;
     let mut request = remote_session_action_request(
         selector,
         WorkspaceAction::ClosePane,
@@ -333,6 +407,7 @@ pub(crate) async fn close_session(
         rows,
         output_limit,
     );
+    request.tab_id = Some(tab_id.to_owned());
     request.pane_id = Some(session_id.to_owned());
     apply_workspace_action(headers, selector, cols, rows, &request).await?;
     Ok(())
@@ -352,9 +427,7 @@ pub(crate) async fn connect_terminal(
     headers: &HeaderMap,
     selector: &str,
     pane_id: &str,
-    cols: u16,
-    rows: u16,
-    replay_after: u64,
+    options: RemoteTerminalConnectOptions<'_>,
 ) -> Result<RemoteTerminalConnection, ClientTerminalError> {
     let pane_id = pane_id.trim();
     if pane_id.is_empty() || pane_id.len() > 256 || pane_id.chars().any(char::is_control) {
@@ -365,12 +438,27 @@ pub(crate) async fn connect_terminal(
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("pane", pane_id);
-        query.append_pair("cols", &cols.to_string());
-        query.append_pair("rows", &rows.to_string());
+        query.append_pair("cols", &options.cols.to_string());
+        query.append_pair("rows", &options.rows.to_string());
+        for (key, value) in [
+            ("fg", terminal_theme_color(options.foreground)),
+            ("bg", terminal_theme_color(options.background)),
+            ("cursor", terminal_theme_color(options.cursor)),
+        ] {
+            if let Some(value) = value {
+                query.append_pair(key, value);
+            }
+        }
         query.append_pair("ticket", &dial.ticket.ticket);
     }
     let safe_url = sanitize_client_terminal_url(&url);
     let websocket_url = websocket_terminal_url(&url)?;
+    info!(
+        selector,
+        pane_id,
+        target = %safe_url,
+        "connecting remote client terminal websocket"
+    );
     let mut request = websocket_url
         .as_str()
         .into_client_request()
@@ -383,49 +471,79 @@ pub(crate) async fn connect_terminal(
         .map_err(|_| ClientTerminalError::bad_gateway("invalid device auth token"))?,
     );
     let connector = websocket_tls_connector()?;
-    let (socket, _) = timeout(
-        CLIENT_TERMINAL_TIMEOUT,
-        tokio_tungstenite::connect_async_tls_with_config(request, None, true, Some(connector)),
-    )
-    .await
-    .map_err(|_| {
-        ClientTerminalError::new(
-            StatusCode::GATEWAY_TIMEOUT,
-            format!("remote client terminal connection timed out: {safe_url}"),
-        )
-    })?
-    .map_err(|_| {
-        ClientTerminalError::bad_gateway(format!(
-            "remote client terminal connection failed: {safe_url}"
-        ))
-    })?;
     Ok(RemoteTerminalConnection {
-        socket,
+        request,
+        connector,
         selector: selector.to_owned(),
         pane_id: pane_id.to_owned(),
-        replay_after,
+        replay_after: options.replay_after,
+        safe_url,
+        ticket: secrecy::SecretString::from(dial.ticket.ticket),
+        auth_token: dial.auth_token,
     })
 }
 
 pub(crate) async fn relay_terminal_socket(
-    browser: WebSocket,
+    mut browser: WebSocket,
     remote: RemoteTerminalConnection,
 ) -> anyhow::Result<()> {
     let RemoteTerminalConnection {
-        socket,
+        request,
+        connector,
         selector,
         pane_id,
         replay_after,
+        safe_url,
+        ticket,
+        auth_token,
     } = remote;
+    let socket = match timeout(
+        CLIENT_TERMINAL_TIMEOUT,
+        tokio_tungstenite::connect_async_tls_with_config(request, None, true, Some(connector)),
+    )
+    .await
+    {
+        Err(_) => {
+            let failure = classify_remote_websocket_failure(
+                None,
+                "",
+                "remote client terminal connection timed out",
+            );
+            warn!(selector, pane_id, target = %safe_url, "remote client terminal websocket timed out");
+            send_remote_websocket_failure(&mut browser, &failure).await?;
+            return Ok(());
+        }
+        Ok(Err(error)) => {
+            let (status, body) = remote_websocket_error_response(&error);
+            let body =
+                redact_sensitive_text(&body, ticket.expose_secret(), auth_token.expose_secret());
+            let technical_message = redact_sensitive_text(
+                &error.to_string(),
+                ticket.expose_secret(),
+                auth_token.expose_secret(),
+            );
+            let failure = classify_remote_websocket_failure(status, &body, &technical_message);
+            warn!(
+                selector,
+                pane_id,
+                target = %safe_url,
+                status = status.map(|value| value.as_u16()).unwrap_or_default(),
+                error = %failure.technical_message,
+                "remote client terminal websocket failed"
+            );
+            send_remote_websocket_failure(&mut browser, &failure).await?;
+            return Ok(());
+        }
+        Ok(Ok((socket, _))) => socket,
+    };
+    info!(selector, pane_id, target = %safe_url, "remote client terminal websocket connected");
     let (mut browser_sink, mut browser_stream) = browser.split();
     let (mut remote_sink, mut remote_stream) = socket.split();
 
     let browser_to_remote = async {
         while let Some(message) = browser_stream.next().await {
             let message = message?;
-            let Some(message) = browser_message_to_remote(message) else {
-                break;
-            };
+            let message = browser_message_to_remote(message);
             remote_sink.send(message).await?;
         }
         Ok::<(), anyhow::Error>(())
@@ -450,13 +568,48 @@ pub(crate) async fn relay_terminal_socket(
     }
 }
 
-fn browser_message_to_remote(message: BrowserMessage) -> Option<RemoteMessage> {
+fn remote_websocket_error_response(
+    error: &tokio_tungstenite::tungstenite::Error,
+) -> (Option<StatusCode>, String) {
+    let tokio_tungstenite::tungstenite::Error::Http(response) = error else {
+        return (None, String::new());
+    };
+    let body = response
+        .body()
+        .as_deref()
+        .map(String::from_utf8_lossy)
+        .map(|value| value.chars().take(2048).collect())
+        .unwrap_or_default();
+    (Some(response.status()), body)
+}
+
+async fn send_remote_websocket_failure(
+    browser: &mut WebSocket,
+    failure: &RemoteWebSocketFailure,
+) -> anyhow::Result<()> {
+    let payload = serde_json::to_string(&remote_websocket_failure_payload(failure))?;
+    browser.send(BrowserMessage::Text(payload.into())).await?;
+    Ok(())
+}
+
+fn remote_websocket_failure_payload(failure: &RemoteWebSocketFailure) -> serde_json::Value {
+    serde_json::json!({
+        "type": "process-exit",
+        "exit_code": -1,
+        "message": failure.user_message,
+        "technical_message": failure.technical_message,
+        "error_code": failure.error_code,
+        "retryable": true,
+    })
+}
+
+fn browser_message_to_remote(message: BrowserMessage) -> RemoteMessage {
     match message {
-        BrowserMessage::Text(text) => Some(RemoteMessage::Text(text.as_str().into())),
-        BrowserMessage::Binary(bytes) => Some(RemoteMessage::Binary(bytes)),
-        BrowserMessage::Ping(bytes) => Some(RemoteMessage::Ping(bytes)),
-        BrowserMessage::Pong(bytes) => Some(RemoteMessage::Pong(bytes)),
-        BrowserMessage::Close(_) => Some(RemoteMessage::Close(None)),
+        BrowserMessage::Text(text) => RemoteMessage::Text(text.as_str().into()),
+        BrowserMessage::Binary(bytes) => RemoteMessage::Binary(bytes),
+        BrowserMessage::Ping(bytes) => RemoteMessage::Ping(bytes),
+        BrowserMessage::Pong(bytes) => RemoteMessage::Pong(bytes),
+        BrowserMessage::Close(_) => RemoteMessage::Close(None),
     }
 }
 
@@ -507,6 +660,53 @@ fn websocket_terminal_url(url: &Url) -> Result<Url, ClientTerminalError> {
     Ok(websocket)
 }
 
+fn terminal_theme_color(value: Option<&str>) -> Option<&str> {
+    let value = value?.trim();
+    (value.len() == 7
+        && value.starts_with('#')
+        && value[1..].bytes().all(|byte| byte.is_ascii_hexdigit()))
+    .then_some(value)
+}
+
+fn classify_remote_websocket_failure(
+    status: Option<StatusCode>,
+    body: &str,
+    technical_message: &str,
+) -> RemoteWebSocketFailure {
+    let body = body.trim();
+    let mut failure = RemoteWebSocketFailure {
+        user_message: technical_message.to_owned(),
+        technical_message: technical_message.to_owned(),
+        error_code: "client_terminal_websocket_dial_failed",
+    };
+    let Some(status) = status else {
+        return failure;
+    };
+    failure.technical_message = format!("{technical_message}; target_status={status}");
+    if !body.is_empty() {
+        failure.technical_message.push_str("; target_body=");
+        failure.technical_message.push_str(body);
+    }
+    if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+        "instance is not accessible by current account".clone_into(&mut failure.user_message);
+        failure.error_code = "client_terminal_forbidden";
+    } else if !body.is_empty() {
+        failure.user_message = format!(
+            "Client terminal connection failed (target_status={}): {body}",
+            status.as_u16()
+        );
+    } else {
+        failure.user_message = format!(
+            "Client terminal connection failed. Please restart the desktop client or turn LightOS access off and on again. (target_status={})",
+            status.as_u16()
+        );
+    }
+    if status == StatusCode::BAD_GATEWAY {
+        failure.error_code = "client_terminal_service_unavailable";
+    }
+    failure
+}
+
 fn translate_remote_control(
     text: &str,
     selector: &str,
@@ -522,13 +722,20 @@ fn translate_remote_control(
     if !matches!(kind, "history-replay-start" | "history-replay-complete") {
         return Ok(text.to_owned());
     }
+    let remote_selector = value
+        .get("selector")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim();
     let remote_pane = value
         .get("pane_id")
         .or_else(|| value.get("paneId"))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .trim();
-    if !remote_pane.is_empty() && remote_pane != pane_id {
+    if (!remote_selector.is_empty() || !remote_pane.is_empty())
+        && (remote_selector != selector || remote_pane != pane_id)
+    {
         return Err(ClientTerminalError::bad_gateway(
             "remote terminal replay identity mismatch",
         ));
@@ -568,6 +775,8 @@ async fn client_terminal_json(
     query: &[(&str, String)],
     body: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, ClientTerminalError> {
+    let method_name = method.as_str().to_owned();
+    info!(selector, method = %method_name, path, "remote client terminal request started");
     let dial = client_terminal_dial_info(headers, selector).await?;
     let mut url = client_terminal_url(&dial.ticket, path)?;
     if url.scheme() != dial.device_api_url.scheme()
@@ -607,12 +816,33 @@ async fn client_terminal_json(
             .header("content-type", "application/json")
             .body(body);
     }
-    let response = request.send().await.map_err(|_| {
+    let response = request.send().await.map_err(|error| {
+        let error = redact_sensitive_text(
+            &error.to_string(),
+            &dial.ticket.ticket,
+            dial.auth_token.expose_secret(),
+        );
+        warn!(
+            selector,
+            method = %method_name,
+            path,
+            target = %safe_url,
+            error = %error,
+            "remote client terminal request failed"
+        );
         ClientTerminalError::bad_gateway(format!(
             "remote client terminal request failed: {safe_url}"
         ))
     })?;
     let status = response.status();
+    info!(
+        selector,
+        method = %method_name,
+        path,
+        target = %safe_url,
+        %status,
+        "remote client terminal response received"
+    );
     let bytes = read_limited_body(
         response,
         MAX_WORKSPACE_RESPONSE_BYTES,
@@ -635,7 +865,7 @@ async fn client_terminal_json(
             format!("remote client terminal returned {status}: {detail}")
         }));
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 async fn client_terminal_dial_info(
@@ -643,13 +873,53 @@ async fn client_terminal_dial_info(
     selector: &str,
 ) -> Result<ClientTerminalDialInfo, ClientTerminalError> {
     let client_id = authorize_client(headers, selector).await?;
+    info!(selector, client_id, "remote client visibility authorized");
     let ticket = request_terminal_ticket(headers, &client_id).await?;
     let ticket = validate_ticket(ticket, &client_id)?;
     let device_api_url = Url::parse(&ticket.device_api_url)
         .map_err(|_| ClientTerminalError::bad_gateway("invalid client terminal device URL"))?;
-    let auth_token = device_api_auth::resolve_auth_token(&device_api_url)
+    let device_origin = device_api_url.origin().ascii_serialization();
+    info!(
+        selector,
+        client_id,
+        service = %ticket.terminal_service_name,
+        device_origin,
+        "remote client terminal ticket validated"
+    );
+    let credentials = ClientCredentials::load(CredentialPaths::runtime())
         .await
-        .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?;
+        .map_err(|error| {
+            ClientTerminalError::bad_gateway(format!(
+                "failed to load LazyCat device credentials: {error}"
+            ))
+        })?;
+    let token_provider = await_client_terminal_boundary(
+        CLIENT_TERMINAL_TIMEOUT,
+        TokenProvider::connect(device_api_url.as_str(), credentials),
+        "LazyCat device authentication connection timed out",
+    )
+    .await?
+    .map_err(|error| {
+        ClientTerminalError::bad_gateway(format!(
+            "failed to connect LazyCat device authentication: {error}"
+        ))
+    })?;
+    let auth_token = await_client_terminal_boundary(
+        CLIENT_TERMINAL_TIMEOUT,
+        token_provider.token(),
+        "LazyCat device authentication token timed out",
+    )
+    .await?
+    .map_err(|error| {
+        ClientTerminalError::bad_gateway(format!(
+            "failed to resolve LazyCat device authentication: {error}"
+        ))
+    })?;
+    info!(
+        selector,
+        client_id, device_origin, "remote client device authentication resolved"
+    );
+    let auth_token = secrecy::SecretString::from(auth_token.expose_secret().to_owned());
     Ok(ClientTerminalDialInfo {
         ticket,
         device_api_url,
@@ -673,6 +943,11 @@ async fn request_terminal_ticket(
     let base_url = resolve_admin_base_url(&info.base_url);
     let url = build_admin_url(&base_url, "/api/client-instances/terminal-ticket")
         .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?;
+    let admin_origin = url.origin().ascii_serialization();
+    info!(
+        client_id,
+        admin_origin, "requesting remote client terminal ticket"
+    );
     let mut upstream_headers =
         build_upstream_headers(headers, &account_id).map_err(ClientTerminalError::bad_gateway)?;
     upstream_headers.insert("content-type", HeaderValue::from_static("application/json"));
@@ -687,8 +962,12 @@ async fn request_terminal_ticket(
         .json(&ClientTerminalTicketRequest { id: client_id })
         .send()
         .await
-        .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?;
+        .map_err(|error| {
+            warn!(client_id, admin_origin, error = %error, "remote client terminal ticket request failed");
+            ClientTerminalError::bad_gateway(error.to_string())
+        })?;
     let status = response.status();
+    info!(client_id, admin_origin, %status, "remote client terminal ticket response received");
     let body = read_limited_body(
         response,
         MAX_TICKET_RESPONSE_BYTES,
@@ -801,7 +1080,6 @@ fn redact_sensitive_text(text: &str, ticket: &str, auth_token: &str) -> String {
 }
 
 fn convert_remote_workspace(selector: &str, remote: RemoteWorkspaceState) -> WorkspaceState {
-    let _remote_selector = remote.selector;
     WorkspaceState {
         selector: selector.to_owned(),
         active_tab_id: non_empty(remote.active_tab_id),
@@ -822,22 +1100,19 @@ fn convert_remote_workspace(selector: &str, remote: RemoteWorkspaceState) -> Wor
                     pinned: false,
                     pinned_order: None,
                     active_pane_id: non_empty(tab.active_pane_id),
-                    layout: tab.layout,
+                    layout: tab.layout.map(remote_layout_to_workspace),
                     panes: tab
                         .panes
                         .into_iter()
                         .filter(|pane| !pane.id.trim().is_empty())
-                        .map(|pane| {
-                            let _exit_code = pane.exit_code;
-                            WorkspacePaneState {
-                                session_id: pane.id.clone(),
-                                id: pane.id,
-                                status: if pane.exited { "exited" } else { "running" }.to_owned(),
-                                session_backend: "webshell".to_owned(),
-                                herdr_output_sequence: None,
-                                cols: pane.cols,
-                                rows: pane.rows,
-                            }
+                        .map(|pane| WorkspacePaneState {
+                            session_id: pane.id.clone(),
+                            id: pane.id,
+                            status: if pane.exited { "exited" } else { "running" }.to_owned(),
+                            session_backend: "webshell".to_owned(),
+                            herdr_output_sequence: None,
+                            cols: pane.cols,
+                            rows: pane.rows,
                         })
                         .collect(),
                 }
@@ -908,6 +1183,14 @@ fn workspace_sessions(workspace: &WorkspaceState) -> Vec<Session> {
         .collect()
 }
 
+fn workspace_tab_id_for_pane<'a>(workspace: &'a WorkspaceState, pane_id: &str) -> Option<&'a str> {
+    workspace
+        .tabs
+        .iter()
+        .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+        .map(|tab| tab.id.as_str())
+}
+
 fn session_from_workspace_pane(
     selector: &str,
     pane: &WorkspacePaneState,
@@ -945,7 +1228,7 @@ fn remote_workspace_action(
         WorkspaceAction::SplitPane => "split_pane",
         WorkspaceAction::ClosePane => "close_pane",
         WorkspaceAction::ActivatePane => "activate_pane",
-        WorkspaceAction::PromotePaneToTab => "promote_pane_to_tab",
+        WorkspaceAction::PromotePaneToTab => "move_pane_to_tab",
         WorkspaceAction::UpdateLayout => "update_layout",
         WorkspaceAction::SetTabPinned => {
             return Err(ClientTerminalError::bad_request(
@@ -959,23 +1242,74 @@ fn remote_workspace_action(
         pane_id: request.pane_id.clone().unwrap_or_default(),
         direction: request
             .direction
-            .map(direction_name)
+            .map(remote_split_direction)
             .unwrap_or_default()
             .to_owned(),
         label: request.label.clone().unwrap_or_default(),
-        layout: request.layout.clone(),
+        layout: request.layout.as_ref().map(workspace_layout_to_remote),
         active_pane_id: request.active_pane_id.clone().unwrap_or_default(),
         cols,
         rows,
     })
 }
 
-fn direction_name(direction: SplitDirection) -> &'static str {
+fn remote_split_direction(direction: SplitDirection) -> &'static str {
     match direction {
-        SplitDirection::Up => "up",
-        SplitDirection::Down => "down",
-        SplitDirection::Left => "left",
-        SplitDirection::Right => "right",
+        SplitDirection::Left | SplitDirection::Right => "vertical",
+        SplitDirection::Up | SplitDirection::Down => "horizontal",
+    }
+}
+
+fn remote_layout_to_workspace(node: RemoteWorkspaceLayoutNode) -> WorkspaceLayoutNode {
+    match node {
+        RemoteWorkspaceLayoutNode::Leaf { pane_id, .. } => WorkspaceLayoutNode::Pane { pane_id },
+        RemoteWorkspaceLayoutNode::Split {
+            direction,
+            children,
+            ..
+        } => WorkspaceLayoutNode::Split {
+            axis: match direction {
+                RemoteSplitDirection::Vertical => SplitAxis::Columns,
+                RemoteSplitDirection::Horizontal => SplitAxis::Rows,
+            },
+            children: children
+                .into_iter()
+                .map(remote_layout_to_workspace)
+                .collect(),
+        },
+    }
+}
+
+fn workspace_layout_to_remote(node: &WorkspaceLayoutNode) -> RemoteWorkspaceLayoutNode {
+    workspace_layout_to_remote_with_size(node, None)
+}
+
+fn workspace_layout_to_remote_with_size(
+    node: &WorkspaceLayoutNode,
+    size: Option<f64>,
+) -> RemoteWorkspaceLayoutNode {
+    match node {
+        WorkspaceLayoutNode::Pane { pane_id } => RemoteWorkspaceLayoutNode::Leaf {
+            pane_id: pane_id.clone(),
+            size,
+        },
+        WorkspaceLayoutNode::Split { axis, children } => {
+            let child_size = u32::try_from(children.len())
+                .ok()
+                .filter(|count| *count > 0)
+                .map(|count| 100.0 / f64::from(count));
+            RemoteWorkspaceLayoutNode::Split {
+                direction: match axis {
+                    SplitAxis::Rows => RemoteSplitDirection::Horizontal,
+                    SplitAxis::Columns => RemoteSplitDirection::Vertical,
+                },
+                children: children
+                    .iter()
+                    .map(|child| workspace_layout_to_remote_with_size(child, child_size))
+                    .collect(),
+                size,
+            }
+        }
     }
 }
 
@@ -986,18 +1320,24 @@ fn non_empty(value: String) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::future::pending;
+    use std::time::Duration;
 
     use axum::http::StatusCode;
 
     use super::{
-        ClientTerminalTicket, RemoteWorkspaceState, authorize_client_id, client_terminal_url,
+        ClientTerminalTicket, RemoteWorkspaceState, authorize_client_id,
+        await_client_terminal_boundary, classify_remote_websocket_failure, client_terminal_url,
         convert_remote_workspace, redact_sensitive_text, remote_access_error,
-        remote_session_action_request, remote_workspace_action, sanitize_client_terminal_url,
-        translate_remote_control, validate_ticket, websocket_terminal_url,
-        workspace_active_session, workspace_sessions,
+        remote_session_action_request, remote_websocket_failure_payload, remote_workspace_action,
+        sanitize_client_terminal_url, terminal_theme_color, translate_remote_control,
+        validate_ticket, websocket_terminal_url, workspace_active_session, workspace_sessions,
+        workspace_tab_id_for_pane,
     };
     use crate::lightos_admin::ClientInstanceSummary;
-    use crate::workspace::{SessionBackend, WorkspaceAction, WorkspaceActionRequest};
+    use crate::workspace::{
+        SessionBackend, SplitAxis, WorkspaceAction, WorkspaceActionRequest, WorkspaceLayoutNode,
+    };
 
     fn ticket() -> ClientTerminalTicket {
         ClientTerminalTicket {
@@ -1054,6 +1394,62 @@ mod tests {
         assert!(remote_access_error(StatusCode::BAD_GATEWAY).is_none());
     }
 
+    #[tokio::test]
+    async fn times_out_a_stalled_device_authentication_boundary() {
+        let error = await_client_terminal_boundary(
+            Duration::ZERO,
+            pending::<()>(),
+            "device authentication timed out",
+        )
+        .await
+        .expect_err("pending authentication must time out");
+
+        assert_eq!(error.status, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(error.message, "device authentication timed out");
+    }
+
+    #[test]
+    fn classifies_remote_websocket_failures_like_the_go_provider() {
+        let unavailable = classify_remote_websocket_failure(
+            Some(StatusCode::BAD_GATEWAY),
+            "upstream unavailable",
+            "websocket: bad handshake",
+        );
+        assert_eq!(
+            unavailable.error_code,
+            "client_terminal_service_unavailable"
+        );
+        assert!(unavailable.user_message.contains("target_status=502"));
+        assert!(unavailable.user_message.contains("upstream unavailable"));
+        assert!(
+            unavailable
+                .technical_message
+                .contains("target_body=upstream unavailable")
+        );
+        assert_eq!(
+            remote_websocket_failure_payload(&unavailable),
+            serde_json::json!({
+                "type": "process-exit",
+                "exit_code": -1,
+                "message": unavailable.user_message,
+                "technical_message": unavailable.technical_message,
+                "error_code": "client_terminal_service_unavailable",
+                "retryable": true,
+            })
+        );
+
+        let forbidden = classify_remote_websocket_failure(
+            Some(StatusCode::FORBIDDEN),
+            "forbidden",
+            "websocket: bad handshake",
+        );
+        assert_eq!(forbidden.error_code, "client_terminal_forbidden");
+        assert_eq!(
+            forbidden.user_message,
+            "instance is not accessible by current account"
+        );
+    }
+
     #[test]
     fn converts_remote_terminal_urls_to_websocket_urls() {
         let secure = reqwest::Url::parse("https://device.example/terminal?ticket=secret")
@@ -1071,9 +1467,17 @@ mod tests {
     }
 
     #[test]
+    fn forwards_only_safe_terminal_theme_colors() {
+        assert_eq!(terminal_theme_color(Some(" #aBc123 ")), Some("#aBc123"));
+        assert_eq!(terminal_theme_color(Some("rgba(0,0,0,0.5)")), None);
+        assert_eq!(terminal_theme_color(Some("#123456?ticket=secret")), None);
+        assert_eq!(terminal_theme_color(None), None);
+    }
+
+    #[test]
     fn translates_official_history_replay_controls_for_the_current_frontend() {
         let start = translate_remote_control(
-            r#"{"type":"history-replay-start","selector":"remote","pane_id":"pane-1","allow_generated_input":true}"#,
+            r#"{"type":"history-replay-start","selector":"client:client-a","pane_id":"pane-1","allow_generated_input":true}"#,
             "client:client-a",
             "pane-1",
             12,
@@ -1087,7 +1491,7 @@ mod tests {
         assert_eq!(start["allow_generated_input"], true);
 
         let complete = translate_remote_control(
-            r#"{"type":"history-replay-complete","selector":"remote","pane_id":"pane-1"}"#,
+            r#"{"type":"history-replay-complete","selector":"client:client-a","pane_id":"pane-1"}"#,
             "client:client-a",
             "pane-1",
             12,
@@ -1116,6 +1520,15 @@ mod tests {
         )
         .expect_err("mismatched replay must be rejected");
         assert!(error.to_string().contains("identity mismatch"));
+
+        let error = translate_remote_control(
+            r#"{"type":"history-replay-start","selector":"client:client-b","pane_id":"pane-1"}"#,
+            "client:client-a",
+            "pane-1",
+            12,
+        )
+        .expect_err("mismatched selector must be rejected");
+        assert!(error.to_string().contains("identity mismatch"));
     }
 
     #[test]
@@ -1129,10 +1542,26 @@ mod tests {
                     "label":"Build",
                     "custom_label":true,
                     "active_pane_id":"pane-1",
-                    "layout":{"type":"pane","paneId":"pane-1"},
+                    "layout":{
+                        "type":"split",
+                        "direction":"vertical",
+                        "children":[
+                            {"type":"leaf","paneId":"pane-1","size":50},
+                            {
+                                "type":"split",
+                                "direction":"horizontal",
+                                "size":50,
+                                "children":[
+                                    {"type":"leaf","paneId":"pane-2","size":50},
+                                    {"type":"leaf","paneId":"pane-3","size":50}
+                                ]
+                            }
+                        ]
+                    },
                     "panes":[
                         {"id":"pane-1","cols":120,"rows":32,"exited":false,"exit_code":0},
-                        {"id":"pane-2","cols":80,"rows":24,"exited":true,"exit_code":7}
+                        {"id":"pane-2","cols":80,"rows":24,"exited":true,"exit_code":7},
+                        {"id":"pane-3","cols":80,"rows":24,"exited":false,"exit_code":0}
                     ]
                 }]
             }"#,
@@ -1148,6 +1577,25 @@ mod tests {
         assert_eq!(workspace.tabs[0].panes[0].session_backend, "webshell");
         assert_eq!(workspace.tabs[0].panes[0].status, "running");
         assert_eq!(workspace.tabs[0].panes[1].status, "exited");
+        assert_eq!(
+            serde_json::to_value(workspace.tabs[0].layout.as_ref().expect("layout"))
+                .expect("layout JSON"),
+            serde_json::json!({
+                "type": "split",
+                "axis": "columns",
+                "children": [
+                    {"type": "pane", "paneId": "pane-1"},
+                    {
+                        "type": "split",
+                        "axis": "rows",
+                        "children": [
+                            {"type": "pane", "paneId": "pane-2"},
+                            {"type": "pane", "paneId": "pane-3"}
+                        ]
+                    }
+                ]
+            })
+        );
     }
 
     #[test]
@@ -1180,6 +1628,12 @@ mod tests {
             session.selector.as_deref() == Some("client:client-a")
                 && session.metadata.get("sessionBackend").map(String::as_str) == Some("webshell")
         }));
+
+        assert_eq!(
+            workspace_tab_id_for_pane(&workspace, "pane-b"),
+            Some("tab-a")
+        );
+        assert_eq!(workspace_tab_id_for_pane(&workspace, "pane-missing"), None);
     }
 
     #[test]
@@ -1244,6 +1698,48 @@ mod tests {
         assert_eq!(value["cols"], 120);
         assert!(value.get("name").is_none());
 
+        let layout_request = WorkspaceActionRequest {
+            name: "client:client-a".to_owned(),
+            action: WorkspaceAction::UpdateLayout,
+            tab_id: Some("tab-1".to_owned()),
+            pane_id: None,
+            direction: None,
+            label: None,
+            layout: Some(WorkspaceLayoutNode::Split {
+                axis: SplitAxis::Columns,
+                children: vec![
+                    WorkspaceLayoutNode::Pane {
+                        pane_id: "pane-1".to_owned(),
+                    },
+                    WorkspaceLayoutNode::Pane {
+                        pane_id: "pane-2".to_owned(),
+                    },
+                ],
+            }),
+            active_pane_id: Some("pane-2".to_owned()),
+            cols: Some(120),
+            rows: Some(32),
+            output_limit: None,
+            auto_restart: None,
+            session_backend: Some(SessionBackend::Webshell),
+            pinned: None,
+            pinned_order: None,
+        };
+        let layout =
+            remote_workspace_action(&layout_request, 120, 32).expect("remote layout action");
+        let layout = serde_json::to_value(layout).expect("layout action JSON");
+        assert_eq!(
+            layout["layout"],
+            serde_json::json!({
+                "type": "split",
+                "direction": "vertical",
+                "children": [
+                    {"type": "leaf", "paneId": "pane-1", "size": 50.0},
+                    {"type": "leaf", "paneId": "pane-2", "size": 50.0}
+                ]
+            })
+        );
+
         let unsupported = WorkspaceActionRequest {
             session_backend: Some(SessionBackend::Herdr),
             ..request
@@ -1251,5 +1747,65 @@ mod tests {
         let error = remote_workspace_action(&unsupported, 120, 32)
             .expect_err("Herdr must not be forwarded to a remote client");
         assert!(error.to_string().contains("native WebShell"));
+    }
+
+    #[test]
+    fn translates_pane_promotion_to_the_go_workspace_action() {
+        let request = WorkspaceActionRequest {
+            name: "client:client-a".to_owned(),
+            action: WorkspaceAction::PromotePaneToTab,
+            tab_id: Some("tab-1".to_owned()),
+            pane_id: Some("pane-2".to_owned()),
+            direction: None,
+            label: None,
+            layout: None,
+            active_pane_id: None,
+            cols: Some(120),
+            rows: Some(32),
+            output_limit: None,
+            auto_restart: None,
+            session_backend: Some(SessionBackend::Webshell),
+            pinned: None,
+            pinned_order: None,
+        };
+
+        let outbound = remote_workspace_action(&request, 120, 32).expect("remote action");
+        let value = serde_json::to_value(outbound).expect("action JSON");
+
+        assert_eq!(value["action"], "move_pane_to_tab");
+        assert_eq!(value["tab_id"], "tab-1");
+        assert_eq!(value["pane_id"], "pane-2");
+    }
+
+    #[test]
+    fn translates_directional_splits_to_the_go_workspace_axis() {
+        for (direction, expected) in [
+            (crate::workspace::SplitDirection::Left, "vertical"),
+            (crate::workspace::SplitDirection::Right, "vertical"),
+            (crate::workspace::SplitDirection::Up, "horizontal"),
+            (crate::workspace::SplitDirection::Down, "horizontal"),
+        ] {
+            let request = WorkspaceActionRequest {
+                name: "client:client-a".to_owned(),
+                action: WorkspaceAction::SplitPane,
+                tab_id: Some("tab-1".to_owned()),
+                pane_id: Some("pane-1".to_owned()),
+                direction: Some(direction),
+                label: None,
+                layout: None,
+                active_pane_id: None,
+                cols: Some(120),
+                rows: Some(32),
+                output_limit: None,
+                auto_restart: None,
+                session_backend: Some(SessionBackend::Webshell),
+                pinned: None,
+                pinned_order: None,
+            };
+
+            let outbound = remote_workspace_action(&request, 120, 32).expect("remote action");
+            let value = serde_json::to_value(outbound).expect("action JSON");
+            assert_eq!(value["direction"], expected);
+        }
     }
 }

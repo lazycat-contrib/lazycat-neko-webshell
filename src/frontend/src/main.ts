@@ -129,9 +129,12 @@ import {
 import { createPaneMenuController } from "./pane-menu-controller";
 import {
   filterRemoteClientPluginTools,
+  installRemoteClientKeepalive,
   isRemoteClientSelector,
   remoteClientNewTabCapabilities,
+  remoteClientProcessExitShouldRetry,
   remoteClientReplayInputPolicy,
+  remoteClientReplayLockTimeout,
   resetRemoteClientTerminalForReplay,
 } from "./remote-client-terminal";
 import {
@@ -314,6 +317,7 @@ import {
   terminalAppearanceContext,
 } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
+import { terminalThemeSocketColors } from "./terminal-theme-wire";
 import { createUploadProgressController } from "./upload-progress";
 import { CUSTOM_THEME_PREFIX } from "./theme-registry";
 import { renderPluginSettingsView } from "./plugin-views";
@@ -345,6 +349,7 @@ import type {
 } from "./types";
 import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorLabel } from "./utils";
 import {
+  webshellGeneratedInputMessage,
   webshellOutputBufferMessage,
   webshellHistoryRecordingMessage,
   webshellResizeMessage,
@@ -5227,6 +5232,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     after: replayAfter,
     outputLimit: settings.outputBufferLimit,
     controlMode: attach.controlMode,
+    theme: terminalThemeSocketColors(currentAppearanceContext().resttyTheme),
   });
 
   pane.exited = false;
@@ -5237,6 +5243,8 @@ async function openSocketPrepared(pane: TerminalPane) {
   socket.binaryType = "arraybuffer";
   socket.addEventListener("open", () => {
     if (pane.socket !== socket) return;
+    pane.remoteKeepaliveStop?.();
+    pane.remoteKeepaliveStop = installRemoteClientKeepalive(pane.selector, socket);
     pane.reconnectDelay = 1000;
     beginReplayInputLock(pane, socket);
     pane.transport?.notifyConnect();
@@ -5252,6 +5260,8 @@ async function openSocketPrepared(pane: TerminalPane) {
   });
   socket.addEventListener("close", () => {
     if (pane.socket !== socket) return;
+    pane.remoteKeepaliveStop?.();
+    pane.remoteKeepaliveStop = undefined;
     pendingPaneSocketOpens.delete(pane.id);
     terminalTransfer.resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
@@ -5263,6 +5273,8 @@ async function openSocketPrepared(pane: TerminalPane) {
   });
   socket.addEventListener("error", () => {
     if (pane.socket !== socket) return;
+    pane.remoteKeepaliveStop?.();
+    pane.remoteKeepaliveStop = undefined;
     pendingPaneSocketOpens.delete(pane.id);
     terminalTransfer.resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
@@ -5272,14 +5284,18 @@ async function openSocketPrepared(pane: TerminalPane) {
   });
 }
 
-function beginReplayInputLock(pane: TerminalPane, socket: WebSocket) {
+function beginReplayInputLock(
+  pane: TerminalPane,
+  socket: WebSocket,
+  timeoutMs = REPLAY_INPUT_LOCK_TIMEOUT_MS,
+) {
   window.clearTimeout(pane.replayTimer);
   herdrWheelInputBatcher.clear(pane);
   pane.replaying = true;
   pane.replayTimer = window.setTimeout(() => {
     if (pane.socket !== socket || pane.closing || !pane.replaying) return;
     finishReplayInputLock(pane);
-  }, REPLAY_INPUT_LOCK_TIMEOUT_MS);
+  }, timeoutMs);
 }
 
 function clearReplayInputLock(pane: TerminalPane) {
@@ -5464,6 +5480,20 @@ function handleServerText(pane: TerminalPane, text: string) {
     setPaneStatus(pane, tr("status.shellReady"), "ok");
   } else if (event.type === "control-state") {
     terminalControl.noteControlState(pane, event);
+  } else if (event.type === "agent-preparing") {
+    if (pane.socket) {
+      beginReplayInputLock(
+        pane,
+        pane.socket,
+        remoteClientReplayLockTimeout(
+          pane.selector,
+          event.type,
+          REPLAY_INPUT_LOCK_TIMEOUT_MS,
+        ),
+      );
+    }
+  } else if (event.type === "pong") {
+    return;
   } else if (event.type === "replay-start") {
     herdrWheelInputBatcher.clear(pane);
     if (!matchesPaneReplay(pane, event)) {
@@ -5492,11 +5522,22 @@ function handleServerText(pane: TerminalPane, text: string) {
     }
   } else if (event.type === "process-exit") {
     clearReplayInputLock(pane);
+    if (remoteClientProcessExitShouldRetry(pane.selector, event)) {
+      const message = event.message || tr("status.socketError");
+      pane.transport?.notifyError(message);
+      setPaneStatus(pane, message, "error");
+      pane.socket?.close();
+      return;
+    }
     pane.exited = true;
     clearPendingInput(pane);
     pane.sessionStatus = "exited";
     pane.transport?.notifyExit(event.exit_code ?? -1);
-    setPaneStatus(pane, tr("status.processExited", { code: event.exit_code ?? -1 }), "error");
+    setPaneStatus(
+      pane,
+      event.message || tr("status.processExited", { code: event.exit_code ?? -1 }),
+      "error",
+    );
   } else if (event.type === "session-stopped") {
     clearReplayInputLock(pane);
     clearPendingInput(pane);
@@ -6201,7 +6242,7 @@ function sendPaneInputDirect(pane: TerminalPane, data: string): boolean {
   if (replayPolicy === "suppress") return true;
   if (replayPolicy === "immediate") {
     if (pane.socket?.readyState !== WebSocket.OPEN) return false;
-    pane.socket.send(terminalEncoder.encode(data));
+    pane.socket.send(webshellGeneratedInputMessage(data));
     return true;
   }
   if (isInterruptInput(data) && pane.socket?.readyState === WebSocket.OPEN) {

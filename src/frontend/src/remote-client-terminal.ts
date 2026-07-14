@@ -17,11 +17,36 @@ const generatedTerminalResponsePatterns = [
   /^\x1b\](?:10|11|12);rgb:[\da-fA-F]{4}\/[\da-fA-F]{4}\/[\da-fA-F]{4}\x07/,
   /^\x1b\]52;[^;\x07\x1b]*;[A-Za-z\d+/=]*\x07/,
 ] as const;
+const generatedTerminalResponseTailPattern = /^(?:\[\d{1,6};\d{1,6}R|\[\d{1,6}R|\d{1,6};\d{1,6}R|;\d{1,6}R|\d{1,6}R|\dR)+$/;
 
 export type RemoteClientNewTabCapabilities = {
   lightosDirectAvailable: boolean;
   sshAvailable: boolean;
 };
+
+type RemoteProcessExit = {
+  retryable?: boolean;
+  message?: string;
+};
+
+type RemoteKeepaliveSocket = {
+  readyState: number;
+  send(message: string): void;
+  close?(): void;
+  addEventListener(
+    type: "close" | "error",
+    listener: () => void,
+    options?: { once?: boolean },
+  ): void;
+};
+
+type RemoteKeepaliveClock = {
+  setInterval(callback: () => void, delay: number): number;
+  clearInterval(id: number): void;
+};
+
+const REMOTE_CLIENT_KEEPALIVE_INTERVAL_MS = 10_000;
+const REMOTE_CLIENT_AGENT_PREPARE_TIMEOUT_MS = 45_000;
 
 export function isRemoteClientSelector(value: unknown): boolean {
   const selector = String(value ?? "").trim();
@@ -44,6 +69,54 @@ export function remoteClientNewTabCapabilities(
   };
 }
 
+export function remoteClientProcessExitShouldRetry(
+  selector: string,
+  event: RemoteProcessExit,
+): boolean {
+  return Boolean(
+    isRemoteClientSelector(selector)
+      && event.retryable === true
+      && !/pane not found/i.test(String(event.message ?? "")),
+  );
+}
+
+export function installRemoteClientKeepalive(
+  selector: string,
+  socket: RemoteKeepaliveSocket,
+  clock: RemoteKeepaliveClock = window,
+): () => void {
+  if (!isRemoteClientSelector(selector)) return () => {};
+  let active = true;
+  let timer = 0;
+  const stop = () => {
+    if (!active) return;
+    active = false;
+    clock.clearInterval(timer);
+  };
+  timer = clock.setInterval(() => {
+    if (!active || socket.readyState !== 1) return;
+    try {
+      socket.send(JSON.stringify({ type: "ping" }));
+    } catch {
+      stop();
+      socket.close?.();
+    }
+  }, REMOTE_CLIENT_KEEPALIVE_INTERVAL_MS);
+  socket.addEventListener("close", stop, { once: true });
+  socket.addEventListener("error", stop, { once: true });
+  return stop;
+}
+
+export function remoteClientReplayLockTimeout(
+  selector: string,
+  eventType: string,
+  defaultTimeoutMs: number,
+): number {
+  return isRemoteClientSelector(selector) && eventType === "agent-preparing"
+    ? REMOTE_CLIENT_AGENT_PREPARE_TIMEOUT_MS
+    : defaultTimeoutMs;
+}
+
 export function remoteClientReplayInputPolicy(
   selector: string,
   replaying: boolean,
@@ -60,6 +133,7 @@ function isGeneratedTerminalResponse(data: string): boolean {
   if (!data) return false;
   let remaining = data;
   while (remaining) {
+    if (generatedTerminalResponseTailPattern.test(remaining)) return true;
     const match = generatedTerminalResponsePatterns
       .map((pattern) => pattern.exec(remaining))
       .find((candidate) => candidate !== null);

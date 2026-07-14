@@ -1,6 +1,6 @@
 [package]
 name = "lazycat-neko-webshell"
-version = "0.5.26"
+version = "0.5.27"
 edition = "2024"
 rust-version = "1.88"
 default-run = "lazycat-neko-webshell"
@@ -17,10 +17,10 @@ capnp-futures = "0.19.0"
 capnp-rpc = "0.19.0"
 claude-sdk = { version = "2.1.0", default-features = false, features = ["anthropic"] }
 connectrpc = { version = "0.4.2", features = ["axum"] }
-ed25519-dalek = { version = "2.2.0", features = ["pkcs8"] }
 futures = "0.3.31"
 http = "1.4.0"
 http-body = "1.0.1"
+lzc-sdk = { git = "https://github.com/lib-x/lzc-sdk-rs", tag = "v0.1.0", default-features = false, features = ["gateway"] }
 mime_guess = "2.0.5"
 ngrok = "0.18.0"
 portable-pty = "0.9.0"
@@ -28,11 +28,9 @@ quinn = { version = "0.10.2", features = ["futures-io"] }
 base64 = "0.22.1"
 reqwest = { version = "0.12.24", default-features = false, features = ["http2", "json", "rustls-tls", "stream"] }
 reqwest13 = { package = "reqwest", version = "0.13.4", default-features = false }
-rsa = { version = "0.9.9", features = ["pem"] }
-rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.39.0", default-features = false, features = ["bundled"] }
 rustls = "0.21.12"
 rustls23 = { package = "rustls", version = "0.23.41", default-features = false, features = ["ring", "std"] }
-rustls-pemfile = "2.2.0"
 secrecy = "0.10.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
@@ -47,15 +45,10 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 url = "2.5.8"
 uuid = { version = "1.18.1", features = ["v4"] }
 wuff = "0.2.5"
-x509-parser = "0.18.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
 connectrpc-build = "0.4.2"
-
-[dev-dependencies]
-h2 = "0.4.14"
-tokio-rustls = "0.26.4"
 
 [lints.rust]
 unsafe_code = "warn"

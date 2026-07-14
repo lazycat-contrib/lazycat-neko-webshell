@@ -3,8 +3,17 @@ export const MAX_PENDING_INPUT_BYTES = 64 * 1024;
 export type TerminalServerEvent =
   | { type: "ready"; session_id?: string; cols?: number; rows?: number }
   | { type: "error"; message?: string; fatal?: boolean }
-  | { type: "process-exit"; exit_code?: number; message?: string }
+  | {
+    type: "process-exit";
+    exit_code?: number;
+    message?: string;
+    technical_message?: string;
+    error_code?: string;
+    retryable?: boolean;
+  }
   | { type: "session-stopped"; message?: string }
+  | { type: "agent-preparing" }
+  | { type: "pong" }
   | { type: "output-sequence"; sequence?: number }
   | {
     type: "control-state";

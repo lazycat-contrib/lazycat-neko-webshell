@@ -375,6 +375,7 @@ export type TerminalPane = {
   workingDirectory?: string;
   term?: Terminal;
   socket?: WebSocket;
+  remoteKeepaliveStop?: () => void;
   transport?: PaneTerminalTransport;
   decoder?: TextDecoder;
   titleBuffer: string;

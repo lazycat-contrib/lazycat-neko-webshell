@@ -23,7 +23,7 @@ The provider keeps three boundaries explicit:
 
 1. `lightos_admin.rs` is the account-scoped discovery adapter. It calls both official admin endpoints with the browser’s safe auth headers and maps their JSON responses into the internal `Instance` protobuf model.
 2. `client_terminal.rs` is the remote-terminal adapter. It re-authorizes every `client:<id>` request against the current account-visible list, obtains a short-lived terminal ticket, resolves the device API auth token, converts workspace JSON, and proxies WebSocket frames.
-3. `device_api_auth.rs` implements the minimal official SDK authentication contract in Rust. It reads the mounted LazyCat certificates, signs the application certificate subject serial number, sends the protobuf `RequestAuthToken` gRPC request to the device API, and returns only the short-lived token.
+3. The shared `lzc-sdk` crate owns device authentication. `client_terminal.rs` loads the mounted LazyCat credentials through `ClientCredentials`, resolves the short-lived token through `TokenProvider`, and never reimplements the official protobuf signing or gRPC transport locally.
 
 Transport compatibility currently matches the official Go provider and LazyCat SDK: device HTTP and WebSocket clients accept the platform's self-signed or hostname-mismatched certificates. This is a deliberate interoperability exception, not strict peer-identity verification. Credential-bearing HTTP clients must not follow redirects, and tickets, device tokens, certificate material, and signed authentication payloads must never be logged. Tightening certificate verification requires a documented LightOS device-certificate identity contract and real-device compatibility testing first.
 
@@ -43,7 +43,7 @@ Selectors remain stable:
 - Remote client: `client:<client_instance_id>`
 - SSH: existing `ssh:<profile_id>` form
 
-The device auth request/response is defined in a minimal protobuf file using the official package and field numbers. The external HTTP admin API remains JSON because that is the platform contract.
+The device auth protobuf and transport are supplied by the shared `lzc-sdk` crate. The provider keeps no copied permission proto or provider-owned signing implementation. The external HTTP admin API remains JSON because that is the platform contract.
 
 ## Remote request flow
 
@@ -69,6 +69,8 @@ The official remote terminal service returns its Go workspace schema. The provid
 - layout, active tab, pane size, labels, and exit state are preserved;
 - unsupported local metadata such as pin ordering is omitted.
 
+The layout and action contracts require an explicit wire adapter rather than direct reuse of the local Rust types. The Go service represents pane nodes as `type: "leaf"`, split orientation as `direction: "vertical" | "horizontal"`, and optional child percentages as `size`. The Rust/frontend model uses `type: "pane"` and `axis: "columns" | "rows"`. Likewise, directional Rust splits map left/right to Go `vertical` and up/down to Go `horizontal`, while Rust `promote_pane_to_tab` maps to the Go action name `move_pane_to_tab`. Contract tests must use the literal Go JSON field and action names.
+
 Workspace actions are converted in the other direction and only the native action set already supported by both implementations is forwarded. `session_backend` values other than `webshell` are rejected for remote clients.
 
 ## WebSocket compatibility
@@ -78,6 +80,8 @@ The remote service’s binary terminal bytes pass through unchanged. Text contro
 - `history-replay-start` becomes the current `replay-start` event with selector, pane, session identity, and replay cursor.
 - `history-replay-complete` becomes `replay-complete`.
 - `process-exit` and other compatible control messages pass through.
+
+The browser WebSocket is upgraded after authorization, ticket, and SDK token preparation but before dialing the remote terminal, matching the Go provider. A target dial failure is returned as a retryable `process-exit` control event. Remote panes send a 10-second JSON ping so the Go attach service does not hit its 30-second read deadline, extend replay input locking to 45 seconds while receiving `agent-preparing`, and mark the single allowed replay-generated terminal response with `generated: true`.
 
 The frontend resets only a remote-client terminal when replay starts, matching the official client behavior and preventing duplicated history after reconnect. Instance switching remains immediate and receives no decorative animation because it is a frequent operation.
 

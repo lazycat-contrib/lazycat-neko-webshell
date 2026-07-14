@@ -57,6 +57,9 @@ pub struct TerminalQuery {
     pane_id: Option<String>,
     backend: Option<String>,
     control_mode: Option<String>,
+    fg: Option<String>,
+    bg: Option<String>,
+    cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,9 +301,14 @@ pub async fn terminal_ws(
             &headers,
             selector,
             pane_id,
-            cols,
-            rows,
-            query.after.unwrap_or(0),
+            client_terminal::RemoteTerminalConnectOptions {
+                cols,
+                rows,
+                replay_after: query.after.unwrap_or(0),
+                foreground: query.fg.as_deref(),
+                background: query.bg.as_deref(),
+                cursor: query.cursor.as_deref(),
+            },
         )
         .await
         {
