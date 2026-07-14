@@ -284,8 +284,9 @@ import {
   tabCurrentTitle as currentTabTitle,
   tabDisplayName as displayNameForTab,
   tabHasTextTitle as tabHasDisplayTextTitle,
+  tabLabelPresentation,
   tabPinnedGlyph as pinnedGlyphForTab,
-  remoteTabTitle,
+  remoteTabDetail,
   tabTone as toneForTab,
 } from "./tab-labels";
 import { applyPaneMouseMode } from "./terminal-mouse-mode";
@@ -5862,8 +5863,9 @@ function syncAIChatForActiveTerminal() {
 }
 
 function renderTabs() {
-  updateTabChrome();
-  const result = syncTabsView(elements.tabList, tabViewItems(), {
+  const items = tabViewItems();
+  updateTabChrome(items);
+  const result = syncTabsView(elements.tabList, items, {
     empty: tr("status.noSessions"),
     rename: tr("action.renameTab"),
     close: tr("action.closeTab"),
@@ -5893,43 +5895,45 @@ function tabViewItems(): TabViewItem[] {
   const pinned = sortedPinnedTabs();
   return tabs.map((tab) => {
     const remote = isRemoteClientSelector(tab.selector);
-    const displayName = tabDisplayName(tab);
+    const active = tab.id === activeTabId;
+    const renaming = renamingTabId === tab.id;
+    const terminalDisplayName = tabDisplayName(tab);
+    const pane = activePane(tab);
+    const sourceName = instanceForSelector(tab.selector)?.name || selectorLabel(tab.selector);
+    const presentation = tabLabelPresentation({
+      active,
+      remote,
+      pinned: tab.pinned,
+      renaming,
+      sourceName,
+      terminalName: remote
+        ? remoteTabDetail(tab, pane, terminalDisplayName)
+        : terminalDisplayName,
+      terminalHasText: tabHasDisplayTextTitle(tab, terminalDisplayName),
+    });
     const pinnedIndex = tab.pinned ? pinned.findIndex((item) => item.id === tab.id) : -1;
     return {
       id: tab.id,
-      active: tab.id === activeTabId,
-      renaming: renamingTabId === tab.id,
-      named: !remote && !tab.pinned && tabHasTextTitle(tab, displayName),
+      active,
+      renaming,
       pinned: tab.pinned,
-      pinnedGlyph: tabPinnedGlyph(tab, displayName),
+      pinnedGlyph: tabPinnedGlyph(tab, terminalDisplayName),
       canMovePinnedPrevious: pinnedIndex > 0,
       canMovePinnedNext: pinnedIndex >= 0 && pinnedIndex < pinned.length - 1,
-      displayName,
-      title: remote
-        ? remoteTabTitle(
-          tab,
-          activePane(tab),
-          instanceForSelector(tab.selector)?.name || selectorLabel(tab.selector),
-        )
-        : tab.pinned ? displayName : tabCurrentTitle(tab),
       tone: tabTone(tab),
       icon: remote ? "monitor-smartphone" : undefined,
-      iconOnly: remote,
+      ...presentation,
     };
   });
 }
 
-function updateTabChrome() {
-  elements.webshell.classList.toggle("has-named-tabs", tabs.some((tab) => !tab.pinned && tabHasTextTitle(tab, tabDisplayName(tab))));
+function updateTabChrome(items: TabViewItem[]) {
+  elements.webshell.classList.toggle("has-named-tabs", items.some((tab) => tab.named));
   elements.webshell.classList.toggle("has-pinned-tabs", tabs.some((tab) => tab.pinned));
 }
 
 function tabDisplayName(tab: TerminalTab): string {
   return displayNameForTab(tab, tabs, tr, herdrWorkspaceLabelForTab);
-}
-
-function tabHasTextTitle(tab: TerminalTab, displayName = tabDisplayName(tab)): boolean {
-  return !isRemoteClientSelector(tab.selector) && tabHasDisplayTextTitle(tab, displayName);
 }
 
 function tabPinnedGlyph(tab: TerminalTab, displayName = tabDisplayName(tab)): string {

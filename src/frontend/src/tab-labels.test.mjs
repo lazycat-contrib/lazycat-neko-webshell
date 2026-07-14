@@ -61,6 +61,23 @@ test("does not repeat equal source and terminal names", () => {
   }).displayName, "Herdr");
 });
 
+test("keeps the source prefix out of the rename value", () => {
+  assert.deepEqual(tabLabelPresentation({
+    active: true,
+    remote: true,
+    pinned: false,
+    renaming: true,
+    sourceName: "MacBook Pro",
+    terminalName: "Herdr",
+    terminalHasText: true,
+  }), {
+    displayName: "Herdr",
+    title: "MacBook Pro · Herdr",
+    iconOnly: false,
+    named: true,
+  });
+});
+
 test("resolves remote Herdr as the terminal detail", () => {
   assert.equal(
     remoteTabDetail(

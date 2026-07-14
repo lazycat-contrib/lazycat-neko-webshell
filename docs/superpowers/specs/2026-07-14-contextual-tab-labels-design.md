@@ -34,6 +34,8 @@ and causes adjacent tabs to move unnecessarily.
   string is also the visible text.
 - Duplicate or missing parts collapse cleanly: if source and detail are equal,
   render the value once; if one part is empty, render the other part.
+- Renaming edits only the terminal name; the contextual source prefix is never
+  copied into the rename input or persisted as part of the custom name.
 
 Examples:
 

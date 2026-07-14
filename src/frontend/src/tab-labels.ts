@@ -7,6 +7,7 @@ export type TabLabelPresentationInput = {
   active: boolean;
   remote: boolean;
   pinned: boolean;
+  renaming?: boolean;
   sourceName: string;
   terminalName: string;
   terminalHasText: boolean;
@@ -82,24 +83,16 @@ export function remoteTabDetail(
 export function tabLabelPresentation(input: TabLabelPresentationInput): TabLabelPresentation {
   const terminalName = input.terminalName.trim();
   const title = contextualTabLabel(input.sourceName, terminalName);
-  const iconOnly = input.remote && !input.active;
+  const iconOnly = input.remote && !input.active && !input.renaming;
+  const showContext = input.active && !input.pinned && !input.renaming;
   return {
-    displayName: input.active && !input.pinned ? title : terminalName || title,
+    displayName: showContext ? title : terminalName || title,
     title,
     iconOnly,
-    named: !input.pinned && !iconOnly && (input.active ? Boolean(title) : input.terminalHasText),
+    named: !input.pinned
+      && !iconOnly
+      && (input.renaming || (input.active ? Boolean(title) : input.terminalHasText)),
   };
-}
-
-export function remoteTabTitle(
-  tab: Pick<TerminalTab, "customTitle" | "label">,
-  activePane: Pick<TerminalPane, "programKind" | "title"> | undefined,
-  deviceName: string,
-): string {
-  return contextualTabLabel(
-    deviceName.trim() || tab.label.trim(),
-    remoteTabDetail(tab, activePane, "WebShell"),
-  );
 }
 
 function contextualTabLabel(sourceName: string, terminalName: string): string {

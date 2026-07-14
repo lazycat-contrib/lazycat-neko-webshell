@@ -14,6 +14,8 @@
 - Active remote tabs show `remote icon + device name · terminal name`.
 - Active local tabs show `instance name · terminal name`.
 - Tooltip and accessible text use the contextual label.
+- Rename inputs edit only the terminal name, never the contextual source
+  prefix.
 - Contextual active tabs may grow to 60vw, capped at 520px on desktop and 320px on mobile.
 - Do not animate tab width or `max-width`.
 - Keep `src/frontend/src/main.ts` orchestration-only.

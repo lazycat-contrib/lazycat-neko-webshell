@@ -301,13 +301,13 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 
   .tab.named.active {
     min-width: 104px;
-    max-width: min(188px, 54vw);
+    max-width: min(320px, 60vw);
   }
 
   .tab.icon-only,
   .tab.icon-only.active {
-    min-width: 70px;
-    max-width: 70px;
+    min-width: 52px;
+    max-width: 52px;
   }
 
   .tab.named .tab-main {
@@ -322,7 +322,7 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   .tab.icon-only .tab-main,
   .tab.icon-only.active .tab-main {
     justify-content: center;
-    padding: 0 34px 0 8px;
+    padding: 0 8px;
   }
 
   .tab:not(.active) .tab-title {
@@ -337,6 +337,14 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 
   .tab-title {
     max-width: min(120px, 32vw);
+  }
+
+  .tab.named.active .tab-title {
+    max-width: calc(min(320px, 60vw) - 84px);
+  }
+
+  .tab.icon-only .tab-close {
+    display: none;
   }
 
   .tab-add,
