@@ -31,7 +31,7 @@ test("tracks the current Herdr 0.7.4 socket schema", () => {
 });
 
 test("uses the synced event contract without enabling scroll polling", () => {
-  const subscriptions = herdrEventSubscriptions(["w1:p1", "w1:p1", "w1:p2"]);
+  const subscriptions = herdrEventSubscriptions(["w1:p1", "w1:p1", "w1:p2"], "0.7.4");
   assert.deepEqual(
     subscriptions.filter((item) => item.type === "pane.agent_status_changed"),
     [
@@ -39,7 +39,29 @@ test("uses the synced event contract without enabling scroll polling", () => {
       { type: "pane.agent_status_changed", pane_id: "w1:p2" },
     ],
   );
+  assert.deepEqual(
+    subscriptions.filter((item) => item.type === "workspace.metadata_updated"),
+    [{ type: "workspace.metadata_updated" }],
+  );
+  assert.deepEqual(
+    subscriptions.filter((item) => item.type === "pane.updated"),
+    [{ type: "pane.updated" }],
+  );
   assert.deepEqual(subscriptions.filter((item) => item.type === "pane.scroll_changed"), []);
+});
+
+test("keeps Herdr 0.7.3 on the legacy event subscription set", () => {
+  for (const version of ["0.7.3", "0.7.3-preview", "", "dev"]) {
+    const subscriptions = herdrEventSubscriptions([], version);
+    assert.deepEqual(subscriptions.filter((item) => item.type === "workspace.metadata_updated"), []);
+    assert.deepEqual(subscriptions.filter((item) => item.type === "pane.updated"), []);
+    assert.deepEqual(subscriptions.filter((item) => item.type === "pane.scroll_changed"), []);
+  }
+  for (const version of ["0.7.4", "0.7.4-preview", "0.8.0"]) {
+    const subscriptions = herdrEventSubscriptions([], version);
+    assert.equal(subscriptions.some((item) => item.type === "workspace.metadata_updated"), true);
+    assert.equal(subscriptions.some((item) => item.type === "pane.updated"), true);
+  }
 });
 
 test("parses PaneInfo and pane.scroll_changed metrics", () => {

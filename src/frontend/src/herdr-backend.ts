@@ -1,5 +1,5 @@
-import { boolField, recordField, stringField } from "./json-meta";
-export { herdrEventSubscriptions } from "./herdr-socket-api";
+import { boolField, recordField, stringField } from "./json-meta.ts";
+export { herdrEventSubscriptions } from "./herdr-socket-api.ts";
 import type { JsonRecord, SplitPlacement, TerminalPane, TerminalTab, Tone } from "./types";
 
 export type HerdrPaneResizeDirection = "left" | "right" | "up" | "down";
@@ -18,7 +18,12 @@ const HERDR_PANE_RESIZE_DIRECTIONS: Partial<Record<string, HerdrPaneResizeDirect
 
 export const HERDR_PANE_RESIZE_AMOUNT = 0.05;
 
-const SILENT_HERDR_EVENTS = new Set(["layout.updated", "pane.scroll_changed"]);
+const SILENT_HERDR_EVENTS = new Set([
+  "layout.updated",
+  "pane.scroll_changed",
+  "workspace.metadata_updated",
+  "pane.updated",
+]);
 
 export function herdrSplitDirection(placement: SplitPlacement): "right" | "down" | undefined {
   return HERDR_SPLIT_DIRECTIONS[placement];
@@ -99,6 +104,7 @@ export function herdrEventChangesDock(event: string): boolean {
     || event.startsWith("tab.")
     || event === "pane.created"
     || event === "pane.closed"
+    || event === "pane.updated"
     || event === "pane.focused"
     || event === "pane.moved"
     || event === "pane.exited"

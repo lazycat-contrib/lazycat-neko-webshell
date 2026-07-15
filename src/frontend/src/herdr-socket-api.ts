@@ -9,6 +9,7 @@ export const HERDR_SOCKET_SOURCE_REVISION = contract.source_revision;
 
 const HERDR_SOCKET_METHODS = new Set(contract.methods);
 const HERDR_SOCKET_SUBSCRIPTIONS = new Set(contract.subscriptions);
+const HERDR_METADATA_EVENT_MIN_VERSION = [0, 7, 4] as const;
 
 const BASE_EVENT_SUBSCRIPTIONS = [
   "workspace.created",
@@ -34,6 +35,11 @@ const BASE_EVENT_SUBSCRIPTIONS = [
   "layout.updated",
 ] as const;
 
+const METADATA_EVENT_SUBSCRIPTIONS = [
+  "workspace.metadata_updated",
+  "pane.updated",
+] as const;
+
 export type HerdrPaneScrollInfo = {
   offsetFromBottom: number;
   maxOffsetFromBottom: number;
@@ -54,12 +60,32 @@ export function isHerdrSocketSubscription(type: string): boolean {
   return HERDR_SOCKET_SUBSCRIPTIONS.has(type);
 }
 
-export function herdrEventSubscriptions(paneIds: string[]): JsonRecord[] {
+export function herdrEventSubscriptions(
+  paneIds: string[],
+  herdrVersion = HERDR_SOCKET_SOURCE_VERSION,
+): JsonRecord[] {
   const subscriptions: JsonRecord[] = BASE_EVENT_SUBSCRIPTIONS.map((type) => ({ type }));
+  if (herdrVersionAtLeast(herdrVersion, HERDR_METADATA_EVENT_MIN_VERSION)) {
+    subscriptions.push(...METADATA_EVENT_SUBSCRIPTIONS.map((type) => ({ type })));
+  }
   for (const paneId of uniqueNonEmpty(paneIds)) {
     subscriptions.push({ type: "pane.agent_status_changed", pane_id: paneId });
   }
   return subscriptions;
+}
+
+function herdrVersionAtLeast(
+  version: string,
+  minimum: readonly [number, number, number],
+): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version.trim());
+  if (!match) return false;
+  const actual = match.slice(1, 4).map(Number);
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (actual[index] > minimum[index]) return true;
+    if (actual[index] < minimum[index]) return false;
+  }
+  return true;
 }
 
 export function herdrPaneInfo(value: JsonRecord | undefined): HerdrPaneSocketInfo | undefined {
