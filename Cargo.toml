@@ -1,6 +1,6 @@
 [package]
 name = "lazycat-neko-webshell"
-version = "0.5.29"
+version = "0.5.30"
 edition = "2024"
 rust-version = "1.88"
 default-run = "lazycat-neko-webshell"
