@@ -233,6 +233,7 @@ impl AgentWorkspace {
     ) -> anyhow::Result<AgentWorkspaceState> {
         let mut inner = self.lock_inner()?;
         inner.update_existing_panes(cols, rows, output_limit)?;
+        inner.repair();
         Ok(inner.snapshot())
     }
 
@@ -668,6 +669,7 @@ impl AgentWorkspaceInner {
     }
 
     fn repair(&mut self) {
+        self.prune_exited_split_panes();
         for tab in &mut self.tabs {
             tab.pane_ids
                 .retain(|pane_id| self.panes.contains_key(pane_id));
@@ -704,6 +706,59 @@ impl AgentWorkspaceInner {
         {
             self.active_tab_id = self.tabs.first().map(|tab| tab.id.clone());
         }
+    }
+
+    fn prune_exited_split_panes(&mut self) {
+        let active_tab_id = self.active_tab_id.clone();
+        let tab_ids = self
+            .tabs
+            .iter()
+            .map(|tab| tab.id.clone())
+            .collect::<Vec<_>>();
+        for tab_id in tab_ids {
+            let keep_exited_pane_id =
+                self.tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id)
+                    .and_then(|tab| {
+                        let has_running_pane = tab.pane_ids.iter().any(|pane_id| {
+                            self.panes
+                                .get(pane_id)
+                                .is_some_and(|pane| pane.status() != "exited")
+                        });
+                        if has_running_pane {
+                            return None;
+                        }
+                        tab.active_pane_id
+                            .as_ref()
+                            .filter(|pane_id| tab.pane_ids.contains(pane_id))
+                            .cloned()
+                            .or_else(|| tab.pane_ids.last().cloned())
+                    });
+            loop {
+                let exited_pane_id = self
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.id == tab_id && tab.pane_ids.len() > 1)
+                    .and_then(|tab| {
+                        tab.pane_ids.iter().find_map(|pane_id| {
+                            (self
+                                .panes
+                                .get(pane_id)
+                                .is_some_and(|pane| pane.status() == "exited")
+                                && keep_exited_pane_id.as_ref() != Some(pane_id))
+                            .then(|| pane_id.clone())
+                        })
+                    });
+                let Some(pane_id) = exited_pane_id else {
+                    break;
+                };
+                if self.close_pane(&tab_id, &pane_id).is_err() {
+                    break;
+                }
+            }
+        }
+        self.active_tab_id = active_tab_id;
     }
 
     fn request_tab_id(&self, action: &AgentWorkspaceAction) -> anyhow::Result<String> {
@@ -1153,6 +1208,111 @@ mod tests {
             closed.tabs[0].panes[0].session_id.as_deref(),
             Some(session_id.as_str())
         );
+    }
+
+    #[test]
+    fn snapshot_removes_an_exited_pane_without_activating_its_split_tab() {
+        let workspace = AgentWorkspace::new("demo@owner", "");
+        let initial = workspace
+            .ensure_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+        let tab_id = initial.tabs[0].id.clone().unwrap();
+        workspace
+            .apply_action(
+                &AgentWorkspaceAction {
+                    action: Some(
+                        AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_SPLIT_PANE.into(),
+                    ),
+                    tab_id: Some(tab_id),
+                    pane_id: Some("pane-1".to_owned()),
+                    direction: Some(AgentSplitDirection::AGENT_SPLIT_DIRECTION_RIGHT.into()),
+                    ..Default::default()
+                },
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                32,
+            )
+            .unwrap();
+        let active_tab_id = workspace
+            .apply_action(
+                &AgentWorkspaceAction {
+                    action: Some(
+                        AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB.into(),
+                    ),
+                    ..Default::default()
+                },
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                32,
+            )
+            .unwrap()
+            .active_tab_id
+            .unwrap();
+        {
+            let inner = workspace.inner.lock().unwrap();
+            let pane = inner.panes.get("pane-2").unwrap();
+            *pane.status.lock().unwrap() = "exited".to_owned();
+        }
+
+        let snapshot = workspace
+            .snapshot_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+
+        assert_eq!(snapshot.tabs.len(), 2);
+        assert_eq!(
+            snapshot.active_tab_id.as_deref(),
+            Some(active_tab_id.as_str())
+        );
+        assert_eq!(snapshot.tabs[0].panes.len(), 1);
+        assert_eq!(snapshot.tabs[0].panes[0].id.as_deref(), Some("pane-1"));
+        assert_eq!(snapshot.tabs[0].active_pane_id.as_deref(), Some("pane-1"));
+        let layout = snapshot.tabs[0].layout.as_option().unwrap();
+        assert_eq!(
+            node_kind(layout),
+            Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_PANE)
+        );
+        assert_eq!(layout.pane_id.as_deref(), Some("pane-1"));
+    }
+
+    #[test]
+    fn snapshot_keeps_the_active_pane_when_every_split_pane_exited() {
+        let workspace = AgentWorkspace::new("demo@owner", "");
+        let initial = workspace
+            .ensure_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+        let tab_id = initial.tabs[0].id.clone().unwrap();
+        workspace
+            .apply_action(
+                &AgentWorkspaceAction {
+                    action: Some(
+                        AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_SPLIT_PANE.into(),
+                    ),
+                    tab_id: Some(tab_id),
+                    pane_id: Some("pane-1".to_owned()),
+                    direction: Some(AgentSplitDirection::AGENT_SPLIT_DIRECTION_RIGHT.into()),
+                    ..Default::default()
+                },
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                32,
+            )
+            .unwrap();
+        {
+            let inner = workspace.inner.lock().unwrap();
+            for pane_id in ["pane-1", "pane-2"] {
+                let pane = inner.panes.get(pane_id).unwrap();
+                *pane.status.lock().unwrap() = "exited".to_owned();
+            }
+        }
+
+        let snapshot = workspace
+            .snapshot_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+
+        assert_eq!(snapshot.tabs[0].panes.len(), 1);
+        assert_eq!(snapshot.tabs[0].panes[0].id.as_deref(), Some("pane-2"));
+        assert_eq!(snapshot.tabs[0].active_pane_id.as_deref(), Some("pane-2"));
+        assert_eq!(snapshot.tabs[0].layout.pane_id.as_deref(), Some("pane-2"));
     }
 
     #[test]

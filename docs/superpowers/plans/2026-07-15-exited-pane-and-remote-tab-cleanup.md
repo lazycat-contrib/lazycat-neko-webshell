@@ -2,121 +2,78 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Collapse split panes after their terminal exits and stop explicitly closed remote workspaces from being restored on the next launch.
+**Goal:** Collapse exited split panes and stop explicitly closed remote workspaces from returning on launch.
 
-**Architecture:** Put process-exit cleanup coordination in a focused frontend controller and keep `main.ts` as the event wiring layer. Keep open-workspace persistence rules in `open-workspaces.ts`, using the workspace action response as the source of truth.
+**Architecture:** Reconcile authoritative workspace state after process exit, normalize exited panes before rendering, repair Rust agent split topology at snapshot time, and synchronize browser selection persistence from authoritative tab count.
 
 **Tech Stack:** TypeScript, Node test runner, Vite, Rust 2024, Cargo, Git tags.
 
 ## Global Constraints
 
-- Do not add reusable pane lifecycle or persistence logic to `src/frontend/src/main.ts`.
-- Preserve single-pane exited tabs so final output remains inspectable.
-- Do not auto-close retryable remote attach failures.
-- Use the existing `close_pane`, `close_tab`, and workspace reload contracts.
+- Keep `src/frontend/src/main.ts` as orchestration only.
+- Do not auto-clean retryable remote attach failures.
+- Preserve one provider-owned pane when every pane in its tab exited.
+- Remove remote tabs when no live panes remain.
 - Release version is exactly `0.5.30` with tag `v0.5.30`.
 
 ---
 
-### Task 1: Exited split-pane cleanup controller
+### Task 1: Reconcile and normalize exited panes
 
 **Files:**
 - Create: `src/frontend/src/exited-pane-cleanup.ts`
 - Create: `src/frontend/src/exited-pane-cleanup.test.mjs`
+- Modify: `src/frontend/src/main.ts`
 
 **Interfaces:**
-- Consumes: `{ selector, tabId, paneId, visiblePaneCount }` plus injected async `closePane` and `reconcile` callbacks.
-- Produces: `createExitedPaneCleanupController(...).handle(request): Promise<boolean>`.
+- Consumes: `{ selector, paneId }`, an async workspace reload callback, and `WorkspaceState`.
+- Produces: `createExitedPaneCleanupController(...).handle(request)` and `normalizeExitedWorkspaceState(workspace, remoteClient)`.
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] Write failing tests for queued reconciliation, duplicate suppression, failure retry, layout collapse, remote empty-tab removal, and provider-owned final-pane preservation.
+- [x] Run the focused tests and confirm the missing behavior fails.
+- [x] Implement per-selector active/pending pane queues and pure workspace normalization using `removePaneFromLayout`.
+- [x] Normalize fetched/action state and forward real `process-exit` events after retryable exits return.
+- [x] Run the focused tests and TypeScript typecheck successfully.
 
-Cover three invariants: one-pane tabs do not close, duplicate concurrent exit events close once, and a failed close reconciles then allows a retry.
-
-- [ ] **Step 2: Run the focused test and confirm failure**
-
-Run: `node --test --experimental-strip-types src/frontend/src/exited-pane-cleanup.test.mjs`
-
-Expected: FAIL because `exited-pane-cleanup.ts` does not exist.
-
-- [ ] **Step 3: Implement the focused controller**
-
-Use an in-flight key derived from selector/tab/pane. Return `false` for `visiblePaneCount <= 1` or an in-flight duplicate. On close failure, await `reconcile(selector)` and clear the key in `finally`.
-
-- [ ] **Step 4: Run the focused test and confirm success**
-
-Run: `node --test --experimental-strip-types src/frontend/src/exited-pane-cleanup.test.mjs`
-
-Expected: all lifecycle tests pass.
-
-### Task 2: Wire exit cleanup and empty-workspace persistence
+### Task 2: Synchronize empty-workspace persistence
 
 **Files:**
-- Modify: `src/frontend/src/main.ts`
 - Modify: `src/frontend/src/open-workspaces.ts`
 - Modify: `src/frontend/src/open-workspaces.test.mjs`
+- Modify: `src/frontend/src/workspace-selection.ts`
+- Create: `src/frontend/src/workspace-selection.test.mjs`
+- Modify: `src/frontend/src/main.ts`
 
 **Interfaces:**
-- Consumes: the controller from Task 1 and the existing `runWorkspaceAction`, `loadWorkspace`, `visiblePanes`, and `WorkspaceState` contracts.
-- Produces: `forgetOpenSelectorWhenWorkspaceEmpty(selector, tabCount, storage?): boolean`.
+- Produces: `syncOpenSelectorFromWorkspace`, `forgetRememberedWorkspace`, `clearWorkspaceLocation`, and `shouldClearWorkspaceSelection`.
 
-- [ ] **Step 1: Add a failing persistence regression test**
+- [x] Write failing tests for authoritative open-selector sync and selected-workspace clearing decisions.
+- [x] Implement storage helpers and URL cleanup in their owning modules.
+- [x] Synchronize persistence after every applied workspace load/action response.
+- [x] Make reconciliation yield to newer requests and let their completed response (or failure recovery) finish pending exited-pane cleanup.
+- [x] Run focused tests and TypeScript typecheck successfully.
 
-Assert that a zero-tab close result removes its selector and a non-empty close result leaves it stored.
-
-- [ ] **Step 2: Run the focused persistence test and confirm failure**
-
-Run: `node --test --experimental-strip-types src/frontend/src/open-workspaces.test.mjs`
-
-Expected: FAIL because the empty-workspace helper does not exist.
-
-- [ ] **Step 3: Implement the persistence helper**
-
-Keep storage access inside `open-workspaces.ts`. Return `false` when `tabCount > 0`; otherwise call `forgetOpenSelector` and return `true`.
-
-- [ ] **Step 4: Wire `main.ts`**
-
-Instantiate the cleanup controller with a `close_pane` workspace action and a workspace reload fallback. Forward only the real `process-exit` branch after retryable remote exits have returned. Capture the workspace returned by `close_tab` and invoke the empty-workspace helper.
-
-- [ ] **Step 5: Run both focused frontend tests**
-
-Run: `node --test --experimental-strip-types src/frontend/src/exited-pane-cleanup.test.mjs src/frontend/src/open-workspaces.test.mjs`
-
-Expected: all tests pass.
-
-### Task 3: Patch release and ship
+### Task 3: Repair Rust agent topology
 
 **Files:**
-- Modify: `Cargo.toml`
-- Modify: `Cargo.lock`
-- Modify: `package.json`
-- Modify any other tracked version source found by `rg -n '0\\.5\\.29|v0\\.5\\.29'` when it represents the current package version.
+- Modify: `src/agent_workspace.rs`
 
 **Interfaces:**
-- Consumes: verified source tree from Tasks 1 and 2.
-- Produces: commit(s) on `main` and annotated tag `v0.5.30` pushed to `origin`.
+- Consumes: pane status and existing pane/layout close primitives.
+- Produces: agent snapshots without exited split panes while retaining one final pane.
 
-- [ ] **Step 1: Bump all package version sources to 0.5.30**
+- [x] Add a failing split-pane snapshot regression test.
+- [x] Confirm the old snapshot retains both panes.
+- [x] Prune exited panes during repair while preserving active-tab identity.
+- [x] Run the focused Rust test successfully.
 
-Use targeted edits only; do not rewrite historical documentation or previous tag references.
+### Task 4: Patch release and ship
 
-- [ ] **Step 2: Run complete verification**
+**Files:**
+- Modify: `Cargo.toml`, `Cargo.lock`, `package.json`, `package-lock.json`, `package.yml`, `README.md`, and `README.en.md`.
 
-Run: `npm test`, `npm run typecheck`, `npm run build`, `cargo test --all-targets`, `cargo fmt --all -- --check`, and `cargo clippy --all-targets -- -D warnings`.
-
-Expected: every command exits 0 with no failed tests or lint errors.
-
-- [ ] **Step 3: Review the final diff and release metadata**
-
-Run: `git diff --check`, `git diff --stat`, `git diff`, `git status --short --branch -uall`, and version/tag consistency searches.
-
-Expected: only the two bug fixes, tests, approved docs, and version files are present.
-
-- [ ] **Step 4: Commit the intended files**
-
-Create a focused bug-fix commit and a release/version commit if the diff naturally separates; otherwise use one release commit. Do not stage unrelated files.
-
-- [ ] **Step 5: Tag and push**
-
-Create annotated tag `v0.5.30`, push `main`, push the tag, then re-read local and remote refs.
-
-Expected: `origin/main` points at the release commit and `refs/tags/v0.5.30` resolves to the same commit.
+- [x] Bump all current version sources from `0.5.29` to `0.5.30` without rewriting historical references.
+- [x] Run final frontend, Rust, format, Clippy, and production-build verification; local LPK packaging reached the native build and stopped because this host lacks `musl-tools`, which tag CI installs explicitly.
+- [ ] Review and commit only the intended diff.
+- [ ] Create annotated tag `v0.5.30`.
+- [ ] Push `main` and `v0.5.30`, then verify remote refs and CI state.

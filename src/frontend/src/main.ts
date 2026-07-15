@@ -104,7 +104,18 @@ import { createNotificationController } from "./notifications/controller";
 import { createNotificationDom } from "./notifications/dom";
 import { notificationDisplayTitle, notificationTone } from "./notifications/presenter";
 import { renderNewTabMenuView, syncTabsView, type TabViewItem } from "./navigation-views";
-import { forgetOpenSelector, readOpenSelectors, rememberOpenSelector } from "./open-workspaces";
+import {
+  createExitedPaneCleanupController,
+  hasExitedPaneForSelector,
+  normalizeExitedWorkspaceState,
+  shouldApplyWorkspaceActionResponse,
+} from "./exited-pane-cleanup";
+import {
+  forgetOpenSelector,
+  readOpenSelectors,
+  rememberOpenSelector,
+  syncOpenSelectorFromWorkspace,
+} from "./open-workspaces";
 import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
 import {
   allTabPanes,
@@ -381,6 +392,8 @@ import {
   workspaceLayoutToView,
 } from "./workspace-identity";
 import {
+  clearWorkspaceLocation,
+  forgetRememberedWorkspace,
   instanceSelector,
   isRunningInstance,
   normalizeSelector,
@@ -389,6 +402,7 @@ import {
   rememberSelector,
   rememberTabId,
   requestedTabIdFromLocation,
+  shouldClearWorkspaceSelection,
   updateWorkspaceLocation,
 } from "./workspace-selection";
 import { applyWebshellStyle } from "./webshell-style";
@@ -597,6 +611,15 @@ const pendingHerdrOutputSequences = new Map<string, { selector: string; sequence
 const herdrOutputSequenceTimers = new Map<string, number>();
 const pendingPaneSocketOpens = new Set<string>();
 const workspaceRequestTracker = createSelectorRequestTracker();
+const exitedPaneCleanupController = createExitedPaneCleanupController({
+  reconcile: async (selector) => {
+    const activateSelector = normalizeSelector(selector) === normalizeSelector(selectedSelector);
+    const applied = await loadWorkspace(selector, {
+      activateSelector,
+    });
+    if (!applied) throw new Error("workspace reconciliation was superseded");
+  },
+});
 let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
 let pluginsLoading = false;
@@ -3929,9 +3952,9 @@ type LoadWorkspaceOptions = {
   background?: boolean;
 };
 
-async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {}) {
+async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {}): Promise<boolean> {
   const requestSelector = normalizeSelector(selector);
-  if (!requestSelector) return;
+  if (!requestSelector) return false;
   const requestGeneration = workspaceRequestTracker.begin(requestSelector);
   const selectedGeneration = selectedSelectorGeneration;
   const activateRequested = options.activateSelector
@@ -3941,14 +3964,19 @@ async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {
     clearHerdrState();
   }
   try {
-    const workspace = await fetchWorkspace(requestSelector, {
-      cols: INITIAL_COLS,
-      rows: INITIAL_ROWS,
-      outputLimit: settings.outputBufferLimit,
-      autoRestart: settings.autoRestartSessions,
-      selectRunningInstanceMessage: tr("status.selectRunningInstance"),
-    });
-    if (!workspaceRequestTracker.isCurrent(requestSelector, requestGeneration)) return;
+    const workspace = normalizeExitedWorkspaceState(
+      await fetchWorkspace(requestSelector, {
+        cols: INITIAL_COLS,
+        rows: INITIAL_ROWS,
+        outputLimit: settings.outputBufferLimit,
+        autoRestart: settings.autoRestartSessions,
+        selectRunningInstanceMessage: tr("status.selectRunningInstance"),
+      }),
+      isRemoteClientSelector(requestSelector),
+    );
+    if (!workspaceRequestTracker.isCurrent(requestSelector, requestGeneration)) {
+      return false;
+    }
     const activateSelector = activateRequested
       && isCurrentSelectorRequest(requestSelector, selectedGeneration);
     const applied = await applyWorkspaceState(workspace, {
@@ -3958,15 +3986,18 @@ async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {
       selector: requestSelector,
     });
     if (applied) {
-      rememberOpenSelector(requestSelector);
+      syncWorkspacePresence(requestSelector, workspace.tabs.length);
       if (activateSelector) {
         const activeGeneration = selectedSelectorGeneration;
         void refreshSessionBackends(requestSelector, activeGeneration);
         void refreshHerdrState(requestSelector, activeGeneration);
       }
     }
+    return applied;
   } catch (error) {
-    if (!workspaceRequestTracker.isCurrent(requestSelector, requestGeneration)) return;
+    if (!workspaceRequestTracker.isCurrent(requestSelector, requestGeneration)) {
+      return false;
+    }
     const activeRequest = activateRequested
       && isCurrentSelectorRequest(requestSelector, selectedGeneration);
     if (
@@ -3976,19 +4007,19 @@ async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {
       && selectedSelector !== requestSelector
     ) {
       renderInstances();
-      await loadWorkspace(selectedSelector, {
+      return loadWorkspace(selectedSelector, {
         activateSelector: true,
         allowReconcileRetry: false,
       });
-      return;
     }
     if (options.background) {
       forgetOpenSelector(requestSelector);
-      return;
+      return false;
     }
-    if (!activeRequest) return;
+    if (!activeRequest) return false;
     clearHerdrState();
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
+    return false;
   }
 }
 
@@ -4013,24 +4044,44 @@ async function runWorkspaceAction(
   const requestGeneration = workspaceRequestTracker.begin(selector);
   const selectedGeneration = selectedSelectorGeneration;
   const target = resolveWorkspaceActionTarget(tabs, selector, options);
-  const workspace = await runWorkspaceActionRequest(action, {
-    selector,
-    cols: INITIAL_COLS,
-    rows: INITIAL_ROWS,
-    outputLimit: settings.outputBufferLimit,
-    autoRestart: settings.autoRestartSessions,
-    tabId: target.tabId,
-    paneId: target.paneId,
-    direction: options.direction,
-    label: options.label,
-    layout: target.layout,
-    activePaneId: target.activePaneId,
-    sessionBackend: options.sessionBackend,
-    pinned: options.pinned,
-    pinnedOrder: options.pinnedOrder,
-  });
+  let workspace: WorkspaceState;
+  try {
+    workspace = normalizeExitedWorkspaceState(
+      await runWorkspaceActionRequest(action, {
+        selector,
+        cols: INITIAL_COLS,
+        rows: INITIAL_ROWS,
+        outputLimit: settings.outputBufferLimit,
+        autoRestart: settings.autoRestartSessions,
+        tabId: target.tabId,
+        paneId: target.paneId,
+        direction: options.direction,
+        label: options.label,
+        layout: target.layout,
+        activePaneId: target.activePaneId,
+        sessionBackend: options.sessionBackend,
+        pinned: options.pinned,
+        pinnedOrder: options.pinnedOrder,
+      }),
+      isRemoteClientSelector(selector),
+    );
+  } catch (error) {
+    if (
+      workspaceRequestTracker.isCurrent(selector, requestGeneration)
+      && hasExitedPaneForSelector(allPanes(), selector)
+    ) {
+      await loadWorkspace(selector, {
+        activateSelector: isCurrentSelectorRequest(selector, selectedGeneration),
+      });
+    }
+    throw error;
+  }
+  const applyResponse = shouldApplyWorkspaceActionResponse(
+    options.apply,
+    hasExitedPaneForSelector(allPanes(), selector),
+  );
   if (
-    options.apply !== false
+    applyResponse
     && workspaceRequestTracker.isCurrent(selector, requestGeneration)
   ) {
     await applyWorkspaceState(workspace, {
@@ -4039,8 +4090,22 @@ async function runWorkspaceAction(
       requestGeneration,
       selector,
     });
+    syncWorkspacePresence(selector, workspace.tabs.length);
   }
   return workspace;
+}
+
+function syncWorkspacePresence(selector: string, tabCount: number) {
+  const open = syncOpenSelectorFromWorkspace(selector, tabCount);
+  if (open || !shouldClearWorkspaceSelection(selector, selectedSelector, tabCount, Boolean(activeTab()))) return;
+  forgetRememberedWorkspace(selector);
+  selectedSelectorExplicit = false;
+  setSelectedSelector("", { updateLocation: false });
+  clearWorkspaceLocation();
+  clearSessionBackendsState();
+  clearHerdrState();
+  updateSelectedInstanceChrome();
+  renderInstances();
 }
 
 async function refreshSessionBackends(
@@ -5671,6 +5736,13 @@ function handleServerText(pane: TerminalPane, text: string) {
       event.message || tr("status.processExited", { code: event.exit_code ?? -1 }),
       "error",
     );
+    const tab = tabForPane(pane);
+    if (tab) {
+      void exitedPaneCleanupController.handle({
+        selector: pane.selector,
+        paneId: pane.workspacePaneId,
+      });
+    }
   } else if (event.type === "session-stopped") {
     clearReplayInputLock(pane);
     clearPendingInput(pane);

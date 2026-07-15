@@ -10,48 +10,42 @@ Remove a split pane after its terminal process exits, and prevent a remote devic
 
 ## Confirmed causes
 
-- The frontend `process-exit` handler marks a pane as exited but does not invoke the workspace `close_pane` action, so the workspace topology and split layout retain the dead pane.
-- Closing a tab updates the workspace but does not remove an empty selector from `lazycat-neko-webshell.openSelectors`; startup later reloads every selector in that list.
+- The frontend marks a live `process-exit` pane as exited but does not reload authoritative workspace state. Restored workspace responses also render `status: exited` panes unchanged, so a missed event preserves the dead split node.
+- The Rust agent marks exited panes but does not repair split topology when state is requested.
+- An empty workspace remains in `openSelectors`, remembered selector/tab storage, and the current URL. Startup can therefore select and reload the remote target again.
 
-## Considered approaches
+## Selected design
 
-### A. Frontend lifecycle cleanup with server reconciliation (selected)
+On a real `process-exit`, reload authoritative workspace state. A focused controller ignores duplicate events for the same pane while queuing another reconciliation when a different pane exits during an in-flight request.
 
-On a terminal `process-exit`, automatically close the pane only when it belongs to a split tab. Use a focused controller to deduplicate cleanup and reconcile workspace state after a failed close. Keep a single-pane exited tab visible so users do not lose the final command output unexpectedly.
+If a newer workspace request supersedes that reload, the cleanup yields without immediately starting another read. A successful newer action response is applied when an exited pane still needs cleanup. If that action fails while it is still the latest request, it starts one completion-aware reload. This keeps the newer request authoritative without losing cleanup behind `apply: false` activation updates.
 
-After an explicit tab close, remove the selector from the persisted open-workspace list only when the returned workspace has no tabs.
+All fetched/action workspace responses pass through a pure normalizer. It removes exited panes and collapses their layout. Empty remote tabs disappear because the official remote service owns process cleanup. Provider-owned tabs preserve the active exited pane (or the last pane as fallback) when every pane exited so final output remains inspectable.
 
-This approach works for local agent and remote-client panes through the existing workspace action contract, avoids backend protocol changes, and keeps `main.ts` limited to event wiring.
+The Rust agent repairs exited split panes before returning a snapshot. It removes exited panes only while a sibling remains and preserves active-tab identity.
 
-### B. Prune exited panes while decoding workspace state
+Every applied workspace response synchronizes persisted presence. Non-empty workspaces remain in `openSelectors`; empty workspaces are removed. If the empty workspace is still selected and no other tab is active, its remembered selector/tab and URL `name`/`tab` parameters are cleared.
 
-Filtering exited panes in local and remote workspace snapshots would repair reloads, but it would not collapse the live split until another state fetch and would leave remote topology unmodified.
+## Alternatives rejected
 
-### C. Change both terminal backends to delete panes on PTY exit
-
-Backend-owned cleanup is authoritative but requires separate local-agent and remote-terminal implementations. The remote device service is outside this repository, so behavior would remain inconsistent.
+- Sending `close_pane` from every browser races when two panes exit together and duplicates the official remote service's cleanup.
+- Filtering only during rendering fixes the picture but leaves Rust agent topology stale.
+- Backend-only cleanup does not repair restored responses from older or remote implementations that still report exited panes.
 
 ## Components
 
-- `src/frontend/src/exited-pane-cleanup.ts`: owns process-exit cleanup deduplication, invokes the supplied close operation, and requests reconciliation on failure.
-- `src/frontend/src/main.ts`: supplies workspace action and reload callbacks, then forwards true process-exit events with the current visible pane count.
-- `src/frontend/src/open-workspaces.ts`: owns the rule that an explicitly closed empty workspace is removed from persisted open selectors.
-
-## Behavior
-
-1. A retryable remote attach failure remains an error/reconnect case and is not treated as a process exit.
-2. A real process exit still updates terminal status and notifies the terminal renderer.
-3. If the owning tab has more than one visible pane, cleanup sends `close_pane`; the returned workspace collapses the split using existing layout logic.
-4. If cleanup fails, the controller clears its in-flight guard and reloads the workspace so concurrent-client cleanup can converge without leaving stale local state.
-5. A single-pane tab remains visible after process exit.
-6. After an explicit `close_tab`, an empty returned workspace removes its selector from persisted open workspaces. Non-empty workspaces remain restorable.
+- `src/frontend/src/exited-pane-cleanup.ts`: queued reconciliation and pure workspace normalization.
+- `src/frontend/src/main.ts`: process-exit event wiring and workspace-presence orchestration.
+- `src/frontend/src/open-workspaces.ts`: persisted open-selector synchronization.
+- `src/frontend/src/workspace-selection.ts`: remembered workspace and URL cleanup.
+- `src/agent_workspace.rs`: exited split-pane snapshot repair.
 
 ## Testing
 
-- Unit-test that exited split panes close once, single-pane exits remain visible, and close failures reconcile and can retry.
-- Unit-test that empty workspace close results remove the selector while non-empty results preserve it.
-- Run frontend tests, TypeScript typecheck, production build, Rust tests, formatting check, and Clippy.
-- Real remote-device acceptance remains required for the physical device path: split a remote terminal, exit one shell, close the final remote tab, restart/reopen the provider, and confirm neither stale surface returns.
+- Frontend tests cover queued/deduplicated reconciliation, retry after failure, remote split collapse, remote empty-tab removal, provider-owned final-pane preservation, open-selector synchronization, and selected-workspace memory clearing.
+- Rust tests cover snapshot repair of an exited split pane.
+- Release verification runs frontend tests, TypeScript typecheck, production build, Rust tests, formatting, Clippy, and the LazyCat package build where host dependencies allow.
+- Real remote-device acceptance remains required: split a remote terminal, exit one shell, close the final remote tab, restart/reopen the provider, and confirm neither stale surface returns.
 
 ## Release
 

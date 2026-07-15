@@ -40,6 +40,19 @@ export function forgetOpenSelector(
   );
 }
 
+export function syncOpenSelectorFromWorkspace(
+  selector: string,
+  tabCount: number,
+  storage: StorageLike = window.localStorage,
+): boolean {
+  if (tabCount > 0) {
+    rememberOpenSelector(selector, storage);
+    return true;
+  }
+  forgetOpenSelector(selector, storage);
+  return false;
+}
+
 function persistOpenSelectors(selectors: string[], storage: StorageLike) {
   try {
     storage.setItem(OPEN_SELECTORS_KEY, JSON.stringify(selectors));

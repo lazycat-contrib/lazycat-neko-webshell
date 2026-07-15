@@ -4,8 +4,21 @@ export { isRemoteClientSelector } from "./remote-client-terminal.ts";
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
 
+type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
 export function normalizeSelector(value: unknown): string {
   return String(value ?? "").trim();
+}
+
+export function shouldClearWorkspaceSelection(
+  workspaceSelector: string,
+  selectedSelector: string,
+  tabCount: number,
+  hasActiveTab: boolean,
+): boolean {
+  return tabCount === 0
+    && !hasActiveTab
+    && normalizeSelector(workspaceSelector) === normalizeSelector(selectedSelector);
 }
 
 export function instanceSelector(instance: Instance | undefined): string {
@@ -56,6 +69,17 @@ export function updateWorkspaceLocation(
   window.history.replaceState(nextState, "", url);
 }
 
+export function clearWorkspaceLocation() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("name");
+  url.searchParams.delete("tab");
+  const state = window.history.state && typeof window.history.state === "object" ? window.history.state : {};
+  const nextState: Record<string, unknown> = { ...state };
+  delete nextState.name;
+  delete nextState.tab;
+  window.history.replaceState(nextState, "", url);
+}
+
 export function requestedTabIdFromLocation(): string {
   return normalizeSelector(new URLSearchParams(window.location.search).get("tab") ?? "");
 }
@@ -91,12 +115,31 @@ export function readRememberedSelector(): string {
   }
 }
 
-export function rememberSelector(selector: string) {
+export function rememberSelector(
+  selector: string,
+  storage: StorageLike = window.localStorage,
+) {
   const normalized = normalizeSelector(selector);
   if (!normalized) return;
   try {
-    window.localStorage.setItem(LAST_SELECTOR_STORAGE_KEY, normalized);
+    storage.setItem(LAST_SELECTOR_STORAGE_KEY, normalized);
   } catch {
     // localStorage is best-effort; URL and server workspace state remain authoritative.
+  }
+}
+
+export function forgetRememberedWorkspace(
+  selector: string,
+  storage: StorageLike = window.localStorage,
+): boolean {
+  const normalized = normalizeSelector(selector);
+  if (!normalized) return false;
+  try {
+    if (normalizeSelector(storage.getItem(LAST_SELECTOR_STORAGE_KEY)) !== normalized) return false;
+    storage.removeItem(lastTabStorageKey(normalized));
+    storage.removeItem(LAST_SELECTOR_STORAGE_KEY);
+    return true;
+  } catch {
+    return false;
   }
 }
