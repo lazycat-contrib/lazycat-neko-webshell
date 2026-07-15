@@ -58,7 +58,7 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   box-shadow: var(--shadow-raised);
   padding: 0 18px;
   backdrop-filter: blur(18px) saturate(1.35);
-  animation: ai-voice-pill-in 350ms cubic-bezier(0.18, 0.9, 0.24, 1.12);
+  animation: ai-voice-pill-in var(--motion-dialog-in) var(--ease-emphasized);
 }
 
 .terminal-input-recording-pill[hidden] {
@@ -155,7 +155,7 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   box-shadow: var(--shadow-raised);
   backdrop-filter: blur(18px) saturate(1.25);
   pointer-events: auto;
-  animation: terminal-input-menu-in 160ms ease-out;
+  animation: terminal-input-menu-in var(--motion-popover-in) var(--ease-emphasized);
 }
 
 .terminal-input-action-menu[hidden] {
@@ -1144,11 +1144,116 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   color: var(--accent-fg);
 }
 
-.terminal-input-action-button:disabled {
-  opacity: 0.55;
-  box-shadow: none;
-  backdrop-filter: none;
+  .terminal-input-action-button:disabled {
+    opacity: 0.55;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+
+  .command-button,
+  .icon-button,
+  .tab-add,
+  .switcher-button,
+  .settings-tabs button,
+  .file-button,
+  .quick-phrase-preview,
+  .new-tab-menu button,
+  .pane-menu button,
+  .settings-menu button,
+  .herdr-workspace-row,
+  .plugin-tool-tabs button {
+    transition-duration: 80ms;
+  }
+
+  .switcher-menu[hidden],
+  .new-tab-menu[hidden],
+  .herdr-workspace-menu[hidden],
+  .notifications-menu[hidden],
+  .settings-menu[hidden],
+  .pane-menu[hidden] {
+    transform: translateY(-2px) scale(0.99);
+  }
+
+  .settings-page[hidden] .settings-dialog,
+  .shortcut-help[hidden] .shortcut-help-dialog,
+  .about-dialog-shell[hidden] .about-dialog,
+  .notification-modal[hidden] .notification-modal-dialog {
+    transform: translateY(4px) scale(0.99);
+  }
+
+  .plugin-sidebar[hidden] {
+    transform: translateX(8px) scale(0.997);
+  }
+
+  @starting-style {
+    .switcher-menu:not([hidden]),
+    .new-tab-menu:not([hidden]),
+    .herdr-workspace-menu:not([hidden]),
+    .notifications-menu:not([hidden]),
+    .settings-menu:not([hidden]),
+    .pane-menu:not([hidden]) {
+      transform: translateY(-2px) scale(0.99);
+    }
+
+    .settings-page:not([hidden]) .settings-dialog,
+    .shortcut-help:not([hidden]) .shortcut-help-dialog,
+    .about-dialog-shell:not([hidden]) .about-dialog,
+    .notification-modal:not([hidden]) .notification-modal-dialog {
+      transform: translateY(4px) scale(0.99);
+    }
+
+    .plugin-sidebar:not([hidden]) {
+      transform: translateX(8px) scale(0.997);
+    }
+  }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-input-recording-pill,
+  .terminal-input-action-menu {
+    animation: none;
+  }
+
+  .switcher-menu,
+  .switcher-menu[hidden],
+  .new-tab-menu,
+  .new-tab-menu[hidden],
+  .herdr-workspace-menu,
+  .herdr-workspace-menu[hidden],
+  .notifications-menu,
+  .notifications-menu[hidden],
+  .settings-menu,
+  .settings-menu[hidden],
+  .pane-menu,
+  .pane-menu[hidden],
+  .settings-dialog,
+  .settings-page[hidden] .settings-dialog,
+  .shortcut-help-dialog,
+  .shortcut-help[hidden] .shortcut-help-dialog,
+  .about-dialog,
+  .about-dialog-shell[hidden] .about-dialog,
+  .notification-modal-dialog,
+  .notification-modal[hidden] .notification-modal-dialog,
+  .plugin-sidebar,
+  .plugin-sidebar[hidden] {
+    transform: none;
+  }
+
+  @starting-style {
+    .switcher-menu:not([hidden]),
+    .new-tab-menu:not([hidden]),
+    .herdr-workspace-menu:not([hidden]),
+    .notifications-menu:not([hidden]),
+    .settings-menu:not([hidden]),
+    .pane-menu:not([hidden]),
+    .settings-page:not([hidden]) .settings-dialog,
+    .shortcut-help:not([hidden]) .shortcut-help-dialog,
+    .about-dialog-shell:not([hidden]) .about-dialog,
+    .notification-modal:not([hidden]) .notification-modal-dialog,
+    .plugin-sidebar:not([hidden]) {
+      transform: none;
+    }
+  }
 }
 
 .tab-mount {

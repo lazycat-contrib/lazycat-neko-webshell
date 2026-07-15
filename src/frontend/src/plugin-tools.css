@@ -9,16 +9,41 @@
   grid-template-columns: 50px minmax(0, 420px);
   width: min(500px, calc(100vw - 20px));
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--dialog-bg);
+  border-radius: var(--radius-lg);
+  background:
+    var(--dialog-material),
+    var(--dialog-bg);
   color: var(--text);
   box-shadow: var(--shadow-deep);
   overflow: hidden;
   backdrop-filter: blur(16px);
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  transform-origin: right center;
+  transition:
+    opacity var(--motion-drawer-in) var(--ease-out),
+    transform var(--motion-drawer-in) var(--ease-emphasized),
+    display var(--motion-drawer-in);
+  transition-behavior: normal, normal, allow-discrete;
+  will-change: transform, opacity;
 }
 
 .plugin-sidebar[hidden] {
   display: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(14px) scale(0.995);
+  transition-duration:
+    var(--motion-drawer-out),
+    var(--motion-drawer-out),
+    var(--motion-drawer-out);
+}
+
+@starting-style {
+  .plugin-sidebar:not([hidden]) {
+    opacity: 0;
+    transform: translateX(14px) scale(0.995);
+  }
 }
 
 .plugin-sidebar-header {
@@ -50,6 +75,11 @@
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
+  transition: transform var(--motion-press) var(--ease-out);
+}
+
+.plugin-tool-tabs button:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .plugin-tool-tabs button[aria-selected="true"] {
@@ -68,7 +98,8 @@
   z-index: 2;
   left: calc(100% + 8px);
   top: 50%;
-  transform: translateY(-50%);
+  transform: translate3d(-4px, -50%, 0) scale(0.98);
+  transform-origin: left center;
   max-width: 160px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -80,11 +111,15 @@
   box-shadow: var(--shadow-raised);
   opacity: 0;
   pointer-events: none;
+  transition:
+    opacity 140ms var(--ease-out),
+    transform 140ms var(--ease-emphasized);
 }
 
 .plugin-tool-tabs button:hover .tool-tip,
 .plugin-tool-tabs button:focus-visible .tool-tip {
   opacity: 1;
+  transform: translate3d(0, -50%, 0) scale(1);
 }
 
 .plugin-tool-body {
@@ -2877,4 +2912,31 @@
 .network-output {
   min-height: 44px;
   max-height: 120px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plugin-sidebar,
+  .plugin-sidebar[hidden] {
+    transform: none;
+    transition:
+      opacity 100ms linear,
+      display 100ms;
+    transition-behavior: normal, allow-discrete;
+    will-change: auto;
+  }
+
+  .plugin-tool-tabs button {
+    transition: none;
+  }
+
+  .plugin-tool-tabs button:active:not(:disabled) {
+    transform: none;
+  }
+
+  .plugin-tool-tabs .tool-tip,
+  .plugin-tool-tabs button:hover .tool-tip,
+  .plugin-tool-tabs button:focus-visible .tool-tip {
+    transform: translateY(-50%);
+    transition: opacity 100ms linear;
+  }
 }

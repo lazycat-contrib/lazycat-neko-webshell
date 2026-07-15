@@ -21,28 +21,66 @@
   --ok: #00ac3a;
   --warning: #f5a524;
   --warning-soft: #332000;
-  --radius: 6px;
-  --shadow-deep: 0 1px 1px rgba(0, 0, 0, 0.02), 0 8px 16px -4px rgba(0, 0, 0, 0.04), 0 24px 32px -8px rgba(0, 0, 0, 0.06);
-  --shadow-raised: 0 1px 1px rgba(0, 0, 0, 0.02), 0 4px 8px -4px rgba(0, 0, 0, 0.04), 0 16px 24px -8px rgba(0, 0, 0, 0.06);
-  --shadow-inset-soft: none;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --radius: var(--radius-sm);
+  --shadow-deep:
+    inset 0 1px 0 rgba(255, 255, 255, 0.065),
+    0 2px 8px rgba(0, 0, 0, 0.34),
+    0 24px 64px rgba(0, 0, 0, 0.58);
+  --shadow-popover:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 2px 6px rgba(0, 0, 0, 0.3),
+    0 14px 36px rgba(0, 0, 0, 0.48);
+  --shadow-raised:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 1px 4px rgba(0, 0, 0, 0.28),
+    0 10px 28px rgba(0, 0, 0, 0.42);
+  --shadow-inset-soft: inset 0 1px 0 rgba(255, 255, 255, 0.045);
   --shadow-inset-strong: inset 0 0 0 1px #ffffff12;
   --focus-gap: var(--bg);
   --focus-ring: #47a8ff;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-press: 120ms;
+  --motion-popover-in: 170ms;
+  --motion-popover-out: 130ms;
+  --motion-dialog-in: 210ms;
+  --motion-dialog-out: 150ms;
+  --motion-drawer-in: 220ms;
+  --motion-drawer-out: 160ms;
   --body-wash: linear-gradient(transparent, transparent);
   --body-grid-x: linear-gradient(transparent, transparent);
   --body-grid-y: linear-gradient(transparent, transparent);
-  --app-wash-a: transparent;
-  --app-wash-b: transparent;
-  --app-wash-c: transparent;
-  --topbar-wash-a: transparent;
-  --topbar-wash-b: transparent;
-  --topbar-wash-c: transparent;
+  --app-wash-a: rgba(71, 168, 255, 0.055);
+  --app-wash-b: rgba(0, 170, 149, 0.035);
+  --app-wash-c: rgba(255, 255, 255, 0.022);
+  --topbar-wash-a: rgba(255, 255, 255, 0.05);
+  --topbar-wash-b: rgba(71, 168, 255, 0.055);
+  --topbar-wash-c: rgba(0, 170, 149, 0.035);
   --topbar-border: var(--line);
   --topbar-shadow: none;
-  --dialog-wash-a: transparent;
-  --dialog-wash-b: transparent;
-  --dialog-wash-c: transparent;
+  --dialog-wash-a: rgba(255, 255, 255, 0.045);
+  --dialog-wash-b: rgba(71, 168, 255, 0.04);
+  --dialog-wash-c: rgba(0, 170, 149, 0.025);
+  --app-material:
+    radial-gradient(circle at 18% -12%, var(--app-wash-a), transparent 34%),
+    radial-gradient(circle at 84% -16%, var(--app-wash-b), transparent 30%),
+    linear-gradient(180deg, var(--app-wash-c), transparent 24%);
+  --topbar-material:
+    linear-gradient(180deg, var(--topbar-wash-a), transparent 72%),
+    linear-gradient(90deg, var(--topbar-wash-b), transparent 42%),
+    linear-gradient(270deg, var(--topbar-wash-c), transparent 38%);
+  --dialog-material:
+    radial-gradient(circle at 12% 0, var(--dialog-wash-a), transparent 34%),
+    radial-gradient(circle at 88% 0, var(--dialog-wash-b), transparent 30%),
+    linear-gradient(180deg, var(--dialog-wash-c), transparent 28%);
+  --menu-material:
+    linear-gradient(180deg, var(--topbar-wash-a), transparent 46%),
+    radial-gradient(circle at 18% 0, var(--topbar-wash-b), transparent 52%);
   --dialog-rule: linear-gradient(90deg, var(--line-soft), var(--line-soft));
   --dialog-bg: var(--surface);
   --dialog-border: var(--line);
@@ -173,7 +211,9 @@ textarea:focus-visible {
   height: var(--app-viewport-height);
   min-width: 0;
   min-height: 0;
-  background: var(--bg);
+  background:
+    var(--app-material),
+    var(--bg);
 }
 
 .upload-progress {
@@ -227,7 +267,9 @@ textarea:focus-visible {
   min-height: calc(38px + var(--lzc-safe-area-inset-top));
   padding: var(--lzc-safe-area-inset-top) max(10px, var(--lzc-safe-area-inset-right)) 0 max(10px, var(--lzc-safe-area-inset-left));
   border-bottom: 1px solid var(--topbar-border);
-  background: var(--chrome);
+  background:
+    var(--topbar-material),
+    var(--chrome);
   box-shadow: var(--topbar-shadow);
 }
 
@@ -671,12 +713,13 @@ textarea:focus-visible {
   width: min(232px, calc(100vw - 20px));
   padding: 6px;
   border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background:
+    var(--menu-material),
     var(--menu-wash),
     var(--menu-bg);
   color: var(--menu-text);
-  box-shadow: var(--shadow-raised);
+  box-shadow: var(--shadow-popover);
   backdrop-filter: blur(16px);
 }
 
@@ -908,6 +951,7 @@ textarea:focus-visible {
   padding: 4px max(10px, var(--lzc-safe-area-inset-right)) 4px max(10px, var(--lzc-safe-area-inset-left));
   border-bottom: 1px solid var(--line-soft);
   background:
+    var(--topbar-material),
     var(--component-wash),
     var(--chrome);
   box-shadow: var(--topbar-shadow);
@@ -1319,23 +1363,13 @@ textarea:focus-visible {
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background:
+    var(--menu-material),
     var(--menu-wash),
     var(--menu-bg);
-  box-shadow: var(--shadow-raised);
+  box-shadow: var(--shadow-popover);
   backdrop-filter: blur(16px);
-}
-
-.switcher-menu[hidden],
-.new-tab-menu[hidden],
-.herdr-workspace-menu[hidden],
-.notifications-menu[hidden],
-.settings-menu[hidden],
-.settings-page[hidden],
-.notification-modal[hidden],
-.pane-menu[hidden] {
-  display: none;
 }
 
 .pane-menu,
@@ -1345,11 +1379,12 @@ textarea:focus-visible {
   min-width: 158px;
   padding: 6px;
   border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background:
+    var(--menu-material),
     var(--menu-wash),
     var(--menu-bg);
-  box-shadow: var(--shadow-raised);
+  box-shadow: var(--shadow-popover);
   backdrop-filter: blur(16px);
 }
 
@@ -1370,11 +1405,12 @@ textarea:focus-visible {
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background:
+    var(--menu-material),
     var(--menu-wash),
     var(--menu-bg);
-  box-shadow: var(--shadow-raised);
+  box-shadow: var(--shadow-popover);
   backdrop-filter: blur(16px);
 }
 
@@ -1530,10 +1566,10 @@ textarea:focus-visible {
   display: grid;
   gap: 14px;
   border: 1px solid var(--notification-tone-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background:
     linear-gradient(180deg, var(--notification-tone-wash), transparent 52%),
-    linear-gradient(180deg, var(--dialog-wash-a), transparent 46%),
+    var(--dialog-material),
     var(--dialog-bg);
   color: var(--text);
   box-shadow: var(--shadow-deep);
@@ -1599,6 +1635,12 @@ textarea:focus-visible {
   bottom: 0;
   left: calc(100% + 8px);
   max-height: min(480px, calc(var(--app-viewport-height) - 16px));
+  transform-origin: bottom left;
+}
+
+.webshell[data-tab-layout="vertical"] .new-tab-menu,
+.webshell[data-tab-layout="vertical"] .pane-menu {
+  transform-origin: bottom left;
 }
 
 .webshell[data-tab-layout="vertical"] .switcher-menu,
@@ -1685,11 +1727,12 @@ textarea:focus-visible {
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--menu-border);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   background:
+    var(--menu-material),
     var(--menu-wash),
     var(--menu-bg);
-  box-shadow: var(--shadow-raised);
+  box-shadow: var(--shadow-popover);
   backdrop-filter: blur(16px);
 }
 
@@ -1776,6 +1819,56 @@ textarea:focus-visible {
 
 .herdr-workspace-menu-status:empty {
   display: none;
+}
+
+.switcher-menu,
+.new-tab-menu,
+.herdr-workspace-menu,
+.notifications-menu,
+.settings-menu,
+.pane-menu {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: top right;
+  transition:
+    opacity var(--motion-popover-in) var(--ease-out),
+    transform var(--motion-popover-in) var(--ease-emphasized),
+    display var(--motion-popover-in);
+  transition-behavior: normal, normal, allow-discrete;
+  will-change: transform, opacity;
+}
+
+.new-tab-menu,
+.pane-menu {
+  transform-origin: top left;
+}
+
+.switcher-menu[hidden],
+.new-tab-menu[hidden],
+.herdr-workspace-menu[hidden],
+.notifications-menu[hidden],
+.settings-menu[hidden],
+.pane-menu[hidden] {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px) scale(0.98);
+  transition-duration:
+    var(--motion-popover-out),
+    var(--motion-popover-out),
+    var(--motion-popover-out);
+}
+
+@starting-style {
+  .switcher-menu:not([hidden]),
+  .new-tab-menu:not([hidden]),
+  .herdr-workspace-menu:not([hidden]),
+  .notifications-menu:not([hidden]),
+  .settings-menu:not([hidden]),
+  .pane-menu:not([hidden]) {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
 }
 
 .instance-list {
@@ -1902,6 +1995,40 @@ textarea:focus-visible {
     var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-inset-soft);
+}
+
+.command-button,
+.icon-button,
+.tab-add,
+.switcher-button,
+.settings-tabs button,
+.file-button,
+.quick-phrase-preview {
+  transition: transform var(--motion-press) var(--ease-out);
+}
+
+.command-button:active:not(:disabled),
+.icon-button:active:not(:disabled),
+.tab-add:active:not(:disabled),
+.switcher-button:active:not(:disabled),
+.settings-tabs button:active:not(:disabled),
+.file-button:not(.is-disabled):active,
+.quick-phrase-preview:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.new-tab-menu button,
+.pane-menu button,
+.settings-menu button,
+.herdr-workspace-row {
+  transition: transform var(--motion-press) var(--ease-out);
+}
+
+.new-tab-menu button:active:not(:disabled),
+.pane-menu button:active:not(:disabled),
+.settings-menu button:active:not(:disabled),
+.herdr-workspace-row:active:not(:disabled) {
+  transform: scale(0.985);
 }
 
 .command-button:hover {
@@ -2278,8 +2405,10 @@ textarea:focus-visible {
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--dialog-border);
-  border-radius: 12px;
-  background: var(--dialog-bg);
+  border-radius: var(--radius-lg);
+  background:
+    var(--dialog-material),
+    var(--dialog-bg);
   box-shadow: var(--shadow-deep);
   padding: 18px;
 }
@@ -3033,10 +3162,6 @@ textarea:focus-visible {
   backdrop-filter: blur(8px);
 }
 
-.shortcut-help[hidden] {
-  display: none;
-}
-
 .about-dialog-shell {
   position: fixed;
   inset: 0;
@@ -3046,11 +3171,6 @@ textarea:focus-visible {
   padding: 18px;
   background: var(--overlay-scrim);
   backdrop-filter: blur(8px);
-  animation: about-backdrop-in 140ms ease-out both;
-}
-
-.about-dialog-shell[hidden] {
-  display: none;
 }
 
 .about-dialog {
@@ -3059,12 +3179,13 @@ textarea:focus-visible {
   max-height: calc(var(--app-viewport-height) - 28px);
   overflow: auto;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
+  background:
+    var(--dialog-material),
+    var(--dialog-bg);
   color: var(--text);
   box-shadow: var(--shadow-deep);
   padding: 16px;
-  animation: about-card-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .about-dialog::before {
@@ -3076,7 +3197,7 @@ textarea:focus-visible {
   height: 2px;
   background: var(--accent);
   transform-origin: 0 50%;
-  animation: about-rule-in 680ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: about-rule-in 280ms var(--ease-emphasized) both;
 }
 
 .about-dialog-head {
@@ -3096,7 +3217,7 @@ textarea:focus-visible {
   border-radius: 18px;
   background: var(--accent-softer);
   color: var(--accent-fg);
-  animation: about-mark-in 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: about-mark-in 260ms var(--ease-emphasized) both;
 }
 
 .about-mark img {
@@ -3133,7 +3254,7 @@ textarea:focus-visible {
   border-radius: 8px;
   background: var(--accent-softer);
   padding: 12px;
-  animation: about-item-in 240ms ease-out 80ms both;
+  animation: about-item-in 180ms var(--ease-out) 40ms both;
 }
 
 .about-version-card span,
@@ -3170,11 +3291,11 @@ textarea:focus-visible {
     var(--component-wash),
     var(--surface);
   padding: 10px;
-  animation: about-item-in 240ms ease-out 120ms both;
+  animation: about-item-in 180ms var(--ease-out) 60ms both;
 }
 
 .about-facts > div:nth-child(2) {
-  animation-delay: 160ms;
+  animation-delay: 80ms;
 }
 
 .about-facts dd {
@@ -3189,7 +3310,7 @@ textarea:focus-visible {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
-  animation: about-item-in 240ms ease-out 200ms both;
+  animation: about-item-in 180ms var(--ease-out) 100ms both;
 }
 
 .shortcut-help-dialog {
@@ -3197,8 +3318,10 @@ textarea:focus-visible {
   max-height: calc(var(--app-viewport-height) - 28px);
   overflow: auto;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
+  background:
+    var(--dialog-material),
+    var(--dialog-bg);
   color: var(--text);
   box-shadow: var(--shadow-deep);
   padding: 16px;
@@ -3263,6 +3386,70 @@ kbd {
   font-family: var(--font-mono);
   font-size: 11px;
   text-align: center;
+}
+
+.settings-page,
+.shortcut-help,
+.about-dialog-shell,
+.notification-modal {
+  opacity: 1;
+  transition:
+    opacity var(--motion-dialog-in) var(--ease-out),
+    display var(--motion-dialog-in);
+  transition-behavior: normal, allow-discrete;
+}
+
+.settings-dialog,
+.shortcut-help-dialog,
+.about-dialog,
+.notification-modal-dialog {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: center;
+  transition:
+    opacity var(--motion-dialog-in) var(--ease-out),
+    transform var(--motion-dialog-in) var(--ease-emphasized);
+  will-change: transform, opacity;
+}
+
+.settings-page[hidden],
+.shortcut-help[hidden],
+.about-dialog-shell[hidden],
+.notification-modal[hidden] {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  transition-duration:
+    var(--motion-dialog-out),
+    var(--motion-dialog-out);
+}
+
+.settings-page[hidden] .settings-dialog,
+.shortcut-help[hidden] .shortcut-help-dialog,
+.about-dialog-shell[hidden] .about-dialog,
+.notification-modal[hidden] .notification-modal-dialog {
+  opacity: 0;
+  transform: translateY(8px) scale(0.985);
+  transition-duration:
+    var(--motion-dialog-out),
+    var(--motion-dialog-out);
+}
+
+@starting-style {
+  .settings-page:not([hidden]),
+  .shortcut-help:not([hidden]),
+  .about-dialog-shell:not([hidden]),
+  .notification-modal:not([hidden]) {
+    opacity: 0;
+  }
+
+  .settings-page:not([hidden]) .settings-dialog,
+  .shortcut-help:not([hidden]) .shortcut-help-dialog,
+  .about-dialog-shell:not([hidden]) .about-dialog,
+  .notification-modal:not([hidden]) .notification-modal-dialog {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
 }
 
 .theme-actions {
@@ -3490,26 +3677,6 @@ output {
   color: var(--danger);
 }
 
-@keyframes about-backdrop-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes about-card-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
 @keyframes about-rule-in {
   from {
     transform: scaleX(0);
@@ -3522,7 +3689,7 @@ output {
 @keyframes about-mark-in {
   from {
     opacity: 0;
-    transform: translateY(4px) scale(0.9);
+    transform: translateY(4px) scale(0.96);
   }
   to {
     opacity: 1;
@@ -3542,6 +3709,83 @@ output {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .switcher-menu,
+  .switcher-menu[hidden],
+  .new-tab-menu,
+  .new-tab-menu[hidden],
+  .herdr-workspace-menu,
+  .herdr-workspace-menu[hidden],
+  .notifications-menu,
+  .notifications-menu[hidden],
+  .settings-menu,
+  .settings-menu[hidden],
+  .pane-menu,
+  .pane-menu[hidden] {
+    transform: none;
+    transition:
+      opacity 100ms linear,
+      display 100ms;
+    transition-behavior: normal, allow-discrete;
+    will-change: auto;
+  }
+
+  .settings-page,
+  .settings-page[hidden],
+  .shortcut-help,
+  .shortcut-help[hidden],
+  .about-dialog-shell,
+  .about-dialog-shell[hidden],
+  .notification-modal,
+  .notification-modal[hidden] {
+    transition:
+      opacity 100ms linear,
+      display 100ms;
+    transition-behavior: normal, allow-discrete;
+  }
+
+  .settings-dialog,
+  .settings-page[hidden] .settings-dialog,
+  .shortcut-help-dialog,
+  .shortcut-help[hidden] .shortcut-help-dialog,
+  .about-dialog,
+  .about-dialog-shell[hidden] .about-dialog,
+  .notification-modal-dialog,
+  .notification-modal[hidden] .notification-modal-dialog {
+    transform: none;
+    transition: opacity 100ms linear;
+    will-change: auto;
+  }
+
+  .command-button,
+  .icon-button,
+  .tab-add,
+  .switcher-button,
+  .settings-tabs button,
+  .file-button,
+  .quick-phrase-preview,
+  .new-tab-menu button,
+  .pane-menu button,
+  .settings-menu button,
+  .herdr-workspace-row,
+  .instance-row {
+    transition: none;
+  }
+
+  .command-button:active:not(:disabled),
+  .icon-button:active:not(:disabled),
+  .tab-add:active:not(:disabled),
+  .switcher-button:active:not(:disabled),
+  .settings-tabs button:active:not(:disabled),
+  .file-button:not(.is-disabled):active,
+  .quick-phrase-preview:active:not(:disabled),
+  .new-tab-menu button:active:not(:disabled),
+  .pane-menu button:active:not(:disabled),
+  .settings-menu button:active:not(:disabled),
+  .herdr-workspace-row:active:not(:disabled),
+  .instance-row:active:not(:disabled) {
+    transform: none;
+  }
+
   .about-dialog-shell,
   .about-dialog,
   .about-dialog::before,
