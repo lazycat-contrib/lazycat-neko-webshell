@@ -1,5 +1,7 @@
 import type { Instance } from "./gen/lazycat/webshell/v1/capability_pb";
-export { isRemoteClientSelector } from "./remote-client-terminal.ts";
+import { isRemoteClientSelector } from "./remote-client-terminal.ts";
+
+export { isRemoteClientSelector };
 
 const LAST_SELECTOR_STORAGE_KEY = "lazycat-neko-webshell.lastSelector";
 const LAST_TAB_STORAGE_PREFIX = "lazycat-neko-webshell.lastTab";
@@ -16,7 +18,8 @@ export function shouldClearWorkspaceSelection(
   tabCount: number,
   hasActiveTab: boolean,
 ): boolean {
-  return tabCount === 0
+  return isRemoteClientSelector(workspaceSelector)
+    && tabCount === 0
     && !hasActiveTab
     && normalizeSelector(workspaceSelector) === normalizeSelector(selectedSelector);
 }

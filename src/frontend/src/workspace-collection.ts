@@ -27,11 +27,13 @@ export function activeTabAfterSelectorReconcile<
   preferred: string | undefined,
   activateSelector: boolean,
 ): string | undefined {
-  if (!activateSelector && previous && tabs.some((tab) => tab.id === previous)) return previous;
+  if (!activateSelector) {
+    return previous && tabs.some((tab) => tab.id === previous) ? previous : undefined;
+  }
   if (preferred && tabs.some((tab) => tab.id === preferred)) return preferred;
-  return tabs.find((tab) => normalizeSelector(tab.selector) === normalizeSelector(selector))?.id
-    ?? tabs.find((tab) => tab.id === previous)?.id
-    ?? tabs[0]?.id;
+  return tabs.find((tab) => (
+    normalizeSelector(tab.selector) === normalizeSelector(selector)
+  ))?.id;
 }
 
 export function selectorTabIdForWorkspaceId<

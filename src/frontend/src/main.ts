@@ -4876,6 +4876,10 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
       updateLocation: options.activateSelector === true,
     });
   } else {
+    for (const tab of tabs) {
+      tab.mount.classList.remove("active");
+      tab.mount.setAttribute("aria-hidden", "true");
+    }
     if (options.activateSelector) {
       setSelectedSelector(workspaceSelector, { updateLocation: false });
     }

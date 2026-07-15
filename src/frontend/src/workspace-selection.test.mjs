@@ -27,6 +27,15 @@ test("forgets the selected workspace and its last tab without clearing another s
 
 test("clears selection only when the selected workspace is empty and no tab remains", () => {
   assert.equal(shouldClearWorkspaceSelection("client:pc", "client:pc", 0, false), true);
+  assert.equal(
+    shouldClearWorkspaceSelection(
+      "debian-bak@cloud.lazycat.lightos.entry",
+      "debian-bak@cloud.lazycat.lightos.entry",
+      0,
+      false,
+    ),
+    false,
+  );
   assert.equal(shouldClearWorkspaceSelection("client:pc", "client:pc", 1, false), false);
   assert.equal(shouldClearWorkspaceSelection("client:pc", "client:other", 0, false), false);
   assert.equal(shouldClearWorkspaceSelection("client:pc", "client:pc", 0, true), false);
