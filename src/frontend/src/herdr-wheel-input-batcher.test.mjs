@@ -30,6 +30,9 @@ function harness() {
 test("recognizes only complete SGR wheel input sequences", () => {
   assert.equal(isHerdrWheelInput("\x1b[<64;10;5M"), true);
   assert.equal(isHerdrWheelInput("\x1b[<93;10;5M"), true);
+  assert.equal(isHerdrWheelInput("\x1b[<66;10;5M"), true);
+  assert.equal(isHerdrWheelInput("\x1b[<67;10;5M"), true);
+  assert.equal(isHerdrWheelInput("\x1b[<94;10;5M"), true);
   assert.equal(isHerdrWheelInput("\x1b[<0;10;5M"), false);
   assert.equal(isHerdrWheelInput("\x1b[<64;10;5m"), false);
   assert.equal(isHerdrWheelInput("x\x1b[<64;10;5M"), false);
@@ -40,14 +43,15 @@ test("sends the first wheel input immediately and batches the rest of the frame"
   const { batcher, sent, frames } = harness();
 
   assert.equal(batcher.handle(herdrPane, "\x1b[<64;10;5M"), true);
-  assert.equal(batcher.handle(herdrPane, "\x1b[<65;11;6M"), true);
+  assert.equal(batcher.handle(herdrPane, "\x1b[<66;11;6M"), true);
+  assert.equal(batcher.handle(herdrPane, "\x1b[<67;12;7M"), true);
   assert.equal(batcher.handle(herdrPane, "\x1b[<68;12;7M"), true);
   assert.deepEqual(sent, [{ pane: "herdr-pane", data: "\x1b[<64;10;5M" }]);
 
   frames.shift()(0);
   assert.deepEqual(sent, [
     { pane: "herdr-pane", data: "\x1b[<64;10;5M" },
-    { pane: "herdr-pane", data: "\x1b[<65;11;6M\x1b[<68;12;7M" },
+    { pane: "herdr-pane", data: "\x1b[<66;11;6M\x1b[<67;12;7M\x1b[<68;12;7M" },
   ]);
 });
 

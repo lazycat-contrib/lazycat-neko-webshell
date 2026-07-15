@@ -1,5 +1,5 @@
-import type { HerdrTabInfo, HerdrWorkspaceInfo } from "./types";
-import { escapeAttr, escapeHtml } from "./utils";
+import type { HerdrPaneInfo, HerdrTabInfo, HerdrWorkspaceInfo } from "./types";
+import { escapeAttr, escapeHtml } from "./utils.ts";
 
 export function renderHerdrWorkspaceMenuRow(
   workspace: HerdrWorkspaceInfo,
@@ -60,20 +60,47 @@ export function renderHerdrWorkspaceButtons(
     : "";
 }
 
-export function renderHerdrTabButton(tab: HerdrTabInfo): string {
+export function herdrPaneDetailForTab(tab: HerdrTabInfo, panes: HerdrPaneInfo[]): string {
+  const matching = panes.filter((pane) => pane.tab_id === tab.tab_id);
+  const pane = matching.find((item) => item.focused) ?? matching[0];
+  return pane?.title?.trim()
+    || pane?.terminal_title_stripped?.trim()
+    || pane?.display_agent?.trim()
+    || pane?.terminal_title?.trim()
+    || pane?.agent?.trim()
+    || "";
+}
+
+export function herdrTabPresentation(
+  tab: HerdrTabInfo,
+  panes: HerdrPaneInfo[],
+): { label: string; title: string } {
   const number = String(tab.number || "").trim();
   const rawLabel = tab.label.trim() || `Tab ${number}`.trim();
-  const label = compactHerdrTabLabel(rawLabel, number);
+  const compactLabel = compactHerdrTabLabel(rawLabel, number);
+  const explicitLabel = herdrTabLabelIsGeneric(rawLabel, number) ? "" : compactLabel;
+  const detail = herdrPaneDetailForTab(tab, panes);
+  const label = explicitLabel || detail;
+  const title = uniqueNonEmpty([explicitLabel || rawLabel, detail, tab.tab_id]).join(" · ");
+  return { label, title };
+}
+
+export function renderHerdrTabButton(tab: HerdrTabInfo, panes: HerdrPaneInfo[] = []): string {
+  const number = String(tab.number || "").trim();
+  const presentation = herdrTabPresentation(tab, panes);
   return `
-    <button class="herdr-tab ${label ? "" : "number-only"}" type="button" role="tab" data-herdr-tab="${escapeAttr(tab.tab_id)}" aria-selected="${tab.focused}" title="${escapeAttr(tab.tab_id)}">
+    <button class="herdr-tab ${presentation.label ? "" : "number-only"}" type="button" role="tab" data-herdr-tab="${escapeAttr(tab.tab_id)}" aria-selected="${tab.focused}" title="${escapeAttr(presentation.title)}">
       ${number ? `<small>${escapeHtml(number)}</small>` : ""}
-      ${label ? `<span>${escapeHtml(label)}</span>` : ""}
+      ${presentation.label ? `<span>${escapeHtml(presentation.label)}</span>` : ""}
     </button>
   `;
 }
 
-export function renderHerdrTabButtons(tabs: HerdrTabInfo[] | undefined): string {
-  return tabs?.length ? tabs.map(renderHerdrTabButton).join("") : "";
+export function renderHerdrTabButtons(
+  tabs: HerdrTabInfo[] | undefined,
+  panes: HerdrPaneInfo[] = [],
+): string {
+  return tabs?.length ? tabs.map((tab) => renderHerdrTabButton(tab, panes)).join("") : "";
 }
 
 export function syncHerdrWorkspaceButtons(
@@ -102,8 +129,12 @@ export function syncHerdrWorkspaceButtons(
   return false;
 }
 
-export function syncHerdrTabButtons(container: HTMLElement, tabs: HerdrTabInfo[] | undefined): boolean {
-  const items = tabItems(tabs);
+export function syncHerdrTabButtons(
+  container: HTMLElement,
+  tabs: HerdrTabInfo[] | undefined,
+  panes: HerdrPaneInfo[] = [],
+): boolean {
+  const items = tabItems(tabs, panes);
   const signature = JSON.stringify(items.map((item) => [item.id, item.number, item.label, item.title]));
   if (!items.length) return syncEmpty(container, "herdrTabSignature", signature);
   if (container.dataset.herdrTabSignature !== signature || tabElements(container).length !== items.length) {
@@ -122,6 +153,25 @@ function compactHerdrTabLabel(label: string, number: string): string {
   if (!number) return label;
   if (label === number) return "";
   return label.replace(new RegExp(`^${escapeRegExp(number)}(?:[.\\s:-]+)`), "").trim();
+}
+
+function herdrTabLabelIsGeneric(label: string, number: string): boolean {
+  const normalized = label.trim();
+  if (!normalized) return true;
+  if (number && normalized === number) return true;
+  return Boolean(number && normalized.toLocaleLowerCase() === `tab ${number}`.toLocaleLowerCase());
+}
+
+function uniqueNonEmpty(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
 }
 
 function escapeRegExp(value: string): string {
@@ -159,15 +209,15 @@ function workspaceItems(workspaces: HerdrWorkspaceInfo[] | undefined, closeLabel
   }) ?? [];
 }
 
-function tabItems(tabs: HerdrTabInfo[] | undefined): TabItem[] {
+function tabItems(tabs: HerdrTabInfo[] | undefined, panes: HerdrPaneInfo[]): TabItem[] {
   return tabs?.map((tab) => {
     const number = String(tab.number || "").trim();
-    const rawLabel = tab.label.trim() || `Tab ${number}`.trim();
+    const presentation = herdrTabPresentation(tab, panes);
     return {
       id: tab.tab_id,
       number,
-      label: compactHerdrTabLabel(rawLabel, number),
-      title: tab.tab_id,
+      label: presentation.label,
+      title: presentation.title,
       focused: tab.focused,
     };
   }) ?? [];

@@ -4,6 +4,8 @@ const SGR_MOUSE_INPUT = /^\x1b\[<(\d+);(\d+);(\d+)M$/;
 const SGR_MOUSE_MODIFIER_MASK = 4 | 8 | 16;
 const SGR_WHEEL_UP = 64;
 const SGR_WHEEL_DOWN = 65;
+const SGR_WHEEL_LEFT = 66;
+const SGR_WHEEL_RIGHT = 67;
 
 type FrameRequest = (callback: FrameRequestCallback) => number;
 type FrameCancel = (handle: number) => void;
@@ -84,5 +86,8 @@ export function isHerdrWheelInput(data: string): boolean {
     return false;
   }
   const baseButton = button & ~SGR_MOUSE_MODIFIER_MASK;
-  return baseButton === SGR_WHEEL_UP || baseButton === SGR_WHEEL_DOWN;
+  return baseButton === SGR_WHEEL_UP
+    || baseButton === SGR_WHEEL_DOWN
+    || baseButton === SGR_WHEEL_LEFT
+    || baseButton === SGR_WHEEL_RIGHT;
 }
