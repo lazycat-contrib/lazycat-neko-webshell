@@ -14,14 +14,17 @@ import {
   isHerdrSocketSubscription,
 } from "./herdr-socket-api.ts";
 
-test("tracks the current Herdr 0.7.3 socket schema", () => {
+test("tracks the current Herdr 0.7.4 socket schema", () => {
   assert.equal(HERDR_SOCKET_PROTOCOL, 16);
   assert.equal(HERDR_SOCKET_SCHEMA_VERSION, 1);
-  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.7.3");
-  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "3661d99c2e4a4247392fc1a1eed5f37453393f8e");
-  assert.equal(isHerdrSocketMethod("session.snapshot"), true);
-  assert.equal(isHerdrSocketMethod("pane.wait_for_output"), true);
-  assert.equal(isHerdrSocketMethod("pane.scroll"), false);
+  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.7.4");
+  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "a22454f27ce096585e19d1787dba43f56d1505cf");
+  assert.equal(isHerdrSocketMethod("workspace.report_metadata"), true);
+  assert.equal(isHerdrSocketMethod("pane.graphics.set"), true);
+  assert.equal(isHerdrSocketMethod("popup.close"), true);
+  assert.equal(isHerdrSocketMethod("pane.graphics.stream"), false);
+  assert.equal(isHerdrSocketSubscription("workspace.metadata_updated"), true);
+  assert.equal(isHerdrSocketSubscription("pane.updated"), true);
   assert.equal(isHerdrSocketSubscription("pane.scroll_changed"), true);
 });
 

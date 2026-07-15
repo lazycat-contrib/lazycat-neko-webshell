@@ -1168,24 +1168,22 @@ mod tests {
         assert_eq!(MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
         assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 16);
         assert_eq!(HERDR_SOCKET_CONTRACT.schema_version, 1);
-        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.7.3");
+        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.7.4");
         assert_eq!(
             HERDR_SOCKET_CONTRACT.source_revision,
-            "3661d99c2e4a4247392fc1a1eed5f37453393f8e"
+            "a22454f27ce096585e19d1787dba43f56d1505cf"
         );
-        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 80);
-        assert_eq!(HERDR_SOCKET_CONTRACT.subscriptions.len(), 24);
+        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 85);
+        assert_eq!(HERDR_SOCKET_CONTRACT.subscriptions.len(), 26);
         for method in [
             "session.snapshot",
-            "workspace.move",
-            "tab.move",
-            "layout.set_split_ratio",
-            "pane.focus",
+            "workspace.report_metadata",
+            "pane.graphics.set",
+            "pane.graphics.clear",
+            "pane.graphics.info",
+            "popup.close",
         ] {
-            assert!(
-                is_allowed_herdr_method(method),
-                "{method} should be allowed for Herdr 0.7.3"
-            );
+            assert!(is_allowed_herdr_method(method), "{method} should be allowed");
         }
         for method in &HERDR_SOCKET_CONTRACT.methods {
             assert!(
@@ -1193,6 +1191,7 @@ mod tests {
                 "{method} should be allowed"
             );
         }
+        assert!(!is_allowed_herdr_method("pane.graphics.stream"));
         assert!(!is_allowed_herdr_method("workspace.delete"));
         assert!(!is_allowed_herdr_method("../../../bin/sh"));
     }
