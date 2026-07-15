@@ -9,7 +9,9 @@ import {
   herdrEventSubscriptions,
   herdrPaneIdFromEvent,
   herdrPaneInfo,
+  herdrPaneInfoFromEvent,
   herdrScrollInfoFromEvent,
+  herdrWorkspaceInfoFromEvent,
   isHerdrSocketMethod,
   isHerdrSocketSubscription,
 } from "./herdr-socket-api.ts";
@@ -75,4 +77,79 @@ test("parses PaneInfo and pane.scroll_changed metrics", () => {
     maxOffsetFromBottom: 240,
     viewportRows: 30,
   });
+});
+
+test("parses Herdr workspace metadata and pane presentation snapshots", () => {
+  assert.deepEqual(herdrWorkspaceInfoFromEvent({
+    workspace: {
+      workspace_id: "w1",
+      number: 1,
+      label: "repo",
+      focused: true,
+      active_tab_id: "w1:t1",
+      tab_count: 1,
+      pane_count: 1,
+      tokens: { summary: "review ready" },
+    },
+  }), {
+    workspace_id: "w1",
+    number: 1,
+    label: "repo",
+    focused: true,
+    active_tab_id: "w1:t1",
+    tab_count: 1,
+    pane_count: 1,
+    tokens: { summary: "review ready" },
+  });
+
+  assert.deepEqual(herdrPaneInfoFromEvent({
+    pane: {
+      pane_id: "w1:p1",
+      workspace_id: "w1",
+      tab_id: "w1:t1",
+      focused: true,
+      title: "Refactor auth",
+      terminal_title: "⠋ Codex",
+      terminal_title_stripped: "Codex",
+      display_agent: "Codex auth",
+      agent: "codex",
+      agent_status: "working",
+      tokens: { model: "gpt-5" },
+    },
+  }), {
+    pane_id: "w1:p1",
+    workspace_id: "w1",
+    tab_id: "w1:t1",
+    focused: true,
+    title: "Refactor auth",
+    terminal_title: "⠋ Codex",
+    terminal_title_stripped: "Codex",
+    display_agent: "Codex auth",
+    agent: "codex",
+    agent_status: "working",
+    tokens: { model: "gpt-5" },
+  });
+});
+
+test("rejects malformed Herdr resource snapshots", () => {
+  assert.equal(herdrWorkspaceInfoFromEvent({ workspace: { label: "missing id" } }), undefined);
+  assert.equal(herdrWorkspaceInfoFromEvent({
+    workspace_id: "w1",
+    number: 1,
+    label: "repo",
+    focused: true,
+    active_tab_id: "w1:t1",
+    tab_count: 1,
+    pane_count: 1,
+    tokens: { summary: 3 },
+  }), undefined);
+  assert.equal(herdrPaneInfoFromEvent({ pane: { pane_id: "w1:p1" } }), undefined);
+  assert.equal(herdrPaneInfoFromEvent({
+    pane_id: "w1:p1",
+    workspace_id: "w1",
+    tab_id: "w1:t1",
+    focused: true,
+    agent_status: "working",
+    tokens: ["not", "a", "map"],
+  }), undefined);
 });

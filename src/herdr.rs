@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -115,6 +115,7 @@ pub struct HerdrBridgeState {
     capabilities: Option<HerdrCapabilitiesInfo>,
     workspaces: Vec<HerdrWorkspaceInfo>,
     tabs: Vec<HerdrTabInfo>,
+    panes: Vec<HerdrPaneInfo>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -132,6 +133,7 @@ pub struct HerdrWorkspaceInfo {
     active_tab_id: String,
     tab_count: usize,
     pane_count: usize,
+    tokens: Map<String, Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -142,6 +144,26 @@ pub struct HerdrTabInfo {
     label: String,
     focused: bool,
     pane_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HerdrPaneInfo {
+    pane_id: String,
+    workspace_id: String,
+    tab_id: String,
+    focused: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_title_stripped: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
+    agent_status: String,
+    tokens: Map<String, Value>,
 }
 
 struct AuthorizedHerdrTarget {
@@ -329,6 +351,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
                 HerdrPingInfo::default(),
                 Vec::new(),
                 Vec::new(),
+                Vec::new(),
             );
         }
     };
@@ -356,7 +379,8 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
                             .is_none_or(|workspace_id| tab.workspace_id == workspace_id)
                     })
                     .collect();
-                return build_herdr_state(target, true, None, ping_info, workspaces, tabs);
+                let panes = parse_panes(&response);
+                return build_herdr_state(target, true, None, ping_info, workspaces, tabs, panes);
             }
             Err(err) => {
                 warn!(
@@ -376,6 +400,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
                 true,
                 Some(err.message),
                 ping_info,
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
             );
@@ -407,7 +432,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
         Vec::new()
     };
 
-    build_herdr_state(target, true, None, ping_info, workspaces, tabs)
+    build_herdr_state(target, true, None, ping_info, workspaces, tabs, Vec::new())
 }
 
 fn build_herdr_state(
@@ -417,6 +442,7 @@ fn build_herdr_state(
     ping_info: HerdrPingInfo,
     workspaces: Vec<HerdrWorkspaceInfo>,
     tabs: Vec<HerdrTabInfo>,
+    panes: Vec<HerdrPaneInfo>,
 ) -> HerdrBridgeState {
     HerdrBridgeState {
         selector: target.selector.clone(),
@@ -432,6 +458,7 @@ fn build_herdr_state(
         capabilities: ping_info.capabilities,
         workspaces,
         tabs,
+        panes,
     }
 }
 
@@ -925,6 +952,36 @@ fn parse_workspaces(response: &Value) -> Vec<HerdrWorkspaceInfo> {
                     .to_owned(),
                 tab_count: json_usize(value, "tab_count"),
                 pane_count: json_usize(value, "pane_count"),
+                tokens: json_string_map(value, "tokens"),
+            })
+        })
+        .collect()
+}
+
+fn parse_panes(response: &Value) -> Vec<HerdrPaneInfo> {
+    herdr_result_collection(response, "panes")
+        .into_iter()
+        .flatten()
+        .filter_map(|value| {
+            Some(HerdrPaneInfo {
+                pane_id: value.get("pane_id")?.as_str()?.to_owned(),
+                workspace_id: value.get("workspace_id")?.as_str()?.to_owned(),
+                tab_id: value.get("tab_id")?.as_str()?.to_owned(),
+                focused: value
+                    .get("focused")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                title: json_optional_string(value, "title"),
+                terminal_title: json_optional_string(value, "terminal_title"),
+                terminal_title_stripped: json_optional_string(value, "terminal_title_stripped"),
+                display_agent: json_optional_string(value, "display_agent"),
+                agent: json_optional_string(value, "agent"),
+                agent_status: value
+                    .get("agent_status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_owned(),
+                tokens: json_string_map(value, "tokens"),
             })
         })
         .collect()
@@ -1024,6 +1081,29 @@ fn json_usize(value: &Value, key: &str) -> usize {
         .unwrap_or(0)
 }
 
+fn json_optional_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn json_string_map(value: &Value, key: &str) -> Map<String, Value> {
+    value
+        .get(key)
+        .and_then(Value::as_object)
+        .map(|tokens| {
+            tokens
+                .iter()
+                .filter(|(_, value)| value.is_string())
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn required_id(value: Option<&str>, name: &str) -> Result<String, HerdrBridgeError> {
     let value = value.map(str::trim).unwrap_or_default();
     if value.is_empty() {
@@ -1071,13 +1151,13 @@ impl IntoResponse for HerdrBridgeError {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::{
         HERDR_SOCKET_CONTRACT, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, herdr_protocol_is_supported,
         herdr_protocol_supports_session_snapshot, is_allowed_herdr_method, parse_herdr_ping,
-        parse_snapshot_focused_workspace_id, parse_tabs, parse_workspaces, shell_quote,
-        validate_herdr_wire_request,
+        parse_panes, parse_snapshot_focused_workspace_id, parse_tabs, parse_workspaces,
+        shell_quote, validate_herdr_wire_request,
     };
 
     #[test]
@@ -1132,7 +1212,8 @@ mod tests {
                         "focused": true,
                         "active_tab_id": "w1:t1",
                         "tab_count": 1,
-                        "pane_count": 1
+                        "pane_count": 1,
+                        "tokens": { "summary": "review ready" }
                     }],
                     "tabs": [{
                         "tab_id": "w1:t1",
@@ -1141,6 +1222,21 @@ mod tests {
                         "label": "main",
                         "focused": true,
                         "pane_count": 1
+                    }],
+                    "panes": [{
+                        "pane_id": "w1:p1",
+                        "terminal_id": "term-1",
+                        "workspace_id": "w1",
+                        "tab_id": "w1:t1",
+                        "focused": true,
+                        "title": "Refactor auth",
+                        "terminal_title": "⠋ Codex",
+                        "terminal_title_stripped": "Codex",
+                        "display_agent": "Codex auth",
+                        "agent": "codex",
+                        "agent_status": "working",
+                        "tokens": { "model": "gpt-5" },
+                        "revision": 3
                     }]
                 }
             }
@@ -1148,14 +1244,27 @@ mod tests {
 
         let workspaces = parse_workspaces(&response);
         let tabs = parse_tabs(&response);
+        let panes = parse_panes(&response);
         assert_eq!(
             parse_snapshot_focused_workspace_id(&response).as_deref(),
             Some("w1")
         );
         assert_eq!(workspaces.len(), 1);
         assert_eq!(workspaces[0].workspace_id, "w1");
+        assert_eq!(
+            workspaces[0].tokens.get("summary").and_then(Value::as_str),
+            Some("review ready")
+        );
         assert_eq!(tabs.len(), 1);
         assert_eq!(tabs[0].tab_id, "w1:t1");
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].pane_id, "w1:p1");
+        assert_eq!(panes[0].terminal_title_stripped.as_deref(), Some("Codex"));
+        assert_eq!(panes[0].agent_status, "working");
+        assert_eq!(
+            panes[0].tokens.get("model").and_then(Value::as_str),
+            Some("gpt-5")
+        );
     }
 
     #[test]
@@ -1183,7 +1292,10 @@ mod tests {
             "pane.graphics.info",
             "popup.close",
         ] {
-            assert!(is_allowed_herdr_method(method), "{method} should be allowed");
+            assert!(
+                is_allowed_herdr_method(method),
+                "{method} should be allowed"
+            );
         }
         for method in &HERDR_SOCKET_CONTRACT.methods {
             assert!(

@@ -77,6 +77,8 @@ export type WorkspaceAction =
   | "update_layout"
   | "set_tab_pinned";
 
+export type HerdrMetadataTokens = Record<string, string>;
+
 export type HerdrWorkspaceInfo = {
   workspace_id: string;
   number: number;
@@ -85,6 +87,7 @@ export type HerdrWorkspaceInfo = {
   active_tab_id: string;
   tab_count: number;
   pane_count: number;
+  tokens: HerdrMetadataTokens;
 };
 
 export type HerdrTabInfo = {
@@ -101,6 +104,20 @@ export type HerdrCapabilitiesInfo = {
   detached_server_daemon: boolean;
 };
 
+export type HerdrPaneInfo = {
+  pane_id: string;
+  workspace_id: string;
+  tab_id: string;
+  focused: boolean;
+  title?: string;
+  terminal_title?: string;
+  terminal_title_stripped?: string;
+  display_agent?: string;
+  agent?: string;
+  agent_status: string;
+  tokens: HerdrMetadataTokens;
+};
+
 export type HerdrBridgeState = {
   selector: string;
   available: boolean;
@@ -115,6 +132,7 @@ export type HerdrBridgeState = {
   capabilities?: HerdrCapabilitiesInfo;
   workspaces: HerdrWorkspaceInfo[];
   tabs: HerdrTabInfo[];
+  panes: HerdrPaneInfo[];
 };
 
 export type HerdrAction = "focus_workspace" | "focus_tab" | "create_tab" | "close_workspace" | "create_workspace";

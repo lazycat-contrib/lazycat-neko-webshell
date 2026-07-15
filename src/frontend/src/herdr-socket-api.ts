@@ -1,6 +1,6 @@
 import contract from "../../herdr_socket_contract.json" with { type: "json" };
 
-import type { JsonRecord } from "./types";
+import type { HerdrPaneInfo, HerdrWorkspaceInfo, JsonRecord } from "./types";
 
 export const HERDR_SOCKET_PROTOCOL = contract.protocol;
 export const HERDR_SOCKET_SCHEMA_VERSION = contract.schema_version;
@@ -74,6 +74,75 @@ export function herdrPaneInfo(value: JsonRecord | undefined): HerdrPaneSocketInf
   };
 }
 
+export function herdrWorkspaceInfoFromEvent(data: JsonRecord): HerdrWorkspaceInfo | undefined {
+  const workspace = recordField(data, "workspace") ?? data;
+  const workspaceId = stringField(workspace, "workspace_id");
+  const label = stringField(workspace, "label");
+  const activeTabId = stringField(workspace, "active_tab_id");
+  const number = nonNegativeInteger(workspace.number);
+  const tabCount = nonNegativeInteger(workspace.tab_count);
+  const paneCount = nonNegativeInteger(workspace.pane_count);
+  const focused = booleanField(workspace, "focused");
+  const tokens = metadataTokens(workspace.tokens);
+  if (
+    !workspaceId
+    || !label
+    || !activeTabId
+    || number === undefined
+    || tabCount === undefined
+    || paneCount === undefined
+    || focused === undefined
+    || tokens === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    workspace_id: workspaceId,
+    number,
+    label,
+    focused,
+    active_tab_id: activeTabId,
+    tab_count: tabCount,
+    pane_count: paneCount,
+    tokens,
+  };
+}
+
+export function herdrPaneInfoFromEvent(data: JsonRecord): HerdrPaneInfo | undefined {
+  const pane = recordField(data, "pane") ?? data;
+  const paneId = stringField(pane, "pane_id");
+  const workspaceId = stringField(pane, "workspace_id");
+  const tabId = stringField(pane, "tab_id");
+  const focused = booleanField(pane, "focused");
+  const agentStatus = stringField(pane, "agent_status");
+  const tokens = metadataTokens(pane.tokens);
+  if (
+    !paneId
+    || !workspaceId
+    || !tabId
+    || focused === undefined
+    || !agentStatus
+    || tokens === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    pane_id: paneId,
+    workspace_id: workspaceId,
+    tab_id: tabId,
+    focused,
+    ...optionalStringFields(pane, [
+      "title",
+      "terminal_title",
+      "terminal_title_stripped",
+      "display_agent",
+      "agent",
+    ]),
+    agent_status: agentStatus,
+    tokens,
+  };
+}
+
 export function herdrPaneIdFromEvent(data: JsonRecord): string {
   return stringField(data, "pane_id") || stringField(recordField(data, "pane"), "pane_id");
 }
@@ -108,6 +177,31 @@ function nonNegativeInteger(value: unknown): number | undefined {
 function positiveInteger(value: unknown): number | undefined {
   const integer = nonNegativeInteger(value);
   return integer !== undefined && integer > 0 ? integer : undefined;
+}
+
+function booleanField(record: JsonRecord | undefined, key: string): boolean | undefined {
+  const value = record?.[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function metadataTokens(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value);
+  if (entries.some(([, token]) => typeof token !== "string")) return undefined;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function optionalStringFields<const K extends string>(
+  record: JsonRecord,
+  keys: readonly K[],
+): Partial<Record<K, string>> {
+  const result: Partial<Record<K, string>> = {};
+  for (const key of keys) {
+    const value = stringField(record, key);
+    if (value) result[key] = value;
+  }
+  return result;
 }
 
 function stringField(record: JsonRecord | undefined, key: string): string {
