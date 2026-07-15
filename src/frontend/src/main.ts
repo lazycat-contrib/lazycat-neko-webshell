@@ -73,6 +73,7 @@ import {
 } from "./herdr-backend";
 import type { HerdrPaneResizeDirection } from "./herdr-backend";
 import { isHerdrSocketMethod } from "./herdr-socket-api";
+import { applyHerdrResourceEvent } from "./herdr-state-events";
 import { createHerdrWheelInputBatcher } from "./herdr-wheel-input-batcher";
 import {
   renderHerdrWorkspaceMenuView,
@@ -4380,7 +4381,7 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
       id: "lazycat-webshell:events",
       method: "events.subscribe",
       params: {
-        subscriptions: herdrEventSubscriptions(paneIds),
+        subscriptions: herdrEventSubscriptions(paneIds, herdrState?.herdr_version ?? ""),
       },
     }));
   });
@@ -4422,20 +4423,34 @@ function handleHerdrEventMessage(raw: unknown) {
   if (message) {
     setGlobalStatus(message, herdrEventTone(event, data));
   }
-  if (event === "pane.agent_detected" || event === "pane.agent_status_changed") {
+  if (
+    event === "pane.agent_detected"
+    || event === "pane.agent_status_changed"
+    || event === "pane.updated"
+  ) {
     mobileSymbolAgent.invalidate();
     void mobileSymbolAgent.refresh();
   }
-  if (herdrEventChangesDock(event)) {
+  let resourceEventApplied = false;
+  if (herdrState) {
+    const result = applyHerdrResourceEvent(herdrState, event, data);
+    resourceEventApplied = result.applied;
+    if (result.applied) {
+      herdrState = result.state;
+      renderTabs();
+      renderHerdrDock();
+    }
+  }
+  if (herdrEventChangesDock(event) && !resourceEventApplied) {
     scheduleHerdrEventRefresh();
   }
 }
 
 function herdrEventMessage(event: string, data: JsonRecord): string {
   if (event === "pane.agent_status_changed") {
-    const status = stringField(data, "agent_status") || stringField(data, "state") || stringField(data, "custom_status");
+    const status = stringField(data, "agent_status") || stringField(data, "state");
     const agent = stringField(data, "display_agent") || stringField(data, "agent") || "agent";
-    const detail = stringField(data, "message") || stringField(data, "custom_status") || status;
+    const detail = stringField(data, "message") || status;
     return tr("status.herdrEventAgent", { agent, status: detail || status || "updated" });
   }
   if (event === "pane.agent_detected") {
@@ -4526,7 +4541,7 @@ function renderHerdrDock() {
     elements.herdrDock.hidden = true;
     elements.herdrWorkspaceSwitcher.hidden = true;
     syncHerdrWorkspaceButtons(elements.herdrWorkspaceList, undefined, tr("action.closeHerdrSpace"));
-    syncHerdrTabButtons(elements.herdrTabList, undefined);
+    syncHerdrTabButtons(elements.herdrTabList, undefined, []);
     elements.herdrStatus.textContent = "";
     renderHerdrProtocolNotice(undefined);
     stopHerdrEventBridge();
@@ -4543,7 +4558,7 @@ function renderHerdrDock() {
     elements.herdrNewWorkspace.hidden = false;
     elements.herdrNewTab.hidden = false;
     syncHerdrWorkspaceButtons(elements.herdrWorkspaceList, undefined, tr("action.closeHerdrSpace"));
-    syncHerdrTabButtons(elements.herdrTabList, undefined);
+    syncHerdrTabButtons(elements.herdrTabList, undefined, []);
     elements.herdrStatus.textContent = "";
     renderHerdrProtocolNotice(undefined);
     renderHerdrWorkspaceMenu();
@@ -4562,7 +4577,11 @@ function renderHerdrDock() {
     herdrState?.workspaces,
     tr("action.closeHerdrSpace"),
   );
-  const tabListRendered = syncHerdrTabButtons(elements.herdrTabList, herdrState?.tabs);
+  const tabListRendered = syncHerdrTabButtons(
+    elements.herdrTabList,
+    herdrState?.tabs,
+    herdrState?.panes ?? [],
+  );
   elements.herdrStatus.textContent = herdrState?.message ?? "";
   renderHerdrProtocolNotice(herdrState);
   renderHerdrWorkspaceMenu();

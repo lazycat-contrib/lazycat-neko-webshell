@@ -138,7 +138,7 @@ export function syncHerdrTabButtons(
   const signature = JSON.stringify(items.map((item) => [item.id, item.number, item.label, item.title]));
   if (!items.length) return syncEmpty(container, "herdrTabSignature", signature);
   if (container.dataset.herdrTabSignature !== signature || tabElements(container).length !== items.length) {
-    container.innerHTML = renderHerdrTabButtons(tabs);
+    container.innerHTML = renderHerdrTabButtons(tabs, panes);
     container.dataset.herdrTabSignature = signature;
     return true;
   }
