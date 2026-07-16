@@ -36,7 +36,7 @@ impl AgentPty {
         username: &str,
         cols: u16,
         rows: u16,
-        event_tx: mpsc::Sender<AgentPtyEvent>,
+        event_tx: mpsc::SyncSender<AgentPtyEvent>,
     ) -> anyhow::Result<Self> {
         validate_size(cols, rows)?;
         info!(pane_id = %pane_id, username = %username.trim(), "spawning agent local pty");
@@ -139,7 +139,7 @@ impl Drop for AgentPty {
 
 fn spawn_exit_thread(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
-    event_tx: mpsc::Sender<AgentPtyEvent>,
+    event_tx: mpsc::SyncSender<AgentPtyEvent>,
     child_wait: ChildWait,
 ) {
     thread::spawn(move || {

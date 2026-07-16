@@ -7,9 +7,11 @@ use anyhow::{anyhow, bail};
 use buffa::MessageField;
 use uuid::Uuid;
 
-use crate::agent_history::{AgentHistory, AgentHistoryFrame};
+use crate::agent_history::{AgentHistory, AgentHistoryFrame, AgentHistorySnapshot};
 use crate::agent_pty::{AgentPty, AgentPtyEvent, AgentPtyExit};
-use crate::config::{DEFAULT_COLS, DEFAULT_ROWS};
+use crate::config::{
+    DEFAULT_COLS, DEFAULT_ROWS, PTY_EVENT_CHANNEL_CAPACITY, PTY_SUBSCRIBER_CHANNEL_CAPACITY,
+};
 use crate::proto::lazycat::webshell::v1::{
     AgentLayoutNode, AgentLayoutNodeType, AgentPaneState, AgentSplitAxis, AgentSplitDirection,
     AgentTabState, AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
@@ -33,7 +35,7 @@ pub struct AgentPane {
     pty: AgentPty,
     history: Mutex<AgentHistory>,
     history_recording: AtomicBool,
-    subscribers: Mutex<Vec<mpsc::Sender<AgentPaneEvent>>>,
+    subscribers: Mutex<Vec<mpsc::SyncSender<AgentPaneEvent>>>,
 }
 
 pub struct AgentWorkspace {
@@ -68,7 +70,7 @@ impl AgentPane {
         rows: u16,
         output_limit: usize,
     ) -> anyhow::Result<Arc<Self>> {
-        let (event_tx, event_rx) = mpsc::channel::<AgentPtyEvent>();
+        let (event_tx, event_rx) = mpsc::sync_channel::<AgentPtyEvent>(PTY_EVENT_CHANNEL_CAPACITY);
         let pty = AgentPty::spawn(&id, username, cols, rows, event_tx)?;
         let pane = Arc::new(Self {
             id,
@@ -131,13 +133,29 @@ impl AgentPane {
             .snapshot_after(sequence)
     }
 
+    pub fn snapshot_after_bounded(
+        &self,
+        sequence: u64,
+        max_bytes: usize,
+        max_frames: usize,
+    ) -> AgentHistorySnapshot {
+        self.history
+            .lock()
+            .expect("agent pane history lock poisoned")
+            .snapshot_after_bounded(sequence, max_bytes, max_frames)
+    }
+
     pub fn subscribe(&self) -> mpsc::Receiver<AgentPaneEvent> {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(PTY_SUBSCRIBER_CHANNEL_CAPACITY);
         self.subscribers
             .lock()
             .expect("agent pane subscriber lock poisoned")
             .push(tx);
         rx
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.pty.is_busy()
     }
 
     pub fn state(&self) -> AgentPaneState {
@@ -195,8 +213,15 @@ impl AgentPane {
             .subscribers
             .lock()
             .expect("agent pane subscriber lock poisoned");
-        subscribers.retain(|subscriber| subscriber.send(event.clone()).is_ok());
+        broadcast_to_subscribers(&mut subscribers, &event);
     }
+}
+
+fn broadcast_to_subscribers(
+    subscribers: &mut Vec<mpsc::SyncSender<AgentPaneEvent>>,
+    event: &AgentPaneEvent,
+) {
+    subscribers.retain(|subscriber| subscriber.try_send(event.clone()).is_ok());
 }
 
 impl AgentWorkspace {
@@ -1055,6 +1080,24 @@ fn node_kind(node: &AgentLayoutNode) -> Option<AgentLayoutNodeType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slow_subscriber_is_disconnected_when_its_queue_is_full() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let mut subscribers = vec![sender];
+        let first = AgentPaneEvent::Error("first".to_owned());
+        let second = AgentPaneEvent::Error("second".to_owned());
+
+        broadcast_to_subscribers(&mut subscribers, &first);
+        assert_eq!(subscribers.len(), 1);
+        broadcast_to_subscribers(&mut subscribers, &second);
+        assert!(subscribers.is_empty());
+
+        assert!(
+            matches!(receiver.recv(), Ok(AgentPaneEvent::Error(message)) if message == "first")
+        );
+        assert!(matches!(receiver.recv(), Err(mpsc::RecvError)));
+    }
 
     #[test]
     fn inserts_split_layout_next_to_reference_pane() {

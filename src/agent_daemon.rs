@@ -315,7 +315,8 @@ fn serve_attach_stream(
     pane: Arc<AgentPane>,
     replay_after: u64,
 ) -> anyhow::Result<()> {
-    let (frames, last_sequence) = pane.snapshot_after(replay_after);
+    let event_rx = pane.subscribe();
+    let (frames, mut last_sequence) = pane.snapshot_after(replay_after);
     write_agent_frame(
         &mut *stream,
         &replay_start_frame(pane.session_id(), pane.selector(), pane.id(), replay_after),
@@ -332,8 +333,7 @@ fn serve_attach_stream(
     )?;
     stream.flush()?;
 
-    let event_rx = pane.subscribe();
-    let (detach_tx, detach_rx) = mpsc::channel::<()>();
+    let (detach_tx, detach_rx) = mpsc::sync_channel::<()>(1);
     let mut reader = stream
         .try_clone()
         .context("failed to clone attach stream")?;
@@ -349,6 +349,9 @@ fn serve_attach_stream(
         }
         match event_rx.recv_timeout(Duration::from_millis(250)) {
             Ok(AgentPaneEvent::Output(frame)) => {
+                if !accept_live_sequence(&mut last_sequence, frame.sequence) {
+                    continue;
+                }
                 write_agent_frame(
                     &mut *stream,
                     &binary_frame_with_sequence(frame.data, frame.sequence),
@@ -373,6 +376,14 @@ fn serve_attach_stream(
         }
     }
     Ok(())
+}
+
+fn accept_live_sequence(last_sequence: &mut u64, sequence: u64) -> bool {
+    if sequence <= *last_sequence {
+        return false;
+    }
+    *last_sequence = sequence;
+    true
 }
 
 fn read_attach_input_loop(stream: &mut UnixStream, pane: &AgentPane) {
@@ -591,5 +602,15 @@ mod tests {
 
         let decoded = read_agent_frame(output.as_slice()).unwrap();
         assert_eq!(decoded.payload.as_deref(), Some(b"hello".as_slice()));
+    }
+
+    #[test]
+    fn skips_live_frames_already_covered_by_replay_snapshot() {
+        let mut last_sequence = 4;
+
+        assert!(!accept_live_sequence(&mut last_sequence, 3));
+        assert!(!accept_live_sequence(&mut last_sequence, 4));
+        assert!(accept_live_sequence(&mut last_sequence, 5));
+        assert_eq!(last_sequence, 5);
     }
 }
