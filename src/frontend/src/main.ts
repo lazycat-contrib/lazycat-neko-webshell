@@ -158,6 +158,7 @@ import {
   pluginDescription,
   pluginDisplayName,
   PUBLIC_TUNNEL_PLUGIN_ID,
+  TERMINAL_MCP_PLUGIN_ID,
   TERMINAL_TRANSFER_PLUGIN_ID,
   WHITE_NOISE_PLUGIN_ID,
 } from "./plugin-utils";
@@ -239,6 +240,7 @@ import {
   type TunnelProviderProfileSaveInput,
 } from "./plugins/public-tunnel/profile-presenter";
 import { renderPublicTunnelToolView } from "./plugins/public-tunnel/tool-view";
+import { createTerminalMcpController } from "./plugins/terminal-mcp/controller";
 import { createTerminalTransferController } from "./plugins/terminal-transfer/controller";
 import {
   normalizeTerminalTransferProtocols,
@@ -790,6 +792,26 @@ let customFonts: FontPreset[] = [];
 let pomodoroPollingTimer: number | undefined;
 let notificationsPollingTimer: number | undefined;
 const pluginSaveInFlight = new Set<string>();
+const terminalMcp = createTerminalMcpController({
+  root: () => elements.pluginList,
+  plugin: () => {
+    const plugin = plugins.find((item) => item.id === TERMINAL_MCP_PLUGIN_ID);
+    return plugin ? { enabled: plugin.enabled, metadata: plugin.metadata } : undefined;
+  },
+  settingsVisible: () => {
+    const panel = elements.pluginList.closest<HTMLElement>('[data-settings-panel="plugins"]');
+    return !elements.settingsPage.hidden && !panel?.hidden;
+  },
+  configure: async (metadata) => {
+    const plugin = plugins.find((item) => item.id === TERMINAL_MCP_PLUGIN_ID);
+    return plugin
+      ? configurePlugin(TERMINAL_MCP_PLUGIN_ID, plugin.enabled, metadata, "settings")
+      : false;
+  },
+  tr,
+  onRender: renderPluginSettings,
+  onStatus: setPluginStatus,
+});
 let terminalResizeTimers: number[] = [];
 const {
   paneForShortcutTarget,
@@ -1068,6 +1090,9 @@ function bindSettings() {
   elements.removeTheme.addEventListener("click", () => removeSelectedCustomTheme());
   elements.refreshPlugins.addEventListener("click", () => void loadPlugins());
   elements.pluginList.addEventListener("change", (event) => {
+    if (terminalMcp.handleInput(event.target instanceof Element ? event.target : null)) {
+      return;
+    }
     const input = event.target instanceof Element
       ? event.target.closest<HTMLInputElement>("[data-plugin-toggle]")
       : null;
@@ -1146,8 +1171,12 @@ function bindSettings() {
       return;
     }
   });
+  elements.pluginList.addEventListener("input", (event) => {
+    terminalMcp.handleInput(event.target instanceof Element ? event.target : null);
+  });
   elements.pluginList.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
+    if (terminalMcp.handleClick(target)) return;
     const tokenToggleButton = target?.closest<HTMLButtonElement>("[data-tunnel-token-toggle]");
     if (tokenToggleButton) {
       event.preventDefault();
@@ -2195,8 +2224,12 @@ function bindSettingsTabs() {
 
 function activateSettingsTab(tabId: string) {
   if (!activateSettingsPanel(elements, tabId)) return;
-  if (tabId === "plugins" && !pluginsLoaded && !pluginsLoading) {
-    void loadPlugins();
+  if (tabId === "plugins") {
+    if (!pluginsLoaded && !pluginsLoading) {
+      void loadPlugins();
+    } else {
+      renderPluginSettings();
+    }
   }
 }
 
@@ -3220,6 +3253,7 @@ function renderPlugins() {
 }
 
 function renderPluginSettings() {
+  terminalMcp.sync();
   elements.refreshPlugins.disabled = pluginsLoading;
   const mcpServers = parseAiMcpServers(settings.aiMcpServers);
   const tunnelProfiles = publicTunnelProfiles();
@@ -3287,6 +3321,7 @@ function renderPluginSettings() {
       disabled: pluginsLoading || pluginSaveInFlight.has(PUBLIC_TUNNEL_PLUGIN_ID),
       tr,
     },
+    terminalMcp: terminalMcp.viewState(),
     terminalTransfer: {
       protocols: currentTerminalTransferProtocols(),
       disabled: pluginsLoading || pluginSaveInFlight.has(TERMINAL_TRANSFER_PLUGIN_ID),
