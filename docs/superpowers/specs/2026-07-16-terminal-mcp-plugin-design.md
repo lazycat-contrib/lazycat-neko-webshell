@@ -92,6 +92,11 @@ mcp-providers}]`, declare `lzcapp.user_delegate`, and access:
 http://app.community.lazycat.webshell.neko.lzcx/mcp
 ```
 
+The consumer captures `X-HC-USER-TICKET` from a real LazyCat user request and
+sends that ticket to the `.lzcx` endpoint. The LazyCat interconnect validates
+the ticket and projects the current user and calling application into the
+request headers delivered to the provider.
+
 The provider itself does not need `lzcapp.user_delegate` merely to serve its
 own MCP endpoint. The first release intentionally does not add an external
 Bearer-token authentication path.
@@ -104,18 +109,28 @@ compatible with LazyCat MCP discovery. The server allows the canonical
 `.lzcx` host and keeps request-size and origin/host validation enabled.
 
 Every tool invocation extracts the platform-injected HTTP request parts from
-the rmcp request context. A principal contains:
+the rmcp request context. It requires a non-empty, bounded
+`X-HC-USER-TICKET` together with the platform-projected user id and caller
+source. The provider treats the ticket as an opaque proof that the request
+used the LazyCat delegated path: it does not parse, persist, log, or copy the
+ticket into the principal. A principal contains:
 
 - LazyCat user id;
 - calling application/source id;
 - optional display name for UI only; and
 - a non-secret request correlation id.
 
-Both user id and caller source are required for control tools. Raw user
-tickets, bearer-like headers, terminal input, SSH passwords, and private keys
-are never logged or returned. Session visibility continues to use the
-project's existing selector and workspace authorization rules; MCP does not
-introduce a broader listing path.
+The ticket, user id, and caller source are all required for tool calls. A
+request that supplies identity headers without a ticket is rejected as an
+unauthenticated caller. Raw user tickets, bearer-like headers, terminal input,
+SSH passwords, and private keys are never logged or returned. Session
+visibility continues to use the project's existing selector and workspace
+authorization rules; MCP does not introduce a broader listing path.
+
+Terminal UI approval endpoints are a separate browser-only boundary. Any
+request carrying either `X-HC-USER-TICKET` or `X-HC-SOURCE` is treated as a
+delegated application request and cannot approve, deny, or revoke its own MCP
+grant through the UI API.
 
 Because the application is multi-instance, most user isolation is also
 provided by the LazyCat instance boundary. Server-side ownership checks remain
@@ -367,6 +382,10 @@ Focused Rust tests cover:
 
 - dynamic empty tool lists and denied calls while the plugin is disabled;
 - principal extraction and missing/forged identity rejection;
+- rejection of projected identity headers when the internal user ticket is
+  missing or oversized;
+- rejection of delegated approval requests identified by either the ticket or
+  caller-source header;
 - policy precedence, trusted callers, automatic mode, read-only mode,
   approval, denial, revocation, and session-close cleanup;
 - session/backend listing and ownership filtering;
