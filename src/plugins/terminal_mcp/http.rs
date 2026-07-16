@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
@@ -18,7 +18,10 @@ struct ControlStateResponse {
     active_grants: Vec<ControlGrant>,
 }
 
-pub async fn get_control_state(State(state): State<Arc<AppState>>) -> Response {
+pub async fn get_control_state(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if !is_terminal_ui_request(&headers) {
+        return delegated_caller_response();
+    }
     let mut pending_requests = state.terminal_mcp.pending_requests();
     let mut active_grants = state.terminal_mcp.active_grants();
     pending_requests.sort_by(|left, right| {
@@ -43,26 +46,43 @@ pub async fn get_control_state(State(state): State<Arc<AppState>>) -> Response {
 pub async fn post_approve_request(
     State(state): State<Arc<AppState>>,
     Path(request_id): Path<String>,
+    headers: HeaderMap,
 ) -> Response {
+    if !is_terminal_ui_request(&headers) {
+        return delegated_caller_response();
+    }
     decide_request(&state, &request_id, ControlDecision::Approved)
 }
 
 pub async fn post_deny_request(
     State(state): State<Arc<AppState>>,
     Path(request_id): Path<String>,
+    headers: HeaderMap,
 ) -> Response {
+    if !is_terminal_ui_request(&headers) {
+        return delegated_caller_response();
+    }
     decide_request(&state, &request_id, ControlDecision::Denied)
 }
 
 pub async fn post_revoke_grant(
     State(state): State<Arc<AppState>>,
     Path(grant_id): Path<String>,
+    headers: HeaderMap,
 ) -> Response {
+    if !is_terminal_ui_request(&headers) {
+        return delegated_caller_response();
+    }
     if state.terminal_mcp.revoke_grant(grant_id.trim()) {
         Json(serde_json::json!({ "revoked": true })).into_response()
     } else {
         (StatusCode::NOT_FOUND, "control grant not found").into_response()
     }
+}
+
+pub(crate) fn is_terminal_ui_request(headers: &HeaderMap) -> bool {
+    // LazyCat delegated app-to-app calls carry x-hc-source; direct browser UI calls do not.
+    !headers.contains_key("x-hc-source")
 }
 
 pub(crate) fn handle_notification_action(
@@ -132,6 +152,19 @@ fn terminal_error_response(error: TerminalMcpError) -> Response {
             "error": {
                 "code": error.code,
                 "message": error.message,
+            }
+        })),
+    )
+        .into_response()
+}
+
+fn delegated_caller_response() -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "error": {
+                "code": "CALLER_NOT_AUTHORIZED",
+                "message": "Terminal-side approval must be performed from the Terminal UI",
             }
         })),
     )
@@ -255,5 +288,29 @@ mod tests {
                 .code,
             "CALLER_NOT_AUTHORIZED"
         );
+    }
+
+    #[test]
+    fn delegated_callers_cannot_use_terminal_side_approval_routes() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-hc-source", "cloud.lazycat.app.agent".parse().unwrap());
+
+        assert!(!is_terminal_ui_request(&headers));
+        assert!(is_terminal_ui_request(&HeaderMap::new()));
+    }
+
+    #[tokio::test]
+    async fn delegated_caller_cannot_approve_a_pending_request() {
+        let state = Arc::new(state());
+        let request = pending_request(&state);
+        let mut headers = HeaderMap::new();
+        headers.insert("x-hc-source", "cloud.lazycat.app.agent".parse().unwrap());
+
+        let response =
+            post_approve_request(State(Arc::clone(&state)), Path(request.id), headers).await;
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(state.terminal_mcp.active_grants().is_empty());
+        assert_eq!(state.terminal_mcp.pending_requests().len(), 1);
     }
 }

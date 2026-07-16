@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -303,6 +303,7 @@ pub async fn post_pomodoro_dismiss(State(state): State<Arc<AppState>>) -> Respon
 pub async fn post_notification_action(
     State(state): State<Arc<AppState>>,
     Path((id, action_id)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     let notification = match state.notifications.notification(&id) {
         Ok(Some(notification)) => notification,
@@ -334,6 +335,9 @@ pub async fn post_notification_action(
         };
     }
     if notification.source_kind == crate::plugins::terminal_mcp::PLUGIN_ID {
+        if !crate::plugins::terminal_mcp::http::is_terminal_ui_request(&headers) {
+            return (StatusCode::FORBIDDEN, "terminal-side approval is required").into_response();
+        }
         return match crate::plugins::terminal_mcp::http::handle_notification_action(
             &state,
             &notification,
