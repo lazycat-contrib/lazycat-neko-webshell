@@ -316,7 +316,9 @@ fn serve_attach_stream(
     replay_after: u64,
 ) -> anyhow::Result<()> {
     let event_rx = pane.subscribe();
-    let (frames, mut last_sequence) = pane.snapshot_after(replay_after);
+    let snapshot = pane.snapshot_after_bounded(replay_after, usize::MAX, usize::MAX);
+    let frames = snapshot.frames;
+    let mut last_sequence = snapshot.last_sequence;
     write_agent_frame(
         &mut *stream,
         &replay_start_frame(pane.session_id(), pane.selector(), pane.id(), replay_after),

@@ -4,3 +4,5 @@ contentdir: ./dist/content
 resource_exports:
   - kind: lightos.webshell
     source: ./resources/lightos.webshell
+  - kind: mcp-providers
+    source: ./resources/mcp-providers

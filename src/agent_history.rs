@@ -63,6 +63,8 @@ impl AgentHistory {
         self.prune();
     }
 
+    // Keep the original replay API available for callers that do not need explicit bounds.
+    #[allow(dead_code)]
     pub fn snapshot_after(&self, sequence: u64) -> (Vec<AgentHistoryFrame>, u64) {
         let snapshot = self.snapshot_after_bounded(sequence, usize::MAX, usize::MAX);
         (snapshot.frames, snapshot.last_sequence)

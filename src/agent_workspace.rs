@@ -126,13 +126,6 @@ impl AgentPane {
         self.history_recording.store(enabled, Ordering::Relaxed);
     }
 
-    pub fn snapshot_after(&self, sequence: u64) -> (Vec<AgentHistoryFrame>, u64) {
-        self.history
-            .lock()
-            .expect("agent pane history lock poisoned")
-            .snapshot_after(sequence)
-    }
-
     pub fn snapshot_after_bounded(
         &self,
         sequence: u64,
@@ -166,6 +159,7 @@ impl AgentPane {
             session_backend: Some("webshell".to_owned()),
             cols: Some(i32::from(self.cols())),
             rows: Some(i32::from(self.rows())),
+            busy: Some(self.is_busy()),
             ..Default::default()
         }
     }

@@ -233,6 +233,7 @@ message AgentPaneState {
   string session_backend = 4;
   int32 cols = 5;
   int32 rows = 6;
+  bool busy = 7;
 }
 
 message AgentLayoutNode {

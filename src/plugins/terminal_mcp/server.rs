@@ -608,7 +608,7 @@ mod tests {
 
     use super::*;
     use crate::router::build_app;
-    use crate::state::PluginRecord;
+    use crate::state::{PluginRecord, SessionRecord};
 
     fn test_state(enabled: bool) -> Arc<AppState> {
         let state = Arc::new(AppState::new_for_test(
@@ -709,6 +709,18 @@ mod tests {
         assert_eq!(input.wait_ms, 0);
     }
 
+    #[test]
+    fn lazycat_resource_layout_publishes_terminal_mcp() {
+        let build = include_str!("../../../lzc-build.yml");
+        let provider = include_str!("../../../resources/mcp-providers/terminal-control/mcp.yml");
+        let package = include_str!("../../../package.yml");
+
+        assert!(build.contains("kind: lightos.webshell\n    source: ./resources/lightos.webshell"));
+        assert!(build.contains("kind: mcp-providers\n    source: ./resources/mcp-providers"));
+        assert_eq!(provider.trim(), "endpoint: /mcp");
+        assert!(package_supports_resource_exports(package));
+    }
+
     #[tokio::test]
     async fn streamable_http_initializes_and_lists_tools_dynamically() {
         let state = test_state(false);
@@ -783,5 +795,73 @@ mod tests {
         );
         assert_eq!(response["result"]["isError"], true);
         handle.abort();
+    }
+
+    #[tokio::test]
+    async fn denied_write_requests_terminal_approval_before_starting_a_pty() {
+        let state = test_state(true);
+        state.sessions.write().unwrap().insert(
+            "session-one".to_owned(),
+            SessionRecord {
+                id: "session-one".to_owned(),
+                host: "local".to_owned(),
+                selector: "device@owner".to_owned(),
+                status: "running".to_owned(),
+                cols: 120,
+                rows: 32,
+                command: "/bin/sh".to_owned(),
+                args: Vec::new(),
+                metadata: HashMap::from([("sessionBackend".to_owned(), "webshell".to_owned())]),
+            },
+        );
+        let (client, url, handle) = spawn_app(Arc::clone(&state)).await;
+        let response = post_mcp(
+            &client,
+            &url,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "terminal_send_text",
+                    "arguments": {
+                        "sessionId": "session-one",
+                        "text": "uptime",
+                        "appendEnter": true,
+                        "reason": "maintain server"
+                    }
+                }
+            }),
+            true,
+        )
+        .await;
+
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "CONTROL_APPROVAL_REQUIRED"
+        );
+        assert_eq!(state.terminal_mcp.pending_requests().len(), 1);
+        assert!(state.sessions.terminal("session-one").unwrap().is_none());
+        handle.abort();
+    }
+
+    fn package_supports_resource_exports(package: &str) -> bool {
+        let Some(version) = package.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix("min_os_version:")
+                .map(str::trim)
+                .map(|value| value.strip_prefix('v').unwrap_or(value))
+        }) else {
+            return false;
+        };
+        let mut parts = version
+            .split('.')
+            .filter_map(|part| part.parse::<u64>().ok());
+        let actual = (
+            parts.next().unwrap_or(0),
+            parts.next().unwrap_or(0),
+            parts.next().unwrap_or(0),
+        );
+        actual >= (1, 5, 2)
     }
 }

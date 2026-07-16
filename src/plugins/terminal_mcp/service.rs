@@ -62,6 +62,7 @@ struct AgentPaneTarget {
     status: String,
     cols: u16,
     rows: u16,
+    busy: bool,
 }
 
 enum ResolvedTarget {
@@ -238,7 +239,7 @@ impl TerminalControlService {
         let target = self.resolve_target(session_id, pane_id).await?;
         self.authorize_target(principal, &target, TerminalCapability::Interact, reason)?;
         match target {
-            ResolvedTarget::Native(session) => self.write_native(&session, data).await,
+            ResolvedTarget::Native(session) => self.write_native(&session, data),
             ResolvedTarget::Agent(target) => self.write_agent_input(&target, data).await,
             ResolvedTarget::Herdr(session, pane_id) => {
                 self.herdr
@@ -266,7 +267,7 @@ impl TerminalControlService {
         let target = self.resolve_target(session_id, pane_id).await?;
         self.authorize_target(principal, &target, TerminalCapability::Interact, reason)?;
         match target {
-            ResolvedTarget::Native(session) => self.write_native(&session, data).await,
+            ResolvedTarget::Native(session) => self.write_native(&session, data),
             ResolvedTarget::Agent(target) => self.write_agent_input(&target, data).await,
             ResolvedTarget::Herdr(session, pane_id) => {
                 self.herdr.send_keys(&session.id, &pane_id, names).await
@@ -286,7 +287,7 @@ impl TerminalControlService {
         let target = self.resolve_target(session_id, pane_id).await?;
         self.authorize_target(principal, &target, TerminalCapability::Interact, reason)?;
         match target {
-            ResolvedTarget::Native(session) => self.write_native(&session, data).await,
+            ResolvedTarget::Native(session) => self.write_native(&session, data),
             ResolvedTarget::Agent(target) => self.write_agent_input(&target, data).await,
             ResolvedTarget::Herdr(session, pane_id) => {
                 self.herdr.send_input(&session.id, &pane_id, &data).await
@@ -757,11 +758,7 @@ impl TerminalControlService {
         })
     }
 
-    async fn write_native(
-        &self,
-        session: &SessionRecord,
-        data: Vec<u8>,
-    ) -> Result<(), TerminalMcpError> {
+    fn write_native(&self, session: &SessionRecord, data: Vec<u8>) -> Result<(), TerminalMcpError> {
         self.ensure_native_terminal(session)?
             .write_input(data)
             .map_err(map_terminal_error)
@@ -905,7 +902,7 @@ impl TerminalControlService {
             status: target.status.clone(),
             cols: target.cols,
             rows: target.rows,
-            busy: false,
+            busy: target.busy,
             control_granted: self
                 .state
                 .terminal_mcp
@@ -1276,6 +1273,7 @@ fn agent_target_from_pane(
             .rows
             .and_then(|value| u16::try_from(value).ok())
             .unwrap_or(32),
+        busy: pane.busy.unwrap_or(false),
     })
 }
 
@@ -1366,6 +1364,27 @@ mod tests {
                 .code,
             "INVALID_INPUT"
         );
+    }
+
+    #[test]
+    fn agent_target_preserves_foreground_process_state() {
+        let target = agent_target_from_pane(
+            "device@owner",
+            "lazycat",
+            "Shell",
+            AgentPaneState {
+                id: Some("pane-one".to_owned()),
+                session_id: Some("session-one".to_owned()),
+                status: Some("running".to_owned()),
+                cols: Some(120),
+                rows: Some(32),
+                busy: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert!(target.busy);
     }
 
     #[tokio::test]
