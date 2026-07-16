@@ -125,7 +125,10 @@ impl TerminalRegistry {
         }
     }
 
-    fn existing(&self, session_id: &str) -> anyhow::Result<Option<Arc<ManagedTerminal>>> {
+    pub(crate) fn existing(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<Option<Arc<ManagedTerminal>>> {
         let sessions = self
             .sessions
             .read()

@@ -1,5 +1,5 @@
-use std::collections::{BTreeSet, HashMap};
-use std::sync::Mutex;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::watch;
@@ -27,6 +27,14 @@ struct RequestKey {
     capability: TerminalCapability,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ReadKey {
+    user_id: String,
+    caller_app_id: String,
+    session_id: String,
+    pane_id: String,
+}
+
 struct RequestEntry {
     request: ControlRequest,
     decision_tx: watch::Sender<ControlDecision>,
@@ -38,6 +46,7 @@ struct ManagerState {
     requests: HashMap<String, RequestEntry>,
     requests_by_key: HashMap<RequestKey, String>,
     created_sessions: HashMap<String, (String, String)>,
+    active_reads: HashSet<ReadKey>,
 }
 
 #[derive(Default)]
@@ -45,7 +54,52 @@ pub struct TerminalMcpManager {
     state: Mutex<ManagerState>,
 }
 
+#[derive(Debug)]
+pub struct TerminalReadPermit {
+    manager: Weak<TerminalMcpManager>,
+    key: ReadKey,
+}
+
+impl Drop for TerminalReadPermit {
+    fn drop(&mut self) {
+        let Some(manager) = self.manager.upgrade() else {
+            return;
+        };
+        if let Ok(mut state) = manager.state.lock() {
+            state.active_reads.remove(&self.key);
+        }
+    }
+}
+
 impl TerminalMcpManager {
+    pub fn begin_read(
+        self: &Arc<Self>,
+        principal: &McpPrincipal,
+        session_id: &str,
+        pane_id: Option<&str>,
+    ) -> Result<TerminalReadPermit, TerminalMcpError> {
+        let key = ReadKey {
+            user_id: principal.user_id.clone(),
+            caller_app_id: principal.caller_app_id.clone(),
+            session_id: session_id.to_owned(),
+            pane_id: pane_id.unwrap_or_default().to_owned(),
+        };
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| TerminalMcpError::new("INTERNAL_ERROR", "Control state is unavailable"))?;
+        if !state.active_reads.insert(key.clone()) {
+            return Err(TerminalMcpError::new(
+                "OPERATION_IN_PROGRESS",
+                "A terminal read is already pending for this target",
+            ));
+        }
+        Ok(TerminalReadPermit {
+            manager: Arc::downgrade(self),
+            key,
+        })
+    }
+
     pub fn authorize(
         &self,
         policy: &TerminalMcpPolicy,
@@ -188,6 +242,14 @@ impl TerminalMcpManager {
         )
     }
 
+    pub fn has_grant(&self, principal: &McpPrincipal, session_id: &str) -> bool {
+        self.state.lock().ok().is_some_and(|state| {
+            state
+                .grants
+                .contains_key(&control_key(principal, session_id))
+        })
+    }
+
     pub fn revoke_grant(&self, grant_id: &str) -> bool {
         let Ok(mut state) = self.state.lock() else {
             return false;
@@ -197,12 +259,28 @@ impl TerminalMcpManager {
         state.grants.len() != before
     }
 
+    pub fn revoke_grant_for(&self, principal: &McpPrincipal, grant_id: &str) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        let before = state.grants.len();
+        state.grants.retain(|_, grant| {
+            grant.id != grant_id
+                || grant.user_id != principal.user_id
+                || grant.caller_app_id != principal.caller_app_id
+        });
+        state.grants.len() != before
+    }
+
     pub fn revoke_session(&self, session_id: &str) {
         let Ok(mut state) = self.state.lock() else {
             return;
         };
         state.grants.retain(|key, _| key.session_id != session_id);
         state.created_sessions.remove(session_id);
+        state
+            .active_reads
+            .retain(|key| key.session_id != session_id);
         revoke_requests(&mut state, |entry| {
             entry.request.target.session_id == session_id
         });
@@ -214,6 +292,7 @@ impl TerminalMcpManager {
         };
         state.grants.clear();
         state.created_sessions.clear();
+        state.active_reads.clear();
         revoke_requests(&mut state, |_| true);
     }
 }
@@ -520,5 +599,28 @@ mod tests {
 
         assert!(manager.caller_created_session(&principal, "session-one"));
         assert!(!manager.caller_created_session(&principal, "session-two"));
+    }
+
+    #[test]
+    fn permits_only_one_outstanding_read_per_caller_target() {
+        let manager = Arc::new(TerminalMcpManager::default());
+        let first = manager
+            .begin_read(&principal(), "session-one", Some("pane-one"))
+            .unwrap();
+
+        assert_eq!(
+            manager
+                .begin_read(&principal(), "session-one", Some("pane-one"))
+                .unwrap_err()
+                .code,
+            "OPERATION_IN_PROGRESS"
+        );
+
+        drop(first);
+        assert!(
+            manager
+                .begin_read(&principal(), "session-one", Some("pane-one"))
+                .is_ok()
+        );
     }
 }

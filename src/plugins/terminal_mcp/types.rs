@@ -85,6 +85,14 @@ pub enum TerminalCapability {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalBackend {
+    Webshell,
+    Ssh,
+    Herdr,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlDecision {
     Pending,
@@ -133,6 +141,50 @@ pub enum ControlAccess {
     ApprovalRequired(ControlRequest),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSessionSummary {
+    pub session_id: String,
+    pub backend: TerminalBackend,
+    pub title: String,
+    pub selector: String,
+    pub status: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub busy: bool,
+    pub control_granted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalOutputFrame {
+    pub sequence: u64,
+    pub data_base64: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalReadResult {
+    pub session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    pub frames: Vec<TerminalOutputFrame>,
+    pub next_sequence: u64,
+    pub last_sequence: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oldest_sequence: Option<u64>,
+    pub timed_out: bool,
+    pub truncated: bool,
+    pub replay_gap: bool,
+    pub exited: bool,
+}
+
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{code}: {message}")]
 pub struct TerminalMcpError {
@@ -179,6 +231,41 @@ impl TerminalMcpError {
             message: "Terminal-side approval is required".to_owned(),
             request_id: Some(request_id),
         }
+    }
+
+    pub fn disabled() -> Self {
+        Self::new("TERMINAL_MCP_DISABLED", "Terminal MCP is disabled")
+    }
+
+    pub fn session_not_found() -> Self {
+        Self::new("SESSION_NOT_FOUND", "Terminal session was not found")
+    }
+
+    pub fn backend_not_supported() -> Self {
+        Self::new("BACKEND_NOT_SUPPORTED", "Terminal backend is not supported")
+    }
+
+    pub fn pane_not_found() -> Self {
+        Self::new("PANE_NOT_FOUND", "Terminal pane was not found")
+    }
+
+    pub fn invalid_input(message: impl Into<String>) -> Self {
+        Self::new("INVALID_INPUT", message)
+    }
+
+    pub fn input_backpressure() -> Self {
+        Self::new(
+            "TERMINAL_INPUT_BACKPRESSURE",
+            "Terminal input queue is full; retry later",
+        )
+    }
+
+    pub fn operation_timeout() -> Self {
+        Self::new("OPERATION_TIMEOUT", "Terminal operation timed out")
+    }
+
+    pub fn terminal_exited() -> Self {
+        Self::new("TERMINAL_EXITED", "Terminal process has exited")
     }
 }
 

@@ -207,9 +207,8 @@ impl WorkspaceTerminalDefaults {
     }
 }
 
-#[cfg(test)]
 #[derive(Debug)]
-pub struct CreatedWorkspaceSession {
+pub(crate) struct CreatedWorkspaceSession {
     pub session: SessionRecord,
 }
 
@@ -861,7 +860,6 @@ fn i32_to_u16(value: Option<i32>, default_value: u16) -> u16 {
         .unwrap_or(default_value)
 }
 
-#[cfg(test)]
 pub(crate) fn create_workspace_session(
     state: &AppState,
     selector: &str,

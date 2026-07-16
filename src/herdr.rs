@@ -184,6 +184,128 @@ pub(crate) struct HerdrBridgeError {
     message: String,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum HerdrTerminalOperation {
+    Snapshot,
+    Read {
+        pane_id: String,
+    },
+    WaitForOutput {
+        pane_id: String,
+        after_sequence: u64,
+        timeout_ms: u64,
+    },
+    SendText {
+        pane_id: String,
+        text: String,
+    },
+    SendKeys {
+        pane_id: String,
+        keys: Vec<String>,
+    },
+    SendInput {
+        pane_id: String,
+        data_base64: String,
+    },
+    Resize {
+        pane_id: String,
+        cols: u16,
+        rows: u16,
+    },
+}
+
+pub(crate) async fn run_terminal_mcp_operation(
+    state: &crate::state::AppState,
+    session_id: &str,
+    operation: HerdrTerminalOperation,
+) -> Result<Value, String> {
+    let selector = {
+        let sessions = state
+            .sessions
+            .read()
+            .map_err(|_| "session store is unavailable".to_owned())?;
+        let session = sessions
+            .get(session_id)
+            .ok_or_else(|| "Herdr session not found".to_owned())?;
+        if !session
+            .metadata
+            .get("sessionBackend")
+            .is_some_and(|backend| backend == "herdr")
+        {
+            return Err("session is not a Herdr session".to_owned());
+        }
+        session.selector.clone()
+    };
+    authorize_herdr_output_sequence_session(state, &selector, session_id)
+        .map_err(|err| err.message)?;
+    let target = authorize_herdr_target(&selector)
+        .await
+        .map_err(|err| err.message)?;
+
+    let (method, params, pane_id) = terminal_mcp_operation_request(operation);
+    if let Some(pane_id) = pane_id {
+        run_herdr_request(&target, "pane.get", json!({ "pane_id": pane_id }))
+            .await
+            .map_err(|err| err.message)?;
+    }
+    run_herdr_request(&target, method, params)
+        .await
+        .map_err(|err| err.message)
+}
+
+fn terminal_mcp_operation_request(
+    operation: HerdrTerminalOperation,
+) -> (&'static str, Value, Option<String>) {
+    match operation {
+        HerdrTerminalOperation::Snapshot => ("session.snapshot", json!({}), None),
+        HerdrTerminalOperation::Read { pane_id } => (
+            "pane.read",
+            json!({ "pane_id": pane_id, "source": "recent" }),
+            Some(pane_id),
+        ),
+        HerdrTerminalOperation::WaitForOutput {
+            pane_id,
+            after_sequence,
+            timeout_ms,
+        } => (
+            "pane.wait_for_output",
+            json!({
+                "pane_id": pane_id,
+                "after_sequence": after_sequence,
+                "timeout_ms": timeout_ms,
+            }),
+            Some(pane_id),
+        ),
+        HerdrTerminalOperation::SendText { pane_id, text } => (
+            "pane.send_text",
+            json!({ "pane_id": pane_id, "text": text }),
+            Some(pane_id),
+        ),
+        HerdrTerminalOperation::SendKeys { pane_id, keys } => (
+            "pane.send_keys",
+            json!({ "pane_id": pane_id, "keys": keys }),
+            Some(pane_id),
+        ),
+        HerdrTerminalOperation::SendInput {
+            pane_id,
+            data_base64,
+        } => (
+            "pane.send_input",
+            json!({ "pane_id": pane_id, "data_base64": data_base64 }),
+            Some(pane_id),
+        ),
+        HerdrTerminalOperation::Resize {
+            pane_id,
+            cols,
+            rows,
+        } => (
+            "pane.resize",
+            json!({ "pane_id": pane_id, "cols": cols, "rows": rows }),
+            Some(pane_id),
+        ),
+    }
+}
+
 pub(crate) async fn get_herdr_state(
     Query(query): Query<HerdrQuery>,
 ) -> Result<Json<HerdrBridgeState>, HerdrBridgeError> {
@@ -1154,11 +1276,57 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        HERDR_SOCKET_CONTRACT, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, herdr_protocol_is_supported,
-        herdr_protocol_supports_session_snapshot, is_allowed_herdr_method, parse_herdr_ping,
-        parse_panes, parse_snapshot_focused_workspace_id, parse_tabs, parse_workspaces,
-        shell_quote, validate_herdr_wire_request,
+        HERDR_SOCKET_CONTRACT, HerdrTerminalOperation, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
+        herdr_protocol_is_supported, herdr_protocol_supports_session_snapshot,
+        is_allowed_herdr_method, parse_herdr_ping, parse_panes,
+        parse_snapshot_focused_workspace_id, parse_tabs, parse_workspaces, shell_quote,
+        terminal_mcp_operation_request, validate_herdr_wire_request,
     };
+
+    #[test]
+    fn terminal_mcp_operations_map_only_to_typed_pane_methods() {
+        let cases = [
+            (
+                HerdrTerminalOperation::Read {
+                    pane_id: "pane-1".to_owned(),
+                },
+                "pane.read",
+            ),
+            (
+                HerdrTerminalOperation::SendText {
+                    pane_id: "pane-1".to_owned(),
+                    text: "hello".to_owned(),
+                },
+                "pane.send_text",
+            ),
+            (
+                HerdrTerminalOperation::SendKeys {
+                    pane_id: "pane-1".to_owned(),
+                    keys: vec!["Enter".to_owned()],
+                },
+                "pane.send_keys",
+            ),
+            (
+                HerdrTerminalOperation::SendInput {
+                    pane_id: "pane-1".to_owned(),
+                    data_base64: "AA==".to_owned(),
+                },
+                "pane.send_input",
+            ),
+            (
+                HerdrTerminalOperation::Resize {
+                    pane_id: "pane-1".to_owned(),
+                    cols: 120,
+                    rows: 32,
+                },
+                "pane.resize",
+            ),
+        ];
+
+        for (operation, expected) in cases {
+            assert_eq!(terminal_mcp_operation_request(operation).0, expected);
+        }
+    }
 
     #[test]
     fn parses_workspace_and_tab_lists_from_herdr_responses() {

@@ -95,6 +95,10 @@ impl SessionManager {
             .open(spec, allow_spawn, output, resize_existing)
     }
 
+    pub fn terminal(&self, session_id: &str) -> anyhow::Result<Option<Arc<ManagedTerminal>>> {
+        self.terminals.existing(session_id)
+    }
+
     pub fn close_sessions<'a>(&self, session_ids: impl IntoIterator<Item = &'a str>) {
         for session_id in session_ids {
             self.close_terminal_and_output(session_id);
