@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use serde_json::json;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::broadcast;
 use tokio::time::{Instant, timeout};
@@ -19,6 +20,7 @@ use crate::config::{
     MCP_TERMINAL_MAX_WAIT_MS, PTY_INPUT_MESSAGE_BYTES,
 };
 use crate::lightos;
+use crate::notifications::{NewNotification, NotificationAction};
 use crate::proto::lazycat::webshell::v1::{
     AgentControlType, AgentFrameType, AgentPaneState, AgentWorkspaceAction,
     AgentWorkspaceActionType, AgentWorkspaceState,
@@ -37,9 +39,9 @@ use crate::workspace::{
 use super::herdr_adapter::HerdrTerminalAdapter;
 use super::principal::McpPrincipal;
 use super::types::{
-    ControlAccess, ControlGrant, ControlTarget, TerminalBackend, TerminalCapability,
-    TerminalMcpError, TerminalMcpPolicy, TerminalOutputFrame, TerminalReadResult,
-    TerminalSessionSummary,
+    ControlAccess, ControlGrant, ControlRequest, ControlTarget, TerminalBackend,
+    TerminalCapability, TerminalMcpError, TerminalMcpPolicy, TerminalOutputFrame,
+    TerminalReadResult, TerminalSessionSummary,
 };
 
 const AGENT_ATTACH_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
@@ -208,9 +210,15 @@ impl TerminalControlService {
         let policy = self.policy()?;
         let target = self.resolve_target(session_id, pane_id).await?;
         let control_target = control_target(&target);
-        self.state
-            .terminal_mcp
-            .authorize(&policy, principal, control_target, capability, reason)
+        let access = self.state.terminal_mcp.authorize(
+            &policy,
+            principal,
+            control_target,
+            capability,
+            reason,
+        )?;
+        self.ensure_control_notification(&access)?;
+        Ok(access)
     }
 
     pub async fn send_text(
@@ -345,7 +353,7 @@ impl TerminalControlService {
                 .collect(),
         };
         let policy = self.policy()?;
-        require_grant(self.state.terminal_mcp.authorize(
+        self.require_grant(self.state.terminal_mcp.authorize(
             &policy,
             principal,
             create_target,
@@ -513,13 +521,25 @@ impl TerminalControlService {
         reason: &str,
     ) -> Result<ControlGrant, TerminalMcpError> {
         let policy = self.policy()?;
-        require_grant(self.state.terminal_mcp.authorize(
+        self.require_grant(self.state.terminal_mcp.authorize(
             &policy,
             principal,
             control_target(target),
             capability,
             reason,
         )?)
+    }
+
+    fn require_grant(&self, access: ControlAccess) -> Result<ControlGrant, TerminalMcpError> {
+        self.ensure_control_notification(&access)?;
+        require_grant(access)
+    }
+
+    fn ensure_control_notification(&self, access: &ControlAccess) -> Result<(), TerminalMcpError> {
+        let ControlAccess::ApprovalRequired(request) = access else {
+            return Ok(());
+        };
+        add_control_notification(&self.state, request)
     }
 
     async fn resolve_target(
@@ -994,6 +1014,59 @@ fn require_grant(access: ControlAccess) -> Result<ControlGrant, TerminalMcpError
     }
 }
 
+fn add_control_notification(
+    state: &AppState,
+    request: &ControlRequest,
+) -> Result<(), TerminalMcpError> {
+    let capability = match request.capability {
+        TerminalCapability::Interact => "interact with",
+        TerminalCapability::Create => "create",
+        TerminalCapability::Terminate => "close",
+    };
+    let reason = if request.reason.is_empty() {
+        "No reason was provided.".to_owned()
+    } else {
+        format!("Reason: {}", request.reason)
+    };
+    let input = NewNotification {
+        source_kind: super::PLUGIN_ID.to_owned(),
+        source_id: Some(request.id.clone()),
+        kind: "interactive".to_owned(),
+        severity: "warning".to_owned(),
+        presentation_hint: "modal".to_owned(),
+        title: "Terminal control request".to_owned(),
+        body: format!(
+            "{} ({}) wants to {capability} {} [{}]. {reason}",
+            request.caller_name,
+            request.caller_app_id,
+            request.target.label,
+            request.target.backend,
+        ),
+        url: None,
+        actions: vec![
+            NotificationAction {
+                id: "terminal-mcp.deny".to_owned(),
+                label: "Deny".to_owned(),
+                style: Some("danger".to_owned()),
+                payload: json!({ "requestId": request.id }),
+            },
+            NotificationAction {
+                id: "terminal-mcp.approve".to_owned(),
+                label: "Approve".to_owned(),
+                style: Some("primary".to_owned()),
+                payload: json!({ "requestId": request.id }),
+            },
+        ],
+    };
+    state
+        .notifications
+        .add_if_absent(super::PLUGIN_ID, &request.id, input)
+        .map(|_| ())
+        .map_err(|_| {
+            TerminalMcpError::new("INTERNAL_ERROR", "Failed to create approval notification")
+        })
+}
+
 fn control_target(target: &ResolvedTarget) -> ControlTarget {
     match target {
         ResolvedTarget::Native(session) => ControlTarget {
@@ -1356,5 +1429,35 @@ mod tests {
 
         assert_eq!(error.code, "CONTROL_APPROVAL_REQUIRED");
         assert_eq!(state.terminal_mcp.pending_requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn repeated_control_request_reuses_pending_request_and_notification() {
+        let (state, service) = test_service();
+        state
+            .sessions
+            .write()
+            .unwrap()
+            .insert("session-one".to_owned(), native_session());
+
+        for _ in 0..2 {
+            let error = service
+                .send_text(
+                    &principal(),
+                    "session-one",
+                    None,
+                    "uptime",
+                    true,
+                    "maintain server",
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "CONTROL_APPROVAL_REQUIRED");
+        }
+
+        assert_eq!(state.terminal_mcp.pending_requests().len(), 1);
+        let notifications = state.notifications.list_active().unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].source_kind, super::super::PLUGIN_ID);
     }
 }

@@ -333,6 +333,26 @@ pub async fn post_notification_action(
                 .into_response(),
         };
     }
+    if notification.source_kind == crate::plugins::terminal_mcp::PLUGIN_ID {
+        return match crate::plugins::terminal_mcp::http::handle_notification_action(
+            &state,
+            &notification,
+            &action_id,
+        ) {
+            Ok(Some(request)) => Json(request).into_response(),
+            Ok(None) => (StatusCode::NOT_FOUND, "notification action not found").into_response(),
+            Err(error) => (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": {
+                        "code": error.code,
+                        "message": error.message,
+                    }
+                })),
+            )
+                .into_response(),
+        };
+    }
     match state.notifications.mark_actioned(&id) {
         Ok(Some(notification)) => Json(notification).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "notification not found").into_response(),

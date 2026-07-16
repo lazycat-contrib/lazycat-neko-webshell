@@ -92,30 +92,33 @@ impl NotificationHub {
     pub fn add(&self, input: NewNotification) -> io::Result<WebshellNotification> {
         let _guard = self.lock.lock().expect("notification hub lock poisoned");
         let mut persisted = self.load_unlocked()?;
-        let now = now_ms();
-        let notification = WebshellNotification {
-            id: Uuid::new_v4().to_string(),
-            source_kind: normalize_token(&input.source_kind, "system"),
-            source_id: normalize_optional_string(input.source_id),
-            kind: normalize_kind(&input.kind),
-            severity: normalize_severity(&input.severity),
-            presentation_hint: normalize_presentation_hint(&input.presentation_hint),
-            title: input.title.trim().to_owned(),
-            body: input.body.trim().to_owned(),
-            url: normalize_notification_url(input.url),
-            actions: input
-                .actions
-                .into_iter()
-                .filter_map(normalize_action)
-                .collect(),
-            state: "unread".to_owned(),
-            created_at_ms: now,
-            updated_at_ms: now,
-        };
+        let notification = build_notification(input);
         persisted.notifications.push(notification.clone());
         prune_notifications(&mut persisted.notifications);
         self.save_unlocked(&persisted)?;
         Ok(notification)
+    }
+
+    pub fn add_if_absent(
+        &self,
+        source_kind: &str,
+        source_id: &str,
+        input: NewNotification,
+    ) -> io::Result<(WebshellNotification, bool)> {
+        let _guard = self.lock.lock().expect("notification hub lock poisoned");
+        let mut persisted = self.load_unlocked()?;
+        if let Some(notification) = persisted.notifications.iter().find(|notification| {
+            notification.source_kind == source_kind
+                && notification.source_id.as_deref() == Some(source_id)
+                && notification.state != "dismissed"
+        }) {
+            return Ok((notification.clone(), false));
+        }
+        let notification = build_notification(input);
+        persisted.notifications.push(notification.clone());
+        prune_notifications(&mut persisted.notifications);
+        self.save_unlocked(&persisted)?;
+        Ok((notification, true))
     }
 
     pub fn list_active(&self) -> io::Result<Vec<WebshellNotification>> {
@@ -161,6 +164,29 @@ impl NotificationHub {
             notification.state = "actioned".to_owned();
             notification.updated_at_ms = now;
         })
+    }
+
+    pub fn mark_source_actioned(
+        &self,
+        source_kind: &str,
+        source_id: &str,
+    ) -> io::Result<Option<WebshellNotification>> {
+        let _guard = self.lock.lock().expect("notification hub lock poisoned");
+        let mut persisted = self.load_unlocked()?;
+        let now = now_ms();
+        let mut updated = None;
+        if let Some(notification) = persisted.notifications.iter_mut().find(|notification| {
+            notification.source_kind == source_kind
+                && notification.source_id.as_deref() == Some(source_id)
+        }) {
+            notification.state = "actioned".to_owned();
+            notification.updated_at_ms = now;
+            updated = Some(notification.clone());
+        }
+        if updated.is_some() {
+            self.save_unlocked(&persisted)?;
+        }
+        Ok(updated)
     }
 
     fn update_state(
@@ -209,6 +235,29 @@ impl NotificationHub {
             serde_json::to_vec(persisted).map_err(|err| io::Error::other(err.to_string()))?;
         self.database
             .store_kv(KV_NAMESPACE_STATE, KV_KEY_NOTIFICATIONS, &bytes)
+    }
+}
+
+fn build_notification(input: NewNotification) -> WebshellNotification {
+    let now = now_ms();
+    WebshellNotification {
+        id: Uuid::new_v4().to_string(),
+        source_kind: normalize_token(&input.source_kind, "system"),
+        source_id: normalize_optional_string(input.source_id),
+        kind: normalize_kind(&input.kind),
+        severity: normalize_severity(&input.severity),
+        presentation_hint: normalize_presentation_hint(&input.presentation_hint),
+        title: input.title.trim().to_owned(),
+        body: input.body.trim().to_owned(),
+        url: normalize_notification_url(input.url),
+        actions: input
+            .actions
+            .into_iter()
+            .filter_map(normalize_action)
+            .collect(),
+        state: "unread".to_owned(),
+        created_at_ms: now,
+        updated_at_ms: now,
     }
 }
 

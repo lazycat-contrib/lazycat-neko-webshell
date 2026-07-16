@@ -1,5 +1,6 @@
 pub mod grants;
 pub mod herdr_adapter;
+pub mod http;
 pub mod principal;
 pub mod server;
 pub mod service;

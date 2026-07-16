@@ -24,6 +24,9 @@ use crate::herdr::{
 use crate::lightos::{self, AdminInfo};
 use crate::lightos_admin;
 use crate::notifications::{get_notifications, post_notification_dismiss, post_notification_read};
+use crate::plugins::terminal_mcp::http::{
+    get_control_state, post_approve_request, post_deny_request, post_revoke_grant,
+};
 use crate::plugins::terminal_mcp::server::streamable_http_service;
 use crate::pomodoro::{
     get_pomodoro_state, post_notification_action, post_pomodoro_dismiss, post_pomodoro_start,
@@ -85,6 +88,22 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/herdr/socket", post(post_herdr_socket))
         .route("/api/herdr/output-sequence", post(post_herdr_output_sequence))
         .route("/api/notifications", get(get_notifications))
+        .route(
+            "/api/plugins/terminal-mcp/control-state",
+            get(get_control_state),
+        )
+        .route(
+            "/api/plugins/terminal-mcp/requests/{id}/approve",
+            post(post_approve_request),
+        )
+        .route(
+            "/api/plugins/terminal-mcp/requests/{id}/deny",
+            post(post_deny_request),
+        )
+        .route(
+            "/api/plugins/terminal-mcp/grants/{id}/revoke",
+            post(post_revoke_grant),
+        )
         .route("/api/notifications/{id}/read", post(post_notification_read))
         .route(
             "/api/notifications/{id}/dismiss",
