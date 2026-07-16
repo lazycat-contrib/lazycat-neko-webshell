@@ -35,6 +35,15 @@ pub struct OutputFrame {
 }
 
 #[derive(Clone, Debug)]
+pub struct OutputSnapshot {
+    pub frames: Vec<OutputFrame>,
+    pub oldest_sequence: Option<u64>,
+    pub last_sequence: u64,
+    pub truncated: bool,
+    pub replay_gap: bool,
+}
+
+#[derive(Clone, Debug)]
 pub struct ExitInfo {
     pub exit_code: i32,
     pub message: Option<String>,
@@ -466,19 +475,47 @@ impl OutputBuffer {
     }
 
     pub fn snapshot_after(&self, sequence: u64) -> (Vec<OutputFrame>, u64) {
+        let snapshot = self.snapshot_after_bounded(sequence, usize::MAX, usize::MAX);
+        (snapshot.frames, snapshot.last_sequence)
+    }
+
+    pub fn snapshot_after_bounded(
+        &self,
+        sequence: u64,
+        max_bytes: usize,
+        max_frames: usize,
+    ) -> OutputSnapshot {
         let inner = self.inner.lock().expect("terminal output buffer poisoned");
-        (
-            inner
+        let oldest_sequence = inner.frames.front().map(|frame| frame.sequence);
+        let start = first_output_frame_after(&inner.frames, sequence);
+        let byte_limit = max_bytes.max(1);
+        let frame_limit = max_frames.max(1);
+        let mut frames = Vec::new();
+        let mut total_bytes = 0usize;
+        let mut index = start;
+        while index < inner.frames.len() && frames.len() < frame_limit {
+            let frame = inner
                 .frames
-                .iter()
-                .filter(|frame| frame.sequence > sequence)
-                .cloned()
-                .collect(),
-            inner
-                .frames
-                .back()
-                .map_or(inner.next_sequence, |_| inner.next_sequence),
-        )
+                .get(index)
+                .expect("terminal output index should remain in range");
+            let next_bytes = total_bytes.saturating_add(frame.data.len());
+            if !frames.is_empty() && next_bytes > byte_limit {
+                break;
+            }
+            total_bytes = next_bytes;
+            frames.push(frame.clone());
+            index += 1;
+            if total_bytes >= byte_limit {
+                break;
+            }
+        }
+        OutputSnapshot {
+            frames,
+            oldest_sequence,
+            last_sequence: inner.next_sequence,
+            truncated: index < inner.frames.len(),
+            replay_gap: oldest_sequence.is_some_and(|oldest| sequence.saturating_add(1) < oldest),
+        }
     }
 
     fn append_history(&self, frame: &OutputFrame, first_retained_sequence: u64) {
@@ -537,6 +574,23 @@ impl OutputBuffer {
             warn!(error = %err, session_id = %store.session_id, "failed to remove terminal output history");
         }
     }
+}
+
+fn first_output_frame_after(frames: &VecDeque<OutputFrame>, sequence: u64) -> usize {
+    let mut left = 0usize;
+    let mut right = frames.len();
+    while left < right {
+        let middle = left + (right - left) / 2;
+        if frames
+            .get(middle)
+            .is_some_and(|frame| frame.sequence <= sequence)
+        {
+            left = middle + 1;
+        } else {
+            right = middle;
+        }
+    }
+    left
 }
 
 impl Default for OutputBuffer {
@@ -715,6 +769,42 @@ mod tests {
         assert_eq!(last_sequence, 2);
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].sequence, 1);
+    }
+
+    #[test]
+    fn bounded_snapshot_stops_at_byte_limit() {
+        let output = OutputBuffer::new(128);
+        for data in [b"a".as_slice(), b"bb", b"ccc", b"dddd", b"eeeee", b"ffffff"] {
+            output.push(data.to_vec());
+        }
+
+        let snapshot = output.snapshot_after_bounded(1, 5, 8);
+
+        assert_eq!(
+            snapshot
+                .frames
+                .iter()
+                .map(|frame| frame.sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert_eq!(snapshot.oldest_sequence, Some(1));
+        assert_eq!(snapshot.last_sequence, 6);
+        assert!(snapshot.truncated);
+        assert!(!snapshot.replay_gap);
+    }
+
+    #[test]
+    fn bounded_snapshot_reports_replay_gap() {
+        let output = OutputBuffer::new(128);
+        for index in 0..130 {
+            output.push(format!("{index}\n").into_bytes());
+        }
+
+        let snapshot = output.snapshot_after_bounded(0, 1024, 8);
+
+        assert_eq!(snapshot.oldest_sequence, Some(3));
+        assert!(snapshot.replay_gap);
     }
 
     #[test]

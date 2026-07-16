@@ -9,6 +9,15 @@ pub struct AgentHistoryFrame {
     pub data: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentHistorySnapshot {
+    pub frames: Vec<AgentHistoryFrame>,
+    pub oldest_sequence: Option<u64>,
+    pub last_sequence: u64,
+    pub truncated: bool,
+    pub replay_gap: bool,
+}
+
 #[derive(Debug)]
 pub struct AgentHistory {
     frames: VecDeque<AgentHistoryFrame>,
@@ -55,16 +64,46 @@ impl AgentHistory {
     }
 
     pub fn snapshot_after(&self, sequence: u64) -> (Vec<AgentHistoryFrame>, u64) {
-        (
-            self.frames
-                .iter()
-                .filter(|frame| frame.sequence > sequence)
-                .cloned()
-                .collect(),
-            self.frames
-                .back()
-                .map_or(self.next_sequence, |_| self.next_sequence),
-        )
+        let snapshot = self.snapshot_after_bounded(sequence, usize::MAX, usize::MAX);
+        (snapshot.frames, snapshot.last_sequence)
+    }
+
+    pub fn snapshot_after_bounded(
+        &self,
+        sequence: u64,
+        max_bytes: usize,
+        max_frames: usize,
+    ) -> AgentHistorySnapshot {
+        let oldest_sequence = self.frames.front().map(|frame| frame.sequence);
+        let start = first_frame_after(&self.frames, sequence);
+        let byte_limit = max_bytes.max(1);
+        let frame_limit = max_frames.max(1);
+        let mut frames = Vec::new();
+        let mut total_bytes = 0usize;
+        let mut index = start;
+        while index < self.frames.len() && frames.len() < frame_limit {
+            let frame = self
+                .frames
+                .get(index)
+                .expect("agent history index should remain in range");
+            let next_bytes = total_bytes.saturating_add(frame.data.len());
+            if !frames.is_empty() && next_bytes > byte_limit {
+                break;
+            }
+            total_bytes = next_bytes;
+            frames.push(frame.clone());
+            index += 1;
+            if total_bytes >= byte_limit {
+                break;
+            }
+        }
+        AgentHistorySnapshot {
+            frames,
+            oldest_sequence,
+            last_sequence: self.next_sequence,
+            truncated: index < self.frames.len(),
+            replay_gap: oldest_sequence.is_some_and(|oldest| sequence.saturating_add(1) < oldest),
+        }
     }
 
     fn prune(&mut self) {
@@ -79,6 +118,23 @@ impl AgentHistory {
             self.total_lines = self.total_lines.saturating_sub(line_count(&frame.data));
         }
     }
+}
+
+fn first_frame_after(frames: &VecDeque<AgentHistoryFrame>, sequence: u64) -> usize {
+    let mut left = 0usize;
+    let mut right = frames.len();
+    while left < right {
+        let middle = left + (right - left) / 2;
+        if frames
+            .get(middle)
+            .is_some_and(|frame| frame.sequence <= sequence)
+        {
+            left = middle + 1;
+        } else {
+            right = middle;
+        }
+    }
+    left
 }
 
 impl Default for AgentHistory {
@@ -191,5 +247,41 @@ mod tests {
         assert_eq!(last_sequence, 2);
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].sequence, 1);
+    }
+
+    #[test]
+    fn bounded_snapshot_stops_at_byte_limit() {
+        let mut history = AgentHistory::new(128);
+        for data in [b"a".as_slice(), b"bb", b"ccc", b"dddd", b"eeeee", b"ffffff"] {
+            history.push(data.to_vec());
+        }
+
+        let snapshot = history.snapshot_after_bounded(1, 5, 8);
+
+        assert_eq!(
+            snapshot
+                .frames
+                .iter()
+                .map(|frame| frame.sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert_eq!(snapshot.oldest_sequence, Some(1));
+        assert_eq!(snapshot.last_sequence, 6);
+        assert!(snapshot.truncated);
+        assert!(!snapshot.replay_gap);
+    }
+
+    #[test]
+    fn bounded_snapshot_reports_replay_gap() {
+        let mut history = AgentHistory::new(128);
+        for index in 0..130 {
+            history.push(format!("{index}\n").into_bytes());
+        }
+
+        let snapshot = history.snapshot_after_bounded(0, 1024, 8);
+
+        assert_eq!(snapshot.oldest_sequence, Some(3));
+        assert!(snapshot.replay_gap);
     }
 }
