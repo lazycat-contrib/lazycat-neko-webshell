@@ -660,6 +660,7 @@ mod tests {
             .json(&body);
         if identity {
             request = request
+                .header("x-hc-user-ticket", "lazycat-ticket")
                 .header("x-hc-user-id", "lazycat")
                 .header("x-hc-source", "cloud.lazycat.app.agent");
         }
@@ -788,6 +789,38 @@ mod tests {
             false,
         )
         .await;
+
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "UNAUTHENTICATED_CALLER"
+        );
+        assert_eq!(response["result"]["isError"], true);
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn tool_calls_reject_projected_identity_without_lazycat_ticket() {
+        let (client, url, handle) = spawn_app(test_state(true)).await;
+        let response = client
+            .post(&url)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("x-hc-user-id", "lazycat")
+            .header("x-hc-source", "cloud.lazycat.app.agent")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "terminal_list_sessions",
+                    "arguments": {}
+                }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let response = response.json::<Value>().await.unwrap();
 
         assert_eq!(
             response["result"]["structuredContent"]["error"]["code"],

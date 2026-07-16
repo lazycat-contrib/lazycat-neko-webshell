@@ -81,8 +81,9 @@ pub async fn post_revoke_grant(
 }
 
 pub(crate) fn is_terminal_ui_request(headers: &HeaderMap) -> bool {
-    // LazyCat delegated app-to-app calls carry x-hc-source; direct browser UI calls do not.
-    !headers.contains_key("x-hc-source")
+    // LazyCat delegated calls carry an internal user ticket and projected source identity.
+    // Direct browser UI calls carry neither marker.
+    !headers.contains_key("x-hc-user-ticket") && !headers.contains_key("x-hc-source")
 }
 
 pub(crate) fn handle_notification_action(
@@ -296,6 +297,11 @@ mod tests {
         headers.insert("x-hc-source", "cloud.lazycat.app.agent".parse().unwrap());
 
         assert!(!is_terminal_ui_request(&headers));
+
+        let mut ticket_headers = HeaderMap::new();
+        ticket_headers.insert("x-hc-user-ticket", "lazycat-ticket".parse().unwrap());
+        assert!(!is_terminal_ui_request(&ticket_headers));
+
         assert!(is_terminal_ui_request(&HeaderMap::new()));
     }
 
