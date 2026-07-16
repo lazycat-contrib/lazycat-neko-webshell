@@ -17,6 +17,7 @@ use crate::database::{
 use crate::notifications::NotificationHub;
 use crate::plugins::file_transfer::FileTransferUploadManager;
 use crate::plugins::lightos_port_forward::LightOsPortForwardManager;
+use crate::plugins::terminal_mcp::TerminalMcpManager;
 use crate::plugins::tunnel::TunnelManager;
 use crate::pomodoro::PomodoroManager;
 use crate::proto::lazycat::webshell::v1::{PluginDescriptor, Session};
@@ -39,6 +40,7 @@ pub struct AppState {
     pub sessions: Arc<SessionManager>,
     pub terminal_control: Arc<TerminalControlHub>,
     pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
+    pub terminal_mcp: Arc<TerminalMcpManager>,
     pub lightos_port_forwards: Arc<LightOsPortForwardManager>,
     pub file_uploads: Arc<FileTransferUploadManager>,
     pub public_tunnels: Arc<TunnelManager>,
@@ -94,6 +96,7 @@ impl AppState {
             )),
             terminal_control: Arc::new(TerminalControlHub::new()),
             plugins: Arc::new(RwLock::new(plugins)),
+            terminal_mcp: Arc::new(TerminalMcpManager::default()),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
             file_uploads: Arc::new(FileTransferUploadManager::default()),
             public_tunnels: Arc::new(TunnelManager::default()),
@@ -155,6 +158,7 @@ impl AppState {
             )),
             terminal_control: Arc::new(TerminalControlHub::new()),
             plugins: Arc::new(RwLock::new(HashMap::new())),
+            terminal_mcp: Arc::new(TerminalMcpManager::default()),
             lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
             file_uploads: Arc::new(FileTransferUploadManager::default()),
             public_tunnels: Arc::new(TunnelManager::default()),
@@ -814,6 +818,31 @@ pub fn output_frame_limit_from_metadata(metadata: &HashMap<String, String>) -> u
 fn builtin_plugins() -> HashMap<String, PluginRecord> {
     [
         PluginRecord {
+            id: crate::plugins::terminal_mcp::PLUGIN_ID.to_owned(),
+            kind: "integration".to_owned(),
+            display_name: "Terminal MCP".to_owned(),
+            description: "Expose terminal session discovery, output, and explicitly authorized control through the LazyCat MCP resource gateway.".to_owned(),
+            scopes: vec![
+                "terminal".to_owned(),
+                "mcp".to_owned(),
+                "automation".to_owned(),
+            ],
+            accepted_content_types: vec!["application/json".to_owned()],
+            produced_content_types: vec!["application/json".to_owned()],
+            input_schema_json: r#"{"transport":"streamable-http","endpoint":"/mcp"}"#.to_owned(),
+            output_schema_json: r#"{"tools":"terminal session discovery, replay, lifecycle, and authorized interaction"}"#.to_owned(),
+            enabled: false,
+            metadata: HashMap::from([
+                ("builtin".to_owned(), "true".to_owned()),
+                ("defaultEnabled".to_owned(), "false".to_owned()),
+                ("runtime".to_owned(), "backend-service".to_owned()),
+                ("backends".to_owned(), "webshell,ssh,herdr".to_owned()),
+                ("defaultPolicy".to_owned(), "confirm".to_owned()),
+                ("trustedCallers".to_owned(), "[]".to_owned()),
+                ("deniedCallers".to_owned(), "[]".to_owned()),
+            ]),
+        },
+        PluginRecord {
             id: "file-transfer".to_owned(),
             kind: "transfer".to_owned(),
             display_name: "File Transfer Adapter".to_owned(),
@@ -1211,6 +1240,33 @@ mod tests {
         assert_eq!(
             plugin.metadata.get("protocols").map(String::as_str),
             Some("lrzsz,trzsz")
+        );
+    }
+
+    #[test]
+    fn builtin_terminal_mcp_plugin_is_disabled_and_confirming_by_default() {
+        let plugins = builtin_plugins();
+        let plugin = plugins
+            .get(crate::plugins::terminal_mcp::PLUGIN_ID)
+            .expect("terminal MCP builtin plugin");
+
+        assert!(!plugin.enabled);
+        assert_eq!(plugin.kind, "integration");
+        assert_eq!(
+            plugin.metadata.get("defaultPolicy").map(String::as_str),
+            Some("confirm")
+        );
+        assert_eq!(
+            plugin.metadata.get("trustedCallers").map(String::as_str),
+            Some("[]")
+        );
+        assert_eq!(
+            plugin.metadata.get("deniedCallers").map(String::as_str),
+            Some("[]")
+        );
+        assert_eq!(
+            plugin.metadata.get("backends").map(String::as_str),
+            Some("webshell,ssh,herdr")
         );
     }
 

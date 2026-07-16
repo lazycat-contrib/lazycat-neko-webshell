@@ -868,6 +868,9 @@ impl CapabilityService for CapabilityServiceImpl {
         self.state
             .persist_plugins_snapshot(&snapshot)
             .map_err(|err| ConnectError::internal(err.to_string()))?;
+        if plugin_id == crate::plugins::terminal_mcp::PLUGIN_ID {
+            self.state.terminal_mcp.revoke_all();
+        }
         let plugin = self.plugin_descriptor(&plugin)?;
         ConnectResponse::ok(ConfigurePluginResponse {
             plugin: MessageField::some(plugin),
