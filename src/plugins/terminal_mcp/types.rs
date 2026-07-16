@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::state::PluginRecord;
@@ -76,7 +77,9 @@ fn parse_caller_list(value: Option<&String>) -> BTreeSet<String> {
         .collect()
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalCapability {
     Interact,
@@ -84,7 +87,7 @@ pub enum TerminalCapability {
     Terminate,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TerminalBackend {
     Webshell,

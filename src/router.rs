@@ -24,6 +24,7 @@ use crate::herdr::{
 use crate::lightos::{self, AdminInfo};
 use crate::lightos_admin;
 use crate::notifications::{get_notifications, post_notification_dismiss, post_notification_read};
+use crate::plugins::terminal_mcp::server::streamable_http_service;
 use crate::pomodoro::{
     get_pomodoro_state, post_notification_action, post_pomodoro_dismiss, post_pomodoro_start,
     post_pomodoro_stop,
@@ -47,12 +48,14 @@ use crate::workspace::{get_workspace, put_workspace_action};
 pub fn build_app(state: Arc<AppState>) -> Router {
     let service = Arc::new(CapabilityServiceImpl::new(Arc::clone(&state)));
     let connect = service.register(ConnectRouter::new()).into_axum_router();
+    let terminal_mcp = streamable_http_service(Arc::clone(&state));
 
     Router::new()
         .route("/", get(index))
         .route("/index.html", get(index))
         .route("/icon.png", get(frontend_icon))
         .route("/healthz", get(|| async { "ok" }))
+        .nest_service("/mcp", terminal_mcp)
         .route("/ws/terminal", get(terminal_ws))
         .route("/ws/action", get(action_ws))
         .route("/ws/herdr", get(herdr_ws))
