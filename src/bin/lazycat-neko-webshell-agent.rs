@@ -14,6 +14,8 @@ mod agent_workspace;
 mod config;
 #[path = "../proto.rs"]
 mod proto;
+#[path = "../pty_io.rs"]
+mod pty_io;
 #[path = "../tty_init.rs"]
 mod tty_init;
 #[path = "../validation.rs"]

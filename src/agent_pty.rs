@@ -1,4 +1,3 @@
-use std::io::{Read, Write};
 use std::sync::{Mutex, mpsc};
 use std::thread;
 
@@ -6,6 +5,7 @@ use anyhow::{Context as _, anyhow};
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use tracing::{info, warn};
 
+use crate::pty_io::{ChildWait, PtyOutputEvent, PtyWriter, spawn_batched_output_reader};
 use crate::tty_init::terminal_session_bootstrap_script;
 use crate::validation::validate_size;
 
@@ -24,8 +24,10 @@ pub enum AgentPtyEvent {
 
 pub struct AgentPty {
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer_tx: mpsc::Sender<AgentPtyCommand>,
+    writer: PtyWriter,
     killer: Mutex<Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
+    child_wait: ChildWait,
+    shell_pid: Option<u32>,
 }
 
 impl AgentPty {
@@ -60,28 +62,38 @@ impl AgentPty {
             .slave
             .spawn_command(command)
             .with_context(|| "failed to start agent pty shell")?;
+        let shell_pid = child.process_id();
         let killer = child.clone_killer();
         drop(pair.slave);
 
         let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
-        let (writer_tx, writer_rx) = mpsc::channel::<AgentPtyCommand>();
+        let writer = PtyWriter::spawn(writer);
+        let child_wait = ChildWait::default();
 
-        spawn_output_thread(reader, event_tx.clone());
-        spawn_writer_thread(writer, writer_rx);
-        spawn_exit_thread(child, event_tx);
+        spawn_batched_output_reader(reader, {
+            let event_tx = event_tx.clone();
+            move |event| {
+                let event = match event {
+                    PtyOutputEvent::Output(data) => AgentPtyEvent::Output(data),
+                    PtyOutputEvent::Error(message) => AgentPtyEvent::Error(message),
+                };
+                event_tx.send(event).is_ok()
+            }
+        });
+        spawn_exit_thread(child, event_tx, child_wait.clone());
 
         Ok(Self {
             master: Mutex::new(pair.master),
-            writer_tx,
+            writer,
             killer: Mutex::new(Some(killer)),
+            child_wait,
+            shell_pid,
         })
     }
 
     pub fn write_input(&self, data: Vec<u8>) -> anyhow::Result<()> {
-        self.writer_tx
-            .send(AgentPtyCommand::Input(data))
-            .map_err(|_| anyhow!("agent pty input writer is closed"))
+        self.writer.send(data).map_err(anyhow::Error::new)
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
@@ -99,14 +111,23 @@ impl AgentPty {
         Ok(())
     }
 
+    pub fn is_busy(&self) -> bool {
+        let Ok(master) = self.master.lock() else {
+            return false;
+        };
+        has_foreground_process(master.as_ref(), self.shell_pid)
+    }
+
     pub fn close(&self) {
-        let _ = self.writer_tx.send(AgentPtyCommand::Close);
+        self.writer.signal_close();
         let Some(mut killer) = self.killer.lock().ok().and_then(|mut killer| killer.take()) else {
             return;
         };
         if let Err(err) = killer.kill() {
             warn!(error = %err, "agent pty child was already closed");
         }
+        self.child_wait.wait();
+        self.writer.wait();
     }
 }
 
@@ -116,60 +137,10 @@ impl Drop for AgentPty {
     }
 }
 
-enum AgentPtyCommand {
-    Input(Vec<u8>),
-    Close,
-}
-
-fn spawn_output_thread(mut reader: Box<dyn Read + Send>, event_tx: mpsc::Sender<AgentPtyEvent>) {
-    thread::spawn(move || {
-        let mut buf = [0_u8; 8192];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if event_tx
-                        .send(AgentPtyEvent::Output(buf[..n].to_vec()))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Err(err) => {
-                    let _ = event_tx.send(AgentPtyEvent::Error(err.to_string()));
-                    break;
-                }
-            }
-        }
-    });
-}
-
-fn spawn_writer_thread(
-    mut writer: Box<dyn Write + Send>,
-    writer_rx: mpsc::Receiver<AgentPtyCommand>,
-) {
-    thread::spawn(move || {
-        for command in writer_rx {
-            match command {
-                AgentPtyCommand::Input(data) => {
-                    if let Err(err) = writer.write_all(&data) {
-                        warn!(error = %err, "failed to write agent pty input");
-                        break;
-                    }
-                    if let Err(err) = writer.flush() {
-                        warn!(error = %err, "failed to flush agent pty input");
-                        break;
-                    }
-                }
-                AgentPtyCommand::Close => break,
-            }
-        }
-    });
-}
-
 fn spawn_exit_thread(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     event_tx: mpsc::Sender<AgentPtyEvent>,
+    child_wait: ChildWait,
 ) {
     thread::spawn(move || {
         let info = match child.wait() {
@@ -182,8 +153,22 @@ fn spawn_exit_thread(
                 message: Some(err.to_string()),
             },
         };
+        child_wait.complete();
         let _ = event_tx.send(AgentPtyEvent::Exit(info));
     });
+}
+
+#[cfg(unix)]
+fn has_foreground_process(master: &dyn MasterPty, shell_pid: Option<u32>) -> bool {
+    let Some(foreground_pgid) = master.process_group_leader() else {
+        return false;
+    };
+    shell_pid.is_some_and(|shell_pid| i64::from(foreground_pgid) != i64::from(shell_pid))
+}
+
+#[cfg(not(unix))]
+fn has_foreground_process(_master: &dyn MasterPty, _shell_pid: Option<u32>) -> bool {
+    false
 }
 
 fn local_shell_bootstrap_script(username: &str) -> String {

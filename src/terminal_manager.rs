@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::io::{self, Read, Write};
+use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
@@ -12,6 +12,7 @@ use tracing::{info, warn};
 use crate::agent_protocol::AGENT_PROTOCOL_VERSION;
 use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES};
 use crate::database::AppDatabase;
+use crate::pty_io::{ChildWait, PtyOutputEvent, PtyWriter, spawn_batched_output_reader};
 use crate::validation::{normalize_output_frame_limit, validate_size};
 
 const EVENT_CAPACITY: usize = 1024;
@@ -145,9 +146,11 @@ pub struct ManagedTerminal {
     cols: u16,
     rows: u16,
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer_tx: std::sync::mpsc::Sender<WriterCommand>,
+    writer: PtyWriter,
     event_tx: broadcast::Sender<TerminalEvent>,
     killer: Mutex<Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
+    child_wait: ChildWait,
+    shell_pid: Option<u32>,
     output: Arc<OutputBuffer>,
     exit: Arc<Mutex<Option<ExitInfo>>>,
 }
@@ -185,18 +188,38 @@ impl ManagedTerminal {
             .slave
             .spawn_command(command)
             .with_context(|| format!("failed to start {}", spec.command))?;
+        let shell_pid = child.process_id();
         let killer = child.clone_killer();
         drop(pair.slave);
 
         let reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
-        let (writer_tx, writer_rx) = std::sync::mpsc::channel::<WriterCommand>();
+        let writer = PtyWriter::spawn(writer);
         let (event_tx, _) = broadcast::channel::<TerminalEvent>(EVENT_CAPACITY);
         let exit = Arc::new(Mutex::new(None));
+        let child_wait = ChildWait::default();
 
-        spawn_output_thread(reader, event_tx.clone(), Arc::clone(&output));
-        spawn_writer_thread(writer, writer_rx);
-        spawn_exit_thread(child, event_tx.clone(), Arc::clone(&exit));
+        spawn_batched_output_reader(reader, {
+            let event_tx = event_tx.clone();
+            let output = Arc::clone(&output);
+            move |event| match event {
+                PtyOutputEvent::Output(data) => {
+                    let frame = output.push(data);
+                    let _ = event_tx.send(TerminalEvent::Output(frame));
+                    true
+                }
+                PtyOutputEvent::Error(message) => {
+                    let _ = event_tx.send(TerminalEvent::Error(message));
+                    false
+                }
+            }
+        });
+        spawn_exit_thread(
+            child,
+            event_tx.clone(),
+            Arc::clone(&exit),
+            child_wait.clone(),
+        );
 
         Ok(Self {
             session_id: spec.session_id,
@@ -204,9 +227,11 @@ impl ManagedTerminal {
             cols: spec.cols,
             rows: spec.rows,
             master: Mutex::new(pair.master),
-            writer_tx,
+            writer,
             event_tx,
             killer: Mutex::new(Some(killer)),
+            child_wait,
+            shell_pid,
             output,
             exit,
         })
@@ -237,9 +262,7 @@ impl ManagedTerminal {
     }
 
     pub fn write_input(&self, data: Vec<u8>) -> anyhow::Result<()> {
-        self.writer_tx
-            .send(WriterCommand::Input(data))
-            .map_err(|_| anyhow!("terminal input writer is closed"))
+        self.writer.send(data).map_err(anyhow::Error::new)
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
@@ -265,8 +288,15 @@ impl ManagedTerminal {
         self.output.set_recording(enabled);
     }
 
+    pub fn is_busy(&self) -> bool {
+        let Ok(master) = self.master.lock() else {
+            return false;
+        };
+        has_foreground_process(master.as_ref(), self.shell_pid)
+    }
+
     fn close(&self) {
-        let _ = self.writer_tx.send(WriterCommand::Close);
+        self.writer.signal_close();
         let Some(mut child_killer) = self.killer.lock().ok().and_then(|mut killer| killer.take())
         else {
             return;
@@ -274,6 +304,8 @@ impl ManagedTerminal {
         if let Err(err) = child_killer.kill() {
             warn!(error = %err, "terminal child was already closed");
         }
+        self.child_wait.wait();
+        self.writer.wait();
     }
 }
 
@@ -283,61 +315,11 @@ impl Drop for ManagedTerminal {
     }
 }
 
-enum WriterCommand {
-    Input(Vec<u8>),
-    Close,
-}
-
-fn spawn_output_thread(
-    mut reader: Box<dyn Read + Send>,
-    event_tx: broadcast::Sender<TerminalEvent>,
-    output: Arc<OutputBuffer>,
-) {
-    thread::spawn(move || {
-        let mut buf = [0_u8; 8192];
-        loop {
-            match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    let frame = output.push(buf[..n].to_vec());
-                    let _ = event_tx.send(TerminalEvent::Output(frame));
-                }
-                Err(err) => {
-                    let _ = event_tx.send(TerminalEvent::Error(err.to_string()));
-                    break;
-                }
-            }
-        }
-    });
-}
-
-fn spawn_writer_thread(
-    mut writer: Box<dyn Write + Send>,
-    writer_rx: std::sync::mpsc::Receiver<WriterCommand>,
-) {
-    thread::spawn(move || {
-        for command in writer_rx {
-            match command {
-                WriterCommand::Input(data) => {
-                    if let Err(err) = writer.write_all(&data) {
-                        warn!(error = %err, "failed to write terminal input");
-                        break;
-                    }
-                    if let Err(err) = writer.flush() {
-                        warn!(error = %err, "failed to flush terminal input");
-                        break;
-                    }
-                }
-                WriterCommand::Close => break,
-            }
-        }
-    });
-}
-
 fn spawn_exit_thread(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     event_tx: broadcast::Sender<TerminalEvent>,
     exit: Arc<Mutex<Option<ExitInfo>>>,
+    child_wait: ChildWait,
 ) {
     thread::spawn(move || {
         let result = child.wait();
@@ -354,8 +336,22 @@ fn spawn_exit_thread(
         if let Ok(mut exit) = exit.lock() {
             *exit = Some(info.clone());
         }
+        child_wait.complete();
         let _ = event_tx.send(TerminalEvent::Exit(info));
     });
+}
+
+#[cfg(unix)]
+fn has_foreground_process(master: &dyn MasterPty, shell_pid: Option<u32>) -> bool {
+    let Some(foreground_pgid) = master.process_group_leader() else {
+        return false;
+    };
+    shell_pid.is_some_and(|shell_pid| i64::from(foreground_pgid) != i64::from(shell_pid))
+}
+
+#[cfg(not(unix))]
+fn has_foreground_process(_master: &dyn MasterPty, _shell_pid: Option<u32>) -> bool {
+    false
 }
 
 pub struct OutputBuffer {
@@ -675,7 +671,7 @@ impl OutputHistoryStore {
 
 #[cfg(test)]
 mod tests {
-    use super::OutputBuffer;
+    use super::{ManagedTerminal, OutputBuffer, TerminalSpec};
     use crate::database::AppDatabase;
     use std::sync::Arc;
 
@@ -805,6 +801,29 @@ mod tests {
 
         assert_eq!(snapshot.oldest_sequence, Some(3));
         assert!(snapshot.replay_gap);
+    }
+
+    #[test]
+    fn managed_terminal_close_kills_waits_and_is_idempotent() {
+        let terminal = ManagedTerminal::spawn(
+            TerminalSpec {
+                session_id: "close-test".to_owned(),
+                host: "localhost".to_owned(),
+                selector: "local@test".to_owned(),
+                command: "/bin/sh".to_owned(),
+                args: vec!["-lc".to_owned(), "exec sleep 30".to_owned()],
+                cols: 80,
+                rows: 24,
+                output_frame_limit: 128,
+            },
+            Arc::new(OutputBuffer::new(128)),
+        )
+        .unwrap();
+
+        terminal.close();
+        terminal.close();
+
+        assert!(terminal.exit_info().is_some());
     }
 
     #[test]
