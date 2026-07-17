@@ -142,6 +142,8 @@ export const zhCNMessages = {
   "action.showToken": "显示 token",
   "action.zmodemCancel": "取消传输",
   "app.title": "小橘Web Shell",
+  "terminal.searchClear": "清除",
+  "terminal.searchPlaceholder": "在终端历史中查找",
   "backend.herdr": "Herdr",
   "backend.webshell": "WebShell 原生",
   "backend.zellij": "zellij",

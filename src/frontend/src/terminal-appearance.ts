@@ -132,7 +132,7 @@ export function applyTerminalAppearance(
   applyCursorAppearance(pane, context.settings);
   term.restty.setFontSize(context.settings.fontSize);
   applyTerminalFontRuntimeOptions(term, context.settings);
-  void term.restty.setFontSources(resttyFontSourcesFor(context.font)).catch((error) => {
+  void term.restty.setFonts(resttyFontSourcesFor(context.font)).catch((error: unknown) => {
     onFontLoadError?.(error);
   });
   term.restty.updateSize(true);

@@ -140,6 +140,8 @@ export const enMessages = {
   "action.showToken": "Show token",
   "action.zmodemCancel": "Cancel transfer",
   "app.title": "Neko Webshell",
+  "terminal.searchClear": "Clear",
+  "terminal.searchPlaceholder": "Find in scrollback",
   "backend.herdr": "Herdr",
   "backend.webshell": "WebShell native",
   "backend.zellij": "zellij",

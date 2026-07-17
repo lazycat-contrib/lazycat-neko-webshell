@@ -262,7 +262,7 @@ impl AgentDaemon {
         };
         pane.resize(cols, rows)?;
         pane.set_output_limit(output_limit);
-        serve_attach_stream(&mut stream, pane, request_replay_after(request))
+        serve_attach_stream(&mut stream, &pane, request_replay_after(request))
     }
 
     fn workspace_for_request(&self, request: &AgentRequest) -> anyhow::Result<Arc<AgentWorkspace>> {
@@ -312,7 +312,7 @@ impl AgentDaemon {
 
 fn serve_attach_stream(
     stream: &mut UnixStream,
-    pane: Arc<AgentPane>,
+    pane: &Arc<AgentPane>,
     replay_after: u64,
 ) -> anyhow::Result<()> {
     let event_rx = pane.subscribe();
@@ -339,7 +339,7 @@ fn serve_attach_stream(
     let mut reader = stream
         .try_clone()
         .context("failed to clone attach stream")?;
-    let input_pane = Arc::clone(&pane);
+    let input_pane = Arc::clone(pane);
     thread::spawn(move || {
         read_attach_input_loop(&mut reader, &input_pane);
         let _ = detach_tx.send(());
@@ -389,11 +389,7 @@ fn accept_live_sequence(last_sequence: &mut u64, sequence: u64) -> bool {
 }
 
 fn read_attach_input_loop(stream: &mut UnixStream, pane: &AgentPane) {
-    loop {
-        let frame = match read_agent_frame(&mut *stream) {
-            Ok(frame) => frame,
-            Err(_) => break,
-        };
+    while let Ok(frame) = read_agent_frame(&mut *stream) {
         match frame_type(&frame) {
             Some(AgentFrameType::AGENT_FRAME_TYPE_INPUT) => {
                 let _ = pane.write_input(frame.payload.unwrap_or_default());
@@ -425,7 +421,7 @@ fn handle_attach_control_frame(frame: AgentFrame, pane: &AgentPane) {
         return;
     };
     if matches!(
-        control.r#type.as_ref().and_then(|kind| kind.as_known()),
+        control.r#type.as_ref().and_then(buffa::EnumValue::as_known),
         Some(AgentControlType::AGENT_CONTROL_TYPE_HISTORY_RECORDING)
     ) {
         pane.set_history_recording(control.history_recording.unwrap_or(true));
@@ -433,11 +429,11 @@ fn handle_attach_control_frame(frame: AgentFrame, pane: &AgentPane) {
 }
 
 fn request_type(request: &AgentRequest) -> Option<AgentRequestType> {
-    request.r#type.as_ref().and_then(|kind| kind.as_known())
+    request.r#type.as_ref().and_then(buffa::EnumValue::as_known)
 }
 
 fn frame_type(frame: &AgentFrame) -> Option<AgentFrameType> {
-    frame.r#type.as_ref().and_then(|kind| kind.as_known())
+    frame.r#type.as_ref().and_then(buffa::EnumValue::as_known)
 }
 
 fn request_size(request: &AgentRequest) -> anyhow::Result<(u16, u16)> {

@@ -297,7 +297,7 @@ dir="${{HOME:-}}/.ssh"
 config="$dir/config"
 tmp="$dir/config.webshell.tmp.$$"
 backup=""
-backup_limit={}
+backup_limit={backup_limit}
 mkdir -p "$dir"
 chmod 700 "$dir" 2>/dev/null || true
 if [ -f "$config" ]; then
@@ -314,7 +314,6 @@ if [ "$backup_limit" -gt 0 ]; then
   done
 fi
 printf '%s' "$backup""#,
-        backup_limit,
     );
     target_login_user_bootstrap_script(&script, login_user)
 }

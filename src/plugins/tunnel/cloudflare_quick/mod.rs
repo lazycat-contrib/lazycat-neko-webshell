@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex, mpsc};
 
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as STANDARD_BASE64;
 use capnp::message::{ReaderOptions, TypedBuilder};
@@ -11,10 +11,10 @@ use capnp_rpc::{RpcSystem, rpc_twoparty_capnp::Side, twoparty::VatNetwork};
 use futures::AsyncReadExt as _;
 use quinn::{
     ClientConfig as QuinnClientConfig, Connection as QuinnConnection, Endpoint as QuinnEndpoint,
-    RecvStream as QuinnRecvStream, SendStream as QuinnSendStream,
+    RecvStream as QuinnRecvStream, SendStream as QuinnSendStream, crypto::rustls::QuicClientConfig,
 };
 use reqwest::Method;
-use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
+use rustls23::{ClientConfig as RustlsClientConfig, RootCertStore};
 use serde::Deserialize;
 use tokio::net::{ToSocketAddrs, lookup_host};
 use tokio::runtime::Builder as RuntimeBuilder;
@@ -100,8 +100,7 @@ async fn handle_connect_request(
     let method = connect_request
         .metadata
         .get("HttpMethod")
-        .map(String::as_str)
-        .unwrap_or("GET")
+        .map_or("GET", String::as_str)
         .parse::<Method>()
         .unwrap_or(Method::GET);
     let upstream_url = build_upstream_url(&upstream_base, &connect_request.request_dest)?;
@@ -265,18 +264,15 @@ impl Connection {
         let mut last_error = None;
         for dst_addr in lookup_host(dst_addr).await? {
             let mut root_cert_store = RootCertStore::empty();
-            root_cert_store.add(&generated::cloudflare_ca())?;
-            let mut tls_config = RustlsClientConfig::builder()
-                .with_safe_default_cipher_suites()
-                .with_safe_default_kx_groups()
-                .with_protocol_versions(&[&rustls::version::TLS13])
-                .expect("TLS 1.3 must be supported")
-                .with_root_certificates(root_cert_store)
-                .with_no_client_auth();
+            root_cert_store.add(generated::cloudflare_ca())?;
+            let mut tls_config =
+                RustlsClientConfig::builder_with_protocol_versions(&[&rustls23::version::TLS13])
+                    .with_root_certificates(root_cert_store)
+                    .with_no_client_auth();
             tls_config.enable_early_data = true;
             tls_config.alpn_protocols = vec![b"argotunnel".to_vec()];
             match endpoint.connect_with(
-                QuinnClientConfig::new(Arc::new(tls_config)),
+                QuinnClientConfig::new(Arc::new(QuicClientConfig::try_from(tls_config)?)),
                 dst_addr,
                 "quic.cftunnel.com",
             ) {
@@ -380,9 +376,12 @@ impl ConnectRequest {
         let root = builder.init_root();
         match response {
             ConnectResponse::Metadata(metadata) => {
-                let mut items = root.init_metadata(metadata.len() as u32);
+                let item_count =
+                    u32::try_from(metadata.len()).context("too many metadata items")?;
+                let mut items = root.init_metadata(item_count);
                 for (index, (key, value)) in metadata.into_iter().enumerate() {
-                    let mut item = items.reborrow().get(index as u32);
+                    let index = u32::try_from(index).context("metadata index overflow")?;
+                    let mut item = items.reborrow().get(index);
                     item.set_key(key);
                     item.set_val(value);
                 }

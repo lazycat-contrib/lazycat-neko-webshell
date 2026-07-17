@@ -132,7 +132,7 @@ impl TerminalControlService {
                         }
                     }
                     Ok(_) | Err(_) => {
-                        sessions.push(self.native_summary(principal, &record, backend))
+                        sessions.push(self.native_summary(principal, &record, backend));
                     }
                 }
             } else {
@@ -194,7 +194,7 @@ impl TerminalControlService {
             }
         }
         .map(|mut read| {
-            read.session_id = session_id.to_owned();
+            session_id.clone_into(&mut read.session_id);
             let _ = principal;
             read
         })
@@ -311,7 +311,9 @@ impl TerminalControlService {
         match target {
             ResolvedTarget::Native(session) => {
                 let terminal = self.ensure_native_terminal(&session)?;
-                terminal.resize(cols, rows).map_err(map_terminal_error)?;
+                terminal
+                    .resize(cols, rows)
+                    .map_err(|error| map_terminal_error(&error))?;
                 self.state
                     .sessions
                     .persist_resize(&session.id, cols, rows)
@@ -324,6 +326,7 @@ impl TerminalControlService {
         }
     }
 
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)] // Mirrors the MCP request fields and full authorization flow.
     pub async fn create_session(
         &self,
         principal: &McpPrincipal,
@@ -396,7 +399,7 @@ impl TerminalControlService {
                             "Failed to create WebShell session",
                         )
                     })?;
-                let target = active_agent_target(state, login_user)
+                let target = active_agent_target(&state, &login_user)
                     .ok_or_else(TerminalMcpError::session_not_found)?;
                 self.agent_summary(principal, &target)
             }
@@ -421,7 +424,7 @@ impl TerminalControlService {
                 }
                 metadata.insert("creatorSource".to_owned(), principal.caller_app_id.clone());
                 let created = create_workspace_session(&self.state, selector, &defaults, metadata)
-                    .map_err(map_workspace_error)?;
+                    .map_err(|error| map_workspace_error(&error))?;
                 let terminal = self.ensure_native_terminal(&created.session)?;
                 self.state
                     .sessions
@@ -483,7 +486,7 @@ impl TerminalControlService {
             }
             ResolvedTarget::Native(_) => {
                 let closed = close_workspace_session(&self.state, session_id)
-                    .map_err(map_workspace_error)?;
+                    .map_err(|error| map_workspace_error(&error))?;
                 self.state
                     .sessions
                     .close_sessions(closed.closed_session_ids.iter().map(String::as_str));
@@ -611,10 +614,10 @@ impl TerminalControlService {
                             Ok(TerminalEvent::Output(frame)) if frame.sequence > after_sequence => {
                                 break;
                             }
-                            Ok(TerminalEvent::Exit(_) | TerminalEvent::Error(_)) => break,
+                            Ok(TerminalEvent::Exit(_) | TerminalEvent::Error(_))
+                            | Err(broadcast::error::RecvError::Closed) => break,
                             Ok(TerminalEvent::Output(_))
                             | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                            Err(broadcast::error::RecvError::Closed) => break,
                         }
                     }
                 })
@@ -671,26 +674,22 @@ impl TerminalControlService {
             let frame = if replay_complete && wait_ms == 0 && frames.is_empty() {
                 break;
             } else if replay_complete && frames.is_empty() {
-                match timeout(
+                if let Ok(result) = timeout(
                     deadline.saturating_duration_since(Instant::now()),
                     read_agent_frame_async(&mut attach.stdout),
                 )
                 .await
                 {
-                    Ok(result) => result,
-                    Err(_) => {
-                        timed_out = true;
-                        break;
-                    }
+                    result
+                } else {
+                    timed_out = true;
+                    break;
                 }
             } else {
                 read_agent_frame_async(&mut attach.stdout).await
             };
-            let frame = match frame {
-                Ok(frame) => frame,
-                Err(_) => break,
-            };
-            match frame.r#type.as_ref().and_then(|kind| kind.as_known()) {
+            let Ok(frame) = frame else { break };
+            match frame.r#type.as_ref().and_then(buffa::EnumValue::as_known) {
                 Some(AgentFrameType::AGENT_FRAME_TYPE_BINARY) => {
                     let Some(sequence) = frame.sequence.and_then(|value| u64::try_from(value).ok())
                     else {
@@ -719,7 +718,7 @@ impl TerminalControlService {
                     let Some(control) = frame.control.into_option() else {
                         continue;
                     };
-                    match control.r#type.as_ref().and_then(|kind| kind.as_known()) {
+                    match control.r#type.as_ref().and_then(buffa::EnumValue::as_known) {
                         Some(AgentControlType::AGENT_CONTROL_TYPE_REPLAY_COMPLETE) => {
                             replay_complete = true;
                             last_sequence = control
@@ -761,7 +760,7 @@ impl TerminalControlService {
     fn write_native(&self, session: &SessionRecord, data: Vec<u8>) -> Result<(), TerminalMcpError> {
         self.ensure_native_terminal(session)?
             .write_input(data)
-            .map_err(map_terminal_error)
+            .map_err(|error| map_terminal_error(&error))
     }
 
     fn ensure_native_terminal(
@@ -784,7 +783,7 @@ impl TerminalControlService {
                 true,
                 false,
             )
-            .map_err(map_terminal_error)?;
+            .map_err(|error| map_terminal_error(&error))?;
         self.state.sessions.mark_status(&session.id, "running");
         Ok(terminal)
     }
@@ -838,9 +837,8 @@ impl TerminalControlService {
             if ssh_backend::is_ssh_selector(&selector) {
                 continue;
             }
-            let login_user = match lightos::login_user_for_selector(&selector, true).await {
-                Ok(user) => user,
-                Err(_) => continue,
+            let Ok(login_user) = lightos::login_user_for_selector(&selector, true).await else {
+                continue;
             };
             let agent = match ensure_agent(&selector, &login_user).await {
                 Ok(agent) => agent,
@@ -849,9 +847,8 @@ impl TerminalControlService {
                     continue;
                 }
             };
-            let state = match agent.state(120, 32, DEFAULT_OUTPUT_FRAME_LIMIT).await {
-                Ok(state) => state,
-                Err(_) => continue,
+            let Ok(state) = agent.state(120, 32, DEFAULT_OUTPUT_FRAME_LIMIT).await else {
+                continue;
             };
             targets.extend(agent_targets(state, &login_user));
         }
@@ -972,7 +969,7 @@ impl AgentAttach {
                 TerminalMcpError::new("BACKEND_OPERATION_FAILED", "WebShell attach ended")
             })?;
             if !matches!(
-                frame.r#type.as_ref().and_then(|kind| kind.as_known()),
+                frame.r#type.as_ref().and_then(buffa::EnumValue::as_known),
                 Some(AgentFrameType::AGENT_FRAME_TYPE_TEXT)
             ) || !frame.control.is_set()
             {
@@ -982,7 +979,7 @@ impl AgentAttach {
                 continue;
             };
             if matches!(
-                control.r#type.as_ref().and_then(|kind| kind.as_known()),
+                control.r#type.as_ref().and_then(buffa::EnumValue::as_known),
                 Some(AgentControlType::AGENT_CONTROL_TYPE_REPLAY_COMPLETE)
             ) {
                 return Ok(());
@@ -1069,8 +1066,7 @@ fn control_target(target: &ResolvedTarget) -> ControlTarget {
         ResolvedTarget::Native(session) => ControlTarget {
             session_id: session.id.clone(),
             backend: backend_for_record(session)
-                .map(backend_name)
-                .unwrap_or("webshell")
+                .map_or("webshell", backend_name)
                 .to_owned(),
             label: session
                 .metadata
@@ -1095,8 +1091,7 @@ fn backend_for_record(session: &SessionRecord) -> Result<TerminalBackend, Termin
     match session
         .metadata
         .get("sessionBackend")
-        .map(String::as_str)
-        .unwrap_or("webshell")
+        .map_or("webshell", String::as_str)
     {
         "webshell" => Ok(TerminalBackend::Webshell),
         "ssh" => Ok(TerminalBackend::Ssh),
@@ -1154,7 +1149,7 @@ fn normalize_keys(keys: &[String]) -> Result<(Vec<String>, Vec<u8>), TerminalMcp
     Ok((names, data))
 }
 
-fn map_terminal_error(error: anyhow::Error) -> TerminalMcpError {
+fn map_terminal_error(error: &anyhow::Error) -> TerminalMcpError {
     if matches!(
         error.downcast_ref::<PtyInputError>(),
         Some(PtyInputError::Backpressure)
@@ -1170,7 +1165,7 @@ fn map_terminal_error(error: anyhow::Error) -> TerminalMcpError {
     }
 }
 
-fn map_workspace_error(error: WorkspaceSessionError) -> TerminalMcpError {
+fn map_workspace_error(error: &WorkspaceSessionError) -> TerminalMcpError {
     match error {
         WorkspaceSessionError::NotFound(_) => TerminalMcpError::session_not_found(),
         WorkspaceSessionError::Internal(_) => internal_error(),
@@ -1218,13 +1213,13 @@ fn agent_targets(state: AgentWorkspaceState, login_user: &str) -> Vec<AgentPaneT
             let selector = selector.clone();
             let login_user = login_user.to_owned();
             tab.panes.into_iter().filter_map(move |pane| {
-                agent_target_from_pane(&selector, &login_user, &title, pane)
+                agent_target_from_pane(&selector, &login_user, &title, &pane)
             })
         })
         .collect()
 }
 
-fn active_agent_target(state: AgentWorkspaceState, login_user: String) -> Option<AgentPaneTarget> {
+fn active_agent_target(state: &AgentWorkspaceState, login_user: &str) -> Option<AgentPaneTarget> {
     let selector = state.selector.clone().unwrap_or_default();
     let active_tab_id = state.active_tab_id.as_deref();
     let tab = state
@@ -1242,19 +1237,18 @@ fn active_agent_target(state: AgentWorkspaceState, login_user: String) -> Option
         .panes
         .iter()
         .find(|pane| active_pane_id.is_some_and(|active| pane.id.as_deref() == Some(active)))
-        .or_else(|| tab.panes.first())?
-        .clone();
-    agent_target_from_pane(&selector, &login_user, title, pane)
+        .or_else(|| tab.panes.first())?;
+    agent_target_from_pane(&selector, login_user, title, pane)
 }
 
 fn agent_target_from_pane(
     selector: &str,
     login_user: &str,
     title: &str,
-    pane: AgentPaneState,
+    pane: &AgentPaneState,
 ) -> Option<AgentPaneTarget> {
-    let session_id = pane.session_id?.trim().to_owned();
-    let pane_id = pane.id?.trim().to_owned();
+    let session_id = pane.session_id.as_deref()?.trim().to_owned();
+    let pane_id = pane.id.as_deref()?.trim().to_owned();
     if session_id.is_empty() || pane_id.is_empty() {
         return None;
     }
@@ -1264,7 +1258,7 @@ fn agent_target_from_pane(
         session_id,
         pane_id,
         title: title.to_owned(),
-        status: pane.status.unwrap_or_else(|| "running".to_owned()),
+        status: pane.status.clone().unwrap_or_else(|| "running".to_owned()),
         cols: pane
             .cols
             .and_then(|value| u16::try_from(value).ok())
@@ -1372,7 +1366,7 @@ mod tests {
             "device@owner",
             "lazycat",
             "Shell",
-            AgentPaneState {
+            &AgentPaneState {
                 id: Some("pane-one".to_owned()),
                 session_id: Some("session-one".to_owned()),
                 status: Some("running".to_owned()),

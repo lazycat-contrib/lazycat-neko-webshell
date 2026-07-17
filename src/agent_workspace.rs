@@ -160,6 +160,7 @@ impl AgentPane {
             cols: Some(i32::from(self.cols())),
             rows: Some(i32::from(self.rows())),
             busy: Some(self.is_busy()),
+            terminal_reply_authority: Some("server".to_owned()),
             ..Default::default()
         }
     }
@@ -181,7 +182,8 @@ impl AgentPane {
     fn close(&self) {
         self.pty.close();
         if let Ok(mut status) = self.status.lock() {
-            *status = "closed".to_owned();
+            status.clear();
+            status.push_str("closed");
         }
     }
 
@@ -192,22 +194,23 @@ impl AgentPane {
             .lock()
             .expect("agent pane history lock poisoned")
             .push_recorded(data, record);
-        self.broadcast(AgentPaneEvent::Output(frame));
+        self.broadcast(&AgentPaneEvent::Output(frame));
     }
 
     fn mark_exit(&self, exit: AgentPtyExit) {
         if let Ok(mut status) = self.status.lock() {
-            *status = "exited".to_owned();
+            status.clear();
+            status.push_str("exited");
         }
-        self.broadcast(AgentPaneEvent::Exit(exit));
+        self.broadcast(&AgentPaneEvent::Exit(exit));
     }
 
-    fn broadcast(&self, event: AgentPaneEvent) {
+    fn broadcast(&self, event: &AgentPaneEvent) {
         let mut subscribers = self
             .subscribers
             .lock()
             .expect("agent pane subscriber lock poisoned");
-        broadcast_to_subscribers(&mut subscribers, &event);
+        broadcast_to_subscribers(&mut subscribers, event);
     }
 }
 
@@ -381,7 +384,7 @@ impl AgentWorkspaceInner {
                 let direction = action
                     .direction
                     .as_ref()
-                    .and_then(|direction| direction.as_known())
+                    .and_then(buffa::EnumValue::as_known)
                     .unwrap_or(AgentSplitDirection::AGENT_SPLIT_DIRECTION_DOWN);
                 self.split_pane(
                     &tab_id,
@@ -829,7 +832,7 @@ fn spawn_pane_event_dispatcher(pane: Weak<AgentPane>, event_rx: mpsc::Receiver<A
             match event {
                 AgentPtyEvent::Output(data) => pane.push_output(data),
                 AgentPtyEvent::Exit(exit) => pane.mark_exit(exit),
-                AgentPtyEvent::Error(message) => pane.broadcast(AgentPaneEvent::Error(message)),
+                AgentPtyEvent::Error(message) => pane.broadcast(&AgentPaneEvent::Error(message)),
             }
         }
     });
@@ -839,7 +842,7 @@ fn action_kind(action: &AgentWorkspaceAction) -> anyhow::Result<AgentWorkspaceAc
     action
         .action
         .as_ref()
-        .and_then(|kind| kind.as_known())
+        .and_then(buffa::EnumValue::as_known)
         .ok_or_else(|| anyhow!("workspace action is required"))
 }
 
@@ -937,7 +940,7 @@ fn insert_pane_into_layout(
             )
         }
         Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_SPLIT) => {
-            let same_axis = node.axis.as_ref().and_then(|axis| axis.as_known()) == Some(axis);
+            let same_axis = node.axis.as_ref().and_then(buffa::EnumValue::as_known) == Some(axis);
             let mut changed = false;
             let mut children = Vec::with_capacity(node.children.len() + 1);
             for child in node.children {
@@ -955,7 +958,10 @@ fn insert_pane_into_layout(
                 if inserted && same_axis {
                     match node_kind(&next_child) {
                         Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_SPLIT)
-                            if next_child.axis.as_ref().and_then(|axis| axis.as_known())
+                            if next_child
+                                .axis
+                                .as_ref()
+                                .and_then(buffa::EnumValue::as_known)
                                 == Some(axis) =>
                         {
                             children.extend(next_child.children);
@@ -971,7 +977,7 @@ fn insert_pane_into_layout(
                 split_layout_node(
                     node.axis
                         .as_ref()
-                        .and_then(|axis| axis.as_known())
+                        .and_then(buffa::EnumValue::as_known)
                         .unwrap_or(AgentSplitAxis::AGENT_SPLIT_AXIS_ROWS),
                     children,
                 ),
@@ -1003,7 +1009,7 @@ fn remove_pane_from_layout(
                 _ => Some(split_layout_node(
                     node.axis
                         .as_ref()
-                        .and_then(|axis| axis.as_known())
+                        .and_then(buffa::EnumValue::as_known)
                         .unwrap_or(AgentSplitAxis::AGENT_SPLIT_AXIS_ROWS),
                     children,
                 )),
@@ -1036,7 +1042,7 @@ fn normalize_layout(
                 _ => Some(split_layout_node(
                     node.axis
                         .as_ref()
-                        .and_then(|axis| axis.as_known())
+                        .and_then(buffa::EnumValue::as_known)
                         .unwrap_or(AgentSplitAxis::AGENT_SPLIT_AXIS_ROWS),
                     children,
                 )),
@@ -1068,7 +1074,7 @@ fn split_layout_node(axis: AgentSplitAxis, children: Vec<AgentLayoutNode>) -> Ag
 }
 
 fn node_kind(node: &AgentLayoutNode) -> Option<AgentLayoutNodeType> {
-    node.r#type.as_ref().and_then(|kind| kind.as_known())
+    node.r#type.as_ref().and_then(buffa::EnumValue::as_known)
 }
 
 #[cfg(test)]
@@ -1350,6 +1356,22 @@ mod tests {
         assert_eq!(snapshot.tabs[0].panes[0].id.as_deref(), Some("pane-2"));
         assert_eq!(snapshot.tabs[0].active_pane_id.as_deref(), Some("pane-2"));
         assert_eq!(snapshot.tabs[0].layout.pane_id.as_deref(), Some("pane-2"));
+    }
+
+    #[test]
+    fn snapshots_mark_agent_panes_as_server_reply_authority() {
+        let workspace = AgentWorkspace::new("demo@owner", "");
+        let snapshot = workspace
+            .ensure_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .expect("agent workspace state");
+
+        assert!(
+            snapshot
+                .tabs
+                .iter()
+                .flat_map(|tab| &tab.panes)
+                .all(|pane| { pane.terminal_reply_authority.as_deref() == Some("server") })
+        );
     }
 
     #[test]

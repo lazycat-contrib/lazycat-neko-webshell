@@ -18,6 +18,7 @@ pub const PTY_INPUT_CHANNEL_CAPACITY: usize = 256;
 pub const PTY_INPUT_MESSAGE_BYTES: usize = 16 * 1024;
 pub const PTY_INPUT_BATCH_BYTES: usize = 64 * 1024;
 pub const PTY_OUTPUT_CHANNEL_CAPACITY: usize = 64;
+pub const PTY_OUTPUT_READ_BYTES: usize = 8 * 1024;
 pub const PTY_OUTPUT_BATCH_BYTES: usize = 64 * 1024;
 pub const PTY_OUTPUT_BATCH_INTERVAL_MS: u64 = 16;
 pub const PTY_EVENT_CHANNEL_CAPACITY: usize = 64;

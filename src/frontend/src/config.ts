@@ -77,15 +77,13 @@ export const THEMES: TerminalTheme[] = [
 ];
 
 export const SYMBOLS_SOURCE = {
-  type: "url" as const,
   url: `${PREINSTALLED_FONT_BASE}SymbolsNerdFontMono-Regular.ttf`,
-  label: "Symbols Nerd Font Mono",
+  name: "Symbols Nerd Font Mono",
 };
 
 export const CJK_FONT_SOURCE = {
-  type: "url" as const,
   url: `${PREINSTALLED_FONT_BASE}MapleMono-NF-CN-Regular.ttf`,
-  label: "Maple Mono NF CN Regular",
+  name: "Maple Mono NF CN Regular",
 };
 
 export const FONT_PRESETS: FontPreset[] = [
@@ -94,7 +92,7 @@ export const FONT_PRESETS: FontPreset[] = [
     label: "Hack Nerd Font",
     family: "\"Hack Nerd Font Mono\", \"Hack\", \"SFMono-Regular\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}HackNerdFontMono-Regular.ttf`, label: "Hack Nerd Font Mono" },
+      { url: `${PREINSTALLED_FONT_BASE}HackNerdFontMono-Regular.ttf`, name: "Hack Nerd Font Mono" },
       SYMBOLS_SOURCE,
     ],
   },
@@ -103,7 +101,7 @@ export const FONT_PRESETS: FontPreset[] = [
     label: "JetBrainsMono Nerd Font",
     family: "\"JetBrainsMono Nerd Font Mono\", \"JetBrainsMono NFM\", \"SFMono-Regular\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}JetBrainsMonoNerdFontMono-Regular.ttf`, label: "JetBrainsMono Nerd Font Mono" },
+      { url: `${PREINSTALLED_FONT_BASE}JetBrainsMonoNerdFontMono-Regular.ttf`, name: "JetBrainsMono Nerd Font Mono" },
       SYMBOLS_SOURCE,
     ],
   },
@@ -112,7 +110,7 @@ export const FONT_PRESETS: FontPreset[] = [
     label: "MesloLGS Nerd Font",
     family: "\"MesloLGS Nerd Font Mono\", \"SFMono-Regular\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}MesloLGSNerdFontMono-Regular.ttf`, label: "MesloLGS Nerd Font Mono" },
+      { url: `${PREINSTALLED_FONT_BASE}MesloLGSNerdFontMono-Regular.ttf`, name: "MesloLGS Nerd Font Mono" },
       SYMBOLS_SOURCE,
     ],
   },
@@ -121,7 +119,7 @@ export const FONT_PRESETS: FontPreset[] = [
     label: "FiraCode Nerd Font",
     family: "\"FiraCode Nerd Font Mono\", \"Fira Code\", \"SFMono-Regular\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}FiraCodeNerdFontMono-Regular.ttf`, label: "FiraCode Nerd Font Mono" },
+      { url: `${PREINSTALLED_FONT_BASE}FiraCodeNerdFontMono-Regular.ttf`, name: "FiraCode Nerd Font Mono" },
       SYMBOLS_SOURCE,
     ],
   },
@@ -130,7 +128,7 @@ export const FONT_PRESETS: FontPreset[] = [
     label: "Source Code Pro Alt",
     family: "\"Source Code Pro\", \"SFMono-Regular\", \"Cascadia Mono\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}SourceCodePro-Regular.ttf`, label: "Source Code Pro Regular" },
+      { url: `${PREINSTALLED_FONT_BASE}SourceCodePro-Regular.ttf`, name: "Source Code Pro Regular" },
       SYMBOLS_SOURCE,
     ],
   },
@@ -139,7 +137,7 @@ export const FONT_PRESETS: FontPreset[] = [
     label: "UI Monospace",
     family: "ui-monospace, \"SFMono-Regular\", \"Menlo\", \"Consolas\", monospace",
     resttySources: [
-      { type: "url", url: `${PREINSTALLED_FONT_BASE}Hack-Regular.woff2`, label: "Hack Regular" },
+      { url: `${PREINSTALLED_FONT_BASE}Hack-Regular.woff2`, name: "Hack Regular" },
       SYMBOLS_SOURCE,
     ],
   },

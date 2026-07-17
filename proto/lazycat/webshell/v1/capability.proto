@@ -234,6 +234,7 @@ message AgentPaneState {
   int32 cols = 5;
   int32 rows = 6;
   bool busy = 7;
+  string terminal_reply_authority = 8;
 }
 
 message AgentLayoutNode {

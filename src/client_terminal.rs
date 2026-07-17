@@ -1307,6 +1307,7 @@ fn convert_remote_workspace(
                             id: pane.id,
                             status: if pane.exited { "exited" } else { "running" }.to_owned(),
                             session_backend: "webshell".to_owned(),
+                            terminal_reply_authority: None,
                             herdr_output_sequence: None,
                             cols: pane.cols,
                             rows: pane.rows,
@@ -1846,6 +1847,12 @@ mod tests {
         assert_eq!(workspace.tabs[0].custom_label.as_deref(), Some("Build"));
         assert_eq!(workspace.tabs[0].panes[0].session_id, "pane-1");
         assert_eq!(workspace.tabs[0].panes[0].session_backend, "webshell");
+        assert!(
+            workspace.tabs[0]
+                .panes
+                .iter()
+                .all(|pane| pane.terminal_reply_authority.is_none())
+        );
         assert_eq!(
             workspace.tabs[0].panes[1].program_kind.as_deref(),
             Some("herdr")

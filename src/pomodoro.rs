@@ -145,7 +145,7 @@ impl PomodoroManager {
         match action_id {
             NOTIFICATION_ACTION_DISMISS => {
                 let notification = self.notifications.notification(notification_id)?;
-                if !notification_is_pomodoro(&notification, notification_id) {
+                if !notification_is_pomodoro(notification.as_ref(), notification_id) {
                     return Ok(None);
                 }
                 self.notifications.mark_actioned(notification_id)?;
@@ -156,7 +156,7 @@ impl PomodoroManager {
                 let Some(notification) = notification else {
                     return Ok(None);
                 };
-                if !notification_is_pomodoro(&Some(notification.clone()), notification_id) {
+                if !notification_is_pomodoro(Some(&notification), notification_id) {
                     return Ok(None);
                 }
                 let minutes = notification
@@ -195,7 +195,7 @@ impl PomodoroManager {
         if state.status != "running" || state.deadline_ms > now_ms() {
             return Ok(false);
         }
-        state.status = "completed".to_owned();
+        "completed".clone_into(&mut state.status);
         state.completed_at_ms = Some(state.deadline_ms);
         if state.notification_id.is_none() {
             let notification = self.notifications.add(NewNotification {
@@ -384,10 +384,10 @@ impl PersistedPomodoroState {
 }
 
 fn notification_is_pomodoro(
-    notification: &Option<crate::notifications::WebshellNotification>,
+    notification: Option<&crate::notifications::WebshellNotification>,
     notification_id: &str,
 ) -> bool {
-    notification.as_ref().is_some_and(|notification| {
+    notification.is_some_and(|notification| {
         notification.id == notification_id && notification.source_kind == NOTIFICATION_SOURCE_KIND
     })
 }
@@ -412,7 +412,7 @@ fn normalize_state_in_place(state: &mut PersistedPomodoroState) {
         state.current_round = state.total_rounds;
     }
     if state.status != "running" && state.status != "completed" {
-        state.status = "idle".to_owned();
+        "idle".clone_into(&mut state.status);
     }
     if state.status == "idle" {
         state.current_round = 0;

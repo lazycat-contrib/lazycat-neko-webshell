@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use crate::config::{
     PTY_INPUT_BATCH_BYTES, PTY_INPUT_CHANNEL_CAPACITY, PTY_INPUT_MESSAGE_BYTES,
     PTY_OUTPUT_BATCH_BYTES, PTY_OUTPUT_BATCH_INTERVAL_MS, PTY_OUTPUT_CHANNEL_CAPACITY,
+    PTY_OUTPUT_READ_BYTES,
 };
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -23,6 +24,8 @@ enum PtyWriterCommand {
     Close,
 }
 
+const PTY_REPLY_SEND_RETRIES: usize = 8;
+
 pub struct PtyWriter {
     sender: Mutex<Option<mpsc::SyncSender<PtyWriterCommand>>>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
@@ -31,7 +34,7 @@ pub struct PtyWriter {
 impl PtyWriter {
     pub fn spawn(writer: Box<dyn Write + Send>) -> Self {
         let (sender, receiver) = mpsc::sync_channel(PTY_INPUT_CHANNEL_CAPACITY);
-        let worker = thread::spawn(move || run_writer(writer, receiver));
+        let worker = thread::spawn(move || run_writer(writer, &receiver));
         Self {
             sender: Mutex::new(Some(sender)),
             worker: Mutex::new(Some(worker)),
@@ -39,6 +42,14 @@ impl PtyWriter {
     }
 
     pub fn send(&self, data: Vec<u8>) -> Result<(), PtyInputError> {
+        self.send_with_retries(data, 0)
+    }
+
+    pub fn send_reply(&self, data: Vec<u8>) -> Result<(), PtyInputError> {
+        self.send_with_retries(data, PTY_REPLY_SEND_RETRIES)
+    }
+
+    fn send_with_retries(&self, data: Vec<u8>, retries: usize) -> Result<(), PtyInputError> {
         if data.len() > PTY_INPUT_MESSAGE_BYTES {
             return Err(PtyInputError::TooLarge {
                 max_bytes: PTY_INPUT_MESSAGE_BYTES,
@@ -48,12 +59,19 @@ impl PtyWriter {
         let Some(sender) = sender.as_ref() else {
             return Err(PtyInputError::Closed);
         };
-        sender
-            .try_send(PtyWriterCommand::Input(data))
-            .map_err(|error| match error {
-                mpsc::TrySendError::Full(_) => PtyInputError::Backpressure,
-                mpsc::TrySendError::Disconnected(_) => PtyInputError::Closed,
-            })
+        let mut command = PtyWriterCommand::Input(data);
+        for attempt in 0..=retries {
+            match sender.try_send(command) {
+                Ok(()) => return Ok(()),
+                Err(mpsc::TrySendError::Full(returned)) if attempt < retries => {
+                    command = returned;
+                    thread::yield_now();
+                }
+                Err(mpsc::TrySendError::Full(_)) => return Err(PtyInputError::Backpressure),
+                Err(mpsc::TrySendError::Disconnected(_)) => return Err(PtyInputError::Closed),
+            }
+        }
+        Err(PtyInputError::Backpressure)
     }
 
     pub fn close(&self) {
@@ -82,7 +100,7 @@ impl Drop for PtyWriter {
     }
 }
 
-fn run_writer(mut writer: Box<dyn Write + Send>, receiver: mpsc::Receiver<PtyWriterCommand>) {
+fn run_writer(mut writer: Box<dyn Write + Send>, receiver: &mpsc::Receiver<PtyWriterCommand>) {
     while let Ok(command) = receiver.recv() {
         let PtyWriterCommand::Input(first) = command else {
             break;
@@ -101,15 +119,11 @@ fn run_writer(mut writer: Box<dyn Write + Send>, receiver: mpsc::Receiver<PtyWri
                         batch.extend_from_slice(&data);
                     }
                 }
-                Ok(PtyWriterCommand::Close) => {
+                Ok(PtyWriterCommand::Close) | Err(mpsc::TryRecvError::Disconnected) => {
                     close_after_write = true;
                     break;
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    close_after_write = true;
-                    break;
-                }
             }
         }
         if writer.write_all(&batch).is_err() || writer.flush().is_err() {
@@ -139,7 +153,7 @@ pub fn spawn_batched_output_reader(
 ) {
     let (sender, receiver) = mpsc::sync_channel(PTY_OUTPUT_CHANNEL_CAPACITY);
     thread::spawn(move || {
-        let mut buffer = [0u8; 8192];
+        let mut buffer = [0u8; PTY_OUTPUT_READ_BYTES];
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => {

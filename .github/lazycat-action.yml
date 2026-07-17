@@ -16,7 +16,7 @@ build:
     - kind: node
       version: 24.x
     - kind: rust
-      version: 1.96.1
+      version: 1.97.1
   run_buildscript: true
 
 stores:

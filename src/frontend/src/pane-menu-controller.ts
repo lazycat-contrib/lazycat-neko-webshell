@@ -1,5 +1,5 @@
 import { clampFloatingPoint } from "./floating-position";
-import { isHerdrPaneResizeAction } from "./herdr-backend";
+import { paneMenuActionSupported } from "./pane-menu-actions";
 import type { TerminalPane, TerminalTab } from "./types";
 
 type PaneMenuControllerOptions = {
@@ -62,42 +62,4 @@ export function createPaneMenuController(options: PaneMenuControllerOptions) {
       return contextPaneId ? options.findPaneById(contextPaneId) : fallback;
     },
   };
-}
-
-function paneMenuActionSupported(
-  action: string,
-  pane: TerminalPane | undefined,
-  tab: TerminalTab | undefined,
-  visiblePaneCount: (tab: TerminalTab) => number,
-): boolean {
-  if (!pane) return false;
-  if (tabHasBackend(tab, "herdr")) {
-    return action === "split-right"
-      || action === "split-down"
-      || isHerdrPaneResizeAction(action)
-      || action === "copy-selection"
-      || action === "paste-clipboard"
-      || action === "close-active-session";
-  }
-  if (pane.sessionBackend === "zellij") {
-    return action === "split-right"
-      || action === "split-down"
-      || action === "copy-selection"
-      || action === "paste-clipboard"
-      || action === "close-active-session";
-  }
-  if (action === "promote-session-to-tab") {
-    return Boolean(tab && visiblePaneCount(tab) > 1);
-  }
-  return action === "split-up"
-    || action === "split-down"
-    || action === "split-left"
-    || action === "split-right"
-    || action === "copy-selection"
-    || action === "paste-clipboard"
-    || action === "close-active-session";
-}
-
-function tabHasBackend(tab: TerminalTab | undefined, backend: TerminalPane["sessionBackend"]): boolean {
-  return Boolean(tab?.panes.some((pane) => pane.sessionBackend === backend));
 }

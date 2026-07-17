@@ -13,6 +13,7 @@ use crate::agent_protocol::AGENT_PROTOCOL_VERSION;
 use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES};
 use crate::database::AppDatabase;
 use crate::pty_io::{ChildWait, PtyOutputEvent, PtyWriter, spawn_batched_output_reader};
+use crate::terminal_reply_authority::TerminalReplyAuthority;
 use crate::validation::{normalize_output_frame_limit, validate_size};
 
 const EVENT_CAPACITY: usize = 1024;
@@ -149,7 +150,8 @@ pub struct ManagedTerminal {
     cols: u16,
     rows: u16,
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: PtyWriter,
+    writer: Arc<PtyWriter>,
+    reply_authority: Arc<TerminalReplyAuthority>,
     event_tx: broadcast::Sender<TerminalEvent>,
     killer: Mutex<Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
     child_wait: ChildWait,
@@ -172,6 +174,7 @@ impl ManagedTerminal {
             command = %spec.command,
             "spawning terminal session"
         );
+        let reply_authority = Arc::new(TerminalReplyAuthority::new(spec.cols, spec.rows)?);
         let pty_system = NativePtySystem::default();
         let pair = pty_system.openpty(PtySize {
             rows: spec.rows,
@@ -179,6 +182,8 @@ impl ManagedTerminal {
             pixel_width: 0,
             pixel_height: 0,
         })?;
+        let reader = pair.master.try_clone_reader()?;
+        let writer = Arc::new(PtyWriter::spawn(pair.master.take_writer()?));
 
         let mut command = CommandBuilder::new(&spec.command);
         for arg in &spec.args {
@@ -193,11 +198,9 @@ impl ManagedTerminal {
             .with_context(|| format!("failed to start {}", spec.command))?;
         let shell_pid = child.process_id();
         let killer = child.clone_killer();
+        let mut output_failure_killer = child.clone_killer();
         drop(pair.slave);
 
-        let reader = pair.master.try_clone_reader()?;
-        let writer = pair.master.take_writer()?;
-        let writer = PtyWriter::spawn(writer);
         let (event_tx, _) = broadcast::channel::<TerminalEvent>(EVENT_CAPACITY);
         let exit = Arc::new(Mutex::new(None));
         let child_wait = ChildWait::default();
@@ -205,14 +208,30 @@ impl ManagedTerminal {
         spawn_batched_output_reader(reader, {
             let event_tx = event_tx.clone();
             let output = Arc::clone(&output);
+            let writer = Arc::clone(&writer);
+            let reply_authority = Arc::clone(&reply_authority);
             move |event| match event {
-                PtyOutputEvent::Output(data) => {
-                    let frame = output.push(data);
-                    let _ = event_tx.send(TerminalEvent::Output(frame));
-                    true
-                }
+                PtyOutputEvent::Output(data) => match reply_authority.process_output(
+                    data,
+                    |reply| writer.send_reply(reply).map_err(anyhow::Error::new),
+                    |data| {
+                        let frame = output.push(data);
+                        let _ = event_tx.send(TerminalEvent::Output(frame));
+                        true
+                    },
+                ) {
+                    Ok(keep_reading) => keep_reading,
+                    Err(error) => {
+                        let _ = event_tx.send(TerminalEvent::Error(format!(
+                            "terminal reply authority failed: {error}"
+                        )));
+                        let _ = output_failure_killer.kill();
+                        false
+                    }
+                },
                 PtyOutputEvent::Error(message) => {
                     let _ = event_tx.send(TerminalEvent::Error(message));
+                    let _ = output_failure_killer.kill();
                     false
                 }
             }
@@ -231,6 +250,7 @@ impl ManagedTerminal {
             rows: spec.rows,
             master: Mutex::new(pair.master),
             writer,
+            reply_authority,
             event_tx,
             killer: Mutex::new(Some(killer)),
             child_wait,
@@ -270,17 +290,18 @@ impl ManagedTerminal {
 
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         validate_size(cols, rows)?;
-        let master = self
-            .master
-            .lock()
-            .map_err(|_| anyhow!("pty lock poisoned"))?;
-        master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
-        Ok(())
+        self.reply_authority.resize_with(cols, rows, || {
+            let master = self
+                .master
+                .lock()
+                .map_err(|_| anyhow!("pty lock poisoned"))?;
+            master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+        })
     }
 
     pub fn set_output_frame_limit(&self, limit: usize) {

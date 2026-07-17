@@ -23,7 +23,9 @@ where
             format!("agent message payload too large: {}", payload.len()),
         ));
     }
-    writer.write_all(&(payload.len() as u32).to_be_bytes())?;
+    let payload_len = u32::try_from(payload.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "agent message too large"))?;
+    writer.write_all(&payload_len.to_be_bytes())?;
     writer.write_all(&payload)
 }
 
@@ -39,9 +41,9 @@ where
             format!("agent message payload too large: {}", payload.len()),
         ));
     }
-    writer
-        .write_all(&(payload.len() as u32).to_be_bytes())
-        .await?;
+    let payload_len = u32::try_from(payload.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "agent message too large"))?;
+    writer.write_all(&payload_len.to_be_bytes()).await?;
     writer.write_all(&payload).await?;
     writer.flush().await
 }
@@ -341,7 +343,7 @@ fn clamped_i64(value: u64) -> i64 {
 }
 
 fn proto_io_error(err: buffa::DecodeError) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+    io::Error::new(io::ErrorKind::InvalidData, err)
 }
 
 #[cfg(test)]
@@ -396,7 +398,8 @@ mod tests {
     #[test]
     fn rejects_oversized_payload_before_allocating() {
         let mut buffer = Vec::new();
-        buffer.extend_from_slice(&((MAX_AGENT_MESSAGE_BYTES as u32) + 1).to_be_bytes());
+        let oversized = u32::try_from(MAX_AGENT_MESSAGE_BYTES).unwrap() + 1;
+        buffer.extend_from_slice(&oversized.to_be_bytes());
 
         let err = read_agent_frame(buffer.as_slice()).unwrap_err();
 

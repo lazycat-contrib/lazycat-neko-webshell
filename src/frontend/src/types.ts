@@ -1,5 +1,6 @@
-import type { ResttyFontSource } from "restty";
+import type { ResttyFontInput } from "restty";
 import type { Terminal } from "restty/xterm";
+import type { TerminalReplyAuthority } from "./terminal-reply-authority";
 
 export type Tone = "ok" | "error" | "neutral";
 export type TabLayout = "horizontal" | "vertical";
@@ -42,6 +43,7 @@ export type WorkspacePaneState = {
   session_id: string;
   status: string;
   session_backend?: SessionBackendId;
+  terminal_reply_authority?: TerminalReplyAuthority | string;
   program_kind?: RemoteProgramKind;
   herdr_output_sequence?: number;
   cols: number;
@@ -281,7 +283,7 @@ export type FontPreset = {
   id: string;
   label: string;
   family: string;
-  resttySources?: ResttyFontSource[];
+  resttySources?: ResttyFontInput[];
   custom?: boolean;
 };
 
@@ -395,8 +397,11 @@ export type TerminalPane = {
   sessionId?: string;
   sessionStatus?: string;
   sessionBackend: SessionBackendId;
+  terminalReplyAuthority: TerminalReplyAuthority;
   workingDirectory?: string;
   term?: Terminal;
+  terminalCanvas?: HTMLCanvasElement;
+  terminalImeInput?: HTMLTextAreaElement;
   socket?: WebSocket;
   remoteKeepaliveStop?: () => void;
   transport?: PaneTerminalTransport;

@@ -146,7 +146,7 @@ impl NotificationHub {
     pub fn mark_read(&self, id: &str) -> io::Result<Option<WebshellNotification>> {
         self.update_state(id, |notification, now| {
             if notification.state == "unread" {
-                notification.state = "read".to_owned();
+                "read".clone_into(&mut notification.state);
                 notification.updated_at_ms = now;
             }
         })
@@ -154,14 +154,14 @@ impl NotificationHub {
 
     pub fn dismiss(&self, id: &str) -> io::Result<Option<WebshellNotification>> {
         self.update_state(id, |notification, now| {
-            notification.state = "dismissed".to_owned();
+            "dismissed".clone_into(&mut notification.state);
             notification.updated_at_ms = now;
         })
     }
 
     pub fn mark_actioned(&self, id: &str) -> io::Result<Option<WebshellNotification>> {
         self.update_state(id, |notification, now| {
-            notification.state = "actioned".to_owned();
+            "actioned".clone_into(&mut notification.state);
             notification.updated_at_ms = now;
         })
     }
@@ -179,7 +179,7 @@ impl NotificationHub {
             notification.source_kind == source_kind
                 && notification.source_id.as_deref() == Some(source_id)
         }) {
-            notification.state = "actioned".to_owned();
+            "actioned".clone_into(&mut notification.state);
             notification.updated_at_ms = now;
             updated = Some(notification.clone());
         }

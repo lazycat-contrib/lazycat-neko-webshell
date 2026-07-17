@@ -136,11 +136,11 @@ fn decide_request(state: &AppState, request_id: &str, decision: ControlDecision)
                 .mark_source_actioned(super::PLUGIN_ID, request_id);
             Json(request).into_response()
         }
-        Err(error) => terminal_error_response(error),
+        Err(error) => terminal_error_response(&error),
     }
 }
 
-fn terminal_error_response(error: TerminalMcpError) -> Response {
+fn terminal_error_response(error: &TerminalMcpError) -> Response {
     let status = match error.code {
         "CONTROL_REVOKED" => StatusCode::NOT_FOUND,
         "INVALID_INPUT" => StatusCode::BAD_REQUEST,

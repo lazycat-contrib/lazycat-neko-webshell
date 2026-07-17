@@ -55,12 +55,12 @@ impl TunnelManager {
     pub fn invoke_metadata(
         &self,
         operation: &str,
-        metadata: HashMap<String, String>,
+        metadata: &HashMap<String, String>,
     ) -> anyhow::Result<TunnelPluginResponse> {
         match operation.trim() {
             "" | "list" | "status" | "default" => self.list(),
-            "start" => self.start(&metadata),
-            "stop" => self.stop(&metadata),
+            "start" => self.start(metadata),
+            "stop" => self.stop(metadata),
             operation => bail!("unsupported public tunnel operation: {operation}"),
         }
     }
@@ -73,7 +73,7 @@ impl TunnelManager {
 
         match start.provider.as_str() {
             "cloudflare-quick" => {
-                cloudflare_quick::spawn(start, stop_rx, ready_tx, Arc::clone(&status))
+                cloudflare_quick::spawn(start, stop_rx, ready_tx, Arc::clone(&status));
             }
             "ngrok" => ngrok_provider::spawn(start, stop_rx, ready_tx, Arc::clone(&status)),
             provider => bail!("unsupported tunnel provider: {provider}"),
@@ -128,7 +128,7 @@ impl TunnelManager {
             .ok_or_else(|| anyhow!("tunnel session not found: {tunnel_id}"))?;
         let mut info = handle.snapshot();
         let _ = handle.stop_tx.send(());
-        info.status = "stopping".to_owned();
+        "stopping".clone_into(&mut info.status);
         json_response(
             "complete",
             &serde_json::json!({
@@ -145,8 +145,7 @@ impl TunnelHandle {
         info.status = self
             .status
             .lock()
-            .map(|status| status.clone())
-            .unwrap_or_else(|_| "unknown".to_owned());
+            .map_or_else(|_| "unknown".to_owned(), |status| status.clone());
         info
     }
 }
@@ -160,8 +159,9 @@ pub(crate) fn mark_status(status: &Arc<Mutex<String>>, value: &str) {
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX))
-        .unwrap_or(0)
+        .map_or(0, |duration| {
+            duration.as_millis().try_into().unwrap_or(u64::MAX)
+        })
 }
 
 fn parse_start_request(metadata: &HashMap<String, String>) -> anyhow::Result<StartTunnelRequest> {

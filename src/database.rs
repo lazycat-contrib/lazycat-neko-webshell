@@ -455,7 +455,7 @@ impl AppDatabase {
                     profile.id,
                     profile.provider,
                     profile.name,
-                    if profile.enabled { 1 } else { 0 },
+                    i32::from(profile.enabled),
                     profile.config_json,
                     secret_json,
                     i64_from_u64(created_at_ms)?,
@@ -553,7 +553,7 @@ impl AppDatabase {
                 profile.id,
                 profile.name,
                 profile.kind,
-                if profile.enabled { 1 } else { 0 },
+                i32::from(profile.enabled),
                 profile.host,
                 profile.port.map(i64::from),
                 profile.username,
@@ -718,8 +718,9 @@ fn store_output_history_protocol_version_tx(
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().try_into().unwrap_or(u64::MAX))
-        .unwrap_or(0)
+        .map_or(0, |duration| {
+            duration.as_millis().try_into().unwrap_or(u64::MAX)
+        })
 }
 
 fn tunnel_provider_profile_from_row(

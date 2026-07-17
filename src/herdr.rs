@@ -227,10 +227,10 @@ pub(crate) async fn run_terminal_mcp_operation(
         let session = sessions
             .get(session_id)
             .ok_or_else(|| "Herdr session not found".to_owned())?;
-        if !session
+        if session
             .metadata
             .get("sessionBackend")
-            .is_some_and(|backend| backend == "herdr")
+            .is_none_or(|backend| backend != "herdr")
         {
             return Err("session is not a Herdr session".to_owned());
         }
@@ -401,7 +401,7 @@ pub(crate) async fn post_herdr_output_sequence(
     let sequence = state
         .database()
         .store_herdr_output_sequence(session_id, request.sequence)
-        .map_err(|err| database_error("failed to persist Herdr output sequence", err))?;
+        .map_err(|err| database_error("failed to persist Herdr output sequence", &err))?;
     Ok(Json(HerdrOutputSequenceResponse {
         session_id: session_id.to_owned(),
         sequence,
@@ -871,10 +871,10 @@ fn authorize_herdr_output_sequence_session(
             message: "Herdr session does not belong to the selected instance".to_owned(),
         });
     }
-    if !session
+    if session
         .metadata
         .get("sessionBackend")
-        .is_some_and(|backend| backend == "herdr")
+        .is_none_or(|backend| backend != "herdr")
     {
         return Err(HerdrBridgeError {
             status: StatusCode::BAD_REQUEST,
@@ -902,7 +902,7 @@ fn authorize_herdr_output_sequence_session(
     Ok(())
 }
 
-fn database_error(context: &str, err: std::io::Error) -> HerdrBridgeError {
+fn database_error(context: &str, err: &std::io::Error) -> HerdrBridgeError {
     let status = if err.kind() == std::io::ErrorKind::InvalidData {
         StatusCode::BAD_REQUEST
     } else {

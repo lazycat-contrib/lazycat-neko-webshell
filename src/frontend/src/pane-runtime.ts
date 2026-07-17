@@ -1,4 +1,5 @@
 import type { PaneTerminalTransport, TerminalPane } from "./types";
+import { clearPaneTerminalDom } from "./terminal-dom";
 
 export type PaneTransportFactory = (pane: TerminalPane) => PaneTerminalTransport;
 
@@ -30,5 +31,6 @@ export function disposePaneTerminalRuntime(pane: TerminalPane) {
   }
   pane.term?.dispose();
   pane.term = undefined;
+  clearPaneTerminalDom(pane);
   pane.terminalShaderEffect = undefined;
 }

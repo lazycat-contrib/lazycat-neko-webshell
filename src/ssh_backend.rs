@@ -364,18 +364,15 @@ async fn save_ssh_config_content(
     }
     let backup_limit = normalize_backup_limit(request.backup_limit);
     let document = ssh_config::parse_ssh_config(&content).map_err(SshConfigError::bad_request)?;
-    let (source, backup_path) = match target_config_selector(name) {
-        Some(selector) => {
-            let backup_path = lightos::write_target_ssh_config(selector, &content, backup_limit)
-                .await
-                .map_err(SshConfigError::from_connect)?;
-            (format!("{}:~/.ssh/config", selector.trim()), backup_path)
-        }
-        None => {
-            let (source, backup_path) = write_device_ssh_config_content(&content, backup_limit)
-                .map_err(SshConfigError::internal)?;
-            (source, backup_path)
-        }
+    let (source, backup_path) = if let Some(selector) = target_config_selector(name) {
+        let backup_path = lightos::write_target_ssh_config(selector, &content, backup_limit)
+            .await
+            .map_err(SshConfigError::from_connect)?;
+        (format!("{}:~/.ssh/config", selector.trim()), backup_path)
+    } else {
+        let (source, backup_path) = write_device_ssh_config_content(&content, backup_limit)
+            .map_err(SshConfigError::internal)?;
+        (source, backup_path)
     };
     let hosts = ssh_config_hosts_from_document(&document, &source);
     Ok(SshConfigSaveResponse {
@@ -395,46 +392,43 @@ async fn load_ssh_key_file(
     path: &str,
 ) -> Result<SshKeyFileView, SshConfigError> {
     let path = normalize_ssh_key_file_path(path).map_err(SshConfigError::bad_request)?;
-    match target_config_selector(name) {
-        Some(selector) => {
-            let content = lightos::read_target_ssh_key_file(selector, &path)
-                .await
-                .map_err(SshConfigError::from_connect)?;
-            Ok(SshKeyFileView {
-                source: format!("{}:{path}", selector.trim()),
-                path,
-                exists: content.is_some(),
-                content: content.unwrap_or_default(),
-                backup_path: None,
-            })
-        }
-        None => {
-            let file_path = device_ssh_key_path(&path).map_err(SshConfigError::bad_request)?;
-            let source = file_path.to_string_lossy().to_string();
-            if !file_path.exists() {
-                return Ok(SshKeyFileView {
-                    path,
-                    source,
-                    exists: false,
-                    content: String::new(),
-                    backup_path: None,
-                });
-            }
-            let metadata = fs::metadata(&file_path).map_err(SshConfigError::internal)?;
-            if metadata.len() > 1024 * 1024 {
-                return Err(SshConfigError::bad_request(
-                    "SSH key file is too large to inspect",
-                ));
-            }
-            let content = fs::read_to_string(&file_path).map_err(SshConfigError::internal)?;
-            Ok(SshKeyFileView {
+    if let Some(selector) = target_config_selector(name) {
+        let content = lightos::read_target_ssh_key_file(selector, &path)
+            .await
+            .map_err(SshConfigError::from_connect)?;
+        Ok(SshKeyFileView {
+            source: format!("{}:{path}", selector.trim()),
+            path,
+            exists: content.is_some(),
+            content: content.unwrap_or_default(),
+            backup_path: None,
+        })
+    } else {
+        let file_path = device_ssh_key_path(&path).map_err(SshConfigError::bad_request)?;
+        let source = file_path.to_string_lossy().to_string();
+        if !file_path.exists() {
+            return Ok(SshKeyFileView {
                 path,
                 source,
-                exists: true,
-                content,
+                exists: false,
+                content: String::new(),
                 backup_path: None,
-            })
+            });
         }
+        let metadata = fs::metadata(&file_path).map_err(SshConfigError::internal)?;
+        if metadata.len() > 1024 * 1024 {
+            return Err(SshConfigError::bad_request(
+                "SSH key file is too large to inspect",
+            ));
+        }
+        let content = fs::read_to_string(&file_path).map_err(SshConfigError::internal)?;
+        Ok(SshKeyFileView {
+            path,
+            source,
+            exists: true,
+            content,
+            backup_path: None,
+        })
     }
 }
 
@@ -450,33 +444,30 @@ async fn save_ssh_key_file(
         ));
     }
     let backup_limit = normalize_backup_limit(request.backup_limit);
-    match target_config_selector(name) {
-        Some(selector) => {
-            let backup_path =
-                lightos::write_target_ssh_key_file(selector, &path, &request.content, backup_limit)
-                    .await
-                    .map_err(SshConfigError::from_connect)?;
-            Ok(SshKeyFileView {
-                source: format!("{}:{path}", selector.trim()),
-                path,
-                exists: true,
-                content: request.content,
-                backup_path,
-            })
-        }
-        None => {
-            let file_path = device_ssh_key_path(&path).map_err(SshConfigError::bad_request)?;
-            let source = file_path.to_string_lossy().to_string();
-            let backup_path = write_device_ssh_key_file(&file_path, &request.content, backup_limit)
-                .map_err(SshConfigError::internal)?;
-            Ok(SshKeyFileView {
-                path,
-                source,
-                exists: true,
-                content: request.content,
-                backup_path,
-            })
-        }
+    if let Some(selector) = target_config_selector(name) {
+        let backup_path =
+            lightos::write_target_ssh_key_file(selector, &path, &request.content, backup_limit)
+                .await
+                .map_err(SshConfigError::from_connect)?;
+        Ok(SshKeyFileView {
+            source: format!("{}:{path}", selector.trim()),
+            path,
+            exists: true,
+            content: request.content,
+            backup_path,
+        })
+    } else {
+        let file_path = device_ssh_key_path(&path).map_err(SshConfigError::bad_request)?;
+        let source = file_path.to_string_lossy().to_string();
+        let backup_path = write_device_ssh_key_file(&file_path, &request.content, backup_limit)
+            .map_err(SshConfigError::internal)?;
+        Ok(SshKeyFileView {
+            path,
+            source,
+            exists: true,
+            content: request.content,
+            backup_path,
+        })
     }
 }
 
@@ -1130,6 +1121,7 @@ impl SshConfigError {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)] // Accepts owned errors directly as a map_err adapter.
     fn internal(message: impl ToString) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

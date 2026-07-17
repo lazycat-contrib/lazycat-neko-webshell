@@ -1,4 +1,4 @@
-use std::sync::{Mutex, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 use anyhow::{Context as _, anyhow};
@@ -6,6 +6,7 @@ use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySyste
 use tracing::{info, warn};
 
 use crate::pty_io::{ChildWait, PtyOutputEvent, PtyWriter, spawn_batched_output_reader};
+use crate::terminal_reply_authority::TerminalReplyAuthority;
 use crate::tty_init::terminal_session_bootstrap_script;
 use crate::validation::validate_size;
 
@@ -24,7 +25,8 @@ pub enum AgentPtyEvent {
 
 pub struct AgentPty {
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: PtyWriter,
+    writer: Arc<PtyWriter>,
+    reply_authority: Arc<TerminalReplyAuthority>,
     killer: Mutex<Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>>,
     child_wait: ChildWait,
     shell_pid: Option<u32>,
@@ -41,6 +43,7 @@ impl AgentPty {
         validate_size(cols, rows)?;
         info!(pane_id = %pane_id, username = %username.trim(), "spawning agent local pty");
 
+        let reply_authority = Arc::new(TerminalReplyAuthority::new(cols, rows)?);
         let pty_system = NativePtySystem::default();
         let pair = pty_system.openpty(PtySize {
             rows,
@@ -48,6 +51,8 @@ impl AgentPty {
             pixel_width: 0,
             pixel_height: 0,
         })?;
+        let reader = pair.master.try_clone_reader()?;
+        let writer = Arc::new(PtyWriter::spawn(pair.master.take_writer()?));
 
         let mut command = CommandBuilder::new("/bin/sh");
         command.arg("-lc");
@@ -64,21 +69,35 @@ impl AgentPty {
             .with_context(|| "failed to start agent pty shell")?;
         let shell_pid = child.process_id();
         let killer = child.clone_killer();
+        let mut output_failure_killer = child.clone_killer();
         drop(pair.slave);
 
-        let reader = pair.master.try_clone_reader()?;
-        let writer = pair.master.take_writer()?;
-        let writer = PtyWriter::spawn(writer);
         let child_wait = ChildWait::default();
 
         spawn_batched_output_reader(reader, {
             let event_tx = event_tx.clone();
-            move |event| {
-                let event = match event {
-                    PtyOutputEvent::Output(data) => AgentPtyEvent::Output(data),
-                    PtyOutputEvent::Error(message) => AgentPtyEvent::Error(message),
-                };
-                event_tx.send(event).is_ok()
+            let writer = Arc::clone(&writer);
+            let reply_authority = Arc::clone(&reply_authority);
+            move |event| match event {
+                PtyOutputEvent::Output(data) => match reply_authority.process_output(
+                    data,
+                    |reply| writer.send_reply(reply).map_err(anyhow::Error::new),
+                    |data| event_tx.send(AgentPtyEvent::Output(data)).is_ok(),
+                ) {
+                    Ok(keep_reading) => keep_reading,
+                    Err(error) => {
+                        let _ = event_tx.send(AgentPtyEvent::Error(format!(
+                            "terminal reply authority failed: {error}"
+                        )));
+                        let _ = output_failure_killer.kill();
+                        false
+                    }
+                },
+                PtyOutputEvent::Error(message) => {
+                    let sent = event_tx.send(AgentPtyEvent::Error(message)).is_ok();
+                    let _ = output_failure_killer.kill();
+                    sent
+                }
             }
         });
         spawn_exit_thread(child, event_tx, child_wait.clone());
@@ -86,6 +105,7 @@ impl AgentPty {
         Ok(Self {
             master: Mutex::new(pair.master),
             writer,
+            reply_authority,
             killer: Mutex::new(Some(killer)),
             child_wait,
             shell_pid,
@@ -98,17 +118,18 @@ impl AgentPty {
 
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         validate_size(cols, rows)?;
-        let master = self
-            .master
-            .lock()
-            .map_err(|_| anyhow!("agent pty lock poisoned"))?;
-        master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
-        Ok(())
+        self.reply_authority.resize_with(cols, rows, || {
+            let master = self
+                .master
+                .lock()
+                .map_err(|_| anyhow!("agent pty lock poisoned"))?;
+            master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+        })
     }
 
     pub fn is_busy(&self) -> bool {

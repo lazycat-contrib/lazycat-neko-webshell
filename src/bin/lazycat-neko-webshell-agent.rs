@@ -16,6 +16,10 @@ mod config;
 mod proto;
 #[path = "../pty_io.rs"]
 mod pty_io;
+#[path = "../restty_headless.rs"]
+mod restty_headless;
+#[path = "../terminal_reply_authority.rs"]
+mod terminal_reply_authority;
 #[path = "../tty_init.rs"]
 mod tty_init;
 #[path = "../validation.rs"]

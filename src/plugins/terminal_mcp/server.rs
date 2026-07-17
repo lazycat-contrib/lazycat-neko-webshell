@@ -44,6 +44,7 @@ impl TerminalMcpServer {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // Keeps the MCP tool-name dispatch table in one auditable location.
     async fn dispatch(
         &self,
         name: &str,
@@ -168,13 +169,10 @@ impl TerminalMcpServer {
                     Ok(input) => input,
                     Err(error) => return tool_error(error),
                 };
-                let data = match BASE64_STANDARD.decode(input.data_base64.trim()) {
-                    Ok(data) => data,
-                    Err(_) => {
-                        return tool_error(TerminalMcpError::invalid_input(
-                            "dataBase64 must be valid base64",
-                        ));
-                    }
+                let Ok(data) = BASE64_STANDARD.decode(input.data_base64.trim()) else {
+                    return tool_error(TerminalMcpError::invalid_input(
+                        "dataBase64 must be valid base64",
+                    ));
                 };
                 self.terminal
                     .send_input(
@@ -320,10 +318,10 @@ impl ServerHandler for TerminalMcpServer {
 pub fn streamable_http_service(
     state: Arc<AppState>,
 ) -> StreamableHttpService<TerminalMcpServer, LocalSessionManager> {
-    let factory_state = Arc::clone(&state);
+    let factory_state = state;
     StreamableHttpService::new(
         move || Ok(TerminalMcpServer::new(Arc::clone(&factory_state))),
-        Default::default(),
+        Arc::default(),
         StreamableHttpServerConfig::default()
             .with_stateful_mode(false)
             .with_json_response(true)

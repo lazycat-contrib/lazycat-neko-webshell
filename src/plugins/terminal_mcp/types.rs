@@ -173,6 +173,7 @@ pub struct TerminalOutputFrame {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::struct_excessive_bools)] // These independent booleans are part of the serialized MCP response contract.
 pub struct TerminalReadResult {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]

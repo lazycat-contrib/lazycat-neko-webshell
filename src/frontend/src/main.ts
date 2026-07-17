@@ -140,6 +140,7 @@ import {
   replacePaneTransport,
 } from "./pane-runtime";
 import { createPaneMenuController } from "./pane-menu-controller";
+import { nativePaneContextMenuItems, type PaneMenuAction } from "./pane-menu-actions";
 import {
   filterRemoteClientPluginTools,
   installRemoteClientKeepalive,
@@ -312,7 +313,11 @@ import {
   normalizeFontHintTarget,
   renderTerminalFontRenderingSettings,
 } from "./terminal-fonts";
-import { focusPaneImeInput, preparePaneImeForKeyboardEvent } from "./terminal-ime";
+import {
+  focusPaneImeInput,
+  preparePaneImeForKeyboardEvent,
+} from "./terminal-ime";
+import { focusPaneSystemKeyboardInput } from "./mobile/system-keyboard-focus";
 import {
   installPaneTouchKeyboardGuard,
   installPaneViewportGuard,
@@ -321,6 +326,7 @@ import {
   schedulePaneViewportReset,
 } from "./terminal-viewport";
 import { createPaneTerminal } from "./terminal-options";
+import { capturePaneTerminalDom, paneTerminalCanvas } from "./terminal-dom";
 import { createTerminalControlController } from "./terminal-control/controller";
 import { syncTerminalControlSettingsInputs } from "./terminal-control/settings-state";
 import { createAIContextPlugin, createTerminalShaderPlugin, TERMINAL_SHADER_PLUGIN_ID } from "./restty-plugins";
@@ -335,6 +341,7 @@ import {
   terminalAppearanceContext,
 } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
+import { normalizeTerminalReplyAuthority } from "./terminal-reply-authority";
 import { terminalThemeSocketColors } from "./terminal-theme-wire";
 import { createUploadProgressController } from "./upload-progress";
 import { CUSTOM_THEME_PREFIX } from "./theme-registry";
@@ -2410,16 +2417,19 @@ function openActivePaneMenu() {
 
 async function runPaneMenuAction(action: string) {
   const pane = paneMenuController.targetPane(activePane());
-  const tab = pane ? tabForPane(pane) : undefined;
   paneMenuController.close();
-  if (tab && pane) {
-    activatePane(tab.id, pane.id);
-  }
-  if (pane?.sessionBackend === "herdr") {
+  if (!pane) return;
+  await runPaneActionForPane(pane, action);
+}
+
+async function runPaneActionForPane(pane: TerminalPane, action: PaneMenuAction | string) {
+  const tab = tabForPane(pane);
+  if (tab) activatePane(tab.id, pane.id);
+  if (pane.sessionBackend === "herdr") {
     await runHerdrPaneMenuAction(action, pane);
     return;
   }
-  if (pane?.sessionBackend === "zellij") {
+  if (pane.sessionBackend === "zellij") {
     await runZellijPaneMenuAction(action, pane);
     return;
   }
@@ -4966,11 +4976,13 @@ async function restoreWorkspacePane(
   options: ApplyWorkspaceOptions = {},
 ): Promise<TerminalPane> {
   const nextBackend = normalizeSessionMode(paneState.session_backend);
+  const nextReplyAuthority = normalizeTerminalReplyAuthority(paneState.terminal_reply_authority);
   let pane: TerminalPane;
   if (
     existing
     && existing.sessionId === paneState.session_id
     && existing.sessionBackend === nextBackend
+    && existing.terminalReplyAuthority === nextReplyAuthority
   ) {
     pane = existing;
     if (options.replayFromStart) {
@@ -4989,6 +5001,7 @@ async function restoreWorkspacePane(
   pane.sessionId = paneState.session_id;
   pane.sessionStatus = paneState.status;
   pane.sessionBackend = nextBackend;
+  pane.terminalReplyAuthority = nextReplyAuthority;
   pane.programKind = paneState.program_kind;
   restoreHerdrOutputSequence(pane, paneState.herdr_output_sequence);
   pane.serverCols = paneState.cols || INITIAL_COLS;
@@ -5213,13 +5226,6 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
         focusPaneSystemKeyboard(current);
       }
     },
-    onContextMenu: (event) => {
-      event.preventDefault();
-      const current = findPaneById(id);
-      if (!current) return;
-      activatePane(current.tabId, id);
-      paneMenuController.open(event.clientX, event.clientY, id);
-    },
     onMouseUp: () => {
       if (settings.copyOnSelect) {
         scheduleCopySelection();
@@ -5252,6 +5258,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     closing: false,
     titleBuffer: "",
     sessionBackend: "webshell",
+    terminalReplyAuthority: "client",
     workingDirectory: "",
     cols: INITIAL_COLS,
     rows: INITIAL_ROWS,
@@ -5340,7 +5347,7 @@ async function mountTerminal(pane: TerminalPane) {
   const term = createPaneTerminal({
     cols: pane.cols || INITIAL_COLS,
     rows: pane.rows || INITIAL_ROWS,
-    fontSources: resttyFontSourcesFor(currentFont()),
+    fonts: resttyFontSourcesFor(currentFont()),
     fontSize: settings.fontSize,
     fontLigatures: settings.fontLigatures,
     fontHinting: settings.fontHinting,
@@ -5348,7 +5355,18 @@ async function mountTerminal(pane: TerminalPane) {
     scrollbackLimit: settings.scrollbackLimit,
     touchSelectionMode: settings.touchSelectionMode,
     transport,
+    forwardTerminalReplies: pane.terminalReplyAuthority !== "server",
     beforeInput: ({ text, source }) => transformMobileStickyInput(text, source),
+    contextMenuItems: () => nativePaneContextMenuItems({
+      pane,
+      tab: tabForPane(pane),
+      visiblePaneCount: (tab) => visiblePanes(tab).length,
+      translate: tr,
+      runAction: (action) => runPaneActionForPane(pane, action),
+    }),
+    searchClearButtonText: tr("terminal.searchClear"),
+    searchPlaceholder: tr("terminal.searchPlaceholder"),
+    onDomReady: (dom) => capturePaneTerminalDom(pane, dom),
     onGridSize: (cols, rows) => {
       handleTerminalResize(pane, cols, rows);
       applyCursorAppearance(pane, settings);
@@ -5401,7 +5419,10 @@ async function applyPaneShaderPlugin(pane: TerminalPane) {
     restty.unuse(TERMINAL_SHADER_PLUGIN_ID);
     pane.terminalShaderEffect = "off";
     if (effect !== "off") {
-      await restty.use(createTerminalShaderPlugin({ effect }));
+      await restty.use(createTerminalShaderPlugin({
+        effect,
+        canvas: () => paneTerminalCanvas(pane),
+      }));
     }
     pane.terminalShaderEffect = effect;
   } catch (error) {
@@ -5487,6 +5508,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     restart: shouldRestartSessionOnConnect(pane),
     after: replayAfter,
     outputLimit: settings.outputBufferLimit,
+    terminalReplyAuthority: pane.terminalReplyAuthority,
     controlMode: attach.controlMode,
     theme: terminalThemeSocketColors(currentAppearanceContext().resttyTheme),
   });
@@ -6426,7 +6448,7 @@ function focusPaneCanvas(pane: TerminalPane | undefined) {
   if (!pane) return;
   if (!isCoarseTouchPointer() && focusPaneImeInput(pane)) return;
   if (isCoarseTouchPointer()) {
-    const canvas = pane.term?.restty?.activePane()?.getRawPane().canvas;
+    const canvas = paneTerminalCanvas(pane);
     if (canvas instanceof HTMLElement) {
       canvas.focus({ preventScroll: true });
       return;
@@ -6437,7 +6459,7 @@ function focusPaneCanvas(pane: TerminalPane | undefined) {
 
 function focusPaneSystemKeyboard(pane: TerminalPane) {
   activatePane(pane.tabId, pane.id, { focus: false });
-  if (!focusPaneImeInput(pane)) {
+  if (!focusPaneSystemKeyboardInput(pane)) {
     pane.term?.focus();
   }
   handleViewportChange();

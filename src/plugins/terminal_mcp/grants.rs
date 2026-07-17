@@ -15,6 +15,7 @@ const MAX_REASON_BYTES: usize = 512;
 const MAX_RETAINED_REQUESTS: usize = 128;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[allow(clippy::struct_field_names)] // Explicit identifier names keep grant-key construction unambiguous.
 struct ControlKey {
     user_id: String,
     caller_app_id: String,
@@ -28,6 +29,7 @@ struct RequestKey {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[allow(clippy::struct_field_names)] // Explicit identifier names keep grant-key construction unambiguous.
 struct ReadKey {
     user_id: String,
     caller_app_id: String,

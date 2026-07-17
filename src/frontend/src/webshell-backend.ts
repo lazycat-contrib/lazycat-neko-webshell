@@ -10,6 +10,7 @@ export type WebshellSocketUrlOptions = {
   restart: boolean;
   after: number;
   outputLimit: number;
+  terminalReplyAuthority: "client" | "server";
   controlMode?: "single";
   theme?: TerminalThemeSocketColors;
 };
@@ -33,6 +34,7 @@ export function webshellTerminalSocketUrl(options: WebshellSocketUrlOptions): UR
   url.searchParams.set("replay", "true");
   url.searchParams.set("after", String(options.after));
   url.searchParams.set("output_limit", String(options.outputLimit));
+  url.searchParams.set("terminal_reply_authority", options.terminalReplyAuthority);
   if (options.controlMode) {
     url.searchParams.set("control_mode", options.controlMode);
   }

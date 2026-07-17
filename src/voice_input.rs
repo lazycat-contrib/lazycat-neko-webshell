@@ -134,6 +134,7 @@ struct VoiceAudioUpload {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_field_names)] // The api_* names match provider configuration terminology.
 struct ApiKeyHeaderConfig {
     api_base: String,
     api_key: SecretString,
@@ -141,7 +142,7 @@ struct ApiKeyHeaderConfig {
 }
 
 impl ApiKeyHeaderConfig {
-    fn new(api_base: String, api_key: String) -> anyhow::Result<Self> {
+    fn new(api_base: String, api_key: &str) -> anyhow::Result<Self> {
         let api_key = api_key.trim().to_owned();
         let api_key_header =
             HeaderValue::from_str(&api_key).context("invalid api-key header value")?;
@@ -184,7 +185,7 @@ pub async fn post_voice_transcription(
     State(state): State<Arc<AppState>>,
     multipart: Multipart,
 ) -> Result<Json<VoiceTranscriptionResponse>, (StatusCode, String)> {
-    let settings = load_voice_settings(&state).map_err(internal_error)?;
+    let settings = load_voice_settings(&state).map_err(|err| internal_error(&err))?;
     if !settings.enabled {
         return Err((StatusCode::FORBIDDEN, "voice input is disabled".to_owned()));
     }
@@ -207,7 +208,7 @@ pub async fn post_voice_speech(
     State(state): State<Arc<AppState>>,
     Json(request): Json<VoiceSpeechRequest>,
 ) -> Result<Response, (StatusCode, String)> {
-    let settings = load_voice_settings(&state).map_err(internal_error)?;
+    let settings = load_voice_settings(&state).map_err(|err| internal_error(&err))?;
     if !settings.reply_enabled && !request.test {
         return Err((StatusCode::FORBIDDEN, "voice reply is disabled".to_owned()));
     }
@@ -268,12 +269,12 @@ async fn read_voice_audio_upload(
     })? {
         let name = field.name().unwrap_or_default().to_owned();
         if name == "mimeType" {
-            requested_mime = field
+            field
                 .text()
                 .await
                 .map_err(|err| (StatusCode::BAD_REQUEST, format!("invalid mime type: {err}")))?
                 .trim()
-                .to_owned();
+                .clone_into(&mut requested_mime);
             continue;
         }
         if name != "audio" && name != "file" {
@@ -396,21 +397,19 @@ async fn transcribe_chat_input_audio(
     let stream_payload = build_chat_input_audio_payload(profile, &upload, true);
     if is_xiaomi_voice_provider(profile) {
         let client = xiaomi_mimo_client(profile)?;
-        match transcribe_chat_input_audio_stream(&client, stream_payload).await {
-            Ok(text) => Ok(text),
-            Err(_) => {
-                let payload = build_chat_input_audio_payload(profile, &upload, false);
-                transcribe_chat_input_audio_raw(&client, payload).await
-            }
+        if let Ok(text) = transcribe_chat_input_audio_stream(&client, stream_payload).await {
+            Ok(text)
+        } else {
+            let payload = build_chat_input_audio_payload(profile, &upload, false);
+            transcribe_chat_input_audio_raw(&client, payload).await
         }
     } else {
         let client = openai_client(profile);
-        match transcribe_chat_input_audio_stream(&client, stream_payload).await {
-            Ok(text) => Ok(text),
-            Err(_) => {
-                let payload = build_chat_input_audio_payload(profile, &upload, false);
-                transcribe_chat_input_audio_raw(&client, payload).await
-            }
+        if let Ok(text) = transcribe_chat_input_audio_stream(&client, stream_payload).await {
+            Ok(text)
+        } else {
+            let payload = build_chat_input_audio_payload(profile, &upload, false);
+            transcribe_chat_input_audio_raw(&client, payload).await
         }
     }
 }
@@ -656,7 +655,7 @@ fn parse_audio_data_url(data: &str) -> (Option<String>, &str) {
         .strip_prefix("data:")
         .map(str::trim)
         .filter(|value| value.starts_with("audio/"))
-        .map(|value| value.to_owned());
+        .map(std::borrow::ToOwned::to_owned);
     (mime_type, encoded.trim())
 }
 
@@ -719,10 +718,7 @@ fn xiaomi_mimo_client_parts(
     base_url: &str,
     api_key: &str,
 ) -> anyhow::Result<Client<ApiKeyHeaderConfig>> {
-    let config = ApiKeyHeaderConfig::new(
-        normalize_openai_api_base(base_url),
-        api_key.trim().to_owned(),
-    )?;
+    let config = ApiKeyHeaderConfig::new(normalize_openai_api_base(base_url), api_key.trim())?;
     Ok(Client::with_config(config))
 }
 
@@ -1108,7 +1104,7 @@ fn speech_mime_type(value: &str) -> &'static str {
     }
 }
 
-fn internal_error(err: anyhow::Error) -> (StatusCode, String) {
+fn internal_error(err: &anyhow::Error) -> (StatusCode, String) {
     (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
 
@@ -1323,8 +1319,7 @@ mod tests {
 
     #[test]
     fn xiaomi_config_uses_api_key_header_without_bearer_auth() {
-        let config =
-            ApiKeyHeaderConfig::new(XIAOMI_MIMO_API_BASE.to_owned(), "secret".to_owned()).unwrap();
+        let config = ApiKeyHeaderConfig::new(XIAOMI_MIMO_API_BASE.to_owned(), "secret").unwrap();
         let headers = config.headers();
 
         assert_eq!(headers.get("api-key").unwrap().to_str().unwrap(), "secret");

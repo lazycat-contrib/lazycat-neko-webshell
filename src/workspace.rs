@@ -30,6 +30,7 @@ use crate::state::{
 use crate::tty_init::lightos_features_enabled;
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's skip_serializing_if callback receives a reference.
 fn is_false(value: &bool) -> bool {
     !*value
 }
@@ -126,6 +127,8 @@ pub struct WorkspacePaneState {
     pub status: String,
     pub session_backend: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_reply_authority: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub program_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herdr_output_sequence: Option<u64>,
@@ -182,6 +185,7 @@ pub(crate) enum SessionBackend {
 }
 
 impl WorkspaceTerminalDefaults {
+    #[allow(clippy::too_many_arguments)] // Mirrors persisted terminal defaults without an intermediate partial state.
     pub(crate) fn new(
         state: &AppState,
         selector: &str,
@@ -729,6 +733,9 @@ fn workspace_state_from_agent(state: AgentWorkspaceState) -> WorkspaceState {
                         session_backend: pane
                             .session_backend
                             .unwrap_or_else(|| "webshell".to_owned()),
+                        terminal_reply_authority: normalize_terminal_reply_authority(
+                            pane.terminal_reply_authority,
+                        ),
                         program_kind: None,
                         cols: i32_to_u16(pane.cols, DEFAULT_COLS),
                         rows: i32_to_u16(pane.rows, DEFAULT_ROWS),
@@ -741,13 +748,13 @@ fn workspace_state_from_agent(state: AgentWorkspaceState) -> WorkspaceState {
 }
 
 fn workspace_layout_from_agent(node: AgentLayoutNode) -> Option<WorkspaceLayoutNode> {
-    match node.r#type.as_ref().and_then(|kind| kind.as_known()) {
+    match node.r#type.as_ref().and_then(buffa::EnumValue::as_known) {
         Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_PANE) => node
             .pane_id
             .map(|pane_id| WorkspaceLayoutNode::Pane { pane_id }),
         Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_SPLIT) => {
             Some(WorkspaceLayoutNode::Split {
-                axis: match node.axis.as_ref().and_then(|axis| axis.as_known()) {
+                axis: match node.axis.as_ref().and_then(buffa::EnumValue::as_known) {
                     Some(AgentSplitAxis::AGENT_SPLIT_AXIS_COLUMNS) => SplitAxis::Columns,
                     _ => SplitAxis::Rows,
                 },
@@ -777,7 +784,7 @@ fn agent_action_from_workspace_request(
         layout: request
             .layout
             .clone()
-            .and_then(agent_layout_from_workspace)
+            .map(agent_layout_from_workspace)
             .map_or_else(MessageField::none, MessageField::some),
         active_pane_id: request.active_pane_id.clone(),
         ..Default::default()
@@ -828,14 +835,14 @@ fn agent_split_direction(direction: SplitDirection) -> AgentSplitDirection {
     }
 }
 
-fn agent_layout_from_workspace(node: WorkspaceLayoutNode) -> Option<AgentLayoutNode> {
+fn agent_layout_from_workspace(node: WorkspaceLayoutNode) -> AgentLayoutNode {
     match node {
-        WorkspaceLayoutNode::Pane { pane_id } => Some(AgentLayoutNode {
+        WorkspaceLayoutNode::Pane { pane_id } => AgentLayoutNode {
             r#type: Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_PANE.into()),
             pane_id: Some(pane_id),
             ..Default::default()
-        }),
-        WorkspaceLayoutNode::Split { axis, children } => Some(AgentLayoutNode {
+        },
+        WorkspaceLayoutNode::Split { axis, children } => AgentLayoutNode {
             r#type: Some(AgentLayoutNodeType::AGENT_LAYOUT_NODE_TYPE_SPLIT.into()),
             axis: Some(
                 match axis {
@@ -846,10 +853,10 @@ fn agent_layout_from_workspace(node: WorkspaceLayoutNode) -> Option<AgentLayoutN
             ),
             children: children
                 .into_iter()
-                .filter_map(agent_layout_from_workspace)
+                .map(agent_layout_from_workspace)
                 .collect(),
             ..Default::default()
-        }),
+        },
     }
 }
 
@@ -944,9 +951,10 @@ fn apply_workspace_action(
         let workspace = workspaces
             .entry(selector.to_owned())
             .or_insert_with(|| WorkspaceRecord::new(selector));
-        if request.action == WorkspaceAction::SetTabPinned {
-            workspace.repair();
-        } else if request.action == WorkspaceAction::CreateTab {
+        if matches!(
+            request.action,
+            WorkspaceAction::SetTabPinned | WorkspaceAction::CreateTab
+        ) {
             workspace.repair();
         } else {
             workspace.ensure_ready(&mut sessions, defaults);
@@ -1136,6 +1144,7 @@ impl WorkspaceRecord {
                                     |session| session.status.clone(),
                                 ),
                                 session_backend: session_backend_from_session(session),
+                                terminal_reply_authority: Some("server".to_owned()),
                                 program_kind: None,
                                 herdr_output_sequence: None,
                                 cols: session.map_or(pane.cols, |session| session.cols),
@@ -1638,6 +1647,12 @@ fn session_backend_from_session(session: Option<&SessionRecord>) -> String {
         .filter(|backend| matches!(*backend, "webshell" | "herdr" | "zellij" | "ssh"))
         .unwrap_or("webshell")
         .to_owned()
+}
+
+fn normalize_terminal_reply_authority(value: Option<String>) -> Option<String> {
+    value
+        .filter(|authority| authority == "server")
+        .map(|_| "server".to_owned())
 }
 
 fn session_record_with_metadata(
@@ -2287,6 +2302,23 @@ mod tests {
     }
 
     #[test]
+    fn agent_reply_authority_accepts_only_explicit_server_values() {
+        assert_eq!(
+            normalize_terminal_reply_authority(Some("server".to_owned())).as_deref(),
+            Some("server")
+        );
+        assert_eq!(
+            normalize_terminal_reply_authority(Some("client".to_owned())),
+            None
+        );
+        assert_eq!(
+            normalize_terminal_reply_authority(Some("future".to_owned())),
+            None
+        );
+        assert_eq!(normalize_terminal_reply_authority(None), None);
+    }
+
+    #[test]
     fn merge_keeps_existing_herdr_tab_before_new_webshell_tab() {
         let state = test_app_state();
         let herdr_tab_id = {
@@ -2315,6 +2347,7 @@ mod tests {
                     session_id: "agent-session".to_owned(),
                     status: "running".to_owned(),
                     session_backend: "webshell".to_owned(),
+                    terminal_reply_authority: Some("server".to_owned()),
                     program_kind: None,
                     herdr_output_sequence: None,
                     cols: DEFAULT_COLS,

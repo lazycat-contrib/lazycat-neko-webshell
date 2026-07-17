@@ -309,7 +309,7 @@ fn parse_visible_instances(output: &[u8]) -> Result<Vec<Instance>, String> {
     let items: Vec<VisibleInstance> = serde_json::from_slice(output)
         .map_err(|error| format!("invalid LightOS webshell instances JSON: {error}"))?;
     let mut instances = items
-        .into_iter()
+        .iter()
         .filter_map(instance_from_visible)
         .collect::<Vec<_>>();
     instances.sort_by_key(|instance| instance.status.as_deref() != Some("running"));
@@ -323,7 +323,7 @@ fn parse_visible_instances(output: &[u8]) -> Result<Vec<Instance>, String> {
     Ok(instances)
 }
 
-fn instance_from_visible(item: VisibleInstance) -> Option<Instance> {
+fn instance_from_visible(item: &VisibleInstance) -> Option<Instance> {
     let explicit_selector = item.selector.trim();
     let legacy_name = item.name.trim();
     let legacy_owner = item.owner_deploy_id.trim();
@@ -363,17 +363,15 @@ fn parse_client_instance_summaries(output: &[u8]) -> Result<Vec<ClientInstanceSu
 
 fn parse_client_instances(output: &[u8]) -> Result<Vec<Instance>, String> {
     Ok(parse_client_instance_summaries(output)?
-        .into_iter()
+        .iter()
         .filter_map(instance_from_client)
         .collect())
 }
 
-fn instance_from_client(item: ClientInstanceSummary) -> Option<Instance> {
+fn instance_from_client(item: &ClientInstanceSummary) -> Option<Instance> {
     let id = item.id.trim();
     let selector = format!("client:{id}");
-    if parse_client_selector(&selector).is_none() {
-        return None;
-    }
+    parse_client_selector(&selector)?;
     let name = item.name.trim();
     let status = item.status.trim();
     Some(Instance {
@@ -562,7 +560,10 @@ mod tests {
         assert_eq!(instances[0].owner_deploy_id.as_deref(), Some("deploy-a"));
         assert_eq!(instances[1].selector.as_deref(), Some("beta@deploy-b"));
         assert_eq!(
-            instances[0].kind.as_ref().and_then(|kind| kind.as_known()),
+            instances[0]
+                .kind
+                .as_ref()
+                .and_then(buffa::EnumValue::as_known),
             Some(InstanceKind::INSTANCE_KIND_LIGHTOS)
         );
     }
@@ -583,7 +584,10 @@ mod tests {
         assert_eq!(instances[0].platform.as_deref(), Some("darwin"));
         assert_eq!(instances[0].owner_user_id.as_deref(), Some("alice"));
         assert_eq!(
-            instances[0].kind.as_ref().and_then(|kind| kind.as_known()),
+            instances[0]
+                .kind
+                .as_ref()
+                .and_then(buffa::EnumValue::as_known),
             Some(InstanceKind::INSTANCE_KIND_REMOTE_CLIENT)
         );
     }

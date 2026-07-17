@@ -116,6 +116,7 @@ struct ParserState {
 }
 
 #[derive(Default)]
+#[allow(clippy::large_enum_variant)] // Parser state is short-lived; boxing complicates in-place section mutation.
 enum CurrentSection {
     #[default]
     Global,
@@ -351,7 +352,7 @@ mod tests {
     #[test]
     fn parses_structured_ssh_config() {
         let document = parse_ssh_config(
-            r#"
+            r"
 AddKeysToAgent yes
 Include ~/.ssh/conf.d/*
 
@@ -366,7 +367,7 @@ Host dev-box dev-short *.internal !blocked
 
 Match host example.com
   User ignored
-"#,
+",
         )
         .unwrap();
 
@@ -395,7 +396,7 @@ Match host example.com
     #[test]
     fn parses_common_identity_file_blocks() {
         let document = parse_ssh_config(
-            r#"
+            r"
 Host DemoServerA
   HostName host-a.example.net
   User ubuntu
@@ -410,7 +411,7 @@ Host DemoServerC
   HostName 203.0.113.10
   User ecs-user
   IdentityFile ~/.ssh/demo_c_key.pem
-"#,
+",
         )
         .unwrap();
 

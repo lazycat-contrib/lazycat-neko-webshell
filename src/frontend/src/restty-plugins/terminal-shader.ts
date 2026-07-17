@@ -12,6 +12,7 @@ export const TERMINAL_SHADER_PLUGIN_ID = "lazycat/terminal-shader";
 
 export type TerminalShaderPluginOptions = {
   effect: Exclude<TerminalShaderEffect, "off">;
+  canvas: () => HTMLCanvasElement | null;
 };
 
 type InteractiveUniforms = {
@@ -38,12 +39,16 @@ export function createTerminalShaderPlugin(options: TerminalShaderPluginOptions)
       if (options.effect !== "interactive-glow") {
         return () => stage.dispose();
       }
-      return activateInteractiveGlow(ctx, stage);
+      return activateInteractiveGlow(ctx, stage, options.canvas);
     },
   };
 }
 
-function activateInteractiveGlow(ctx: ResttyPluginContext, stage: ResttyRenderStageHandle): () => void {
+function activateInteractiveGlow(
+  ctx: ResttyPluginContext,
+  stage: ResttyRenderStageHandle,
+  canvasForPane: () => HTMLCanvasElement | null,
+): () => void {
   const uniforms: InteractiveUniforms = {
     x: 0.5,
     y: 0.5,
@@ -85,9 +90,8 @@ function activateInteractiveGlow(ctx: ResttyPluginContext, stage: ResttyRenderSt
     frame = window.requestAnimationFrame(tick);
   };
 
-  const attachPointer = (paneId: number) => {
-    const pane = ctx.pane(paneId);
-    const canvas = pane?.getRawPane().canvas;
+  const attachPointer = () => {
+    const canvas = canvasForPane();
     if (!canvas) return;
     const updateColor = () => {
       uniforms.color = readTerminalAccentColor(canvas);
@@ -106,16 +110,11 @@ function activateInteractiveGlow(ctx: ResttyPluginContext, stage: ResttyRenderSt
     cleanups.push(() => canvas.removeEventListener("pointermove", onPointerMove));
   };
 
-  for (const pane of ctx.panes()) {
-    attachPointer(pane.id);
-  }
-
-  const paneCreated = ctx.on("pane:created", ({ paneId }) => attachPointer(paneId));
+  attachPointer();
   const input = ctx.addInputInterceptor(({ source }) => {
     if (source !== "pty" && source !== "program") {
-      const pane = ctx.activePane();
-      const raw = pane?.getRawPane();
-      if (raw?.canvas) uniforms.color = readTerminalAccentColor(raw.canvas);
+      const canvas = canvasForPane();
+      if (canvas) uniforms.color = readTerminalAccentColor(canvas);
       uniforms.key = 1;
       update();
       startDecay();
@@ -124,7 +123,6 @@ function activateInteractiveGlow(ctx: ResttyPluginContext, stage: ResttyRenderSt
   });
 
   return () => {
-    paneCreated.dispose();
     input.dispose();
     stage.dispose();
     if (frame) {

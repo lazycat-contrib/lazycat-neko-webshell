@@ -254,8 +254,7 @@ where
         json!({ "role": "user", "content": prompt }),
     ];
     for _ in 0..MAX_TOOL_LOOPS {
-        let result =
-            stream_openai_chat_once(settings, &catalog, &messages, |chunk| emit(chunk)).await?;
+        let result = stream_openai_chat_once(settings, &catalog, &messages, &mut emit).await?;
         if result.tool_calls.is_empty() {
             return Ok(());
         }
@@ -325,8 +324,7 @@ where
         json!({ "role": "user", "content": prompt }),
     ];
     for _ in 0..MAX_TOOL_LOOPS {
-        let result =
-            stream_openai_responses_once(settings, &catalog, &input, |chunk| emit(chunk)).await?;
+        let result = stream_openai_responses_once(settings, &catalog, &input, &mut emit).await?;
         if result.tool_calls.is_empty() {
             return Ok(());
         }
@@ -392,8 +390,7 @@ where
     let catalog = discover_mcp_tools(settings).await?;
     let mut messages = vec![json!({ "role": "user", "content": prompt })];
     for _ in 0..MAX_TOOL_LOOPS {
-        let result =
-            stream_anthropic_once(settings, &catalog, &messages, |chunk| emit(chunk)).await?;
+        let result = stream_anthropic_once(settings, &catalog, &messages, &mut emit).await?;
         if result.tool_calls.is_empty() {
             return Ok(());
         }
@@ -493,11 +490,11 @@ impl OpenAiChatStreamState {
             let index = item.get("index").and_then(Value::as_u64).unwrap_or(0);
             let call = self.calls.entry(index).or_default();
             if let Some(id) = item.get("id").and_then(Value::as_str) {
-                call.id = id.to_owned();
+                id.clone_into(&mut call.id);
             }
             if let Some(function) = item.get("function") {
                 if let Some(name) = function.get("name").and_then(Value::as_str) {
-                    call.name = name.to_owned();
+                    name.clone_into(&mut call.name);
                 }
                 if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
                     call.arguments.push_str(arguments);
@@ -578,14 +575,13 @@ impl OpenAiResponsesStreamState {
                 if let Some(call) = self.calls.get_mut(&call_key) {
                     call.arguments = arguments.clone();
                 }
-                if let Some(item_id) = value.get("item_id").and_then(Value::as_str) {
-                    if let Some(item) = self
+                if let Some(item_id) = value.get("item_id").and_then(Value::as_str)
+                    && let Some(item) = self
                         .output_items
                         .iter_mut()
                         .find(|item| item.get("id").and_then(Value::as_str) == Some(item_id))
-                    {
-                        item["arguments"] = Value::String(arguments.to_string());
-                    }
+                {
+                    item["arguments"] = Value::String(arguments.to_string());
                 }
             }
         }
@@ -840,13 +836,13 @@ impl StreamableMcpSession {
     async fn request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
-        let request = json_rpc_request(id, method, params);
+        let request = json_rpc_request(id, method, &params);
         let response = self.post_json(request, true).await?;
-        response_result(response, id)
+        response_result(&response, id)
     }
 
     async fn notification(&mut self, method: &str, params: Value) -> anyhow::Result<()> {
-        self.post_json(json_rpc_notification(method, params), false)
+        self.post_json(json_rpc_notification(method, &params), false)
             .await?;
         Ok(())
     }
@@ -938,7 +934,7 @@ impl LegacySseMcpSession {
     async fn request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
-        self.post(json_rpc_request(id, method, params)).await?;
+        self.post(json_rpc_request(id, method, &params)).await?;
         loop {
             let event = self
                 .reader
@@ -950,13 +946,13 @@ impl LegacySseMcpSession {
             }
             let value = serde_json::from_str::<Value>(&event.data)?;
             if value.get("id").and_then(Value::as_u64) == Some(id) {
-                return response_result(value, id);
+                return response_result(&value, id);
             }
         }
     }
 
     async fn notification(&mut self, method: &str, params: Value) -> anyhow::Result<()> {
-        self.post(json_rpc_notification(method, params)).await
+        self.post(json_rpc_notification(method, &params)).await
     }
 
     async fn post(&mut self, body: Value) -> anyhow::Result<()> {
@@ -1052,7 +1048,7 @@ async fn parse_mcp_response(response: reqwest::Response, id: u64) -> anyhow::Res
     Ok(response.json::<Value>().await?)
 }
 
-fn response_result(response: Value, id: u64) -> anyhow::Result<Value> {
+fn response_result(response: &Value, id: u64) -> anyhow::Result<Value> {
     if let Some(error) = response.get("error") {
         return Err(anyhow!(
             "MCP JSON-RPC error for {id}: {}",
@@ -1422,6 +1418,7 @@ fn build_prompt(action: &str, payload: &Value) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Mirrors the terminal context fields sent to the AI provider.
 fn terminal_context_block(
     cwd: &str,
     shell: &str,
@@ -1569,11 +1566,11 @@ fn provider(settings: &AiSettings) -> AiProvider {
     }
 }
 
-fn json_rpc_request(id: u64, method: &str, params: Value) -> Value {
+fn json_rpc_request(id: u64, method: &str, params: &Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
 }
 
-fn json_rpc_notification(method: &str, params: Value) -> Value {
+fn json_rpc_notification(method: &str, params: &Value) -> Value {
     json!({ "jsonrpc": "2.0", "method": method, "params": params })
 }
 
@@ -1645,7 +1642,7 @@ fn parse_sse_event(source: &str) -> Option<SseEvent> {
             continue;
         }
         if let Some(value) = line.strip_prefix("event:") {
-            event = value.trim().to_owned();
+            value.trim().clone_into(&mut event);
         } else if let Some(value) = line.strip_prefix("data:") {
             data.push(value.trim_start().to_owned());
         }

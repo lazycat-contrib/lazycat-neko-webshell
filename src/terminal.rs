@@ -2,7 +2,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -29,7 +29,9 @@ use crate::client_terminal;
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
 use crate::lightos;
 use crate::lightos_admin;
-use crate::proto::lazycat::webshell::v1::{AgentControlType, AgentFrame, AgentFrameType};
+use crate::proto::lazycat::webshell::v1::{
+    AgentControlType, AgentFrame, AgentFrameType, AgentWorkspaceState,
+};
 use crate::ssh_backend;
 use crate::state::{AppState, mark_session_status, sync_session_login_user};
 use crate::terminal_control::TerminalControlSnapshot;
@@ -54,6 +56,7 @@ pub struct TerminalQuery {
     replay: Option<String>,
     after: Option<u64>,
     output_limit: Option<usize>,
+    terminal_reply_authority: Option<String>,
     pane_id: Option<String>,
     backend: Option<String>,
     control_mode: Option<String>,
@@ -151,6 +154,12 @@ enum TerminalAttachTarget {
     Managed(ManagedTerminalAttachTarget),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientReplyAuthority {
+    Client,
+    Server,
+}
+
 struct ManagedTerminalAttachTarget {
     spec: TerminalSpec,
     allow_spawn: bool,
@@ -160,6 +169,7 @@ struct ManagedTerminalAttachTarget {
     pane_id: Option<String>,
     output: Arc<OutputBuffer>,
     control: TerminalControlGuard,
+    client_reply_authority: ClientReplyAuthority,
 }
 
 struct AgentTerminalAttachTarget {
@@ -171,6 +181,7 @@ struct AgentTerminalAttachTarget {
     replay_after: u64,
     output_limit: usize,
     control: TerminalControlGuard,
+    client_reply_authority: ClientReplyAuthority,
 }
 
 #[derive(Clone, Debug)]
@@ -323,8 +334,17 @@ pub async fn terminal_ws(
         });
     }
 
+    let client_reply_authority =
+        match parse_client_reply_authority(query.terminal_reply_authority.as_deref()) {
+            Ok(authority) => authority,
+            Err(error) => {
+                return (StatusCode::UPGRADE_REQUIRED, error.to_string()).into_response();
+            }
+        };
+
     ws.on_upgrade(move |socket| async move {
-        if let Err(err) = handle_terminal_socket(socket, state, query).await {
+        if let Err(err) = handle_terminal_socket(socket, state, query, client_reply_authority).await
+        {
             warn!(error = %err, "terminal websocket ended with error");
         }
     })
@@ -393,9 +413,10 @@ async fn handle_terminal_socket(
     socket: WebSocket,
     state: Arc<AppState>,
     query: TerminalQuery,
+    client_reply_authority: ClientReplyAuthority,
 ) -> anyhow::Result<()> {
     let (mut sender, receiver) = socket.split();
-    let target = match resolve_terminal_target(&state, &query).await {
+    let target = match resolve_terminal_target(&state, &query, client_reply_authority).await {
         Ok(target) => target,
         Err(err) => {
             let message = err.to_string();
@@ -407,7 +428,15 @@ async fn handle_terminal_socket(
         TerminalAttachTarget::Agent(target) => {
             return serve_agent_terminal(sender, receiver, state, target).await;
         }
-        TerminalAttachTarget::Managed(target) => target,
+        TerminalAttachTarget::Managed(target) => {
+            if target.client_reply_authority != ClientReplyAuthority::Server {
+                let error =
+                    anyhow!("terminal client reply authority is stale; reload the application");
+                send_terminal_error(&mut sender, error.to_string(), true).await?;
+                return Err(error);
+            }
+            target
+        }
     };
     let ready_cols = target.spec.cols;
     let ready_rows = target.spec.rows;
@@ -509,7 +538,7 @@ async fn serve_open_terminal(
             }
             update = recv_terminal_control_update(&mut control_rx) => {
                 match update {
-                    Some(Ok(())) | Some(Err(broadcast::error::RecvError::Lagged(_))) => {
+                    Some(Ok(()) | Err(broadcast::error::RecvError::Lagged(_))) => {
                         send_terminal_control_state(&mut sender, &state, &control).await?;
                     }
                     Some(Err(broadcast::error::RecvError::Closed)) | None => {}
@@ -534,6 +563,7 @@ async fn serve_open_terminal(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // Connection lifecycle stays linear so cleanup ordering remains explicit.
 async fn serve_agent_terminal(
     mut sender: TerminalSender,
     mut receiver: TerminalReceiver,
@@ -554,6 +584,17 @@ async fn serve_agent_terminal(
         }
     };
     let pane_id = target.pane_id.as_deref().unwrap_or_default();
+    let agent_state = agent
+        .state(target.cols, target.rows, target.output_limit)
+        .await
+        .context("failed to read webshell agent reply authority")?;
+    let actual_reply_authority = agent_pane_reply_authority(&agent_state, pane_id)
+        .ok_or_else(|| anyhow!("unknown agent pane id"))?;
+    if actual_reply_authority != target.client_reply_authority {
+        let error = anyhow!("terminal client reply authority is stale; reload the application");
+        send_terminal_error(&mut sender, error.to_string(), true).await?;
+        return Err(error);
+    }
     let mut command = agent.attach_command(
         pane_id,
         target.cols,
@@ -569,13 +610,11 @@ async fn serve_agent_terminal(
         Ok(child) => child,
         Err(err) => return Err(anyhow!("failed to start webshell agent attach: {err}")),
     };
-    let mut stdin = match child.stdin.take() {
-        Some(stdin) => stdin,
-        None => return Err(anyhow!("failed to open agent attach stdin")),
+    let Some(mut stdin) = child.stdin.take() else {
+        return Err(anyhow!("failed to open agent attach stdin"));
     };
-    let mut stdout = match child.stdout.take() {
-        Some(stdout) => stdout,
-        None => return Err(anyhow!("failed to open agent attach stdout")),
+    let Some(mut stdout) = child.stdout.take() else {
+        return Err(anyhow!("failed to open agent attach stdout"));
     };
     let mut stderr = child.stderr.take();
     let stderr_task = tokio::spawn(async move {
@@ -609,7 +648,7 @@ async fn serve_agent_terminal(
             }
             update = recv_terminal_control_update(&mut control_rx) => {
                 match update {
-                    Some(Ok(())) | Some(Err(broadcast::error::RecvError::Lagged(_))) => {
+                    Some(Ok(()) | Err(broadcast::error::RecvError::Lagged(_))) => {
                         send_terminal_control_state(&mut sender, &state, &target.control).await?;
                     }
                     Some(Err(broadcast::error::RecvError::Closed)) | None => {}
@@ -652,12 +691,41 @@ async fn serve_agent_terminal(
     Ok(())
 }
 
+fn agent_pane_reply_authority(
+    state: &AgentWorkspaceState,
+    requested_pane_id: &str,
+) -> Option<ClientReplyAuthority> {
+    let pane_id = if requested_pane_id.trim().is_empty() {
+        let active_tab_id = state.active_tab_id.as_deref()?;
+        state
+            .tabs
+            .iter()
+            .find(|tab| tab.id.as_deref() == Some(active_tab_id))?
+            .active_pane_id
+            .as_deref()?
+    } else {
+        requested_pane_id.trim()
+    };
+    state
+        .tabs
+        .iter()
+        .flat_map(|tab| &tab.panes)
+        .find(|pane| pane.id.as_deref() == Some(pane_id))
+        .map(|pane| {
+            if pane.terminal_reply_authority.as_deref() == Some("server") {
+                ClientReplyAuthority::Server
+            } else {
+                ClientReplyAuthority::Client
+            }
+        })
+}
+
 async fn handle_agent_frame(
     sender: &mut TerminalSender,
     target: &AgentTerminalAttachTarget,
     frame: AgentFrame,
 ) -> anyhow::Result<bool> {
-    match frame.r#type.as_ref().and_then(|kind| kind.as_known()) {
+    match frame.r#type.as_ref().and_then(buffa::EnumValue::as_known) {
         Some(AgentFrameType::AGENT_FRAME_TYPE_BINARY) => {
             if sender
                 .send(Message::Binary(frame.payload.unwrap_or_default().into()))
@@ -693,7 +761,7 @@ async fn handle_agent_control_frame(
     let Some(control) = frame.control.into_option() else {
         return Ok(true);
     };
-    match control.r#type.as_ref().and_then(|kind| kind.as_known()) {
+    match control.r#type.as_ref().and_then(buffa::EnumValue::as_known) {
         Some(AgentControlType::AGENT_CONTROL_TYPE_REPLAY_START) => {
             let session_id = control.session_id.as_deref().unwrap_or_default();
             let selector = control.selector.as_deref().unwrap_or(&target.selector);
@@ -810,6 +878,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_lines)] // Centralizes validation and replies for the agent control protocol.
 async fn handle_agent_control_message<W>(
     sender: &mut TerminalSender,
     state: &AppState,
@@ -1242,6 +1311,7 @@ async fn send_replay_snapshot_for_target(
     Ok(Some(last_sent_sequence))
 }
 
+#[allow(clippy::too_many_lines)] // Centralizes validation and replies for the provider control protocol.
 async fn handle_terminal_control_message(
     sender: &mut TerminalSender,
     state: &AppState,
@@ -1643,9 +1713,11 @@ async fn send_output_frame(
     Ok(true)
 }
 
+#[allow(clippy::too_many_lines)] // Keeps authority and backend selection in one auditable decision path.
 async fn resolve_terminal_target(
     state: &AppState,
     query: &TerminalQuery,
+    client_reply_authority: ClientReplyAuthority,
 ) -> anyhow::Result<TerminalAttachTarget> {
     let restart = parse_query_bool(query.restart.as_deref(), "restart")?;
     let replay = parse_query_bool(query.replay.as_deref(), "replay")?.unwrap_or(true);
@@ -1704,6 +1776,7 @@ async fn resolve_terminal_target(
             replay_after: if replay { replay_after } else { u64::MAX },
             output_limit,
             control,
+            client_reply_authority,
         }));
     }
 
@@ -1753,6 +1826,7 @@ async fn resolve_terminal_target(
                 pane_id,
                 output,
                 control,
+                client_reply_authority,
             }));
         }
         if backend == "ssh" {
@@ -1784,6 +1858,7 @@ async fn resolve_terminal_target(
             pane_id,
             output,
             control,
+            client_reply_authority,
         }));
     }
 
@@ -2018,6 +2093,16 @@ fn parse_query_bool(value: Option<&str>, name: &str) -> anyhow::Result<Option<bo
         .transpose()
 }
 
+fn parse_client_reply_authority(value: Option<&str>) -> anyhow::Result<ClientReplyAuthority> {
+    match value.map(str::trim) {
+        Some("client") => Ok(ClientReplyAuthority::Client),
+        Some("server") => Ok(ClientReplyAuthority::Server),
+        _ => Err(anyhow!(
+            "terminal client update required: missing reply-authority capability"
+        )),
+    }
+}
+
 fn parse_bool_flag(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
@@ -2046,9 +2131,11 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
     use super::{
-        TerminalClientMessage, clipboard_image_stage_script, origin_allowed,
+        ClientReplyAuthority, TerminalClientMessage, agent_pane_reply_authority,
+        clipboard_image_stage_script, origin_allowed, parse_client_reply_authority,
         sanitize_clipboard_image_extension,
     };
+    use crate::proto::lazycat::webshell::v1::{AgentPaneState, AgentTabState, AgentWorkspaceState};
 
     #[test]
     fn validates_origin_host_match() {
@@ -2095,5 +2182,46 @@ mod tests {
                 request_id: Some(request_id)
             } if request_id == "tc-1"
         ));
+    }
+
+    #[test]
+    fn requires_explicit_client_reply_authority_capability() {
+        assert_eq!(
+            parse_client_reply_authority(Some("client")).unwrap(),
+            ClientReplyAuthority::Client
+        );
+        assert_eq!(
+            parse_client_reply_authority(Some("server")).unwrap(),
+            ClientReplyAuthority::Server
+        );
+        assert!(parse_client_reply_authority(None).is_err());
+        assert!(parse_client_reply_authority(Some("future")).is_err());
+    }
+
+    #[test]
+    fn reads_reply_authority_from_the_attached_agent_pane() {
+        let state = AgentWorkspaceState {
+            active_tab_id: Some("tab-1".to_owned()),
+            tabs: vec![AgentTabState {
+                id: Some("tab-1".to_owned()),
+                active_pane_id: Some("pane-1".to_owned()),
+                panes: vec![AgentPaneState {
+                    id: Some("pane-1".to_owned()),
+                    terminal_reply_authority: Some("server".to_owned()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            agent_pane_reply_authority(&state, "pane-1"),
+            Some(ClientReplyAuthority::Server)
+        );
+        assert_eq!(
+            agent_pane_reply_authority(&state, ""),
+            Some(ClientReplyAuthority::Server)
+        );
     }
 }

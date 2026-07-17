@@ -815,6 +815,7 @@ pub fn output_frame_limit_from_metadata(metadata: &HashMap<String, String>) -> u
     normalize_output_frame_limit(limit)
 }
 
+#[allow(clippy::too_many_lines)] // The built-in plugin catalog is intentionally centralized for review.
 fn builtin_plugins() -> HashMap<String, PluginRecord> {
     [
         PluginRecord {

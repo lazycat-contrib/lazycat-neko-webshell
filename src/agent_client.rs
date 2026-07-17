@@ -490,14 +490,13 @@ async fn restart_agent(client: &AgentClient) -> anyhow::Result<()> {
 async fn start_agent_with_reset(client: &AgentClient, stop_existing: bool) -> anyhow::Result<()> {
     let log_path = scoped_log_path(&client.selector);
     let stop_script = if stop_existing {
-        format!(
-            r#"
+        r#"
 if [ -S "$socket" ]; then
   old_pids="$(fuser "$socket" 2>/dev/null || true)"
   if [ -n "$old_pids" ]; then kill $old_pids 2>/dev/null || true; fi
 fi
 "#
-        )
+        .to_string()
     } else {
         String::new()
     };
@@ -775,7 +774,11 @@ mod tests {
         assert_eq!(scope_hash("demo@owner"), scope_hash(" demo@owner "));
         let socket = scoped_socket_path("demo@owner");
         assert!(socket.starts_with("/tmp/lazycat-neko-webshell-agent-"));
-        assert!(socket.ends_with(".sock"));
+        assert!(
+            std::path::Path::new(&socket)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("sock"))
+        );
         assert!(
             socket
                 .chars()

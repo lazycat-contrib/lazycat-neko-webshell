@@ -233,18 +233,18 @@ impl CapabilityServiceImpl {
         let manager = Arc::clone(&self.state.public_tunnels);
         let operation_for_task = operation.clone();
         let response = tokio::task::spawn_blocking(move || {
-            manager.invoke_metadata(&operation_for_task, metadata)
+            manager.invoke_metadata(&operation_for_task, &metadata)
         })
         .await
         .map_err(|err| ConnectError::internal(format!("plugin task failed: {err}")))?
         .map_err(|err| ConnectError::failed_precondition(err.to_string()))?;
-        if operation == "start" {
-            if let Some(profile_id) = ngrok_profile_id {
-                self.state
-                    .database()
-                    .mark_tunnel_provider_profile_used(&profile_id)
-                    .map_err(|err| ConnectError::internal(err.to_string()))?;
-            }
+        if operation == "start"
+            && let Some(profile_id) = ngrok_profile_id
+        {
+            self.state
+                .database()
+                .mark_tunnel_provider_profile_used(&profile_id)
+                .map_err(|err| ConnectError::internal(err.to_string()))?;
         }
         plugin_response(
             &response.status,
@@ -827,10 +827,10 @@ impl CapabilityService for CapabilityServiceImpl {
             .iter()
             .map(|entry| (entry.0.to_owned(), entry.1.to_owned()))
             .collect::<HashMap<_, _>>();
-        if plugin_id == tunnel::PLUGIN_ID {
-            if let Some(profiles_json) = request_metadata.get(TUNNEL_PROVIDER_PROFILES_METADATA) {
-                self.replace_tunnel_provider_profiles(profiles_json)?;
-            }
+        if plugin_id == tunnel::PLUGIN_ID
+            && let Some(profiles_json) = request_metadata.get(TUNNEL_PROVIDER_PROFILES_METADATA)
+        {
+            self.replace_tunnel_provider_profiles(profiles_json)?;
         }
         let (plugin, snapshot) = {
             let mut plugins = self
@@ -1157,7 +1157,7 @@ fn invoke_file_upload_begin(
     let progress = state
         .file_uploads
         .begin(&session.id, path, name, size)
-        .map_err(|err| map_file_transfer_error(err, "upload_begin"))?;
+        .map_err(|err| map_file_transfer_error(&err, "upload_begin"))?;
     plugin_json_response(
         "uploading",
         &progress,
@@ -1176,7 +1176,7 @@ fn invoke_file_upload_chunk(
     let progress = state
         .file_uploads
         .append(&session.id, upload_id, offset, payload)
-        .map_err(|err| map_file_transfer_error(err, "upload_chunk"))?;
+        .map_err(|err| map_file_transfer_error(&err, "upload_chunk"))?;
     plugin_json_response(
         "uploading",
         &progress,
@@ -1193,7 +1193,7 @@ async fn invoke_file_upload_finish(
     let finished = state
         .file_uploads
         .finish(&session.id, upload_id)
-        .map_err(|err| map_file_transfer_error(err, "upload_finish"))?;
+        .map_err(|err| map_file_transfer_error(&err, "upload_finish"))?;
     let metadata = HashMap::from([("path".to_owned(), finished.path.clone())]);
     invoke_file_write(state, session, "upload", &finished.data, &metadata).await
 }
@@ -1207,7 +1207,7 @@ fn invoke_file_upload_cancel(
     let result = state
         .file_uploads
         .cancel(&session.id, upload_id)
-        .map_err(|err| map_file_transfer_error(err, "upload_cancel"))?;
+        .map_err(|err| map_file_transfer_error(&err, "upload_cancel"))?;
     plugin_json_response(
         "cancelled",
         &result,
@@ -1286,15 +1286,14 @@ async fn run_session_script(
     let mut child = command
         .spawn()
         .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
-    if let Some(mut child_stdin) = child.stdin.take() {
-        if !stdin.is_empty()
-            && let Err(err) = child_stdin.write_all(stdin).await
-        {
-            let _ = child.kill().await;
-            return Err(ConnectError::unavailable(format!(
-                "plugin command input failed: {err}"
-            )));
-        }
+    if let Some(mut child_stdin) = child.stdin.take()
+        && !stdin.is_empty()
+        && let Err(err) = child_stdin.write_all(stdin).await
+    {
+        let _ = child.kill().await;
+        return Err(ConnectError::unavailable(format!(
+            "plugin command input failed: {err}"
+        )));
     }
     let output = tokio::time::timeout(PLUGIN_COMMAND_TIMEOUT, child.wait_with_output())
         .await
@@ -1366,7 +1365,7 @@ fn required_usize_metadata(
         .map_err(|_| ConnectError::invalid_argument(format!("metadata.{key} must be a number")))
 }
 
-fn map_file_transfer_error(error: ConnectError, operation: &str) -> ConnectError {
+fn map_file_transfer_error(error: &ConnectError, operation: &str) -> ConnectError {
     let message = error.to_string();
     if message.contains("file size is outside the supported transfer limit") {
         ConnectError::invalid_argument(format!(

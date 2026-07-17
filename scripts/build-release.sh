@@ -11,8 +11,11 @@ mkdir -p "${content_dir}"
     printf 'LIGHTOS_ADMIN_INTERNAL_BASE_URL=%s\n' "${LIGHTOS_ADMIN_INTERNAL_BASE_URL}"
   fi
 } > "${content_dir}/.env"
+mkdir -p "${content_dir}/licenses"
+cp vendor/restty/0.2.5/LICENSE "${content_dir}/licenses/restty-0.2.5-LICENSE"
 
 npm ci
+node scripts/export-restty-wasm.mjs
 npm run build
 
 protoc_version="31.1"

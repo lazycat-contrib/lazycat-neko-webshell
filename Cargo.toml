@@ -1,8 +1,8 @@
 [package]
 name = "lazycat-neko-webshell"
-version = "0.5.34"
+version = "0.5.35"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.97.1"
 default-run = "lazycat-neko-webshell"
 
 [dependencies]
@@ -12,40 +12,39 @@ axum = { version = "0.8.7", features = ["tokio", "http1", "json", "multipart", "
 buffa = { version = "0.5.2", features = ["json"] }
 buffa-types = "0.5.2"
 bytes = "1.11.0"
-capnp = "0.19.1"
-capnp-futures = "0.19.0"
-capnp-rpc = "0.19.0"
-claude-sdk = { version = "2.1.0", default-features = false, features = ["anthropic"] }
+capnp = "0.26.2"
+capnp-futures = "0.26.1"
+capnp-rpc = "0.26.1"
 connectrpc = { version = "0.4.2", features = ["axum"] }
 futures = "0.3.31"
 http = "1.4.0"
 http-body = "1.0.1"
 lzc-sdk = { version = "0.1.1", default-features = false, features = ["gateway"] }
 mime_guess = "2.0.5"
-ngrok = "0.18.0"
+ngrok = "0.19.0"
 portable-pty = "0.9.0"
-quinn = { version = "0.10.2", features = ["futures-io"] }
+quinn = { version = "0.11.11", features = ["futures-io"] }
 base64 = "0.22.1"
 reqwest = { version = "0.12.24", default-features = false, features = ["http2", "json", "rustls-tls", "stream"] }
 reqwest13 = { package = "reqwest", version = "0.13.4", default-features = false }
-rmcp = { version = "=2.1.0", default-features = false, features = ["base64", "macros", "server", "transport-streamable-http-server"] }
-rusqlite = { version = "0.39.0", default-features = false, features = ["bundled"] }
+rmcp = { version = "=2.2.0", default-features = false, features = ["base64", "macros", "server", "transport-streamable-http-server"] }
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 schemars = "1.2.1"
-rustls = "0.21.12"
 rustls23 = { package = "rustls", version = "0.23.41", default-features = false, features = ["ring", "std"] }
 secrecy = "0.10.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["full"] }
-tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7.13", features = ["io"] }
-tower-http = { version = "0.6.6", features = ["trace", "cors", "fs", "set-header"] }
+tower-http = { version = "0.7.0", features = ["trace", "cors", "fs", "set-header"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 url = "2.5.8"
 uuid = { version = "1.18.1", features = ["v4"] }
+wasmi = { version = "=1.1.0", default-features = false, features = ["std"] }
 wuff = "0.2.5"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 

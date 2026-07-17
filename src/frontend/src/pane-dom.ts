@@ -5,7 +5,6 @@ type TerminalMountHandlers = {
   onPointerUp: (event: PointerEvent) => void;
   onPointerCancel: (event: PointerEvent) => void;
   onDoubleClick: (event: MouseEvent) => void;
-  onContextMenu: (event: MouseEvent) => void;
   onMouseUp: () => void;
   onTouchEnd: () => void;
 };
@@ -25,7 +24,6 @@ export function createTerminalPaneMount(
   mount.addEventListener("pointerup", handlers.onPointerUp);
   mount.addEventListener("pointercancel", handlers.onPointerCancel);
   mount.addEventListener("dblclick", handlers.onDoubleClick);
-  mount.addEventListener("contextmenu", handlers.onContextMenu);
   mount.addEventListener("mouseup", handlers.onMouseUp);
   mount.addEventListener("touchend", handlers.onTouchEnd);
   return mount;

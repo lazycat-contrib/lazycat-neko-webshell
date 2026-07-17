@@ -1,9 +1,9 @@
-import type { ResttyFontSource } from "restty";
+import type { ResttyFontInput, ResttyFontUrlInput } from "restty";
 
 import { CJK_FONT_SOURCE, FONT_PRESETS, PREINSTALLED_FONT_BASE } from "./config";
 import type { FontPreset, StoredFont } from "./types";
 
-export function resttyFontSourcesFor(font: FontPreset): ResttyFontSource[] {
+export function resttyFontSourcesFor(font: FontPreset): ResttyFontInput[] {
   const sources = font.resttySources ?? FONT_PRESETS[0]?.resttySources ?? [];
   return [...sources, CJK_FONT_SOURCE].map(resolveResttyFontSource);
 }
@@ -16,23 +16,30 @@ export function storedFontToResttyPreset(font: StoredFont): FontPreset | undefin
     label,
     family: quoteFontFamily(font.family),
     resttySources: [
-      { type: "url", url: new URL(font.url, window.location.href).toString(), label },
+      { url: new URL(font.url, window.location.href).toString(), name: label },
       {
-        type: "url",
         url: `${PREINSTALLED_FONT_BASE}SymbolsNerdFontMono-Regular.ttf`,
-        label: "Symbols Nerd Font Mono",
+        name: "Symbols Nerd Font Mono",
       },
     ],
     custom: true,
   };
 }
 
-function resolveResttyFontSource(source: ResttyFontSource): ResttyFontSource {
-  if (source.type !== "url") return source;
+function resolveResttyFontSource(source: ResttyFontInput): ResttyFontInput {
+  if (!isResttyFontUrlInput(source)) return source;
   return {
     ...source,
     url: new URL(source.url, window.location.href).toString(),
   };
+}
+
+function isResttyFontUrlInput(source: ResttyFontInput): source is ResttyFontUrlInput {
+  return typeof source === "object"
+    && source !== null
+    && !(source instanceof URL)
+    && !ArrayBuffer.isView(source)
+    && "url" in source;
 }
 
 function quoteFontFamily(family: string): string {

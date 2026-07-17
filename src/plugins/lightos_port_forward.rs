@@ -128,7 +128,7 @@ impl LightOsPortForwardManager {
             .ok_or_else(|| anyhow!("LightOS forward not found: {forward_id}"))?;
         let _ = handle.child.kill();
         let _ = handle.child.wait();
-        handle.info.status = "stopped".to_owned();
+        "stopped".clone_into(&mut handle.info.status);
         Ok(serde_json::json!({
             "forward": handle.info,
             "forwards": self.forward_snapshots()?,
@@ -148,7 +148,7 @@ impl LightOsPortForwardManager {
                 info.status = format!("exited:{status}");
                 exited.push(id.clone());
             } else if !local_port_listening(handle.info.local_port) {
-                info.status = "unreachable".to_owned();
+                "unreachable".clone_into(&mut info.status);
             }
             snapshots.push(info);
         }

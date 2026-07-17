@@ -1,7 +1,7 @@
-use rustls::Certificate;
+use rustls23::pki_types::CertificateDer;
 
-pub fn cloudflare_ca() -> Certificate {
-    Certificate(include_bytes!("cloudflare_ca.der").to_vec())
+pub fn cloudflare_ca() -> CertificateDer<'static> {
+    CertificateDer::from(include_bytes!("cloudflare_ca.der").as_slice())
 }
 
 #[allow(

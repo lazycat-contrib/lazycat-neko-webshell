@@ -1,5 +1,6 @@
 import type { TerminalPane } from "./types";
 import { installTouchKeyboardReadOnlyGuard } from "./mobile/touch-keyboard-guard";
+import { paneTerminalImeInput } from "./terminal-dom";
 
 export type PaneViewportGuardOptions = {
   scheduleSizeRefresh: () => void;
@@ -62,5 +63,5 @@ export function resetPaneViewport(pane: TerminalPane) {
 }
 
 export function paneImeInput(pane: TerminalPane): HTMLTextAreaElement | null {
-  return pane.term?.restty?.activePane()?.getRawPane().imeInput ?? null;
+  return paneTerminalImeInput(pane);
 }

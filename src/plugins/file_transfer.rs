@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 pub const MAX_FILE_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 
-const UPLOAD_TTL: Duration = Duration::from_secs(30 * 60);
+const UPLOAD_TTL: Duration = Duration::from_mins(30);
 
 #[derive(Default)]
 pub struct FileTransferUploadManager {
@@ -121,12 +121,12 @@ impl FileTransferUploadManager {
     pub fn cancel(&self, session_id: &str, upload_id: &str) -> Result<Value, ConnectError> {
         let mut uploads = self.lock_uploads()?;
         prune_stale_uploads(&mut uploads);
-        if let Some(upload) = uploads.get(upload_id) {
-            if upload.session_id != session_id {
-                return Err(ConnectError::permission_denied(
-                    "upload does not belong to this session",
-                ));
-            }
+        if let Some(upload) = uploads.get(upload_id)
+            && upload.session_id != session_id
+        {
+            return Err(ConnectError::permission_denied(
+                "upload does not belong to this session",
+            ));
         }
         uploads.remove(upload_id);
         Ok(json!({ "uploadId": upload_id, "cancelled": true }))

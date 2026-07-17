@@ -25,7 +25,7 @@ const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &["mp3", "wav", "ogg", "flac", "m4a"
 const MAX_SOUND_PACKAGE_BYTES: u64 = 500 * 1_024 * 1_024;
 const MAX_SOUND_PACKAGE_EXTRACTED_BYTES: u64 = 2_048 * 1_024 * 1_024;
 const MAX_SOUND_PACKAGE_FILES: usize = 5_000;
-const SOUND_PACKAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(240);
+const SOUND_PACKAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(4);
 const SOUND_PACKAGE_PROGRESS_CHUNK_BYTES: u64 = 1_024 * 1_024;
 
 #[derive(Debug, Serialize)]
@@ -90,7 +90,7 @@ pub async fn list_sounds() -> Json<SoundCatalog> {
 pub async fn install_sound_package(Json(payload): Json<InstallSoundPackageRequest>) -> Response {
     let url = match validate_sound_package_url(&payload.url) {
         Ok(url) => url,
-        Err(error) => return sound_package_error_response(error),
+        Err(error) => return sound_package_error_response(&error),
     };
     let (sender, receiver) = mpsc::unbounded_channel();
     tokio::spawn(async move {
@@ -181,7 +181,7 @@ fn sound_package_stream_response(
     response
 }
 
-fn sound_package_error_response(error: SoundPackageError) -> Response {
+fn sound_package_error_response(error: &SoundPackageError) -> Response {
     let status = match error {
         SoundPackageError::BadRequest(_) | SoundPackageError::Zip(_) => StatusCode::BAD_REQUEST,
         SoundPackageError::Download(_) => StatusCode::BAD_GATEWAY,
@@ -516,8 +516,7 @@ fn sound_file_from_path(root: &Path, path: &Path, size_bytes: u64) -> Option<Sou
             _ => None,
         })
         .filter(|_| relative.components().count() > 1)
-        .map(sound_label)
-        .unwrap_or_else(|| "Root".to_owned());
+        .map_or_else(|| "Root".to_owned(), sound_label);
     Some(SoundFile {
         id: normalized.clone(),
         name,
@@ -566,12 +565,11 @@ fn normalize_relative_path(path: &Path) -> Option<String> {
 fn supported_audio_file(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
-        .map(|extension| {
+        .is_some_and(|extension| {
             SUPPORTED_AUDIO_EXTENSIONS
                 .iter()
                 .any(|allowed| extension.eq_ignore_ascii_case(allowed))
         })
-        .unwrap_or(false)
 }
 
 fn encode_sound_url_path(path: &str) -> String {
