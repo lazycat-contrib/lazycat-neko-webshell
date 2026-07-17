@@ -9,6 +9,14 @@ use crate::proto::lazycat::webshell::v1::{
 };
 
 pub const AGENT_PROTOCOL_VERSION: &str = "lazycat-neko-webshell-agent-v4";
+// Bump when target-local agent code or one of its runtime dependencies changes.
+// Existing targets may keep an older agent until the provider raises its
+// minimum supported version.
+pub const AGENT_VERSION: u64 = 2;
+// Bump only when the provider can no longer safely use an older agent. Protocol
+// compatibility is checked before this version floor.
+pub const MIN_SUPPORTED_AGENT_VERSION: u64 = 1;
+const _: () = assert!(AGENT_VERSION >= MIN_SUPPORTED_AGENT_VERSION);
 pub const MAX_AGENT_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 
 pub fn write_agent_message<W, M>(mut writer: W, message: &M) -> io::Result<()>

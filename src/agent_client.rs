@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::HashMap;
 #[cfg(debug_assertions)]
 use std::path::PathBuf;
@@ -18,8 +17,8 @@ use tokio::time::{sleep, timeout};
 use tracing::warn;
 
 use crate::agent_protocol::{
-    AGENT_PROTOCOL_VERSION, action_request, close_session_request, ping_request,
-    read_agent_response, state_request,
+    AGENT_PROTOCOL_VERSION, AGENT_VERSION, MIN_SUPPORTED_AGENT_VERSION, action_request,
+    close_session_request, ping_request, read_agent_response, state_request,
 };
 use crate::config::LIGHTOSCTL;
 use crate::proto::lazycat::webshell::v1::{
@@ -29,7 +28,8 @@ use crate::validation::{normalize_output_frame_limit, validate_selector};
 
 const AGENT_INSTALL_PATH: &str = "/usr/local/bin/lazycat-neko-webshell-agent";
 const AGENT_PAYLOAD_ROOT: &str = "/usr/local/lib/lazycat-neko-webshell/agents";
-const AGENT_PAYLOAD_VERSION: &str = env!("CARGO_PKG_VERSION");
+const LEGACY_V0_5_35_PAYLOAD_VERSION: &str = "0.5.35";
+const LEGACY_V0_5_35_AGENT_VERSION: u64 = 1;
 const AGENT_READY_MARKER: &str = "lazycat-neko-webshell-agent-ready";
 const AGENT_LOCK_READY_MARKER: &str = "lazycat-neko-webshell-agent-lock-ready";
 const AGENT_LOG_TAIL_LINES: usize = 80;
@@ -47,12 +47,24 @@ pub struct AgentClient {
     socket_path: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct AgentPayloadIdentity {
     manifest: String,
     install_path: String,
-    version: &'static str,
-    generation: u64,
+    agent_version: u64,
+}
+
+#[derive(Clone, Debug)]
+struct InstalledAgentIdentity {
+    protocol_version: String,
+    payload: Option<AgentPayloadIdentity>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AgentProtocolCompatibility {
+    Current,
+    Stale,
+    Newer,
 }
 
 struct RemoteAgentLock {
@@ -278,7 +290,7 @@ pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<Agen
     let expected = agent_payload_identity().await?;
 
     if let Ok(response) = ping_agent(&client).await {
-        if running_agent_is_acceptable(&response, &expected) {
+        if running_agent_is_acceptable(&response) {
             return Ok(client);
         }
         reject_unsupported_newer_agent(&response)?;
@@ -297,27 +309,19 @@ async fn ensure_agent_locked(
     expected: &AgentPayloadIdentity,
 ) -> anyhow::Result<AgentClient> {
     match ping_agent(client).await {
-        Ok(response) if running_agent_is_acceptable(&response, expected) => {
+        Ok(response) if running_agent_is_acceptable(&response) => {
             return Ok(client.clone());
         }
-        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
-            warn!(
-                selector = %client.selector,
-                running_manifest = response.payload_manifest.as_deref().unwrap_or(""),
-                running_payload_version = response.payload_version.as_deref().unwrap_or(""),
-                running_payload_generation = response.payload_generation.unwrap_or_default(),
-                expected_manifest = %expected.manifest,
-                expected_payload_version = expected.version,
-                expected_payload_generation = expected.generation,
-                "webshell agent payload is stale; restarting agent"
-            );
-            ensure_agent_binary_installed(&client.selector, expected).await?;
-            restart_agent(client, expected).await?;
-            wait_for_agent(client, expected).await?;
-            prune_stale_agent_payloads(&client.selector, expected).await;
-            return Ok(client.clone());
+        Ok(response)
+            if agent_protocol_compatibility(response.version.as_deref())
+                == AgentProtocolCompatibility::Newer =>
+        {
+            reject_unsupported_newer_agent(&response)?;
         }
-        Ok(response) if agent_protocol_version_is_stale(response.version.as_deref()) => {
+        Ok(response)
+            if agent_protocol_compatibility(response.version.as_deref())
+                == AgentProtocolCompatibility::Stale =>
+        {
             warn!(
                 selector = %client.selector,
                 running_protocol = response.version.as_deref().unwrap_or(""),
@@ -331,7 +335,20 @@ async fn ensure_agent_locked(
             return Ok(client.clone());
         }
         Ok(response) => {
-            reject_unsupported_newer_agent(&response)?;
+            warn!(
+                selector = %client.selector,
+                running_manifest = response.payload_manifest.as_deref().unwrap_or(""),
+                running_agent_version = running_agent_version(&response).unwrap_or_default(),
+                expected_manifest = %expected.manifest,
+                embedded_agent_version = expected.agent_version,
+                minimum_supported_agent_version = MIN_SUPPORTED_AGENT_VERSION,
+                "webshell agent version is below the compatibility floor; restarting agent"
+            );
+            ensure_agent_binary_installed(&client.selector, expected).await?;
+            restart_agent(client, expected).await?;
+            wait_for_agent(client, expected).await?;
+            prune_stale_agent_payloads(&client.selector, expected).await;
+            return Ok(client.clone());
         }
         Err(_) => {}
     }
@@ -340,12 +357,12 @@ async fn ensure_agent_locked(
     }
     ensure_agent_binary_installed(&client.selector, expected).await?;
     match ping_agent(client).await {
-        Ok(response) if running_agent_is_acceptable(&response, expected) => {
+        Ok(response) if running_agent_is_acceptable(&response) => {
             return Ok(client.clone());
         }
         Ok(response)
-            if agent_protocol_version_is_current(response.version.as_deref())
-                || agent_protocol_version_is_stale(response.version.as_deref()) =>
+            if agent_protocol_compatibility(response.version.as_deref())
+                != AgentProtocolCompatibility::Newer =>
         {
             restart_agent(client, expected).await?;
             wait_for_agent(client, expected).await?;
@@ -367,14 +384,37 @@ async fn try_recover_installed_agent(
     client: &AgentClient,
     expected: &AgentPayloadIdentity,
 ) -> anyhow::Result<bool> {
-    let payload_exists = installed_agent_binary_exists(&client.selector, &expected.install_path)
+    let installed = probe_installed_agent_payload(&client.selector).await?;
+    let reusable_installed = if let Some(installed) = installed {
+        match agent_protocol_compatibility(Some(&installed.protocol_version)) {
+            AgentProtocolCompatibility::Newer => {
+                return reject_unsupported_newer_agent_protocol(&installed.protocol_version)
+                    .map(|()| false);
+            }
+            AgentProtocolCompatibility::Current
+                if installed.payload.as_ref().is_some_and(|payload| {
+                    payload.agent_version >= MIN_SUPPORTED_AGENT_VERSION
+                }) =>
+            {
+                installed.payload
+            }
+            AgentProtocolCompatibility::Current | AgentProtocolCompatibility::Stale => None,
+        }
+    } else {
+        None
+    };
+    let restart_payload = if let Some(installed) = reusable_installed {
+        installed
+    } else if installed_agent_binary_exists(&client.selector, &expected.install_path)
         .await
-        .unwrap_or(false);
-    if !payload_exists {
+        .unwrap_or(false)
+    {
+        expected.clone()
+    } else {
         return Ok(false);
-    }
-    activate_agent_payload(&client.selector, &expected.install_path).await?;
-    if let Err(err) = restart_agent(client, expected).await {
+    };
+    activate_agent_payload(&client.selector, &restart_payload.install_path).await?;
+    if let Err(err) = restart_agent(client, &restart_payload).await {
         warn!(
             selector = %client.selector,
             error = %err,
@@ -383,17 +423,25 @@ async fn try_recover_installed_agent(
         return Ok(false);
     }
     match wait_for_agent_response(client).await {
-        Ok(response) if running_agent_is_acceptable(&response, expected) => Ok(true),
-        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+        Ok(response) if running_agent_is_acceptable(&response) => Ok(true),
+        Ok(response)
+            if agent_protocol_compatibility(response.version.as_deref())
+                == AgentProtocolCompatibility::Current =>
+        {
             warn!(
                 selector = %client.selector,
                 running_manifest = response.payload_manifest.as_deref().unwrap_or(""),
+                running_agent_version = running_agent_version(&response).unwrap_or_default(),
+                minimum_supported_agent_version = MIN_SUPPORTED_AGENT_VERSION,
                 expected_manifest = %expected.manifest,
-                "installed webshell agent payload is stale; upgrading agent"
+                "installed webshell agent version is below the compatibility floor; upgrading agent"
             );
             Ok(false)
         }
-        Ok(response) if agent_protocol_version_is_stale(response.version.as_deref()) => {
+        Ok(response)
+            if agent_protocol_compatibility(response.version.as_deref())
+                == AgentProtocolCompatibility::Stale =>
+        {
             warn!(
                 selector = %client.selector,
                 running_protocol = response.version.as_deref().unwrap_or(""),
@@ -402,11 +450,7 @@ async fn try_recover_installed_agent(
             );
             Ok(false)
         }
-        Ok(response) => bail!(
-            "unsupported newer webshell agent protocol: running {}, provider expects {}",
-            response.version.unwrap_or_default(),
-            AGENT_PROTOCOL_VERSION
-        ),
+        Ok(response) => reject_unsupported_newer_agent(&response).map(|()| false),
         Err(err) => {
             warn!(
                 selector = %client.selector,
@@ -440,18 +484,20 @@ async fn wait_for_agent(
     let mut last_error = None;
     for _ in 0..25 {
         match ping_agent(client).await {
-            Ok(response) if running_agent_is_acceptable(&response, expected) => {
+            Ok(response) if running_agent_is_acceptable(&response) => {
                 return Ok(());
             }
-            Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+            Ok(response)
+                if agent_protocol_compatibility(response.version.as_deref())
+                    == AgentProtocolCompatibility::Current =>
+            {
                 last_error = Some(anyhow!(
-                    "agent payload mismatch: running {} {}#{}, expected {} {}#{}",
-                    response.payload_manifest.unwrap_or_default(),
-                    response.payload_version.unwrap_or_default(),
-                    response.payload_generation.unwrap_or_default(),
+                    "agent version mismatch: running {} version {}, expected minimum version {} from embedded version {} ({})",
+                    response.payload_manifest.as_deref().unwrap_or_default(),
+                    running_agent_version(&response).unwrap_or_default(),
+                    MIN_SUPPORTED_AGENT_VERSION,
+                    expected.agent_version,
                     expected.manifest,
-                    expected.version,
-                    expected.generation,
                 ));
             }
             Ok(response) => {
@@ -511,6 +557,74 @@ fi
         shell_quote(agent_path),
         shell_quote(AGENT_READY_MARKER),
     )
+}
+
+async fn probe_installed_agent_payload(
+    selector: &str,
+) -> anyhow::Result<Option<InstalledAgentIdentity>> {
+    let output = run_target_shell(
+        selector,
+        &installed_agent_identity_probe_script(),
+        None,
+        Duration::from_secs(8),
+    )
+    .await?;
+    Ok(parse_installed_agent_identity(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+fn installed_agent_identity_probe_script() -> String {
+    format!(
+        r#"set -eu
+agent={}
+if [ -L "$agent" ] && [ -x "$agent" ]; then
+  target="$(readlink "$agent" 2>/dev/null || true)"
+  protocol="$("$agent" version 2>/dev/null || true)"
+  agent_version="$("$agent" agent-version 2>/dev/null || true)"
+  printf '%s\t%s\t%s\t%s\n' {} "$protocol" "$agent_version" "$target"
+fi
+"#,
+        shell_quote(AGENT_INSTALL_PATH),
+        shell_quote(AGENT_READY_MARKER),
+    )
+}
+
+fn parse_installed_agent_identity(output: &str) -> Option<InstalledAgentIdentity> {
+    let line = output.lines().find(|line| !line.trim().is_empty())?;
+    let mut fields = line.split('\t');
+    if fields.next() != Some(AGENT_READY_MARKER) {
+        return None;
+    }
+    let protocol_version = fields.next().unwrap_or_default().to_owned();
+    let agent_version = match fields.next().filter(|value| !value.is_empty()) {
+        Some(value) => value
+            .parse()
+            .ok()
+            .filter(|version| *version > 0)
+            .unwrap_or_default(),
+        None if agent_protocol_compatibility(Some(&protocol_version))
+            == AgentProtocolCompatibility::Current =>
+        {
+            LEGACY_V0_5_35_AGENT_VERSION
+        }
+        None => 0,
+    };
+    let install_path = fields.next().unwrap_or_default().to_owned();
+    if fields.next().is_some() {
+        return None;
+    }
+    let payload = agent_payload_manifest_from_install_path(&install_path).map(|manifest| {
+        AgentPayloadIdentity {
+            manifest,
+            install_path,
+            agent_version,
+        }
+    });
+    Some(InstalledAgentIdentity {
+        protocol_version,
+        payload,
+    })
 }
 
 async fn run_agent_request(
@@ -586,8 +700,7 @@ async fn agent_payload_identity() -> anyhow::Result<AgentPayloadIdentity> {
     Ok(AgentPayloadIdentity {
         manifest,
         install_path,
-        version: AGENT_PAYLOAD_VERSION,
-        generation: expected_agent_payload_generation(),
+        agent_version: AGENT_VERSION,
     })
 }
 
@@ -631,10 +744,18 @@ fn agent_payload_install_path(manifest: &str) -> anyhow::Result<String> {
     ))
 }
 
-fn expected_agent_payload_generation() -> u64 {
-    option_env!("NEKO_WEBSHELL_AGENT_BUILD_GENERATION")
-        .and_then(|value| value.parse().ok())
-        .unwrap_or_default()
+fn agent_payload_manifest_from_install_path(path: &str) -> Option<String> {
+    let path = std::path::Path::new(path);
+    if path.file_name()?.to_str()? != "lazycat-neko-webshell-agent" {
+        return None;
+    }
+    let payload_dir = path.parent()?;
+    if payload_dir.parent()? != std::path::Path::new(AGENT_PAYLOAD_ROOT) {
+        return None;
+    }
+    let digest = payload_dir.file_name()?.to_str()?.strip_prefix("sha256-")?;
+    let manifest = format!("sha256:{digest}");
+    agent_payload_install_path(&manifest).ok().map(|_| manifest)
 }
 
 async fn activate_agent_payload(selector: &str, agent_path: &str) -> anyhow::Result<()> {
@@ -954,84 +1075,56 @@ fn response_ok(response: AgentResponse) -> anyhow::Result<()> {
 }
 
 fn agent_protocol_version_is_current(version: Option<&str>) -> bool {
-    version.is_some_and(|version| version.trim() == AGENT_PROTOCOL_VERSION)
+    agent_protocol_compatibility(version) == AgentProtocolCompatibility::Current
 }
 
-fn running_agent_is_acceptable(response: &AgentResponse, expected: &AgentPayloadIdentity) -> bool {
+fn running_agent_is_acceptable(response: &AgentResponse) -> bool {
     if !agent_protocol_version_is_current(response.version.as_deref()) {
         return false;
     }
-    let Some(running_manifest) = response
+    let Some(_running_manifest) = response
         .payload_manifest
         .as_deref()
         .filter(|manifest| agent_payload_install_path(manifest).is_ok())
     else {
         return false;
     };
-    let Some(running_version) = response.payload_version.as_deref() else {
-        return false;
-    };
-    let Some(running_generation) = response.payload_generation else {
-        return false;
-    };
-    match compare_payload_revisions(
-        running_version,
-        running_generation,
-        expected.version,
-        expected.generation,
-    ) {
-        Some(Ordering::Greater) => true,
-        Some(Ordering::Equal) => running_manifest >= expected.manifest.as_str(),
-        Some(Ordering::Less) | None => false,
+    running_agent_version(response).is_some_and(|version| version >= MIN_SUPPORTED_AGENT_VERSION)
+}
+
+fn running_agent_version(response: &AgentResponse) -> Option<u64> {
+    if let Some(version) = response.agent_version.filter(|version| *version > 0) {
+        return Some(version);
     }
-}
-
-fn compare_payload_revisions(
-    running_version: &str,
-    running_generation: u64,
-    expected_version: &str,
-    expected_generation: u64,
-) -> Option<Ordering> {
-    Some(
-        parse_stable_semver(running_version)?
-            .cmp(&parse_stable_semver(expected_version)?)
-            .then_with(|| running_generation.cmp(&expected_generation)),
-    )
-}
-
-fn parse_stable_semver(version: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = version.trim().split('.');
-    let parsed = (
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-        parts.next()?.parse().ok()?,
-    );
-    parts.next().is_none().then_some(parsed)
+    (response.payload_version.as_deref() == Some(LEGACY_V0_5_35_PAYLOAD_VERSION)
+        && response.payload_generation.is_some())
+    .then_some(LEGACY_V0_5_35_AGENT_VERSION)
 }
 
 fn reject_unsupported_newer_agent(response: &AgentResponse) -> anyhow::Result<()> {
-    if agent_protocol_version_is_current(response.version.as_deref())
-        || agent_protocol_version_is_stale(response.version.as_deref())
-    {
+    reject_unsupported_newer_agent_protocol(response.version.as_deref().unwrap_or_default())
+}
+
+fn reject_unsupported_newer_agent_protocol(version: &str) -> anyhow::Result<()> {
+    if agent_protocol_compatibility(Some(version)) != AgentProtocolCompatibility::Newer {
         return Ok(());
     }
     bail!(
-        "unsupported newer webshell agent protocol: running {}, provider expects {}",
-        response.version.as_deref().unwrap_or_default(),
-        AGENT_PROTOCOL_VERSION
+        "unsupported newer webshell agent protocol: running {version}, provider expects {AGENT_PROTOCOL_VERSION}"
     )
 }
 
-fn agent_protocol_version_is_stale(version: Option<&str>) -> bool {
+fn agent_protocol_compatibility(version: Option<&str>) -> AgentProtocolCompatibility {
     let Some(version) = version else {
-        return true;
+        return AgentProtocolCompatibility::Stale;
     };
     match (
         agent_protocol_generation(version),
         agent_protocol_generation(AGENT_PROTOCOL_VERSION),
     ) {
-        (Some(running), Some(current)) => running < current,
-        _ => true,
+        (Some(running), Some(current)) if running == current => AgentProtocolCompatibility::Current,
+        (Some(running), Some(current)) if running > current => AgentProtocolCompatibility::Newer,
+        _ => AgentProtocolCompatibility::Stale,
     }
 }
 
@@ -1225,6 +1318,50 @@ mod tests {
     }
 
     #[test]
+    fn installed_agent_identity_reuses_the_stable_symlink_target() {
+        let digest = "29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
+        let path = format!("{AGENT_PAYLOAD_ROOT}/sha256-{digest}/lazycat-neko-webshell-agent");
+        let output = format!("{AGENT_READY_MARKER}\t{AGENT_PROTOCOL_VERSION}\t1\t{path}\n");
+
+        let identity = parse_installed_agent_identity(&output).expect("installed agent identity");
+        let payload = identity.payload.expect("installed agent payload");
+
+        assert_eq!(identity.protocol_version, AGENT_PROTOCOL_VERSION);
+        assert_eq!(payload.manifest, format!("sha256:{digest}"));
+        assert_eq!(payload.install_path, path);
+        assert_eq!(payload.agent_version, 1);
+    }
+
+    #[test]
+    fn installed_v0_5_35_symlink_maps_to_the_first_agent_version() {
+        let digest = "29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
+        let path = format!("{AGENT_PAYLOAD_ROOT}/sha256-{digest}/lazycat-neko-webshell-agent");
+        let output = format!("{AGENT_READY_MARKER}\t{AGENT_PROTOCOL_VERSION}\t\t{path}\n");
+
+        let identity =
+            parse_installed_agent_identity(&output).expect("legacy installed agent identity");
+        let payload = identity.payload.expect("legacy installed agent payload");
+
+        assert_eq!(identity.protocol_version, AGENT_PROTOCOL_VERSION);
+        assert_eq!(payload.agent_version, LEGACY_V0_5_35_AGENT_VERSION);
+    }
+
+    #[test]
+    fn installed_newer_protocol_remains_visible_when_payload_identity_changes() {
+        let protocol = "lazycat-neko-webshell-agent-v999";
+        let output = format!("{AGENT_READY_MARKER}\t{protocol}\tfuture\t/opt/future-agent\n");
+
+        let identity = parse_installed_agent_identity(&output).expect("newer installed agent");
+
+        assert_eq!(identity.protocol_version, protocol);
+        assert!(identity.payload.is_none());
+        assert_eq!(
+            agent_protocol_compatibility(Some(&identity.protocol_version)),
+            AgentProtocolCompatibility::Newer
+        );
+    }
+
+    #[test]
     fn payload_install_path_accepts_only_a_sha256_manifest() {
         let digest = "29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
         assert_eq!(
@@ -1298,34 +1435,33 @@ mod tests {
 
     #[test]
     fn classifies_agent_protocol_versions() {
-        assert!(agent_protocol_version_is_current(Some(
-            AGENT_PROTOCOL_VERSION
-        )));
-        assert!(agent_protocol_version_is_stale(None));
-        assert!(agent_protocol_version_is_stale(Some(
-            "lazycat-neko-webshell-agent-v1"
-        )));
-        assert!(!agent_protocol_version_is_stale(Some(
-            "lazycat-neko-webshell-agent-v999"
-        )));
+        assert_eq!(
+            agent_protocol_compatibility(Some(AGENT_PROTOCOL_VERSION)),
+            AgentProtocolCompatibility::Current
+        );
+        assert_eq!(
+            agent_protocol_compatibility(None),
+            AgentProtocolCompatibility::Stale
+        );
+        assert_eq!(
+            agent_protocol_compatibility(Some("lazycat-neko-webshell-agent-v1")),
+            AgentProtocolCompatibility::Stale
+        );
+        assert_eq!(
+            agent_protocol_compatibility(Some("lazycat-neko-webshell-agent-v999")),
+            AgentProtocolCompatibility::Newer
+        );
     }
 
     #[test]
-    fn current_protocol_does_not_reuse_a_stale_or_unidentified_payload() {
-        let expected_manifest =
+    fn protocol_match_then_minimum_agent_version_controls_reuse() {
+        let current_manifest =
             "sha256:29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
-        let expected = AgentPayloadIdentity {
-            manifest: expected_manifest.to_owned(),
-            install_path: agent_payload_install_path(expected_manifest).unwrap(),
-            version: "0.5.35",
-            generation: 123,
-        };
         let current = AgentResponse {
             ok: Some(true),
             version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
-            payload_manifest: Some(expected_manifest.to_owned()),
-            payload_version: Some("0.5.35".to_owned()),
-            payload_generation: Some(123),
+            payload_manifest: Some(current_manifest.to_owned()),
+            agent_version: Some(MIN_SUPPORTED_AGENT_VERSION),
             ..Default::default()
         };
         let stale = AgentResponse {
@@ -1335,8 +1471,7 @@ mod tests {
                 "sha256:19ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a"
                     .to_owned(),
             ),
-            payload_version: Some("0.5.35".to_owned()),
-            payload_generation: Some(123),
+            agent_version: Some(MIN_SUPPORTED_AGENT_VERSION.saturating_sub(1)),
             ..Default::default()
         };
         let unidentified = AgentResponse {
@@ -1345,21 +1480,13 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(running_agent_is_acceptable(&current, &expected));
-        assert!(!running_agent_is_acceptable(&stale, &expected));
-        assert!(!running_agent_is_acceptable(&unidentified, &expected));
+        assert!(running_agent_is_acceptable(&current));
+        assert!(!running_agent_is_acceptable(&stale));
+        assert!(!running_agent_is_acceptable(&unidentified));
     }
 
     #[test]
     fn older_provider_reuses_a_newer_compatible_agent_payload() {
-        let expected_manifest =
-            "sha256:29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
-        let expected = AgentPayloadIdentity {
-            manifest: expected_manifest.to_owned(),
-            install_path: agent_payload_install_path(expected_manifest).unwrap(),
-            version: "0.5.35",
-            generation: 123,
-        };
         let newer = AgentResponse {
             ok: Some(true),
             version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
@@ -1367,11 +1494,56 @@ mod tests {
                 "sha256:39ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a"
                     .to_owned(),
             ),
-            payload_version: Some("0.5.36".to_owned()),
-            payload_generation: Some(124),
+            agent_version: Some(MIN_SUPPORTED_AGENT_VERSION + 1),
             ..Default::default()
         };
 
-        assert!(running_agent_is_acceptable(&newer, &expected));
+        assert!(running_agent_is_acceptable(&newer));
+    }
+
+    #[test]
+    fn application_release_reuses_the_legacy_supported_agent_version() {
+        let installed = AgentResponse {
+            ok: Some(true),
+            version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
+            payload_manifest: Some(
+                "sha256:39ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a"
+                    .to_owned(),
+            ),
+            payload_version: Some("0.5.35".to_owned()),
+            payload_generation: Some(123),
+            ..Default::default()
+        };
+
+        assert_eq!(running_agent_version(&installed), Some(1));
+        assert!(running_agent_is_acceptable(&installed));
+    }
+
+    #[test]
+    fn v0_5_34_agent_without_payload_identity_upgrades_once() {
+        let installed = AgentResponse {
+            ok: Some(true),
+            version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
+            ..Default::default()
+        };
+
+        assert_eq!(running_agent_version(&installed), None);
+        assert!(!running_agent_is_acceptable(&installed));
+    }
+
+    #[test]
+    fn protocol_mismatch_wins_over_a_high_agent_version() {
+        let stale_protocol = AgentResponse {
+            ok: Some(true),
+            version: Some("lazycat-neko-webshell-agent-v1".to_owned()),
+            payload_manifest: Some(
+                "sha256:39ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a"
+                    .to_owned(),
+            ),
+            agent_version: Some(u64::MAX),
+            ..Default::default()
+        };
+
+        assert!(!running_agent_is_acceptable(&stale_protocol));
     }
 }

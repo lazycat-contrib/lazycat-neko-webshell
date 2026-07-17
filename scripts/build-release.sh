@@ -35,20 +35,6 @@ fi
 export PROTOC="${protoc_bin}"
 "${PROTOC}" --version
 
-if [[ -z "${NEKO_WEBSHELL_AGENT_BUILD_GENERATION:-}" ]]; then
-  NEKO_WEBSHELL_AGENT_BUILD_GENERATION="${SOURCE_DATE_EPOCH:-}"
-  if [[ -z "${NEKO_WEBSHELL_AGENT_BUILD_GENERATION}" ]] &&
-    git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    NEKO_WEBSHELL_AGENT_BUILD_GENERATION="$(git log -1 --format=%ct)"
-  fi
-  NEKO_WEBSHELL_AGENT_BUILD_GENERATION="${NEKO_WEBSHELL_AGENT_BUILD_GENERATION:-0}"
-fi
-if [[ ! "${NEKO_WEBSHELL_AGENT_BUILD_GENERATION}" =~ ^[0-9]+$ ]]; then
-  echo "invalid agent build generation: ${NEKO_WEBSHELL_AGENT_BUILD_GENERATION}" >&2
-  exit 1
-fi
-export NEKO_WEBSHELL_AGENT_BUILD_GENERATION
-
 missing_packages=()
 command -v musl-gcc >/dev/null || missing_packages+=(musl-tools)
 if ((${#missing_packages[@]} > 0)); then
@@ -84,6 +70,17 @@ if [[ "${actual_agent_protocol}" != "${expected_agent_protocol}" ]]; then
   echo "invalid lightweight agent protocol: expected=${expected_agent_protocol} actual=${actual_agent_protocol}" >&2
   exit 1
 fi
+actual_agent_version="$("${agent_binary}" agent-version)"
+minimum_agent_version="$("${agent_binary}" minimum-supported-version)"
+if [[ ! "${actual_agent_version}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "invalid lightweight agent version: ${actual_agent_version}" >&2
+  exit 1
+fi
+if [[ ! "${minimum_agent_version}" =~ ^[1-9][0-9]*$ ]] ||
+  ((actual_agent_version < minimum_agent_version)); then
+  echo "invalid lightweight agent compatibility window: agent=${actual_agent_version} minimum=${minimum_agent_version}" >&2
+  exit 1
+fi
 CC_x86_64_unknown_linux_musl=musl-gcc \
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="${rust_lld}" \
   RUSTFLAGS="-C target-feature=+crt-static" \
@@ -94,6 +91,15 @@ CC_x86_64_unknown_linux_musl=musl-gcc \
 agent_bytes="$(stat -c '%s' "${agent_binary}")"
 provider_binary="target/x86_64-unknown-linux-musl/release/lazycat-neko-webshell"
 provider_bytes="$(stat -c '%s' "${provider_binary}")"
+provider_agent_protocol="$("${provider_binary}" agent version)"
+provider_agent_version="$("${provider_binary}" agent agent-version)"
+provider_minimum_agent_version="$("${provider_binary}" agent minimum-supported-version)"
+if [[ "${provider_agent_protocol}" != "${actual_agent_protocol}" ]] ||
+  [[ "${provider_agent_version}" != "${actual_agent_version}" ]] ||
+  [[ "${provider_minimum_agent_version}" != "${minimum_agent_version}" ]]; then
+  echo "provider and embedded agent compatibility metadata differ" >&2
+  exit 1
+fi
 max_agent_bytes=$((16 * 1024 * 1024))
 if ((agent_bytes <= 0 || agent_bytes > max_agent_bytes || agent_bytes * 3 >= provider_bytes)); then
   echo "invalid lightweight agent size: agent=${agent_bytes} provider=${provider_bytes}" >&2

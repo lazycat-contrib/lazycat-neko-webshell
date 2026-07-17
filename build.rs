@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest as _, Sha256};
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=NEKO_WEBSHELL_AGENT_BUILD_GENERATION");
     connectrpc_build::Config::new()
         .files(&["proto/lazycat/webshell/v1/capability.proto"])
         .includes(&["proto/"])

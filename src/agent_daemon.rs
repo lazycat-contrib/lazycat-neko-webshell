@@ -13,10 +13,11 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use buffa::Message;
 
 use crate::agent_protocol::{
-    AGENT_PROTOCOL_VERSION, MAX_AGENT_MESSAGE_BYTES, attach_request, binary_frame_with_sequence,
-    error_response, ok_response, process_exit_frame, read_agent_frame, read_agent_request,
-    read_agent_response, replay_complete_frame, replay_start_frame, state_response,
-    write_agent_frame, write_agent_request, write_agent_response,
+    AGENT_PROTOCOL_VERSION, AGENT_VERSION, MAX_AGENT_MESSAGE_BYTES, MIN_SUPPORTED_AGENT_VERSION,
+    attach_request, binary_frame_with_sequence, error_response, ok_response, process_exit_frame,
+    read_agent_frame, read_agent_request, read_agent_response, replay_complete_frame,
+    replay_start_frame, state_response, write_agent_frame, write_agent_request,
+    write_agent_response,
 };
 use crate::agent_workspace::{AgentPane, AgentPaneEvent, AgentWorkspace};
 use crate::config::{DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, MAX_COLS, MAX_ROWS};
@@ -25,13 +26,10 @@ use crate::proto::lazycat::webshell::v1::{
 };
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
-const AGENT_PAYLOAD_VERSION: &str = env!("CARGO_PKG_VERSION");
-
-fn agent_payload_generation() -> u64 {
-    option_env!("NEKO_WEBSHELL_AGENT_BUILD_GENERATION")
-        .and_then(|value| value.parse().ok())
-        .unwrap_or_default()
-}
+// v0.5.35 compares these legacy fields before payload SHA. Keep version-aware
+// agents directionally newer so an older provider cannot replace them.
+const LEGACY_PROVIDER_COMPAT_VERSION: &str = "9999.0.0";
+const LEGACY_PROVIDER_COMPAT_GENERATION: u64 = u64::MAX;
 
 fn running_agent_payload_manifest() -> Option<String> {
     std::env::current_exe()
@@ -60,6 +58,14 @@ pub fn run_agent_command(args: &[String]) -> anyhow::Result<()> {
     match command {
         "version" => {
             println!("{AGENT_PROTOCOL_VERSION}");
+            Ok(())
+        }
+        "agent-version" => {
+            println!("{AGENT_VERSION}");
+            Ok(())
+        }
+        "minimum-supported-version" => {
+            println!("{MIN_SUPPORTED_AGENT_VERSION}");
             Ok(())
         }
         "daemon" => run_daemon_command(&args[1..]),
@@ -152,8 +158,7 @@ fn run_agent_daemon(socket: &str, selector: &str, username: &str) -> anyhow::Res
         selector: selector.trim().to_owned(),
         username: username.trim().to_owned(),
         payload_manifest: running_agent_payload_manifest(),
-        payload_version: AGENT_PAYLOAD_VERSION.to_owned(),
-        payload_generation: agent_payload_generation(),
+        agent_version: AGENT_VERSION,
         workspace: Mutex::new(None),
     });
     for connection in listener.incoming() {
@@ -174,8 +179,7 @@ struct AgentDaemon {
     selector: String,
     username: String,
     payload_manifest: Option<String>,
-    payload_version: String,
-    payload_generation: u64,
+    agent_version: u64,
     workspace: Mutex<Option<Arc<AgentWorkspace>>>,
 }
 
@@ -224,8 +228,9 @@ impl AgentDaemon {
             .map_err(|err| err.to_string())?;
         let mut response = ok_response();
         response.payload_manifest.clone_from(&self.payload_manifest);
-        response.payload_version = Some(self.payload_version.clone());
-        response.payload_generation = Some(self.payload_generation);
+        response.payload_version = Some(LEGACY_PROVIDER_COMPAT_VERSION.to_owned());
+        response.payload_generation = Some(LEGACY_PROVIDER_COMPAT_GENERATION);
+        response.agent_version = Some(self.agent_version);
         Ok(response)
     }
 
@@ -633,8 +638,7 @@ mod tests {
             selector: "demo@owner".to_owned(),
             username: "alice".to_owned(),
             payload_manifest: Some("sha256:running".to_owned()),
-            payload_version: "0.5.35".to_owned(),
-            payload_generation: 123,
+            agent_version: 1,
             workspace: Mutex::new(None),
         };
         let request = crate::agent_protocol::ping_request("demo@owner", "alice");
@@ -642,8 +646,21 @@ mod tests {
         let response = daemon.ping(&request).expect("agent ping");
 
         assert_eq!(response.payload_manifest.as_deref(), Some("sha256:running"));
-        assert_eq!(response.payload_version.as_deref(), Some("0.5.35"));
-        assert_eq!(response.payload_generation, Some(123));
+        assert_eq!(response.agent_version, Some(1));
+        assert_eq!(
+            response.payload_version.as_deref(),
+            Some(LEGACY_PROVIDER_COMPAT_VERSION)
+        );
+        assert_eq!(
+            response.payload_generation,
+            Some(LEGACY_PROVIDER_COMPAT_GENERATION)
+        );
+    }
+
+    #[test]
+    fn agent_compatibility_window_is_valid() {
+        assert_eq!(AGENT_VERSION, 2);
+        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 1);
     }
 
     #[test]

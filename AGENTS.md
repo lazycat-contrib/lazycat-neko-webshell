@@ -27,3 +27,25 @@ When adding new behavior:
 5. For plugin work, create or update `src/frontend/src/plugins/<pluginName>/...` first, then wire it from `main.ts`.
 
 If a change must touch `main.ts`, keep the edit to orchestration and move reusable logic out in the same change.
+
+## Keep Agent Upgrades Independent
+
+The target-local lightweight agent has its own compatibility lifecycle. Do not
+tie agent replacement to the application version, release tag, provider commit,
+or embedded binary SHA alone. Compatibility checks are ordered: protocol first,
+then the provider's minimum supported agent version.
+
+- Bump `AGENT_VERSION` when target-local agent code, its behavior, or an agent
+  runtime dependency changes. Existing compatible targets may keep the older
+  version.
+- Bump `MIN_SUPPORTED_AGENT_VERSION` only when the provider cannot safely use an
+  older agent, including required behavior, security, or stability fixes.
+- A stale protocol must be upgraded even when its agent version is numerically
+  higher. A newer protocol must never be downgraded by an older provider.
+- Do not bump either agent version for frontend-only, provider-only, packaging,
+  release, documentation, or application-version changes.
+- The SHA-256 manifest identifies the exact running payload and its
+  content-addressed install path; it is not by itself a reason to restart a
+  protocol-compatible agent that meets the minimum supported version.
+- Keep `/usr/local/bin/lazycat-neko-webshell-agent` as the stable launch symlink
+  to the active content-addressed lightweight agent payload.

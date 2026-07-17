@@ -54,9 +54,9 @@ The release build embeds the lightweight agent bytes into `lazycat-neko-webshell
 
 ### Agent installation
 
-`agent_client` reads the compile-time embedded agent payload. Hash comparison and atomic target installation operate on those bytes and never on `std::env::current_exe()`.
+`agent_client` reads the compile-time embedded agent payload. SHA-256 identifies the exact bytes and their content-addressed target path; it does not force replacement by itself. `/usr/local/bin/lazycat-neko-webshell-agent` remains a stable symlink to the active lightweight payload.
 
-The wire protocol remains at `v4` because the extraction does not change any protobuf message or command behavior. A compatible running full-provider `v4` agent remains reusable so active terminal sessions are not destroyed during upgrade. New installs use the lightweight payload, and an old full-provider agent is naturally replaced after it stops or its installed manifest no longer matches.
+The wire protocol remains at `v4` because the extraction does not change any protobuf message or command behavior. Agent reuse checks the protocol first and the agent implementation version second. `AGENT_VERSION` advances when target-local agent code or dependencies change, while `MIN_SUPPORTED_AGENT_VERSION` advances only when the provider must replace older agents. An older protocol is upgraded regardless of its numeric agent version; a newer protocol is never downgraded by an older provider. Application versions, provider commits, frontend work, and packaging changes do not change either value by default, so a compatible running agent remains reusable even when the provider embeds a different SHA. The published `v0.5.35` content-addressed agent maps to agent version `1`; the `v0.5.36` embedded agent reports version `2` while keeping the minimum supported version at `1`. A `v0.5.34` agent has neither payload identity nor an agent version and therefore receives one migration to the content-addressed v2 agent.
 
 The transfer helper applies one timeout to the complete spawn/write/wait operation so a blocked stdin write cannot hang workspace loading indefinitely.
 
@@ -88,6 +88,7 @@ Native create/update actions continue to report agent errors; they must not sile
 - Unit test that agent installation uses the embedded payload and cannot resolve to the provider executable.
 - Unit test that agent failure workspace degradation preserves optional backend tabs.
 - Agent CLI smoke test: the internal agent build prints the expected protocol version before it is embedded.
+- Agent compatibility smoke test: the internal agent build reports a positive agent version and a positive minimum supported version no greater than the embedded agent version.
 - Release build gate: the internal agent binary exists before provider compilation, is embedded into the provider, stays below an explicit size ceiling, and is materially smaller than the provider.
 - Existing frontend tests, typecheck/build, Rust tests, Clippy, LPK lint, and `git diff --check` pass.
 - Inspect the built LPK and verify it contains the single provider executable with the embedded agent metadata/version smoke check succeeding.

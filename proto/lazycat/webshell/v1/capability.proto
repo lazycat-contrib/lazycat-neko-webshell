@@ -210,8 +210,15 @@ message AgentResponse {
   string error = 3;
   AgentWorkspaceState state = 4;
   string payload_manifest = 5;
+  // Legacy v0.5.35 application identity fields. Version-aware agents keep
+  // compatibility sentinel values here so an old provider cannot downgrade
+  // them; new providers use agent_version instead.
   string payload_version = 6;
   uint64 payload_generation = 7;
+  // Monotonic agent-only implementation version. The provider first requires
+  // an exact protocol match, then compares this with its minimum supported
+  // agent version. Application releases do not change this value by default.
+  uint64 agent_version = 8;
 }
 
 message AgentWorkspaceState {
