@@ -3,7 +3,10 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest as _, Sha256};
+
 fn main() {
+    println!("cargo:rerun-if-env-changed=NEKO_WEBSHELL_AGENT_BUILD_GENERATION");
     connectrpc_build::Config::new()
         .files(&["proto/lazycat/webshell/v1/capability.proto"])
         .includes(&["proto/"])
@@ -35,9 +38,14 @@ fn embed_webshell_agent() -> std::io::Result<()> {
             ));
         }
         println!("cargo:rerun-if-changed={}", path.display());
+        let payload = fs::read(&path)?;
+        let manifest = sha256_manifest(&payload);
+        let embedded_path = out_dir.join("embedded_agent_payload");
+        fs::write(&embedded_path, &payload)?;
         format!(
-            "pub static EMBEDDED_AGENT_BINARY: &[u8] = include_bytes!({:?});\n",
-            path.display().to_string()
+            "pub static EMBEDDED_AGENT_BINARY: &[u8] = include_bytes!({:?});\n\
+             pub const EMBEDDED_AGENT_SHA256: &str = {manifest:?};\n",
+            embedded_path.display().to_string(),
         )
     } else if env::var("PROFILE").as_deref() == Ok("release")
         && env::var(AGENT_ONLY_ENV_NAME).as_deref() != Ok("1")
@@ -47,9 +55,21 @@ fn embed_webshell_agent() -> std::io::Result<()> {
             "release provider builds require NEKO_WEBSHELL_AGENT_BINARY; use scripts/build-release.sh",
         ));
     } else {
-        "pub static EMBEDDED_AGENT_BINARY: &[u8] = &[];\n".to_owned()
+        "pub static EMBEDDED_AGENT_BINARY: &[u8] = &[];\n\
+         pub const EMBEDDED_AGENT_SHA256: &str = \"\";\n"
+            .to_owned()
     };
     fs::write(out_dir.join("embedded_agent.rs"), generated)
+}
+
+fn sha256_manifest(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut manifest = String::with_capacity("sha256:".len() + digest.len() * 2);
+    manifest.push_str("sha256:");
+    for byte in digest {
+        write!(&mut manifest, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    manifest
 }
 
 fn embed_frontend_assets() -> std::io::Result<()> {

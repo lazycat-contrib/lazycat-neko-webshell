@@ -35,6 +35,20 @@ fi
 export PROTOC="${protoc_bin}"
 "${PROTOC}" --version
 
+if [[ -z "${NEKO_WEBSHELL_AGENT_BUILD_GENERATION:-}" ]]; then
+  NEKO_WEBSHELL_AGENT_BUILD_GENERATION="${SOURCE_DATE_EPOCH:-}"
+  if [[ -z "${NEKO_WEBSHELL_AGENT_BUILD_GENERATION}" ]] &&
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    NEKO_WEBSHELL_AGENT_BUILD_GENERATION="$(git log -1 --format=%ct)"
+  fi
+  NEKO_WEBSHELL_AGENT_BUILD_GENERATION="${NEKO_WEBSHELL_AGENT_BUILD_GENERATION:-0}"
+fi
+if [[ ! "${NEKO_WEBSHELL_AGENT_BUILD_GENERATION}" =~ ^[0-9]+$ ]]; then
+  echo "invalid agent build generation: ${NEKO_WEBSHELL_AGENT_BUILD_GENERATION}" >&2
+  exit 1
+fi
+export NEKO_WEBSHELL_AGENT_BUILD_GENERATION
+
 missing_packages=()
 command -v musl-gcc >/dev/null || missing_packages+=(musl-tools)
 if ((${#missing_packages[@]} > 0)); then

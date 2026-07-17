@@ -1,6 +1,9 @@
+use std::cmp::Ordering;
+use std::collections::HashMap;
 #[cfg(debug_assertions)]
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
@@ -8,8 +11,9 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use buffa::Message;
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{sleep, timeout};
 use tracing::warn;
 
@@ -24,9 +28,14 @@ use crate::proto::lazycat::webshell::v1::{
 use crate::validation::{normalize_output_frame_limit, validate_selector};
 
 const AGENT_INSTALL_PATH: &str = "/usr/local/bin/lazycat-neko-webshell-agent";
-const AGENT_MANIFEST_PATH: &str = "/usr/local/lib/lazycat-neko-webshell/agent.sha256";
+const AGENT_PAYLOAD_ROOT: &str = "/usr/local/lib/lazycat-neko-webshell/agents";
+const AGENT_PAYLOAD_VERSION: &str = env!("CARGO_PKG_VERSION");
 const AGENT_READY_MARKER: &str = "lazycat-neko-webshell-agent-ready";
+const AGENT_LOCK_READY_MARKER: &str = "lazycat-neko-webshell-agent-lock-ready";
 const AGENT_LOG_TAIL_LINES: usize = 80;
+
+static AGENT_ENSURE_LOCKS: OnceLock<StdMutex<HashMap<String, Weak<AsyncMutex<()>>>>> =
+    OnceLock::new();
 
 #[cfg(not(debug_assertions))]
 include!(concat!(env!("OUT_DIR"), "/embedded_agent.rs"));
@@ -36,6 +45,126 @@ pub struct AgentClient {
     selector: String,
     username: String,
     socket_path: String,
+}
+
+#[derive(Debug)]
+struct AgentPayloadIdentity {
+    manifest: String,
+    install_path: String,
+    version: &'static str,
+    generation: u64,
+}
+
+struct RemoteAgentLock {
+    child: Child,
+    stdin: Option<ChildStdin>,
+}
+
+impl RemoteAgentLock {
+    async fn acquire(selector: &str) -> anyhow::Result<Self> {
+        let script = remote_agent_lock_script(selector);
+        let mut command = Command::new(LIGHTOSCTL);
+        command.args(["exec", "-i", selector, "/bin/sh", "-lc", &script]);
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = command
+            .spawn()
+            .map_err(|err| anyhow!("failed to acquire target agent lock: {err}"))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("failed to open target agent lock stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("failed to open target agent lock stdout"))?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        let marker = timeout(Duration::from_secs(65), reader.read_line(&mut line)).await;
+        if !matches!(marker, Ok(Ok(_))) || line.trim() != AGENT_LOCK_READY_MARKER {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            bail!("timed out acquiring the target webshell agent upgrade lock");
+        }
+        Ok(Self {
+            child,
+            stdin: Some(stdin),
+        })
+    }
+
+    async fn release(mut self) -> anyhow::Result<()> {
+        if let Some(mut stdin) = self.stdin.take() {
+            stdin
+                .write_all(b"release\n")
+                .await
+                .context("failed to release target agent lock")?;
+            stdin
+                .shutdown()
+                .await
+                .context("failed to close target agent lock")?;
+        }
+        if let Ok(status) = timeout(Duration::from_secs(5), self.child.wait()).await {
+            let status = status.context("failed to wait for target agent lock")?;
+            if !status.success() {
+                bail!("target agent lock exited with {status}");
+            }
+        } else {
+            self.child
+                .kill()
+                .await
+                .context("failed to stop target agent lock")?;
+            let _ = self.child.wait().await;
+        }
+        Ok(())
+    }
+}
+
+fn selector_ensure_lock(selector: &str) -> Arc<AsyncMutex<()>> {
+    let locks = AGENT_ENSURE_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut locks = locks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(selector).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(AsyncMutex::new(()));
+    locks.insert(selector.to_owned(), Arc::downgrade(&lock));
+    lock
+}
+
+fn remote_agent_lock_script(selector: &str) -> String {
+    format!(
+        r#"set -eu
+lock_file={}
+lock_dir="${{lock_file}}.d"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$lock_file"
+  flock 9
+else
+  attempts=0
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    owner="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      rm -rf "$lock_dir"
+      continue
+    fi
+    attempts=$((attempts + 1))
+    [ "$attempts" -lt 300 ] || exit 1
+    sleep 0.2
+  done
+  printf '%s' "$$" > "$lock_dir/pid"
+  trap 'rm -rf "$lock_dir"' EXIT HUP INT TERM
+fi
+printf '%s\n' {}
+IFS= read -r _release || true
+"#,
+        shell_quote(&scoped_upgrade_lock_path(selector)),
+        shell_quote(AGENT_LOCK_READY_MARKER),
+    )
 }
 
 impl AgentClient {
@@ -138,82 +267,114 @@ pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<Agen
                 .unwrap_or_else(|| "invalid LightOS selector".to_owned())
         )
     })?;
+    let ensure_lock = selector_ensure_lock(selector);
+    let _ensure_guard = ensure_lock.lock().await;
     let username = username.trim().to_owned();
     let client = AgentClient {
         selector: selector.to_owned(),
         username,
         socket_path: scoped_socket_path(selector),
     };
+    let expected = agent_payload_identity().await?;
 
-    match ping_agent(&client).await {
-        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+    if let Ok(response) = ping_agent(&client).await {
+        if running_agent_is_acceptable(&response, &expected) {
             return Ok(client);
+        }
+        reject_unsupported_newer_agent(&response)?;
+    }
+
+    let remote_lock = RemoteAgentLock::acquire(selector).await?;
+    let result = ensure_agent_locked(&client, &expected).await;
+    if let Err(err) = remote_lock.release().await {
+        warn!(selector = %selector, error = %err, "failed to release webshell agent upgrade lock");
+    }
+    result
+}
+
+async fn ensure_agent_locked(
+    client: &AgentClient,
+    expected: &AgentPayloadIdentity,
+) -> anyhow::Result<AgentClient> {
+    match ping_agent(client).await {
+        Ok(response) if running_agent_is_acceptable(&response, expected) => {
+            return Ok(client.clone());
+        }
+        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+            warn!(
+                selector = %client.selector,
+                running_manifest = response.payload_manifest.as_deref().unwrap_or(""),
+                running_payload_version = response.payload_version.as_deref().unwrap_or(""),
+                running_payload_generation = response.payload_generation.unwrap_or_default(),
+                expected_manifest = %expected.manifest,
+                expected_payload_version = expected.version,
+                expected_payload_generation = expected.generation,
+                "webshell agent payload is stale; restarting agent"
+            );
+            ensure_agent_binary_installed(&client.selector, expected).await?;
+            restart_agent(client, expected).await?;
+            wait_for_agent(client, expected).await?;
+            prune_stale_agent_payloads(&client.selector, expected).await;
+            return Ok(client.clone());
         }
         Ok(response) if agent_protocol_version_is_stale(response.version.as_deref()) => {
             warn!(
-                selector = %selector,
+                selector = %client.selector,
                 running_protocol = response.version.as_deref().unwrap_or(""),
                 expected_protocol = AGENT_PROTOCOL_VERSION,
                 "webshell agent protocol is stale; restarting agent"
             );
-            ensure_agent_binary_installed(selector).await?;
-            restart_agent(&client).await?;
-            wait_for_agent(&client).await?;
-            return Ok(client);
+            ensure_agent_binary_installed(&client.selector, expected).await?;
+            restart_agent(client, expected).await?;
+            wait_for_agent(client, expected).await?;
+            prune_stale_agent_payloads(&client.selector, expected).await;
+            return Ok(client.clone());
         }
         Ok(response) => {
-            bail!(
-                "unsupported newer webshell agent protocol: running {}, provider expects {}",
-                response.version.unwrap_or_default(),
-                AGENT_PROTOCOL_VERSION
-            );
+            reject_unsupported_newer_agent(&response)?;
         }
         Err(_) => {}
     }
-    if try_recover_installed_agent(&client).await? {
-        return Ok(client);
+    if try_recover_installed_agent(client, expected).await? {
+        return Ok(client.clone());
     }
-    ensure_agent_binary_installed(selector).await?;
-    match ping_agent(&client).await {
-        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
-            return Ok(client);
+    ensure_agent_binary_installed(&client.selector, expected).await?;
+    match ping_agent(client).await {
+        Ok(response) if running_agent_is_acceptable(&response, expected) => {
+            return Ok(client.clone());
         }
-        Ok(response) if agent_protocol_version_is_stale(response.version.as_deref()) => {
-            restart_agent(&client).await?;
-            wait_for_agent(&client).await?;
-            return Ok(client);
+        Ok(response)
+            if agent_protocol_version_is_current(response.version.as_deref())
+                || agent_protocol_version_is_stale(response.version.as_deref()) =>
+        {
+            restart_agent(client, expected).await?;
+            wait_for_agent(client, expected).await?;
+            prune_stale_agent_payloads(&client.selector, expected).await;
+            return Ok(client.clone());
         }
         Ok(response) => {
-            bail!(
-                "unsupported newer webshell agent protocol: running {}, provider expects {}",
-                response.version.unwrap_or_default(),
-                AGENT_PROTOCOL_VERSION
-            );
+            reject_unsupported_newer_agent(&response)?;
         }
         Err(_) => {}
     }
-    start_agent(&client).await?;
-    wait_for_agent(&client).await?;
-    Ok(client)
+    start_agent(client, expected).await?;
+    wait_for_agent(client, expected).await?;
+    prune_stale_agent_payloads(&client.selector, expected).await;
+    Ok(client.clone())
 }
 
-async fn try_recover_installed_agent(client: &AgentClient) -> anyhow::Result<bool> {
-    let binary_exists = installed_agent_binary_exists(&client.selector)
+async fn try_recover_installed_agent(
+    client: &AgentClient,
+    expected: &AgentPayloadIdentity,
+) -> anyhow::Result<bool> {
+    let payload_exists = installed_agent_binary_exists(&client.selector, &expected.install_path)
         .await
         .unwrap_or(false);
-    if !binary_exists {
+    if !payload_exists {
         return Ok(false);
     }
-    let expected_manifest = agent_payload_manifest().await?;
-    let manifest_matches = installed_manifest_matches(&client.selector, &expected_manifest).await?;
-    if !should_restart_installed_agent(binary_exists, manifest_matches) {
-        warn!(
-            selector = %client.selector,
-            "installed webshell agent payload is stale; installing embedded lightweight agent"
-        );
-        return Ok(false);
-    }
-    if let Err(err) = restart_agent(client).await {
+    activate_agent_payload(&client.selector, &expected.install_path).await?;
+    if let Err(err) = restart_agent(client, expected).await {
         warn!(
             selector = %client.selector,
             error = %err,
@@ -222,7 +383,16 @@ async fn try_recover_installed_agent(client: &AgentClient) -> anyhow::Result<boo
         return Ok(false);
     }
     match wait_for_agent_response(client).await {
-        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => Ok(true),
+        Ok(response) if running_agent_is_acceptable(&response, expected) => Ok(true),
+        Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+            warn!(
+                selector = %client.selector,
+                running_manifest = response.payload_manifest.as_deref().unwrap_or(""),
+                expected_manifest = %expected.manifest,
+                "installed webshell agent payload is stale; upgrading agent"
+            );
+            Ok(false)
+        }
         Ok(response) if agent_protocol_version_is_stale(response.version.as_deref()) => {
             warn!(
                 selector = %client.selector,
@@ -263,12 +433,26 @@ async fn ping_agent(client: &AgentClient) -> anyhow::Result<AgentResponse> {
     Ok(response)
 }
 
-async fn wait_for_agent(client: &AgentClient) -> anyhow::Result<()> {
+async fn wait_for_agent(
+    client: &AgentClient,
+    expected: &AgentPayloadIdentity,
+) -> anyhow::Result<()> {
     let mut last_error = None;
     for _ in 0..25 {
         match ping_agent(client).await {
-            Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+            Ok(response) if running_agent_is_acceptable(&response, expected) => {
                 return Ok(());
+            }
+            Ok(response) if agent_protocol_version_is_current(response.version.as_deref()) => {
+                last_error = Some(anyhow!(
+                    "agent payload mismatch: running {} {}#{}, expected {} {}#{}",
+                    response.payload_manifest.unwrap_or_default(),
+                    response.payload_version.unwrap_or_default(),
+                    response.payload_generation.unwrap_or_default(),
+                    expected.manifest,
+                    expected.version,
+                    expected.generation,
+                ));
             }
             Ok(response) => {
                 last_error = Some(anyhow!(
@@ -306,10 +490,10 @@ async fn wait_for_agent_response(client: &AgentClient) -> anyhow::Result<AgentRe
     ))
 }
 
-async fn installed_agent_binary_exists(selector: &str) -> anyhow::Result<bool> {
+async fn installed_agent_binary_exists(selector: &str, agent_path: &str) -> anyhow::Result<bool> {
     let output = run_target_shell(
         selector,
-        &installed_agent_probe_script(),
+        &installed_agent_probe_script(agent_path),
         None,
         Duration::from_secs(8),
     )
@@ -317,14 +501,14 @@ async fn installed_agent_binary_exists(selector: &str) -> anyhow::Result<bool> {
     Ok(String::from_utf8_lossy(&output.stdout).trim() == AGENT_READY_MARKER)
 }
 
-fn installed_agent_probe_script() -> String {
+fn installed_agent_probe_script(agent_path: &str) -> String {
     format!(
         r#"agent={}
 if [ -x "$agent" ]; then
   printf '%s\n' {}
 fi
 "#,
-        shell_quote(AGENT_INSTALL_PATH),
+        shell_quote(agent_path),
         shell_quote(AGENT_READY_MARKER),
     )
 }
@@ -365,13 +549,16 @@ async fn run_agent_request(
         .map_err(|err| anyhow!("invalid agent response: {err}"))
 }
 
-async fn ensure_agent_binary_installed(selector: &str) -> anyhow::Result<()> {
-    let payload = load_agent_payload().await?;
-    let manifest = binary_manifest(&payload);
-    if installed_manifest_matches(selector, &manifest).await? {
+async fn ensure_agent_binary_installed(
+    selector: &str,
+    expected: &AgentPayloadIdentity,
+) -> anyhow::Result<()> {
+    if installed_agent_binary_exists(selector, &expected.install_path).await? {
+        activate_agent_payload(selector, &expected.install_path).await?;
         return Ok(());
     }
-    install_agent_binary(selector, &manifest, &payload).await
+    let payload = load_agent_payload().await?;
+    install_agent_binary(selector, &expected.install_path, &payload).await
 }
 
 async fn load_agent_payload() -> anyhow::Result<Vec<u8>> {
@@ -393,13 +580,24 @@ async fn load_agent_payload() -> anyhow::Result<Vec<u8>> {
     }
 }
 
+async fn agent_payload_identity() -> anyhow::Result<AgentPayloadIdentity> {
+    let manifest = agent_payload_manifest().await?;
+    let install_path = agent_payload_install_path(&manifest)?;
+    Ok(AgentPayloadIdentity {
+        manifest,
+        install_path,
+        version: AGENT_PAYLOAD_VERSION,
+        generation: expected_agent_payload_generation(),
+    })
+}
+
 async fn agent_payload_manifest() -> anyhow::Result<String> {
     #[cfg(not(debug_assertions))]
     {
-        if EMBEDDED_AGENT_BINARY.is_empty() {
-            bail!("embedded webshell agent payload is empty");
+        if EMBEDDED_AGENT_BINARY.is_empty() || EMBEDDED_AGENT_SHA256.is_empty() {
+            bail!("embedded webshell agent payload or manifest is empty");
         }
-        Ok(binary_manifest(EMBEDDED_AGENT_BINARY))
+        Ok(EMBEDDED_AGENT_SHA256.to_owned())
     }
 
     #[cfg(debug_assertions)]
@@ -418,54 +616,88 @@ fn sibling_agent_path(provider: &std::path::Path) -> PathBuf {
     provider.with_file_name("lazycat-neko-webshell-agent")
 }
 
-async fn installed_manifest_matches(selector: &str, manifest: &str) -> anyhow::Result<bool> {
+fn agent_payload_install_path(manifest: &str) -> anyhow::Result<String> {
+    let digest = manifest
+        .strip_prefix("sha256:")
+        .filter(|digest| {
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        })
+        .ok_or_else(|| anyhow!("invalid embedded webshell agent manifest"))?;
+    Ok(format!(
+        "{AGENT_PAYLOAD_ROOT}/sha256-{digest}/lazycat-neko-webshell-agent"
+    ))
+}
+
+fn expected_agent_payload_generation() -> u64 {
+    option_env!("NEKO_WEBSHELL_AGENT_BUILD_GENERATION")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default()
+}
+
+async fn activate_agent_payload(selector: &str, agent_path: &str) -> anyhow::Result<()> {
+    let script = activate_agent_payload_script(agent_path);
+    let output = run_target_shell(selector, &script, None, Duration::from_secs(8)).await?;
+    if String::from_utf8_lossy(&output.stdout).trim() != AGENT_READY_MARKER {
+        bail!(
+            "agent activation did not complete: {}",
+            command_output_detail(&output)
+        );
+    }
+    Ok(())
+}
+
+fn activate_agent_payload_script(agent_path: &str) -> String {
     let script = format!(
         r#"set -eu
 agent={}
-manifest_path={}
-expected={}
-if [ -x "$agent" ] && [ "$(cat "$manifest_path" 2>/dev/null || true)" = "$expected" ]; then
-  printf '%s\n' {}
-fi
+link={}
+tmp_link="${{link}}.tmp-$$"
+[ -x "$agent" ]
+rm -f "$tmp_link"
+ln -s "$agent" "$tmp_link"
+mv -f "$tmp_link" "$link"
+printf '%s\n' {}
 "#,
+        shell_quote(agent_path),
         shell_quote(AGENT_INSTALL_PATH),
-        shell_quote(AGENT_MANIFEST_PATH),
-        shell_quote(manifest),
         shell_quote(AGENT_READY_MARKER),
     );
-    let output = run_target_shell(selector, &script, None, Duration::from_secs(8)).await?;
-    Ok(String::from_utf8_lossy(&output.stdout).trim() == AGENT_READY_MARKER)
+    script
 }
 
 async fn install_agent_binary(
     selector: &str,
-    manifest: &str,
+    agent_path: &str,
     payload: &[u8],
 ) -> anyhow::Result<()> {
-    let install_dir = "/usr/local/bin";
-    let manifest_dir = "/usr/local/lib/lazycat-neko-webshell";
-    let tmp_path = format!("{AGENT_INSTALL_PATH}.tmp-{}", std::process::id());
+    let install_dir = std::path::Path::new(agent_path)
+        .parent()
+        .and_then(std::path::Path::to_str)
+        .ok_or_else(|| anyhow!("invalid webshell agent install path"))?;
+    let tmp_path = format!("{agent_path}.tmp-{}", std::process::id());
     let script = format!(
         r#"set -eu
 install_dir={}
-manifest_dir={}
 agent={}
 tmp={}
-manifest_path={}
-expected={}
-mkdir -p "$install_dir" "$manifest_dir"
+link={}
+tmp_link="${{link}}.tmp-$$"
+mkdir -p "$install_dir"
 cat > "$tmp"
 chmod 755 "$tmp"
 mv "$tmp" "$agent"
-printf '%s' "$expected" > "$manifest_path"
+rm -f "$tmp_link"
+ln -s "$agent" "$tmp_link"
+mv -f "$tmp_link" "$link"
 printf '%s\n' {}
 "#,
         shell_quote(install_dir),
-        shell_quote(manifest_dir),
-        shell_quote(AGENT_INSTALL_PATH),
+        shell_quote(agent_path),
         shell_quote(&tmp_path),
-        shell_quote(AGENT_MANIFEST_PATH),
-        shell_quote(manifest),
+        shell_quote(AGENT_INSTALL_PATH),
         shell_quote(AGENT_READY_MARKER),
     );
     let output =
@@ -479,51 +711,53 @@ printf '%s\n' {}
     Ok(())
 }
 
-async fn start_agent(client: &AgentClient) -> anyhow::Result<()> {
-    start_agent_with_reset(client, false).await
-}
-
-async fn restart_agent(client: &AgentClient) -> anyhow::Result<()> {
-    start_agent_with_reset(client, true).await
-}
-
-async fn start_agent_with_reset(client: &AgentClient, stop_existing: bool) -> anyhow::Result<()> {
-    let log_path = scoped_log_path(&client.selector);
-    let stop_script = if stop_existing {
-        r#"
-if [ -S "$socket" ]; then
-  old_pids="$(fuser "$socket" 2>/dev/null || true)"
-  if [ -n "$old_pids" ]; then kill $old_pids 2>/dev/null || true; fi
-fi
-"#
-        .to_string()
-    } else {
-        String::new()
+async fn prune_stale_agent_payloads(selector: &str, expected: &AgentPayloadIdentity) {
+    let Some(active_dir) = std::path::Path::new(&expected.install_path)
+        .parent()
+        .and_then(std::path::Path::to_str)
+    else {
+        return;
     };
     let script = format!(
         r#"set -eu
-agent={}
-socket={}
-log={}
-selector={}
-username={}
-{}
-rm -f "$socket"
-if command -v setsid >/dev/null 2>&1; then
-  setsid "$agent" agent daemon --socket "$socket" --selector "$selector" --username "$username" </dev/null >>"$log" 2>&1 &
-else
-  nohup "$agent" agent daemon --socket "$socket" --selector "$selector" --username "$username" </dev/null >>"$log" 2>&1 &
-fi
-printf '%s\n' {}
+root={}
+active={}
+backup_kept=0
+for directory in $(ls -1dt "$root"/sha256-* 2>/dev/null || true); do
+  [ -d "$directory" ] || continue
+  [ "$directory" = "$active" ] && continue
+  if [ "$backup_kept" -eq 0 ]; then
+    backup_kept=1
+    continue
+  fi
+  rm -rf "$directory"
+done
 "#,
-        shell_quote(AGENT_INSTALL_PATH),
-        shell_quote(&client.socket_path),
-        shell_quote(&log_path),
-        shell_quote(&client.selector),
-        shell_quote(&client.username),
-        stop_script,
-        shell_quote(AGENT_READY_MARKER),
+        shell_quote(AGENT_PAYLOAD_ROOT),
+        shell_quote(active_dir),
     );
+    if let Err(err) = run_target_shell(selector, &script, None, Duration::from_secs(8)).await {
+        warn!(selector = %selector, error = %err, "failed to prune stale webshell agent payloads");
+    }
+}
+
+async fn start_agent(client: &AgentClient, expected: &AgentPayloadIdentity) -> anyhow::Result<()> {
+    start_agent_with_reset(client, expected, false).await
+}
+
+async fn restart_agent(
+    client: &AgentClient,
+    expected: &AgentPayloadIdentity,
+) -> anyhow::Result<()> {
+    start_agent_with_reset(client, expected, true).await
+}
+
+async fn start_agent_with_reset(
+    client: &AgentClient,
+    expected: &AgentPayloadIdentity,
+    stop_existing: bool,
+) -> anyhow::Result<()> {
+    let script = agent_start_script(client, &expected.install_path, stop_existing);
     let output = run_target_shell(&client.selector, &script, None, Duration::from_secs(10))
         .await
         .with_context(|| {
@@ -539,6 +773,45 @@ printf '%s\n' {}
         );
     }
     Ok(())
+}
+
+fn agent_start_script(client: &AgentClient, agent_path: &str, stop_existing: bool) -> String {
+    let log_path = scoped_log_path(&client.selector);
+    let stop_script = if stop_existing {
+        r#"
+if [ -S "$socket" ]; then
+  old_pids="$(fuser "$socket" 2>/dev/null || true)"
+  if [ -n "$old_pids" ]; then kill $old_pids 2>/dev/null || true; fi
+fi
+"#
+        .to_string()
+    } else {
+        String::new()
+    };
+    format!(
+        r#"set -eu
+agent={}
+socket={}
+log={}
+selector={}
+username={}
+{}
+rm -f "$socket"
+if command -v setsid >/dev/null 2>&1; then
+  setsid "$agent" agent daemon --socket "$socket" --selector "$selector" --username "$username" </dev/null >>"$log" 2>&1 &
+else
+  nohup "$agent" agent daemon --socket "$socket" --selector "$selector" --username "$username" </dev/null >>"$log" 2>&1 &
+fi
+printf '%s\n' {}
+"#,
+        shell_quote(agent_path),
+        shell_quote(&client.socket_path),
+        shell_quote(&log_path),
+        shell_quote(&client.selector),
+        shell_quote(&client.username),
+        stop_script,
+        shell_quote(AGENT_READY_MARKER),
+    )
 }
 
 async fn read_agent_log_tail(client: &AgentClient, lines: usize) -> String {
@@ -684,6 +957,71 @@ fn agent_protocol_version_is_current(version: Option<&str>) -> bool {
     version.is_some_and(|version| version.trim() == AGENT_PROTOCOL_VERSION)
 }
 
+fn running_agent_is_acceptable(response: &AgentResponse, expected: &AgentPayloadIdentity) -> bool {
+    if !agent_protocol_version_is_current(response.version.as_deref()) {
+        return false;
+    }
+    let Some(running_manifest) = response
+        .payload_manifest
+        .as_deref()
+        .filter(|manifest| agent_payload_install_path(manifest).is_ok())
+    else {
+        return false;
+    };
+    let Some(running_version) = response.payload_version.as_deref() else {
+        return false;
+    };
+    let Some(running_generation) = response.payload_generation else {
+        return false;
+    };
+    match compare_payload_revisions(
+        running_version,
+        running_generation,
+        expected.version,
+        expected.generation,
+    ) {
+        Some(Ordering::Greater) => true,
+        Some(Ordering::Equal) => running_manifest >= expected.manifest.as_str(),
+        Some(Ordering::Less) | None => false,
+    }
+}
+
+fn compare_payload_revisions(
+    running_version: &str,
+    running_generation: u64,
+    expected_version: &str,
+    expected_generation: u64,
+) -> Option<Ordering> {
+    Some(
+        parse_stable_semver(running_version)?
+            .cmp(&parse_stable_semver(expected_version)?)
+            .then_with(|| running_generation.cmp(&expected_generation)),
+    )
+}
+
+fn parse_stable_semver(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.trim().split('.');
+    let parsed = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    parts.next().is_none().then_some(parsed)
+}
+
+fn reject_unsupported_newer_agent(response: &AgentResponse) -> anyhow::Result<()> {
+    if agent_protocol_version_is_current(response.version.as_deref())
+        || agent_protocol_version_is_stale(response.version.as_deref())
+    {
+        return Ok(());
+    }
+    bail!(
+        "unsupported newer webshell agent protocol: running {}, provider expects {}",
+        response.version.as_deref().unwrap_or_default(),
+        AGENT_PROTOCOL_VERSION
+    )
+}
+
 fn agent_protocol_version_is_stale(version: Option<&str>) -> bool {
     let Some(version) = version else {
         return true;
@@ -705,14 +1043,11 @@ fn agent_protocol_generation(version: &str) -> Option<u32> {
         .ok()
 }
 
+#[cfg(any(debug_assertions, test))]
 fn binary_manifest(payload: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(payload);
     format!("sha256:{}", hex_lower(&hasher.finalize()))
-}
-
-fn should_restart_installed_agent(binary_exists: bool, manifest_matches: bool) -> bool {
-    binary_exists && manifest_matches
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
@@ -734,6 +1069,13 @@ fn scoped_socket_path(selector: &str) -> String {
 fn scoped_log_path(selector: &str) -> String {
     format!(
         "/tmp/lazycat-neko-webshell-agent-{}.log",
+        scope_hash(selector)
+    )
+}
+
+fn scoped_upgrade_lock_path(selector: &str) -> String {
+    format!(
+        "/tmp/lazycat-neko-webshell-agent-{}.upgrade.lock",
         scope_hash(selector)
     )
 }
@@ -784,6 +1126,7 @@ mod tests {
                 .chars()
                 .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '-'))
         );
+        assert!(scoped_upgrade_lock_path("demo@owner").ends_with(".upgrade.lock"));
     }
 
     #[test]
@@ -873,18 +1216,38 @@ mod tests {
     }
 
     #[test]
-    fn installed_agent_probe_checks_the_existing_binary_without_matching_provider_hash() {
-        let script = installed_agent_probe_script();
+    fn installed_agent_probe_checks_the_content_addressed_binary() {
+        let agent_path = "/usr/local/lib/lazycat-neko-webshell/agents/sha256-abc/agent";
+        let script = installed_agent_probe_script(agent_path);
         assert!(script.contains("[ -x \"$agent\" ]"));
+        assert!(script.contains(agent_path));
         assert!(script.contains(AGENT_READY_MARKER));
-        assert!(!script.contains(AGENT_MANIFEST_PATH));
     }
 
     #[test]
-    fn recovery_restarts_only_the_embedded_agent_payload() {
-        assert!(should_restart_installed_agent(true, true));
-        assert!(!should_restart_installed_agent(true, false));
-        assert!(!should_restart_installed_agent(false, true));
+    fn payload_install_path_accepts_only_a_sha256_manifest() {
+        let digest = "29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
+        assert_eq!(
+            agent_payload_install_path(&format!("sha256:{digest}")).unwrap(),
+            format!("{AGENT_PAYLOAD_ROOT}/sha256-{digest}/lazycat-neko-webshell-agent")
+        );
+        assert!(agent_payload_install_path("sha256:expected").is_err());
+        assert!(agent_payload_install_path("md5:29ec22").is_err());
+    }
+
+    #[test]
+    fn agent_start_executes_the_content_addressed_payload() {
+        let client = AgentClient {
+            selector: "demo@owner".to_owned(),
+            username: "alice".to_owned(),
+            socket_path: scoped_socket_path("demo@owner"),
+        };
+        let agent_path = "/usr/local/lib/lazycat-neko-webshell/agents/sha256-abc/agent";
+
+        let script = agent_start_script(&client, agent_path, true);
+
+        assert!(script.contains(agent_path));
+        assert!(!script.contains("--payload-manifest"));
     }
 
     #[test]
@@ -945,5 +1308,70 @@ mod tests {
         assert!(!agent_protocol_version_is_stale(Some(
             "lazycat-neko-webshell-agent-v999"
         )));
+    }
+
+    #[test]
+    fn current_protocol_does_not_reuse_a_stale_or_unidentified_payload() {
+        let expected_manifest =
+            "sha256:29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
+        let expected = AgentPayloadIdentity {
+            manifest: expected_manifest.to_owned(),
+            install_path: agent_payload_install_path(expected_manifest).unwrap(),
+            version: "0.5.35",
+            generation: 123,
+        };
+        let current = AgentResponse {
+            ok: Some(true),
+            version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
+            payload_manifest: Some(expected_manifest.to_owned()),
+            payload_version: Some("0.5.35".to_owned()),
+            payload_generation: Some(123),
+            ..Default::default()
+        };
+        let stale = AgentResponse {
+            ok: Some(true),
+            version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
+            payload_manifest: Some(
+                "sha256:19ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a"
+                    .to_owned(),
+            ),
+            payload_version: Some("0.5.35".to_owned()),
+            payload_generation: Some(123),
+            ..Default::default()
+        };
+        let unidentified = AgentResponse {
+            ok: Some(true),
+            version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
+            ..Default::default()
+        };
+
+        assert!(running_agent_is_acceptable(&current, &expected));
+        assert!(!running_agent_is_acceptable(&stale, &expected));
+        assert!(!running_agent_is_acceptable(&unidentified, &expected));
+    }
+
+    #[test]
+    fn older_provider_reuses_a_newer_compatible_agent_payload() {
+        let expected_manifest =
+            "sha256:29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
+        let expected = AgentPayloadIdentity {
+            manifest: expected_manifest.to_owned(),
+            install_path: agent_payload_install_path(expected_manifest).unwrap(),
+            version: "0.5.35",
+            generation: 123,
+        };
+        let newer = AgentResponse {
+            ok: Some(true),
+            version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
+            payload_manifest: Some(
+                "sha256:39ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a"
+                    .to_owned(),
+            ),
+            payload_version: Some("0.5.36".to_owned()),
+            payload_generation: Some(124),
+            ..Default::default()
+        };
+
+        assert!(running_agent_is_acceptable(&newer, &expected));
     }
 }

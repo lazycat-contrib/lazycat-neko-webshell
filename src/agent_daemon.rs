@@ -25,6 +25,34 @@ use crate::proto::lazycat::webshell::v1::{
 };
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
+const AGENT_PAYLOAD_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn agent_payload_generation() -> u64 {
+    option_env!("NEKO_WEBSHELL_AGENT_BUILD_GENERATION")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_default()
+}
+
+fn running_agent_payload_manifest() -> Option<String> {
+    std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(payload_manifest_from_executable)
+}
+
+fn payload_manifest_from_executable(path: &Path) -> Option<String> {
+    let directory = path.parent()?.file_name()?.to_str()?;
+    let digest = directory.strip_prefix("sha256-")?;
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return None;
+    }
+    Some(format!("sha256:{digest}"))
+}
+
 pub fn run_agent_command(args: &[String]) -> anyhow::Result<()> {
     let Some(command) = args.first().map(String::as_str) else {
         bail!("missing agent command");
@@ -123,6 +151,9 @@ fn run_agent_daemon(socket: &str, selector: &str, username: &str) -> anyhow::Res
     let daemon = Arc::new(AgentDaemon {
         selector: selector.trim().to_owned(),
         username: username.trim().to_owned(),
+        payload_manifest: running_agent_payload_manifest(),
+        payload_version: AGENT_PAYLOAD_VERSION.to_owned(),
+        payload_generation: agent_payload_generation(),
         workspace: Mutex::new(None),
     });
     for connection in listener.incoming() {
@@ -142,6 +173,9 @@ fn run_agent_daemon(socket: &str, selector: &str, username: &str) -> anyhow::Res
 struct AgentDaemon {
     selector: String,
     username: String,
+    payload_manifest: Option<String>,
+    payload_version: String,
+    payload_generation: u64,
     workspace: Mutex<Option<Arc<AgentWorkspace>>>,
 }
 
@@ -188,7 +222,11 @@ impl AgentDaemon {
     ) -> Result<crate::proto::lazycat::webshell::v1::AgentResponse, String> {
         self.request_selector(request)
             .map_err(|err| err.to_string())?;
-        Ok(ok_response())
+        let mut response = ok_response();
+        response.payload_manifest.clone_from(&self.payload_manifest);
+        response.payload_version = Some(self.payload_version.clone());
+        response.payload_generation = Some(self.payload_generation);
+        Ok(response)
     }
 
     fn state(
@@ -587,6 +625,39 @@ mod tests {
 
         assert_eq!(required_option(&options, "socket").unwrap(), "/tmp/a.sock");
         assert_eq!(option_u16(&options, "cols", 80, 500).unwrap(), 120);
+    }
+
+    #[test]
+    fn ping_identifies_the_exact_running_agent_payload() {
+        let daemon = AgentDaemon {
+            selector: "demo@owner".to_owned(),
+            username: "alice".to_owned(),
+            payload_manifest: Some("sha256:running".to_owned()),
+            payload_version: "0.5.35".to_owned(),
+            payload_generation: 123,
+            workspace: Mutex::new(None),
+        };
+        let request = crate::agent_protocol::ping_request("demo@owner", "alice");
+
+        let response = daemon.ping(&request).expect("agent ping");
+
+        assert_eq!(response.payload_manifest.as_deref(), Some("sha256:running"));
+        assert_eq!(response.payload_version.as_deref(), Some("0.5.35"));
+        assert_eq!(response.payload_generation, Some(123));
+    }
+
+    #[test]
+    fn payload_identity_comes_from_the_content_addressed_executable_path() {
+        let digest = "29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
+        let path = Path::new("/usr/local/lib/lazycat-neko-webshell/agents")
+            .join(format!("sha256-{digest}"))
+            .join("lazycat-neko-webshell-agent");
+
+        assert_eq!(
+            payload_manifest_from_executable(&path).as_deref(),
+            Some(format!("sha256:{digest}").as_str())
+        );
+        assert!(payload_manifest_from_executable(Path::new("/usr/local/bin/agent")).is_none());
     }
 
     #[test]

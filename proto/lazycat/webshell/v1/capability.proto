@@ -209,6 +209,9 @@ message AgentResponse {
   string version = 2;
   string error = 3;
   AgentWorkspaceState state = 4;
+  string payload_manifest = 5;
+  string payload_version = 6;
+  uint64 payload_generation = 7;
 }
 
 message AgentWorkspaceState {

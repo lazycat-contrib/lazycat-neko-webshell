@@ -50,6 +50,7 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
 connectrpc-build = "0.4.2"
+sha2 = "0.11.0"
 
 [lints.rust]
 unsafe_code = "warn"
