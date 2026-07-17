@@ -1394,7 +1394,10 @@ mod tests {
                 .database()
                 .append_output_frame(
                     "session-one",
-                    &crate::terminal_manager::OutputFrame { sequence, data },
+                    &crate::terminal_manager::OutputFrame {
+                        sequence,
+                        data: data.into(),
+                    },
                     1,
                     crate::agent_protocol::AGENT_PROTOCOL_VERSION,
                 )

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Mutex;
 
 use anyhow::{Context as _, anyhow};
@@ -83,10 +84,18 @@ impl TerminalReplyAuthority {
 }
 
 impl ReplyOnlyInputFilter {
-    fn filter(&mut self, input: &[u8]) -> Vec<u8> {
+    fn filter<'a>(&mut self, input: &'a [u8]) -> Cow<'a, [u8]> {
         const ESC: u8 = 0x1b;
         const APC: u8 = 0x9f;
         const ST: u8 = 0x9c;
+
+        if matches!(self.state, ReplyOnlyFilterState::Normal)
+            && !input.ends_with(&[ESC])
+            && !input.contains(&APC)
+            && !input.windows(2).any(|bytes| bytes == b"\x1b_")
+        {
+            return Cow::Borrowed(input);
+        }
 
         let mut output = Vec::with_capacity(input.len());
         let mut index = 0;
@@ -134,7 +143,7 @@ impl ReplyOnlyInputFilter {
             }
             index += 1;
         }
-        output
+        Cow::Owned(output)
     }
 }
 
@@ -241,7 +250,15 @@ mod tests {
         let mut filter = ReplyOnlyInputFilter::default();
         let command = b"\x1b_X;metadata\x1b\\";
 
-        assert_eq!(filter.filter(command), command);
+        assert_eq!(filter.filter(command).as_ref(), command);
+    }
+
+    #[test]
+    fn borrows_normal_output_without_allocating() {
+        let mut filter = ReplyOnlyInputFilter::default();
+        let output = b"\x1b[2J\x1b[Hregular terminal output";
+
+        assert!(matches!(filter.filter(output), Cow::Borrowed(_)));
     }
 
     #[test]

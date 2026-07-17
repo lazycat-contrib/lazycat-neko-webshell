@@ -326,7 +326,7 @@ fn serve_attach_stream(
     for frame in frames {
         write_agent_frame(
             &mut *stream,
-            &binary_frame_with_sequence(frame.data, frame.sequence),
+            &binary_frame_with_sequence(frame.data.to_vec(), frame.sequence),
         )?;
     }
     write_agent_frame(
@@ -356,7 +356,7 @@ fn serve_attach_stream(
                 }
                 write_agent_frame(
                     &mut *stream,
-                    &binary_frame_with_sequence(frame.data, frame.sequence),
+                    &binary_frame_with_sequence(frame.data.to_vec(), frame.sequence),
                 )?;
                 stream.flush()?;
             }

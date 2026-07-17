@@ -278,7 +278,7 @@ mod tests {
                 "session-one",
                 &crate::terminal_manager::OutputFrame {
                     sequence: 1,
-                    data: b"stale history".to_vec(),
+                    data: bytes::Bytes::from_static(b"stale history"),
                 },
                 1,
                 crate::agent_protocol::AGENT_PROTOCOL_VERSION,
@@ -304,7 +304,7 @@ mod tests {
                 "session-one",
                 &crate::terminal_manager::OutputFrame {
                     sequence: 1,
-                    data: b"stale history".to_vec(),
+                    data: bytes::Bytes::from_static(b"stale history"),
                 },
                 1,
                 crate::agent_protocol::AGENT_PROTOCOL_VERSION,
@@ -334,7 +334,7 @@ mod tests {
                 "session-one",
                 &crate::terminal_manager::OutputFrame {
                     sequence: 1,
-                    data: b"managed by herdr".to_vec(),
+                    data: bytes::Bytes::from_static(b"managed by herdr"),
                 },
                 1,
                 crate::agent_protocol::AGENT_PROTOCOL_VERSION,

@@ -1697,7 +1697,7 @@ async fn send_output_frame(
     frame: &OutputFrame,
 ) -> anyhow::Result<bool> {
     if sender
-        .send(Message::Binary(frame.data.clone().into()))
+        .send(Message::Binary(frame.data.clone()))
         .await
         .is_err()
     {

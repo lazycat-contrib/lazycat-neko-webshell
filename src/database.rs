@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use bytes::Bytes;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::config::{DEFAULT_DATABASE_FILE, ENV_DATABASE_FILE};
@@ -162,7 +163,7 @@ impl AppDatabase {
             let (sequence, data) = row.map_err(TO_IO_ERROR)?;
             frames.push(OutputFrame {
                 sequence: u64_from_i64(sequence)?,
-                data,
+                data: Bytes::from(data),
             });
         }
         Ok(frames)
@@ -196,7 +197,11 @@ impl AppDatabase {
             INSERT OR REPLACE INTO terminal_output_frames (session_id, sequence, data)
             VALUES (?1, ?2, ?3)
             ",
-            params![session_id, i64_from_u64(frame.sequence)?, &frame.data],
+            params![
+                session_id,
+                i64_from_u64(frame.sequence)?,
+                frame.data.as_ref()
+            ],
         )
         .map_err(TO_IO_ERROR)?;
         tx.execute(
@@ -227,7 +232,11 @@ impl AppDatabase {
                 INSERT INTO terminal_output_frames (session_id, sequence, data)
                 VALUES (?1, ?2, ?3)
                 ",
-                params![session_id, i64_from_u64(frame.sequence)?, &frame.data],
+                params![
+                    session_id,
+                    i64_from_u64(frame.sequence)?,
+                    frame.data.as_ref()
+                ],
             )
             .map_err(TO_IO_ERROR)?;
         }

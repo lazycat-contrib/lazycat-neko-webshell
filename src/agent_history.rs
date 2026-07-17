@@ -1,12 +1,14 @@
 use std::collections::VecDeque;
 
+use bytes::Bytes;
+
 use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES};
 use crate::validation::normalize_output_frame_limit;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentHistoryFrame {
     pub sequence: u64,
-    pub data: Vec<u8>,
+    pub data: Bytes,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,7 +49,7 @@ impl AgentHistory {
         self.next_sequence = self.next_sequence.saturating_add(1);
         let frame = AgentHistoryFrame {
             sequence: self.next_sequence,
-            data,
+            data: Bytes::from(data),
         };
         if record {
             self.total_bytes = self.total_bytes.saturating_add(frame.data.len());
@@ -164,8 +166,33 @@ mod tests {
         assert_eq!(second.sequence, 2);
         let (frames, last_sequence) = history.snapshot_after(0);
         assert_eq!(last_sequence, 2);
-        assert_eq!(frames[0].data, b"\x1b[31mred");
+        assert_eq!(frames[0].data.as_ref(), b"\x1b[31mred");
         assert_eq!(frames[1].data, vec![0, 1, 2, b'\n']);
+    }
+
+    #[test]
+    fn live_output_and_history_share_the_same_payload_allocation() {
+        let mut history = AgentHistory::new(128);
+        let live = history.push(vec![b'x'; 64 * 1024]);
+        let stored = history
+            .snapshot_after(0)
+            .0
+            .pop()
+            .expect("stored output frame");
+
+        assert_eq!(live.data.as_ptr(), stored.data.as_ptr());
+    }
+
+    #[test]
+    fn history_has_an_explicit_byte_budget() {
+        let mut history = AgentHistory::new(crate::config::MAX_OUTPUT_FRAME_LIMIT);
+        let frame_bytes = MAX_OUTPUT_BUFFER_BYTES / 4;
+        for _ in 0..5 {
+            history.push(vec![b'x'; frame_bytes]);
+        }
+
+        assert_eq!(history.total_bytes, MAX_OUTPUT_BUFFER_BYTES);
+        assert_eq!(history.frames.len(), 4);
     }
 
     #[test]
@@ -181,7 +208,7 @@ mod tests {
             frames,
             vec![AgentHistoryFrame {
                 sequence: 2,
-                data: b"two".to_vec(),
+                data: Bytes::from_static(b"two"),
             }]
         );
     }
@@ -209,7 +236,7 @@ mod tests {
         assert_eq!(last_sequence, 130);
         assert_eq!(frames.len(), 128);
         assert_eq!(frames[0].sequence, 3);
-        assert_eq!(frames[0].data, b"2\n");
+        assert_eq!(frames[0].data.as_ref(), b"2\n");
     }
 
     #[test]
@@ -228,11 +255,11 @@ mod tests {
             vec![
                 AgentHistoryFrame {
                     sequence: 1,
-                    data: b"before".to_vec(),
+                    data: Bytes::from_static(b"before"),
                 },
                 AgentHistoryFrame {
                     sequence: 3,
-                    data: b"after".to_vec(),
+                    data: Bytes::from_static(b"after"),
                 },
             ]
         );

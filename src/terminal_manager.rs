@@ -5,18 +5,21 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
 use anyhow::{Context as AnyhowContext, anyhow};
+use bytes::Bytes;
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 use crate::agent_protocol::AGENT_PROTOCOL_VERSION;
-use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES};
+use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES, PTY_OUTPUT_BATCH_BYTES};
 use crate::database::AppDatabase;
 use crate::pty_io::{ChildWait, PtyOutputEvent, PtyWriter, spawn_batched_output_reader};
 use crate::terminal_reply_authority::TerminalReplyAuthority;
 use crate::validation::{normalize_output_frame_limit, validate_size};
 
-const EVENT_CAPACITY: usize = 1024;
+// One terminal's live broadcast backlog must not retain more payload than its
+// replay history. PTY frames are capped by `PTY_OUTPUT_BATCH_BYTES`.
+const EVENT_CAPACITY: usize = MAX_OUTPUT_BUFFER_BYTES / PTY_OUTPUT_BATCH_BYTES;
 
 #[derive(Clone, Debug)]
 pub struct TerminalSpec {
@@ -33,7 +36,7 @@ pub struct TerminalSpec {
 #[derive(Clone, Debug)]
 pub struct OutputFrame {
     pub sequence: u64,
-    pub data: Vec<u8>,
+    pub data: Bytes,
 }
 
 #[derive(Clone, Debug)]
@@ -223,7 +226,7 @@ impl ManagedTerminal {
                     Ok(keep_reading) => keep_reading,
                     Err(error) => {
                         let _ = event_tx.send(TerminalEvent::Error(format!(
-                            "terminal reply authority failed: {error}"
+                            "terminal reply authority failed: {error:#}"
                         )));
                         let _ = output_failure_killer.kill();
                         false
@@ -458,7 +461,7 @@ impl OutputBuffer {
             inner.next_sequence = inner.next_sequence.saturating_add(1);
             let frame = OutputFrame {
                 sequence: inner.next_sequence,
-                data,
+                data: Bytes::from(data),
             };
             let first_retained_sequence = if record {
                 inner.total_bytes = inner.total_bytes.saturating_add(frame.data.len());
@@ -695,7 +698,8 @@ impl OutputHistoryStore {
 
 #[cfg(test)]
 mod tests {
-    use super::{ManagedTerminal, OutputBuffer, TerminalSpec};
+    use super::{EVENT_CAPACITY, ManagedTerminal, OutputBuffer, TerminalSpec};
+    use crate::config::{MAX_OUTPUT_BUFFER_BYTES, MAX_OUTPUT_FRAME_LIMIT, PTY_OUTPUT_BATCH_BYTES};
     use crate::database::AppDatabase;
     use std::sync::Arc;
 
@@ -713,7 +717,38 @@ mod tests {
         assert_eq!(last_sequence, 2);
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].sequence, 2);
-        assert_eq!(frames[0].data, b"two");
+        assert_eq!(frames[0].data.as_ref(), b"two");
+    }
+
+    #[test]
+    fn live_output_and_history_share_the_same_payload_allocation() {
+        let output = OutputBuffer::default();
+        let live = output.push(vec![b'x'; 64 * 1024]);
+        let stored = output
+            .snapshot_after(0)
+            .0
+            .pop()
+            .expect("stored output frame");
+
+        assert_eq!(live.data.as_ptr(), stored.data.as_ptr());
+    }
+
+    #[test]
+    fn output_history_and_live_backlog_have_explicit_byte_budgets() {
+        assert_eq!(
+            EVENT_CAPACITY * PTY_OUTPUT_BATCH_BYTES,
+            MAX_OUTPUT_BUFFER_BYTES
+        );
+
+        let output = OutputBuffer::new(MAX_OUTPUT_FRAME_LIMIT);
+        let frame_bytes = MAX_OUTPUT_BUFFER_BYTES / 4;
+        for _ in 0..5 {
+            output.push(vec![b'x'; frame_bytes]);
+        }
+        let inner = output.inner.lock().expect("terminal output buffer");
+
+        assert_eq!(inner.total_bytes, MAX_OUTPUT_BUFFER_BYTES);
+        assert_eq!(inner.frames.len(), 4);
     }
 
     #[test]
@@ -754,7 +789,7 @@ mod tests {
         assert_eq!(last_sequence, 130);
         assert_eq!(frames.len(), 128);
         assert_eq!(frames[0].sequence, 3);
-        assert_eq!(frames[0].data, b"2\n");
+        assert_eq!(frames[0].data.as_ref(), b"2\n");
     }
 
     #[test]
@@ -772,9 +807,9 @@ mod tests {
         assert_eq!(last_sequence, 3);
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[0].sequence, 1);
-        assert_eq!(frames[0].data, b"before");
+        assert_eq!(frames[0].data.as_ref(), b"before");
         assert_eq!(frames[1].sequence, 3);
-        assert_eq!(frames[1].data, b"after");
+        assert_eq!(frames[1].data.as_ref(), b"after");
     }
 
     #[test]
@@ -864,9 +899,9 @@ mod tests {
         assert_eq!(last_sequence, 2);
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[0].sequence, 1);
-        assert_eq!(frames[0].data, b"one");
+        assert_eq!(frames[0].data.as_ref(), b"one");
         assert_eq!(frames[1].sequence, 2);
-        assert_eq!(frames[1].data, b"two");
+        assert_eq!(frames[1].data.as_ref(), b"two");
 
         let third = reloaded.push(b"three".to_vec());
         assert_eq!(third.sequence, 3);
@@ -897,7 +932,7 @@ mod tests {
                 "session-one",
                 &crate::terminal_manager::OutputFrame {
                     sequence: 1,
-                    data: b"old".to_vec(),
+                    data: bytes::Bytes::from_static(b"old"),
                 },
                 1,
                 "lazycat-neko-webshell-agent-v0",

@@ -794,6 +794,7 @@ mod tests {
         );
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn debug_agent_payload_uses_a_dedicated_sibling_binary() {
         let provider = PathBuf::from("/lzcapp/pkg/content/lazycat-neko-webshell");

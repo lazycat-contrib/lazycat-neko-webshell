@@ -15,6 +15,9 @@ const MAX_WASM_WRITE_BYTES: usize = 1024 * 1024;
 const MAX_WASM_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_WASM_MEMORY_BYTES: usize = 16 * 1024 * 1024;
 const MAX_WASM_FUEL_PER_OPERATION: u64 = 100_000_000;
+// Match the PTY reader cadence so complex full-screen redraws cannot spend an entire
+// batched frame's fuel in one WASM call. The input is sliced without copying.
+const MAX_WASM_FUEL_INPUT_CHUNK_BYTES: usize = 8 * 1024;
 
 static COMPILED_RESTTY: OnceLock<Result<CompiledRestty, String>> = OnceLock::new();
 
@@ -125,8 +128,19 @@ impl ResttyHeadlessTerminal {
     }
 
     pub fn write_output(&mut self, bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
-        self.write(bytes)?;
-        self.drain_output()
+        if bytes.len() > MAX_WASM_WRITE_BYTES {
+            bail!("Restty write exceeds {MAX_WASM_WRITE_BYTES} bytes");
+        }
+        let mut output = Vec::new();
+        for chunk in bytes.chunks(MAX_WASM_FUEL_INPUT_CHUNK_BYTES) {
+            self.write(chunk)?;
+            let reply = self.drain_output()?;
+            if output.len().saturating_add(reply.len()) > MAX_WASM_OUTPUT_BYTES {
+                bail!("Restty generated output exceeds {MAX_WASM_OUTPUT_BYTES} bytes");
+            }
+            output.extend(reply);
+        }
+        Ok(output)
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) -> anyhow::Result<()> {
@@ -376,6 +390,36 @@ mod tests {
             terminal
                 .write_output(&output)
                 .expect("parse maximum PTY batch")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn accepts_a_herdr_style_full_screen_output_batch() {
+        let mut output = Vec::with_capacity(PTY_OUTPUT_BATCH_BYTES);
+        while output.len() < PTY_OUTPUT_BATCH_BYTES {
+            for row in 1..=49 {
+                for col in 1..=193 {
+                    output.extend_from_slice(
+                        format!("\x1b[{row};{col}H\x1b[0;38;2;237;242;247;48;2;5;10;18mx")
+                            .as_bytes(),
+                    );
+                    if output.len() >= PTY_OUTPUT_BATCH_BYTES {
+                        break;
+                    }
+                }
+                if output.len() >= PTY_OUTPUT_BATCH_BYTES {
+                    break;
+                }
+            }
+        }
+        output.truncate(PTY_OUTPUT_BATCH_BYTES);
+
+        let mut terminal = ResttyHeadlessTerminal::new(193, 49).expect("create headless terminal");
+        assert!(
+            terminal
+                .write_output(&output)
+                .expect("parse Herdr-style full-screen output")
                 .is_empty()
         );
     }

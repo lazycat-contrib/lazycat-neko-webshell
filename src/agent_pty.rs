@@ -87,7 +87,7 @@ impl AgentPty {
                     Ok(keep_reading) => keep_reading,
                     Err(error) => {
                         let _ = event_tx.send(AgentPtyEvent::Error(format!(
-                            "terminal reply authority failed: {error}"
+                            "terminal reply authority failed: {error:#}"
                         )));
                         let _ = output_failure_killer.kill();
                         false
