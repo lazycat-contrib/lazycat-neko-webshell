@@ -99,6 +99,11 @@ import { isMobileOverlayMode, prepareMobileOverlay } from "./mobile/overlay";
 import { createMobileSymbolAgentController } from "./mobile/symbol-agent-controller";
 import { createMobileTerminalGestureController, isCoarseTouchPointer } from "./mobile/terminal-gestures";
 import {
+  forwardTouchContextMenuToRestty,
+  hideResttyPaneContextMenus,
+  openResttyPaneContextMenu,
+} from "./mobile/restty-context-menu";
+import {
   dismissNotification,
 } from "./notifications-api";
 import { createNotificationController } from "./notifications/controller";
@@ -139,7 +144,6 @@ import {
   disposePaneTerminalRuntime,
   replacePaneTransport,
 } from "./pane-runtime";
-import { createPaneMenuController } from "./pane-menu-controller";
 import { nativePaneContextMenuItems, type PaneMenuAction } from "./pane-menu-actions";
 import {
   filterRemoteClientPluginTools,
@@ -492,15 +496,6 @@ const mobileClock = createMobileClockController({
   settings: () => settings,
   tr,
 });
-const paneMenuController = createPaneMenuController({
-  menu: elements.paneMenu,
-  prepareOverlay: prepareMobileOverlay,
-  isMobileOverlayMode,
-  updateIcons,
-  findPaneById,
-  tabForPane,
-  visiblePaneCount: (tab) => visiblePanes(tab).length,
-});
 const {
   openSettings,
   closeSettings,
@@ -525,7 +520,7 @@ const {
   pluginsLoading: () => pluginsLoading,
   loadPlugins: () => void loadPlugins(),
   renderPluginTools,
-  closePaneMenu: () => paneMenuController.close(),
+  closePaneMenu: hidePaneContextMenus,
   closeNewTabMenu,
   closeHerdrWorkspaceMenu,
   closeNotificationsMenu,
@@ -2092,9 +2087,6 @@ function bindActions() {
     if (event.target instanceof Node && !elements.shortcutHelp.contains(event.target) && event.target !== elements.shortcutHelpButton) {
       closeShortcutHelp();
     }
-    if (event.target instanceof Node && !elements.paneMenu.contains(event.target)) {
-      paneMenuController.close();
-    }
     if (
       fileTransfer.hasContextMenu()
       && event.target instanceof Element
@@ -2102,11 +2094,6 @@ function bindActions() {
     ) {
       if (fileTransfer.clearContextMenu()) renderPluginTools();
     }
-  });
-  elements.paneMenu.addEventListener("click", (event) => {
-    const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-pane-action]") : null;
-    if (!button) return;
-    void runPaneMenuAction(button.dataset.paneAction ?? "");
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
@@ -2118,7 +2105,7 @@ function bindActions() {
       closeNotificationModal();
       closeShortcutHelp();
       closeAboutDialog();
-      paneMenuController.close();
+      hidePaneContextMenus();
       fileTransfer.clearContextMenu();
       closeSettings();
       closePluginSidebar();
@@ -2386,7 +2373,7 @@ async function navigateLightOSHome() {
     return;
   }
   closeInstanceMenu();
-  paneMenuController.close();
+  hidePaneContextMenus();
   closeSettingsMenu();
   elements.homeButton.disabled = true;
   setGlobalStatus(tr("status.lightosHomeLoading"));
@@ -2412,14 +2399,13 @@ function applyRuntimeChrome() {
 function openActivePaneMenu() {
   const pane = activePane();
   if (!pane) return;
-  paneMenuController.openForPane(pane);
+  prepareMobileOverlay();
+  hidePaneContextMenus();
+  openResttyPaneContextMenu(pane);
 }
 
-async function runPaneMenuAction(action: string) {
-  const pane = paneMenuController.targetPane(activePane());
-  paneMenuController.close();
-  if (!pane) return;
-  await runPaneActionForPane(pane, action);
+function hidePaneContextMenus() {
+  hideResttyPaneContextMenus(allPanes());
 }
 
 async function runPaneActionForPane(pane: TerminalPane, action: PaneMenuAction | string) {
@@ -5224,6 +5210,12 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
       const current = findPaneById(id);
       if (current) {
         focusPaneSystemKeyboard(current);
+      }
+    },
+    onContextMenu: (event) => {
+      const current = findPaneById(id);
+      if (current) {
+        forwardTouchContextMenuToRestty(current, event);
       }
     },
     onMouseUp: () => {

@@ -1,4 +1,5 @@
 import type { MessageKey } from "../i18n";
+import { mobileActionEventPhase } from "./action-event-phase";
 import {
   clearMobileSticky,
   createMobileStickyState,
@@ -43,6 +44,20 @@ export function createMobileKeyboardController(options: MobileKeyboardController
   const sticky = createMobileStickyState();
   let repeatTimer: number | undefined;
   let repeatInterval: number | undefined;
+  let deferredActionTimer: number | undefined;
+
+  function clearDeferredAction() {
+    window.clearTimeout(deferredActionTimer);
+    deferredActionTimer = undefined;
+  }
+
+  function scheduleDeferredAction(action: string) {
+    clearDeferredAction();
+    deferredActionTimer = window.setTimeout(() => {
+      deferredActionTimer = undefined;
+      void options.onAction(action);
+    }, 0);
+  }
 
   function bind() {
     options.root.addEventListener("pointerdown", (event) => {
@@ -55,11 +70,19 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     });
 
     options.root.addEventListener("click", (event) => {
+      const actionButton = event.target instanceof Element
+        ? event.target.closest<HTMLButtonElement>("[data-mobile-action]")
+        : null;
       if (
         event.target instanceof Element
         && event.target.closest("[data-mobile-shortcut], [data-mobile-action], [data-mobile-chord], [data-mobile-page], [data-mobile-phrase]")
       ) {
         event.preventDefault();
+      }
+      const action = actionButton?.dataset.mobileAction ?? "";
+      if (mobileActionEventPhase(action) === "click") {
+        clearDeferredAction();
+        queueMicrotask(() => void options.onAction(action));
       }
     });
 
@@ -77,7 +100,22 @@ export function createMobileKeyboardController(options: MobileKeyboardController
         : null;
       if (!actionButton) return;
       event.preventDefault();
-      void options.onAction(actionButton.dataset.mobileAction ?? "");
+      const action = actionButton.dataset.mobileAction ?? "";
+      if (mobileActionEventPhase(action) === "pointerdown") {
+        void options.onAction(action);
+      } else {
+        clearDeferredAction();
+      }
+    });
+
+    options.root.addEventListener("pointerup", (event) => {
+      const actionButton = event.target instanceof Element
+        ? event.target.closest<HTMLButtonElement>("[data-mobile-action]")
+        : null;
+      const action = actionButton?.dataset.mobileAction ?? "";
+      if (mobileActionEventPhase(action) !== "click") return;
+      event.preventDefault();
+      scheduleDeferredAction(action);
     });
 
     options.root.addEventListener("pointerdown", (event) => {

@@ -130,7 +130,6 @@ export type ShellElements = {
   shortcutHelpClose: HTMLButtonElement;
   aboutDialog: HTMLDivElement;
   aboutClose: HTMLButtonElement;
-  paneMenu: HTMLDivElement;
   terminalControlOverlay: HTMLDivElement;
   fitTerminal: HTMLButtonElement;
 };
@@ -579,56 +578,6 @@ export function renderShell(app: HTMLElement): ShellElements {
         </div>
       </section>
 
-      <div class="pane-menu" id="paneMenu" hidden role="menu" aria-label="Pane menu" data-i18n-aria="menu.pane">
-        <button type="button" data-pane-action="split-up" role="menuitem">
-          <i data-lucide="panel-top"></i>
-          <span data-i18n="action.splitUp">Split up</span>
-        </button>
-        <button type="button" data-pane-action="split-down" role="menuitem">
-          <i data-lucide="panel-bottom"></i>
-          <span data-i18n="action.splitDown">Split down</span>
-        </button>
-        <button type="button" data-pane-action="split-left" role="menuitem">
-          <i data-lucide="panel-left"></i>
-          <span data-i18n="action.splitLeft">Split left</span>
-        </button>
-        <button type="button" data-pane-action="split-right" role="menuitem">
-          <i data-lucide="panel-right"></i>
-          <span data-i18n="action.splitRight">Split right</span>
-        </button>
-        <button type="button" data-pane-action="resize-up" role="menuitem" hidden>
-          <i data-lucide="arrow-up"></i>
-          <span data-i18n="action.resizeUp">Resize up</span>
-        </button>
-        <button type="button" data-pane-action="resize-down" role="menuitem" hidden>
-          <i data-lucide="arrow-down"></i>
-          <span data-i18n="action.resizeDown">Resize down</span>
-        </button>
-        <button type="button" data-pane-action="resize-left" role="menuitem" hidden>
-          <i data-lucide="arrow-left"></i>
-          <span data-i18n="action.resizeLeft">Resize left</span>
-        </button>
-        <button type="button" data-pane-action="resize-right" role="menuitem" hidden>
-          <i data-lucide="arrow-right"></i>
-          <span data-i18n="action.resizeRight">Resize right</span>
-        </button>
-        <button type="button" data-pane-action="copy-selection" role="menuitem">
-          <i data-lucide="copy"></i>
-          <span data-i18n="action.copySelection">Copy selection</span>
-        </button>
-        <button type="button" data-pane-action="paste-clipboard" role="menuitem">
-          <i data-lucide="clipboard-paste"></i>
-          <span data-i18n="action.pasteClipboard">Paste</span>
-        </button>
-        <button type="button" data-pane-action="promote-session-to-tab" role="menuitem" hidden>
-          <i data-lucide="external-link"></i>
-          <span data-i18n="action.promoteSessionToTab">Move session to new tab</span>
-        </button>
-        <button type="button" data-pane-action="close-active-session" data-tone="danger" role="menuitem">
-          <i data-lucide="square-x"></i>
-          <span data-i18n="action.closeActiveSession">Close active session</span>
-        </button>
-      </div>
     </main>
   `;
 
@@ -758,7 +707,6 @@ export function renderShell(app: HTMLElement): ShellElements {
     shortcutHelpClose: qs<HTMLButtonElement>("#shortcutHelpClose"),
     aboutDialog: qs<HTMLDivElement>("#aboutDialog"),
     aboutClose: qs<HTMLButtonElement>("#aboutClose"),
-    paneMenu: qs<HTMLDivElement>("#paneMenu"),
     terminalControlOverlay: qs<HTMLDivElement>("#terminalControlOverlay"),
     fitTerminal: qs<HTMLButtonElement>("#fitTerminal"),
   };
