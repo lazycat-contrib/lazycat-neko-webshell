@@ -234,7 +234,7 @@ impl SessionRecord {
             cols: Some(i32::from(self.cols)),
             rows: Some(i32::from(self.rows)),
             control: MessageField::none(),
-            metadata: self.metadata.clone(),
+            metadata: self.metadata.clone().into_iter().collect(),
             ..Default::default()
         }
     }
@@ -312,7 +312,7 @@ impl PluginRecord {
             input_schema_json: Some(self.input_schema_json.clone()),
             output_schema_json: Some(self.output_schema_json.clone()),
             enabled: Some(self.enabled),
-            metadata: self.public_metadata(),
+            metadata: self.public_metadata().into_iter().collect(),
             ..Default::default()
         }
     }
