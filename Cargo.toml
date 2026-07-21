@@ -9,7 +9,7 @@ default-run = "lazycat-neko-webshell"
 anyhow = "1.0.100"
 async-openai = { version = "0.41.1", default-features = false, features = ["audio", "byot", "chat-completion", "model", "responses", "rustls"] }
 axum = { version = "0.8.7", features = ["tokio", "http1", "json", "multipart", "ws"] }
-buffa = { version = "0.5.2", features = ["json"] }
+buffa = { version = "0.9.0", features = ["json"] }
 buffa-types = "0.5.2"
 bytes = "1.11.0"
 capnp = "0.26.2"

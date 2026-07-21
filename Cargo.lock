@@ -344,12 +344,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "buffa"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97ce1f34252b8e2516042e1002d56c160908a7ff8a1c9d47e97836558d1c83a"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "foldhash 0.1.5",
+ "hashbrown 0.15.5",
+ "once_cell",
+ "rustversion",
+ "serde",
+ "serde_json",
+ "smoothutf8",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "buffa-codegen"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd9774d97c281d07a61006775c675940371c170ae1b454de0e9c013e0acd19f6"
 dependencies = [
- "buffa",
+ "buffa 0.5.2",
  "buffa-descriptor",
  "prettyplease",
  "proc-macro2",
@@ -364,7 +382,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7b942f9242ea5a79c92486460073a0a36cccc314e69fbc2ff08f55467c47b37"
 dependencies = [
- "buffa",
+ "buffa 0.5.2",
 ]
 
 [[package]]
@@ -373,7 +391,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d406a92c781273688fa21eb2641b54b2cf4e6b52e4a1339fd12279b8220313c"
 dependencies = [
- "buffa",
+ "buffa 0.5.2",
  "bytes",
  "serde",
  "serde_json",
@@ -526,7 +544,7 @@ dependencies = [
  "async-compression",
  "axum",
  "base64 0.22.1",
- "buffa",
+ "buffa 0.5.2",
  "bytes",
  "flate2",
  "futures",
@@ -553,7 +571,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eec3203af15f7075997d16f8ea0a614bcad86879abe9f8ea70c4df69e74f3c14"
 dependencies = [
  "anyhow",
- "buffa",
+ "buffa 0.5.2",
  "buffa-codegen",
  "connectrpc-codegen",
  "tempfile",
@@ -566,7 +584,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77590b8d66a279f1741bc56bd358f82ce57f26f5a9576fbb8329bce30ea1e96e"
 dependencies = [
  "anyhow",
- "buffa",
+ "buffa 0.5.2",
  "buffa-codegen",
  "heck",
  "prettyplease",
@@ -1689,7 +1707,7 @@ dependencies = [
  "async-openai",
  "axum",
  "base64 0.22.1",
- "buffa",
+ "buffa 0.9.0",
  "buffa-types",
  "bytes",
  "capnp",
@@ -3167,6 +3185,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
+name = "smoothutf8"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b4ec95892483d6d94284caccfddb9b77111a4dcac33ed25d624248def0fa5f1"
+dependencies = [
+ "simdutf8",
+]
+
+[[package]]
 name = "snafu"
 version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3303,7 +3330,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
