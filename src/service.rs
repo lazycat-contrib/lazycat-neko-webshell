@@ -4,7 +4,9 @@ use std::sync::{Arc, RwLockReadGuard};
 use std::time::Duration;
 
 use buffa::MessageField;
-use connectrpc::{ConnectError, RequestContext, Response as ConnectResponse, ServiceResult};
+use connectrpc::{
+    ConnectError, RequestContext, Response as ConnectResponse, ServiceRequest, ServiceResult,
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
@@ -19,15 +21,17 @@ use crate::database::{TunnelProviderProfile, TunnelProviderProfileUpsert};
 use crate::lightos;
 use crate::lightos_admin;
 use crate::plugins::{file_transfer, lightos_port_forward, tunnel};
+#[cfg(test)]
+use crate::proto::lazycat::webshell::v1::OwnedCreateSessionRequestView;
 use crate::proto::lazycat::webshell::v1::{
     AgentPaneState, AgentWorkspaceAction, AgentWorkspaceActionType, AgentWorkspaceState,
-    Capability, CapabilityService, CloseSessionResponse, ConfigurePluginResponse,
-    CreateSessionResponse, GetProviderResponse, InvokePluginResponse, ListInstancesResponse,
-    ListPluginsResponse, ListSessionsResponse, OwnedCloseSessionRequestView,
-    OwnedConfigurePluginRequestView, OwnedCreateSessionRequestView, OwnedGetProviderRequestView,
-    OwnedInvokePluginRequestView, OwnedListInstancesRequestView, OwnedListPluginsRequestView,
-    OwnedListSessionsRequestView, OwnedReleaseControlRequestView, OwnedRequestControlRequestView,
-    PluginDescriptor, ProviderDescriptor, ReleaseControlResponse, RequestControlResponse, Session,
+    Capability, CapabilityService, CloseSessionRequest, CloseSessionResponse,
+    ConfigurePluginRequest, ConfigurePluginResponse, CreateSessionRequest, CreateSessionResponse,
+    GetProviderRequest, GetProviderResponse, InvokePluginRequest, InvokePluginResponse,
+    ListInstancesRequest, ListInstancesResponse, ListPluginsRequest, ListPluginsResponse,
+    ListSessionsRequest, ListSessionsResponse, PluginDescriptor, ProviderDescriptor,
+    ReleaseControlRequest, ReleaseControlResponse, RequestControlRequest, RequestControlResponse,
+    Session,
 };
 use crate::ssh_backend;
 use crate::state::{
@@ -396,7 +400,7 @@ fn session_from_agent_pane(
         status: pane.status.clone().or_else(|| Some("running".to_owned())),
         cols: pane.cols,
         rows: pane.rows,
-        metadata,
+        metadata: metadata.into_iter().collect(),
         ..Default::default()
     }
 }
@@ -583,10 +587,10 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn list_instances(
         &self,
         ctx: RequestContext,
-        _request: OwnedListInstancesRequestView,
+        _request: ServiceRequest<'_, ListInstancesRequest>,
     ) -> ServiceResult<ListInstancesResponse> {
         let mut instances = if lightos_features_enabled() {
-            lightos_admin::list_visible_instances(&ctx.headers)
+            lightos_admin::list_visible_instances(ctx.headers())
                 .await
                 .map_err(lightos_admin_connect_error)?
         } else {
@@ -604,7 +608,7 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn get_provider(
         &self,
         _ctx: RequestContext,
-        _request: OwnedGetProviderRequestView,
+        _request: ServiceRequest<'_, GetProviderRequest>,
     ) -> ServiceResult<GetProviderResponse> {
         ConnectResponse::ok(GetProviderResponse {
             provider: MessageField::some(provider_descriptor()),
@@ -615,7 +619,7 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn create_session(
         &self,
         ctx: RequestContext,
-        request: OwnedCreateSessionRequestView,
+        request: ServiceRequest<'_, CreateSessionRequest>,
     ) -> ServiceResult<CreateSessionResponse> {
         let selector = request
             .selector
@@ -640,7 +644,7 @@ impl CapabilityService for CapabilityServiceImpl {
         let output_limit = output_frame_limit_from_metadata(&metadata);
         if lightos_admin::is_client_selector(selector) {
             let session = client_terminal::create_session(
-                &ctx.headers,
+                ctx.headers(),
                 selector,
                 cols,
                 rows,
@@ -685,7 +689,7 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn close_session(
         &self,
         ctx: RequestContext,
-        request: OwnedCloseSessionRequestView,
+        request: ServiceRequest<'_, CloseSessionRequest>,
     ) -> ServiceResult<CloseSessionResponse> {
         let session_id = required_field(request.session_id, "session_id")?.to_owned();
         let requested_selector = request
@@ -699,7 +703,7 @@ impl CapabilityService for CapabilityServiceImpl {
                 return Err(ConnectError::not_found("LightOS integration is disabled"));
             }
             client_terminal::close_session(
-                &ctx.headers,
+                ctx.headers(),
                 selector,
                 &session_id,
                 DEFAULT_COLS,
@@ -743,7 +747,7 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn list_sessions(
         &self,
         ctx: RequestContext,
-        request: OwnedListSessionsRequestView,
+        request: ServiceRequest<'_, ListSessionsRequest>,
     ) -> ServiceResult<ListSessionsResponse> {
         let selector = request
             .selector
@@ -754,7 +758,7 @@ impl CapabilityService for CapabilityServiceImpl {
                 return Err(ConnectError::not_found("LightOS integration is disabled"));
             }
             let sessions = client_terminal::list_sessions(
-                &ctx.headers,
+                ctx.headers(),
                 selector,
                 DEFAULT_COLS,
                 DEFAULT_ROWS,
@@ -795,7 +799,7 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn list_plugins(
         &self,
         _ctx: RequestContext,
-        _request: OwnedListPluginsRequestView,
+        _request: ServiceRequest<'_, ListPluginsRequest>,
     ) -> ServiceResult<ListPluginsResponse> {
         let plugin_records = self
             .state
@@ -819,7 +823,7 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn configure_plugin(
         &self,
         _ctx: RequestContext,
-        request: OwnedConfigurePluginRequestView,
+        request: ServiceRequest<'_, ConfigurePluginRequest>,
     ) -> ServiceResult<ConfigurePluginResponse> {
         let plugin_id = required_field(request.plugin_id, "plugin_id")?;
         let request_metadata = request
@@ -881,7 +885,7 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn invoke_plugin(
         &self,
         _ctx: RequestContext,
-        request: OwnedInvokePluginRequestView,
+        request: ServiceRequest<'_, InvokePluginRequest>,
     ) -> ServiceResult<InvokePluginResponse> {
         let plugin_id = required_field(request.plugin_id, "plugin_id")?;
         {
@@ -940,7 +944,7 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn request_control(
         &self,
         _ctx: RequestContext,
-        request: OwnedRequestControlRequestView,
+        request: ServiceRequest<'_, RequestControlRequest>,
     ) -> ServiceResult<RequestControlResponse> {
         let _ = request;
         Err(ConnectError::unimplemented(
@@ -951,7 +955,7 @@ impl CapabilityService for CapabilityServiceImpl {
     async fn release_control(
         &self,
         _ctx: RequestContext,
-        request: OwnedReleaseControlRequestView,
+        request: ServiceRequest<'_, ReleaseControlRequest>,
     ) -> ServiceResult<ReleaseControlResponse> {
         let _ = request;
         Err(ConnectError::unimplemented(
@@ -1407,7 +1411,7 @@ fn plugin_response(
         status: Some(status.to_owned()),
         content_type: Some(content_type.to_owned()),
         payload: Some(payload),
-        metadata,
+        metadata: metadata.into_iter().collect(),
         ..Default::default()
     })
 }
@@ -1523,6 +1527,8 @@ mod tests {
             },
         )
         .expect("owned create-session request");
+        let request =
+            ServiceRequest::<CreateSessionRequest>::from_parts(request.reborrow(), request.bytes());
 
         let error = service
             .create_session(RequestContext::default(), request)

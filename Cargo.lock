@@ -330,24 +330,27 @@ dependencies = [
 
 [[package]]
 name = "buffa"
-version = "0.5.2"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7a22fed63b429c4928fd5ed18dcacd3a98d0df1f06cd7cf651b2bbf3dbf0500"
+checksum = "33f29a40702df4b86ccd84211bfde8cee0bce6d0811450ade4a86a7d0958a23a"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "foldhash 0.1.5",
  "hashbrown 0.15.5",
  "once_cell",
+ "rustversion",
  "serde",
  "serde_json",
+ "smoothutf8",
  "thiserror 2.0.19",
 ]
 
 [[package]]
 name = "buffa-codegen"
-version = "0.5.2"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd9774d97c281d07a61006775c675940371c170ae1b454de0e9c013e0acd19f6"
+checksum = "c6681b562b18ea719622d0d12684e88ecbdca600d517557dc7bcef7704631e28"
 dependencies = [
  "buffa",
  "buffa-descriptor",
@@ -360,18 +363,21 @@ dependencies = [
 
 [[package]]
 name = "buffa-descriptor"
-version = "0.5.2"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7b942f9242ea5a79c92486460073a0a36cccc314e69fbc2ff08f55467c47b37"
+checksum = "57ed423c4ecec86d1500879ce42e7e5f6def01bc632985ac756c1fd723fa21fc"
 dependencies = [
  "buffa",
+ "rustversion",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "buffa-types"
-version = "0.5.2"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d406a92c781273688fa21eb2641b54b2cf4e6b52e4a1339fd12279b8220313c"
+checksum = "22cb54bcbf6946c58e550eeaf6209047146363dbc7cbdc87e49e67089ed2ff5f"
 dependencies = [
  "buffa",
  "bytes",
@@ -519,11 +525,12 @@ checksum = "cc14f565cf027a105f7a44ccf9e5b424348421a1d8952a8fc9d499d313107789"
 
 [[package]]
 name = "connectrpc"
-version = "0.4.2"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55cb80f9eb09b593a96880eb1c2588ac6319b129519de8c672f9b8b4ffdeaece"
+checksum = "e4d1bbfc95ed1f4f31a027f5b97ff981be2617bc8a5c800fd6fcc701867bb97f"
 dependencies = [
  "async-compression",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "buffa",
@@ -548,9 +555,9 @@ dependencies = [
 
 [[package]]
 name = "connectrpc-build"
-version = "0.4.2"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eec3203af15f7075997d16f8ea0a614bcad86879abe9f8ea70c4df69e74f3c14"
+checksum = "f8cdec2dacacd00437898dad38f98105c82d51086a78baa62cee6dc66c031070"
 dependencies = [
  "anyhow",
  "buffa",
@@ -561,9 +568,9 @@ dependencies = [
 
 [[package]]
 name = "connectrpc-codegen"
-version = "0.4.2"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77590b8d66a279f1741bc56bd358f82ce57f26f5a9576fbb8329bce30ea1e96e"
+checksum = "36c6e3bb62a4a77f41d5cd3d290a488bf529dc7e26b444cda67a3e5544c97542"
 dependencies = [
  "anyhow",
  "buffa",
@@ -3165,6 +3172,15 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+
+[[package]]
+name = "smoothutf8"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36358427d32ecdb1624616deed99eccfef0a167fe5bf40ddb51efe6980bc1ec8"
+dependencies = [
+ "simdutf8",
+]
 
 [[package]]
 name = "snafu"

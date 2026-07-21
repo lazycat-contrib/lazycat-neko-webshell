@@ -1439,7 +1439,7 @@ fn session_from_workspace_pane(
         status: Some(pane.status.clone()),
         cols: Some(i32::from(pane.cols)),
         rows: Some(i32::from(pane.rows)),
-        metadata,
+        metadata: metadata.into_iter().collect(),
         ..Default::default()
     }
 }
