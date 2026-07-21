@@ -49,7 +49,7 @@ wuff = "0.2.5"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
-connectrpc-build = "0.4.2"
+connectrpc-build = "0.8.0"
 sha2 = "0.11.0"
 
 [lints.rust]
