@@ -15,7 +15,7 @@ bytes = "1.11.0"
 capnp = "0.26.2"
 capnp-futures = "0.26.1"
 capnp-rpc = "0.26.1"
-connectrpc = { version = "0.4.2", features = ["axum"] }
+connectrpc = { version = "0.8.1", features = ["axum"] }
 futures = "0.3.31"
 http = "1.4.0"
 http-body = "1.0.1"
