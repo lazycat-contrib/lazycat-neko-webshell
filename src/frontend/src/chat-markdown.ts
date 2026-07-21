@@ -1,4 +1,4 @@
-import { escapeAttr, escapeHtml } from "./utils";
+import { escapeAttr, escapeHtml } from "./utils.ts";
 
 type Fence = {
   marker: "```" | "~~~";

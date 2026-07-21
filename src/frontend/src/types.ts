@@ -120,6 +120,26 @@ export type HerdrPaneInfo = {
   tokens: HerdrMetadataTokens;
 };
 
+export type HerdrAgentInfo = {
+  terminal_id: string;
+  name?: string;
+  agent?: string;
+  display_agent?: string;
+  agent_status: string;
+  workspace_id: string;
+  tab_id: string;
+  pane_id: string;
+  focused: boolean;
+  revision: number;
+  launch_pending: boolean;
+  interactive_ready: boolean;
+  state_change_seq: number;
+  title?: string;
+  terminal_title?: string;
+  terminal_title_stripped?: string;
+  tokens: HerdrMetadataTokens;
+};
+
 export type HerdrBridgeState = {
   selector: string;
   available: boolean;
@@ -135,6 +155,7 @@ export type HerdrBridgeState = {
   workspaces: HerdrWorkspaceInfo[];
   tabs: HerdrTabInfo[];
   panes: HerdrPaneInfo[];
+  agents: HerdrAgentInfo[];
 };
 
 export type HerdrAction = "focus_workspace" | "focus_tab" | "create_tab" | "close_workspace" | "create_workspace";
@@ -189,6 +210,12 @@ export type AIChatSession = {
 export type AIChatTerminalTarget = {
   key: string;
   label: string;
+  herdrAgent?: {
+    target: string;
+    label: string;
+    status: string;
+    interactiveReady: boolean;
+  };
 };
 
 export type AiMcpServerSettings = {

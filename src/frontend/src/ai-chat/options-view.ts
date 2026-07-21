@@ -1,5 +1,5 @@
 import type { MessageKey } from "../i18n";
-import { escapeAttr, escapeHtml } from "../utils";
+import { escapeAttr, escapeHtml } from "../utils.ts";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 

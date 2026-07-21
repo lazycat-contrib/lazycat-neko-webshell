@@ -1,13 +1,16 @@
 import type { MessageKey } from "../../i18n";
 import type {
   AIChatTerminalTarget,
+  HerdrAgentInfo,
   HerdrBridgeState,
+  HerdrPaneInfo,
   HerdrTabInfo,
   HerdrWorkspaceInfo,
   TerminalPane,
   TerminalTab,
 } from "../../types";
-import { normalizeSelector } from "../../workspace-selection";
+import { herdrAgentInteractionsAvailable, herdrAgentLabel } from "../../herdr-agent-view.ts";
+import { normalizeSelector } from "../../workspace-selection.ts";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -69,6 +72,7 @@ export function buildAIChatTerminalTarget(options: AIChatTerminalTargetOptions):
   if (pane.sessionBackend === "herdr") {
     const workspace = focusedHerdrWorkspace(herdrState);
     const herdrTab = focusedHerdrTab(herdrState);
+    const herdrAgent = focusedHerdrAgent(herdrState);
     return {
       key: [
         selector,
@@ -85,6 +89,14 @@ export function buildAIChatTerminalTarget(options: AIChatTerminalTargetOptions):
         tabDisplayName,
         tr,
       }),
+      ...(herdrAgent ? {
+        herdrAgent: {
+          target: herdrAgent.pane_id,
+          label: herdrAgentLabel(herdrAgent),
+          status: herdrAgent.agent_status,
+          interactiveReady: herdrAgent.interactive_ready,
+        },
+      } : {}),
     };
   }
   return {
@@ -99,6 +111,17 @@ function focusedHerdrWorkspace(state: HerdrBridgeState | undefined): HerdrWorksp
 
 function focusedHerdrTab(state: HerdrBridgeState | undefined): HerdrTabInfo | undefined {
   return state?.tabs.find((tab) => tab.focused) ?? state?.tabs[0];
+}
+
+function focusedHerdrAgent(state: HerdrBridgeState | undefined): HerdrAgentInfo | undefined {
+  if (!herdrAgentInteractionsAvailable(state)) return undefined;
+  const pane = focusedHerdrPane(state);
+  return state?.agents.find((agent) => agent.pane_id === pane?.pane_id)
+    ?? state?.agents.find((agent) => agent.focused);
+}
+
+function focusedHerdrPane(state: HerdrBridgeState | undefined): HerdrPaneInfo | undefined {
+  return state?.panes.find((pane) => pane.focused) ?? state?.panes[0];
 }
 
 function herdrTerminalTargetLabel(options: {

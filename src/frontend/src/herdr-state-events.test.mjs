@@ -39,6 +39,7 @@ function stateFixture() {
       agent_status: "working",
       tokens: {},
     }],
+    agents: [],
   };
 }
 

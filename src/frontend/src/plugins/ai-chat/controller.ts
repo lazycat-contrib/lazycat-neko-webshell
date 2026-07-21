@@ -1,16 +1,17 @@
 import type { TerminalActionWSClient } from "../../action-ws-client";
 import type { MessageKey } from "../../i18n";
-import { metaString, metaStringArray } from "../../json-meta";
-import { downloadPluginPayload } from "../../plugin-utils";
-import type { AIChatMessage, AIChatSession, AIChatTerminalTarget, Tone } from "../../types";
-import { errorMessage } from "../../utils";
-import { replaceAIChatHistory, resizeAIChatInput } from "./dom";
-import { AIChatStore } from "./store";
+import { metaString, metaStringArray } from "../../json-meta.ts";
+import { downloadPluginPayload } from "../../plugin-utils.ts";
+import type { AIChatMessage, AIChatSession, AIChatTerminalTarget, JsonRecord, Tone } from "../../types";
+import { errorMessage } from "../../utils.ts";
+import { replaceAIChatHistory, resizeAIChatInput } from "./dom.ts";
+import { AIChatStore } from "./store.ts";
 import {
   aiChatTranscript,
   renderAIChatMessages as renderAIChatMessagesView,
-} from "./tool-view";
+} from "./tool-view.ts";
 import type { AiVoiceReplyPlaybackState } from "./voice-reply";
+import { herdrAgentPromptTone, submitHerdrAgentPrompt } from "./herdr-agent-prompt.ts";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -27,6 +28,7 @@ type AIChatControllerDeps = {
   activeTerminalTarget: () => AIChatTerminalTarget | undefined;
   inputElement: () => HTMLTextAreaElement | null;
   actionClient: Pick<TerminalActionWSClient, "send">;
+  requestHerdrAgentPrompt: (params: JsonRecord) => Promise<JsonRecord | undefined>;
   tr: Translate;
   createId: () => string;
   onStatus: (message: string, tone?: Tone) => void;
@@ -38,6 +40,7 @@ type AIChatControllerDeps = {
 
 export function createAIChatController(deps: AIChatControllerDeps) {
   const store = new AIChatStore();
+  let activeTargetPresentation = "";
 
   function currentModel(): string {
     return store.currentModel(deps.configuredModel());
@@ -51,6 +54,10 @@ export function createAIChatController(deps: AIChatControllerDeps) {
 
   function activeTarget(): AIChatTerminalTarget | undefined {
     return deps.activeTerminalTarget();
+  }
+
+  function activeHerdrAgentTarget() {
+    return activeTarget()?.herdrAgent;
   }
 
   function ensureSession(model = currentModelKey()): AIChatSession {
@@ -73,8 +80,11 @@ export function createAIChatController(deps: AIChatControllerDeps) {
   function syncSessionForActiveTarget(): boolean {
     if (store.streaming) return false;
     const before = store.activeSessionId;
+    const presentation = terminalTargetPresentation(activeTarget());
     store.activeSessionId = ensureSession(currentModelKey()).id;
-    return store.activeSessionId !== before;
+    const changed = store.activeSessionId !== before || presentation !== activeTargetPresentation;
+    activeTargetPresentation = presentation;
+    return changed;
   }
 
   function renderMessages(): string {
@@ -125,6 +135,9 @@ export function createAIChatController(deps: AIChatControllerDeps) {
     currentModel,
     currentModelKey,
     activeTerminalTarget: activeTarget,
+    canPromptHerdrAgent: () => Boolean(
+      !store.streaming && activeHerdrAgentTarget()?.interactiveReady,
+    ),
     activeSession: () => store.activeSession(),
     ensureSession,
     modelValues: () => store.modelValues(deps.configuredModel(), deps.tr("action.aiFetchModels")),
@@ -225,6 +238,49 @@ export function createAIChatController(deps: AIChatControllerDeps) {
         deps.onRender();
       }
     },
+    async promptHerdrAgent() {
+      if (!deps.isEnabled() || store.streaming) return;
+      const agentTarget = activeHerdrAgentTarget();
+      if (!agentTarget?.interactiveReady) {
+        appendSystem(deps.tr("validation.aiHerdrAgentUnavailable"), "error");
+        return;
+      }
+      const input = deps.inputElement();
+      const prompt = input?.value.trim() ?? "";
+      if (!prompt) {
+        appendSystem(deps.tr("validation.aiPrompt"), "error");
+        return;
+      }
+      const session = ensureSession(currentModelKey());
+      input!.value = "";
+      resizeAIChatInput(input!);
+      session.messages.push({ role: "user", content: prompt });
+      store.streaming = true;
+      deps.onStatus(deps.tr("status.aiHerdrAgentPrompting"));
+      deps.onRender();
+      try {
+        const agent = await submitHerdrAgentPrompt(
+          deps.requestHerdrAgentPrompt,
+          agentTarget.target,
+          prompt,
+        );
+        if (!agent) throw new Error(deps.tr("validation.aiHerdrAgentInvalidResponse"));
+        const tone = herdrAgentPromptTone(agent.agent_status);
+        const message = deps.tr("status.aiHerdrAgentPrompted", {
+          agent: agentTarget.label,
+          status: agent.agent_status,
+        });
+        session.messages.push({ role: "system", content: message, tone });
+        deps.onStatus(message, tone);
+      } catch (error) {
+        const message = errorMessage(error);
+        session.messages.push({ role: "system", content: message, tone: "error" });
+        deps.onStatus(message, "error");
+      } finally {
+        store.streaming = false;
+        deps.onRender();
+      }
+    },
     copyOutput() {
       const session = store.activeSession();
       void copyText(session ? aiChatTranscript(session) : "");
@@ -268,4 +324,16 @@ export function createAIChatController(deps: AIChatControllerDeps) {
       );
     },
   };
+}
+
+function terminalTargetPresentation(target: AIChatTerminalTarget | undefined): string {
+  const agent = target?.herdrAgent;
+  return [
+    target?.key ?? "",
+    target?.label ?? "",
+    agent?.target ?? "",
+    agent?.label ?? "",
+    agent?.status ?? "",
+    agent?.interactiveReady ? "ready" : "",
+  ].join("\u0000");
 }

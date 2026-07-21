@@ -1,7 +1,9 @@
 import type { SplitNode, TerminalPane } from "./types";
 
 type TerminalMountHandlers = {
+  onPointerDownCapture: (event: PointerEvent) => void;
   onPointerDown: (event: PointerEvent) => void;
+  onPointerUpCapture: (event: PointerEvent) => void;
   onPointerUp: (event: PointerEvent) => void;
   onPointerCancel: (event: PointerEvent) => void;
   onDoubleClick: (event: MouseEvent) => void;
@@ -21,7 +23,9 @@ export function createTerminalPaneMount(
   mount.tabIndex = 0;
   mount.setAttribute("role", "group");
   mount.setAttribute("aria-label", ariaLabel);
+  mount.addEventListener("pointerdown", handlers.onPointerDownCapture, true);
   mount.addEventListener("pointerdown", handlers.onPointerDown);
+  mount.addEventListener("pointerup", handlers.onPointerUpCapture, true);
   mount.addEventListener("pointerup", handlers.onPointerUp);
   mount.addEventListener("pointercancel", handlers.onPointerCancel);
   mount.addEventListener("dblclick", handlers.onDoubleClick);

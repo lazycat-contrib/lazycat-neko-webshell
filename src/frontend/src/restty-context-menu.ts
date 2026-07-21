@@ -1,4 +1,4 @@
-import type { TerminalPane } from "../types";
+import type { TerminalPane } from "./types";
 
 export type ResttyContextMenuPoint = {
   clientX: number;
@@ -26,13 +26,26 @@ export function openResttyPaneContextMenu(
   return event.defaultPrevented;
 }
 
-export function forwardTouchContextMenuToRestty(
+export function interceptHerdrContextMenuPointer(
+  pane: TerminalPane,
+  event: PointerEvent,
+): boolean {
+  if (pane.sessionBackend !== "herdr" || event.pointerType !== "mouse" || event.button !== 2) {
+    return false;
+  }
+  event.stopPropagation();
+  return true;
+}
+
+export function forwardPaneContextMenuToRestty(
   pane: TerminalPane,
   event: MouseEvent,
 ): boolean {
   const container = pane.term?.restty?.getActivePane()?.container;
   const ownerWindow = container?.ownerDocument.defaultView;
-  if (!container || !ownerWindow || event.target === container || !usesCoarseTouchPointer(ownerWindow)) {
+  const shouldForward = pane.sessionBackend === "herdr"
+    || Boolean(ownerWindow && usesCoarseTouchPointer(ownerWindow));
+  if (!container || !ownerWindow || event.target === container || !shouldForward) {
     return false;
   }
 

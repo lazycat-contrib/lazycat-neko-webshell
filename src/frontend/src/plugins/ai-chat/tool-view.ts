@@ -1,9 +1,10 @@
-import { renderAIChatContextToggle } from "../../ai-chat/options-view";
-import { renderChatMarkdown } from "../../chat-markdown";
+import { renderAIChatContextToggle } from "../../ai-chat/options-view.ts";
+import { renderChatMarkdown } from "../../chat-markdown.ts";
 import type { MessageKey } from "../../i18n";
 import type { AIChatMessage, AIChatSession, AiProviderProfile } from "../../types";
-import { escapeAttr, escapeHtml } from "../../utils";
+import { escapeAttr, escapeHtml } from "../../utils.ts";
 import type { AiVoiceReplyPlaybackState } from "./voice-reply";
+import { renderHerdrAgentPromptButton } from "./herdr-agent-prompt-view.ts";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -27,6 +28,7 @@ export type AIChatViewState = {
   targetTerminalLabel: string;
   sendTerminalContext: boolean;
   terminalContextPreview: string;
+  herdrAgentPromptAvailable: boolean;
   voiceReplyEnabled: boolean;
   voiceReplyStateForMessage: (messageIndex: number, content: string) => AiVoiceReplyPlaybackState;
   tr: Translate;
@@ -86,6 +88,11 @@ export function renderAIChatToolView(state: AIChatViewState): string {
           </div>
           <div class="ai-chat-input-row">
             <textarea id="aiChatInput" rows="1" spellcheck="false" placeholder="${escapeAttr(tr("field.aiPrompt"))}" ${disabledAttr}></textarea>
+            ${renderHerdrAgentPromptButton({
+              available: state.herdrAgentPromptAvailable,
+              busy: state.disabled || state.streaming,
+              tr,
+            })}
             <button class="command-button primary" type="button" data-ai-action="send-chat" ${disabledAttr}>
               <i data-lucide="send"></i>
               <span>${escapeHtml(tr("action.aiSend"))}</span>

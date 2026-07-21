@@ -1,6 +1,6 @@
 import contract from "../../herdr_socket_contract.json" with { type: "json" };
 
-import type { HerdrPaneInfo, HerdrWorkspaceInfo, JsonRecord } from "./types";
+import type { HerdrAgentInfo, HerdrPaneInfo, HerdrWorkspaceInfo, JsonRecord } from "./types";
 
 export const HERDR_SOCKET_PROTOCOL = contract.protocol;
 export const HERDR_SOCKET_SCHEMA_VERSION = contract.schema_version;
@@ -169,6 +169,60 @@ export function herdrPaneInfoFromEvent(data: JsonRecord): HerdrPaneInfo | undefi
   };
 }
 
+export function herdrAgentInfo(value: JsonRecord | undefined): HerdrAgentInfo | undefined {
+  const agent = recordField(value, "agent") ?? value;
+  if (!agent) return undefined;
+  const terminalId = stringField(agent, "terminal_id");
+  const agentStatus = stringField(agent, "agent_status");
+  const workspaceId = stringField(agent, "workspace_id");
+  const tabId = stringField(agent, "tab_id");
+  const paneId = stringField(agent, "pane_id");
+  const focused = booleanField(agent, "focused");
+  const revision = nonNegativeInteger(agent?.revision);
+  const launchPending = optionalBooleanField(agent, "launch_pending", false);
+  const interactiveReady = optionalBooleanField(agent, "interactive_ready", false);
+  const stateChangeSeq = optionalNonNegativeInteger(agent?.state_change_seq, 0);
+  const tokens = metadataTokens(agent?.tokens);
+  if (
+    !terminalId
+    || !agentStatus
+    || !workspaceId
+    || !tabId
+    || !paneId
+    || focused === undefined
+    || revision === undefined
+    || launchPending === undefined
+    || interactiveReady === undefined
+    || stateChangeSeq === undefined
+    || tokens === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    terminal_id: terminalId,
+    ...optionalStringFields(agent, [
+      "name",
+      "agent",
+      "display_agent",
+    ]),
+    agent_status: agentStatus,
+    workspace_id: workspaceId,
+    tab_id: tabId,
+    pane_id: paneId,
+    focused,
+    revision,
+    launch_pending: launchPending,
+    interactive_ready: interactiveReady,
+    state_change_seq: stateChangeSeq,
+    ...optionalStringFields(agent, [
+      "title",
+      "terminal_title",
+      "terminal_title_stripped",
+    ]),
+    tokens,
+  };
+}
+
 export function herdrPaneIdFromEvent(data: JsonRecord): string {
   return stringField(data, "pane_id") || stringField(recordField(data, "pane"), "pane_id");
 }
@@ -208,6 +262,19 @@ function positiveInteger(value: unknown): number | undefined {
 function booleanField(record: JsonRecord | undefined, key: string): boolean | undefined {
   const value = record?.[key];
   return typeof value === "boolean" ? value : undefined;
+}
+
+function optionalBooleanField(
+  record: JsonRecord | undefined,
+  key: string,
+  fallback: boolean,
+): boolean | undefined {
+  if (!record || !(key in record)) return fallback;
+  return booleanField(record, key);
+}
+
+function optionalNonNegativeInteger(value: unknown, fallback: number): number | undefined {
+  return value === undefined ? fallback : nonNegativeInteger(value);
 }
 
 function metadataTokens(value: unknown): Record<string, string> | undefined {

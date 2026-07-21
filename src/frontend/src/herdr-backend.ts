@@ -92,7 +92,9 @@ export function herdrFocusedOrFirstPaneId(result: JsonRecord | undefined): strin
 
 export function herdrEventTone(event: string, data: JsonRecord): Tone {
   if (event === "pane.exited") return "error";
-  const status = stringField(data, "agent_status") || stringField(data, "state");
+  const status = stringField(data, "agent_status")
+    || stringField(data, "state")
+    || stringField(data, "final_status");
   if (status === "blocked") return "error";
   if (status === "done" || status === "idle") return "ok";
   return "neutral";
@@ -109,6 +111,11 @@ export function herdrEventChangesDock(event: string): boolean {
     || event === "pane.moved"
     || event === "pane.exited"
     || event === "layout.updated";
+}
+
+export function herdrEventChangesAgentList(event: string): boolean {
+  return event === "pane.agent_detected"
+    || event === "pane.agent_status_changed";
 }
 
 export function herdrEventShowsStatus(event: string): boolean {

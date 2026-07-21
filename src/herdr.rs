@@ -24,6 +24,8 @@ use crate::tty_init::lightos_features_enabled;
 use crate::validation::validate_selector;
 
 const HERDR_API_TIMEOUT: Duration = Duration::from_secs(6);
+const HERDR_LONG_REQUEST_TIMEOUT_MAX_MS: u64 = 300_000;
+const HERDR_REQUEST_TIMEOUT_OVERHEAD: Duration = Duration::from_secs(2);
 const MAX_HERDR_SOCKET_REQUEST_BYTES: usize = 1024 * 1024;
 const HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS: u64 = 5;
 const MIN_SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 14;
@@ -116,6 +118,7 @@ pub struct HerdrBridgeState {
     workspaces: Vec<HerdrWorkspaceInfo>,
     tabs: Vec<HerdrTabInfo>,
     panes: Vec<HerdrPaneInfo>,
+    agents: Vec<HerdrAgentInfo>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -163,6 +166,33 @@ pub struct HerdrPaneInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     agent: Option<String>,
     agent_status: String,
+    tokens: Map<String, Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HerdrAgentInfo {
+    terminal_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_agent: Option<String>,
+    agent_status: String,
+    workspace_id: String,
+    tab_id: String,
+    pane_id: String,
+    focused: bool,
+    revision: u64,
+    launch_pending: bool,
+    interactive_ready: bool,
+    state_change_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    terminal_title_stripped: Option<String>,
     tokens: Map<String, Value>,
 }
 
@@ -474,6 +504,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                Vec::new(),
             );
         }
     };
@@ -502,7 +533,10 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
                     })
                     .collect();
                 let panes = parse_panes(&response);
-                return build_herdr_state(target, true, None, ping_info, workspaces, tabs, panes);
+                let agents = parse_agents(&response);
+                return build_herdr_state(
+                    target, true, None, ping_info, workspaces, tabs, panes, agents,
+                );
             }
             Err(err) => {
                 warn!(
@@ -522,6 +556,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
                 true,
                 Some(err.message),
                 ping_info,
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
@@ -554,7 +589,16 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
         Vec::new()
     };
 
-    build_herdr_state(target, true, None, ping_info, workspaces, tabs, Vec::new())
+    build_herdr_state(
+        target,
+        true,
+        None,
+        ping_info,
+        workspaces,
+        tabs,
+        Vec::new(),
+        Vec::new(),
+    )
 }
 
 fn build_herdr_state(
@@ -565,6 +609,7 @@ fn build_herdr_state(
     workspaces: Vec<HerdrWorkspaceInfo>,
     tabs: Vec<HerdrTabInfo>,
     panes: Vec<HerdrPaneInfo>,
+    agents: Vec<HerdrAgentInfo>,
 ) -> HerdrBridgeState {
     HerdrBridgeState {
         selector: target.selector.clone(),
@@ -581,6 +626,7 @@ fn build_herdr_state(
         workspaces,
         tabs,
         panes,
+        agents,
     }
 }
 
@@ -609,12 +655,18 @@ async fn run_herdr_request_raw(
     params: Value,
 ) -> Result<Value, HerdrBridgeError> {
     validate_herdr_method(method)?;
+    let params = normalize_herdr_request_params(method, params);
+    let request_timeout = herdr_request_timeout(method, &params);
     let request = json!({
         "id": format!("lazycat-webshell:{method}"),
         "method": method,
-        "params": normalize_herdr_params(params),
+        "params": params,
     });
-    let script = herdr_socket_script(&target.login_user, &request.to_string());
+    let script = herdr_socket_script(
+        &target.login_user,
+        &request.to_string(),
+        herdr_socket_timeout_seconds(request_timeout),
+    );
     let mut command = Command::new(LIGHTOSCTL);
     command.args([
         "exec",
@@ -624,7 +676,8 @@ async fn run_herdr_request_raw(
         "-lc",
         script.as_str(),
     ]);
-    let output = timeout(HERDR_API_TIMEOUT, command.output())
+    command.kill_on_drop(true);
+    let output = timeout(request_timeout, command.output())
         .await
         .map_err(|_| HerdrBridgeError {
             status: StatusCode::GATEWAY_TIMEOUT,
@@ -922,11 +975,59 @@ fn normalize_herdr_params(params: Value) -> Value {
     }
 }
 
+fn normalize_herdr_request_params(method: &str, params: Value) -> Value {
+    let mut params = normalize_herdr_params(params);
+    match method {
+        "agent.prompt" => {
+            if let Some(wait) = params
+                .as_object_mut()
+                .and_then(|params| params.get_mut("wait"))
+                .and_then(Value::as_object_mut)
+            {
+                cap_herdr_wait_timeout(wait);
+            }
+        }
+        "agent.wait" | "events.wait" | "pane.wait_for_output" => {
+            if let Some(params) = params.as_object_mut() {
+                cap_herdr_wait_timeout(params);
+            }
+        }
+        _ => {}
+    }
+    params
+}
+
+fn cap_herdr_wait_timeout(params: &mut Map<String, Value>) {
+    match params.get("timeout_ms") {
+        None | Some(Value::Null) => {
+            params.insert(
+                "timeout_ms".to_owned(),
+                Value::from(HERDR_LONG_REQUEST_TIMEOUT_MAX_MS),
+            );
+        }
+        Some(value) => {
+            let Some(timeout_ms) = value.as_u64() else {
+                return;
+            };
+            if timeout_ms > HERDR_LONG_REQUEST_TIMEOUT_MAX_MS {
+                params.insert(
+                    "timeout_ms".to_owned(),
+                    Value::from(HERDR_LONG_REQUEST_TIMEOUT_MAX_MS),
+                );
+            }
+        }
+    }
+}
+
 fn empty_json_object() -> Value {
     json!({})
 }
 
-fn herdr_socket_script(login_user: &str, request_json: &str) -> String {
+fn herdr_socket_script(
+    login_user: &str,
+    request_json: &str,
+    socket_timeout_seconds: u64,
+) -> String {
     let request_json = shell_quote(request_json);
     format!(
         r#"{}
@@ -942,7 +1043,7 @@ import sys
 request = os.environ["HERDR_WEB_REQUEST"].encode("utf-8")
 path = os.environ["HERDR_WEB_SOCKET"]
 client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-client.settimeout(5)
+client.settimeout({socket_timeout_seconds})
 client.connect(path)
 client.sendall(request + b"\n")
 chunks = []
@@ -957,7 +1058,7 @@ payload = b"".join(chunks).split(b"\n", 1)[0]
 sys.stdout.buffer.write(payload + b"\n")
 PY
 elif command -v socat >/dev/null 2>&1; then
-  printf '%s\n' "$request_json" | socat -t {HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS} - "UNIX-CONNECT:$socket_path" | sed -n '1p'
+  printf '%s\n' "$request_json" | socat -t {socket_timeout_seconds} - "UNIX-CONNECT:$socket_path" | sed -n '1p'
 elif command -v nc >/dev/null 2>&1 && nc -h 2>&1 | grep -q -- ' -U\|-U '; then
   printf '%s\n' "$request_json" | nc -U "$socket_path" | sed -n '1p'
 else
@@ -965,6 +1066,36 @@ else
 fi"#,
         herdr_socket_prelude(login_user),
     )
+}
+
+fn herdr_request_timeout(method: &str, params: &Value) -> Duration {
+    let requested_ms = match method {
+        "agent.prompt" => params.get("wait").and_then(Value::as_object).map(|wait| {
+            wait.get("timeout_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(HERDR_LONG_REQUEST_TIMEOUT_MAX_MS)
+        }),
+        "agent.wait" | "events.wait" | "pane.wait_for_output" => Some(
+            params
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(HERDR_LONG_REQUEST_TIMEOUT_MAX_MS),
+        ),
+        _ => None,
+    };
+    let Some(requested_ms) = requested_ms else {
+        return HERDR_API_TIMEOUT;
+    };
+    let bounded = Duration::from_millis(requested_ms.min(HERDR_LONG_REQUEST_TIMEOUT_MAX_MS))
+        .saturating_add(HERDR_REQUEST_TIMEOUT_OVERHEAD);
+    HERDR_API_TIMEOUT.max(bounded)
+}
+
+fn herdr_socket_timeout_seconds(request_timeout: Duration) -> u64 {
+    request_timeout
+        .as_secs()
+        .saturating_sub(1)
+        .max(HERDR_SOCKET_BRIDGE_TIMEOUT_SECONDS)
 }
 
 fn herdr_socket_stream_script(login_user: &str) -> String {
@@ -1107,6 +1238,42 @@ fn parse_panes(response: &Value) -> Vec<HerdrPaneInfo> {
             })
         })
         .collect()
+}
+
+fn parse_agents(response: &Value) -> Vec<HerdrAgentInfo> {
+    herdr_result_collection(response, "agents")
+        .into_iter()
+        .flatten()
+        .filter_map(|value| {
+            Some(HerdrAgentInfo {
+                terminal_id: value.get("terminal_id")?.as_str()?.to_owned(),
+                name: json_optional_string(value, "name"),
+                agent: json_optional_string(value, "agent"),
+                display_agent: json_optional_string(value, "display_agent"),
+                agent_status: value.get("agent_status")?.as_str()?.to_owned(),
+                workspace_id: value.get("workspace_id")?.as_str()?.to_owned(),
+                tab_id: value.get("tab_id")?.as_str()?.to_owned(),
+                pane_id: value.get("pane_id")?.as_str()?.to_owned(),
+                focused: value.get("focused")?.as_bool()?,
+                revision: value.get("revision")?.as_u64()?,
+                launch_pending: json_optional_bool(value, "launch_pending", false)?,
+                interactive_ready: json_optional_bool(value, "interactive_ready", false)?,
+                state_change_seq: json_optional_u64(value, "state_change_seq", 0)?,
+                title: json_optional_string(value, "title"),
+                terminal_title: json_optional_string(value, "terminal_title"),
+                terminal_title_stripped: json_optional_string(value, "terminal_title_stripped"),
+                tokens: json_string_map(value, "tokens"),
+            })
+        })
+        .collect()
+}
+
+fn json_optional_bool(value: &Value, key: &str, default: bool) -> Option<bool> {
+    value.get(key).map_or(Some(default), Value::as_bool)
+}
+
+fn json_optional_u64(value: &Value, key: &str, default: u64) -> Option<u64> {
+    value.get(key).map_or(Some(default), Value::as_u64)
 }
 
 fn parse_tabs(response: &Value) -> Vec<HerdrTabInfo> {
@@ -1278,9 +1445,10 @@ mod tests {
     use super::{
         HERDR_SOCKET_CONTRACT, HerdrTerminalOperation, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
         herdr_protocol_is_supported, herdr_protocol_supports_session_snapshot,
-        is_allowed_herdr_method, parse_herdr_ping, parse_panes,
-        parse_snapshot_focused_workspace_id, parse_tabs, parse_workspaces, shell_quote,
-        terminal_mcp_operation_request, validate_herdr_wire_request,
+        herdr_request_timeout, is_allowed_herdr_method, normalize_herdr_request_params,
+        parse_agents, parse_herdr_ping, parse_panes, parse_snapshot_focused_workspace_id,
+        parse_tabs, parse_workspaces, shell_quote, terminal_mcp_operation_request,
+        validate_herdr_wire_request,
     };
 
     #[test]
@@ -1405,6 +1573,23 @@ mod tests {
                         "agent_status": "working",
                         "tokens": { "model": "gpt-5" },
                         "revision": 3
+                    }],
+                    "agents": [{
+                        "terminal_id": "term-1",
+                        "name": "reviewer",
+                        "agent": "codex",
+                        "display_agent": "Codex review",
+                        "agent_status": "working",
+                        "workspace_id": "w1",
+                        "tab_id": "w1:t1",
+                        "pane_id": "w1:p1",
+                        "focused": true,
+                        "revision": 4,
+                        "launch_pending": false,
+                        "interactive_ready": true,
+                        "state_change_seq": 12,
+                        "title": "Review auth",
+                        "tokens": { "model": "gpt-5" }
                     }]
                 }
             }
@@ -1413,6 +1598,7 @@ mod tests {
         let workspaces = parse_workspaces(&response);
         let tabs = parse_tabs(&response);
         let panes = parse_panes(&response);
+        let agents = parse_agents(&response);
         assert_eq!(
             parse_snapshot_focused_workspace_id(&response).as_deref(),
             Some("w1")
@@ -1433,6 +1619,12 @@ mod tests {
             panes[0].tokens.get("model").and_then(Value::as_str),
             Some("gpt-5")
         );
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].pane_id, "w1:p1");
+        assert_eq!(agents[0].name.as_deref(), Some("reviewer"));
+        assert!(agents[0].interactive_ready);
+        assert!(!agents[0].launch_pending);
+        assert_eq!(agents[0].state_change_seq, 12);
     }
 
     #[test]
@@ -1443,14 +1635,14 @@ mod tests {
     #[test]
     fn herdr_socket_allowlist_covers_documented_methods() {
         assert_eq!(MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
-        assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 16);
+        assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 17);
         assert_eq!(HERDR_SOCKET_CONTRACT.schema_version, 1);
-        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.7.4");
+        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.7.5");
         assert_eq!(
             HERDR_SOCKET_CONTRACT.source_revision,
-            "a22454f27ce096585e19d1787dba43f56d1505cf"
+            "0f161fac287011b3e216383e2b8482f049fd6a7b"
         );
-        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 85);
+        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 89);
         assert_eq!(HERDR_SOCKET_CONTRACT.subscriptions.len(), 26);
         for method in [
             "session.snapshot",
@@ -1459,6 +1651,11 @@ mod tests {
             "pane.graphics.clear",
             "pane.graphics.info",
             "popup.close",
+            "agent.send_keys",
+            "agent.prompt",
+            "agent.wait",
+            "agent.view.set",
+            "agent.view.clear",
         ] {
             assert!(
                 is_allowed_herdr_method(method),
@@ -1471,6 +1668,7 @@ mod tests {
                 "{method} should be allowed"
             );
         }
+        assert!(!is_allowed_herdr_method("agent.send"));
         assert!(!is_allowed_herdr_method("pane.graphics.stream"));
         assert!(!is_allowed_herdr_method("workspace.delete"));
         assert!(!is_allowed_herdr_method("../../../bin/sh"));
@@ -1481,9 +1679,11 @@ mod tests {
         assert!(!herdr_protocol_is_supported(13));
         assert!(herdr_protocol_is_supported(14));
         assert!(herdr_protocol_is_supported(16));
-        assert!(!herdr_protocol_is_supported(17));
+        assert!(herdr_protocol_is_supported(17));
+        assert!(!herdr_protocol_is_supported(18));
         assert!(!herdr_protocol_supports_session_snapshot(14));
         assert!(herdr_protocol_supports_session_snapshot(16));
+        assert!(herdr_protocol_supports_session_snapshot(17));
     }
 
     #[test]
@@ -1491,16 +1691,16 @@ mod tests {
         let ping = parse_herdr_ping(&json!({
             "result": {
                 "type": "pong",
-                "version": "0.7.3",
-                "protocol": 16,
+                "version": "0.7.5",
+                "protocol": 17,
                 "capabilities": {
                     "live_handoff": true,
                     "detached_server_daemon": true
                 }
             }
         }));
-        assert_eq!(ping.version.as_deref(), Some("0.7.3"));
-        assert_eq!(ping.protocol, Some(16));
+        assert_eq!(ping.version.as_deref(), Some("0.7.5"));
+        assert_eq!(ping.protocol, Some(17));
         assert!(
             ping.capabilities
                 .as_ref()
@@ -1527,5 +1727,129 @@ mod tests {
                 .expect_err("unknown method should be rejected");
         assert!(error.contains("method_not_allowed"));
         assert!(error.contains("req_2"));
+    }
+
+    #[test]
+    fn derives_bounded_timeouts_for_long_running_herdr_methods() {
+        assert_eq!(
+            herdr_request_timeout("ping", &json!({})),
+            std::time::Duration::from_secs(6)
+        );
+        assert_eq!(
+            herdr_request_timeout("agent.wait", &json!({ "timeout_ms": 120_000 })),
+            std::time::Duration::from_secs(122)
+        );
+        assert_eq!(
+            herdr_request_timeout(
+                "agent.prompt",
+                &json!({ "wait": { "until": ["done", "blocked"], "timeout_ms": 120_000 } })
+            ),
+            std::time::Duration::from_secs(122)
+        );
+        assert_eq!(
+            herdr_request_timeout("agent.wait", &json!({ "timeout_ms": 600_000 })),
+            std::time::Duration::from_secs(302)
+        );
+        assert_eq!(
+            herdr_request_timeout("agent.prompt", &json!({ "wait": {} })),
+            std::time::Duration::from_secs(302)
+        );
+        assert_eq!(
+            herdr_request_timeout("agent.prompt", &json!({})),
+            std::time::Duration::from_secs(6)
+        );
+    }
+
+    #[test]
+    fn caps_wait_timeouts_in_the_request_sent_to_herdr() {
+        assert_eq!(
+            normalize_herdr_request_params("agent.wait", json!({})),
+            json!({ "timeout_ms": 300_000 })
+        );
+        assert_eq!(
+            normalize_herdr_request_params("events.wait", json!({ "timeout_ms": 600_000 })),
+            json!({ "timeout_ms": 300_000 })
+        );
+        assert_eq!(
+            normalize_herdr_request_params("agent.prompt", json!({ "wait": {} })),
+            json!({ "wait": { "timeout_ms": 300_000 } })
+        );
+        assert_eq!(
+            normalize_herdr_request_params("agent.prompt", json!({})),
+            json!({})
+        );
+    }
+
+    #[test]
+    fn rejects_agent_snapshots_with_invalid_defaulted_field_types() {
+        let response = json!({
+            "result": {
+                "agents": [
+                    {
+                        "terminal_id": "term-valid",
+                        "agent_status": "idle",
+                        "workspace_id": "w1",
+                        "tab_id": "w1:t1",
+                        "pane_id": "w1:p1",
+                        "focused": false,
+                        "revision": 1
+                    },
+                    {
+                        "terminal_id": "term-invalid-focused",
+                        "agent_status": "working",
+                        "workspace_id": "w1",
+                        "tab_id": "w1:t1",
+                        "pane_id": "w1:p2",
+                        "focused": "yes",
+                        "revision": 2
+                    },
+                    {
+                        "terminal_id": "term-invalid-revision",
+                        "agent_status": "working",
+                        "workspace_id": "w1",
+                        "tab_id": "w1:t1",
+                        "pane_id": "w1:p3",
+                        "focused": false,
+                        "revision": "two"
+                    },
+                    {
+                        "terminal_id": "term-invalid-launch",
+                        "agent_status": "working",
+                        "workspace_id": "w1",
+                        "tab_id": "w1:t1",
+                        "pane_id": "w1:p4",
+                        "focused": false,
+                        "revision": 3,
+                        "launch_pending": "yes"
+                    },
+                    {
+                        "terminal_id": "term-invalid-ready",
+                        "agent_status": "working",
+                        "workspace_id": "w1",
+                        "tab_id": "w1:t1",
+                        "pane_id": "w1:p5",
+                        "focused": false,
+                        "revision": 4,
+                        "interactive_ready": "yes"
+                    },
+                    {
+                        "terminal_id": "term-invalid-sequence",
+                        "agent_status": "working",
+                        "workspace_id": "w1",
+                        "tab_id": "w1:t1",
+                        "pane_id": "w1:p6",
+                        "focused": false,
+                        "revision": 5,
+                        "state_change_seq": "five"
+                    }
+                ]
+            }
+        });
+
+        let agents = parse_agents(&response);
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].terminal_id, "term-valid");
+        assert!(!agents[0].interactive_ready);
+        assert_eq!(agents[0].state_change_seq, 0);
     }
 }

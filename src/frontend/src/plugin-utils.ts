@@ -1,6 +1,6 @@
 import type { PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
 import type { MessageKey } from "./i18n";
-import { metaBoolean, metaNumber, metaString } from "./json-meta";
+import { metaBoolean, metaNumber, metaString } from "./json-meta.ts";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 

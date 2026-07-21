@@ -7,6 +7,7 @@ import {
   HERDR_SOCKET_SOURCE_REVISION,
   HERDR_SOCKET_SOURCE_VERSION,
   herdrEventSubscriptions,
+  herdrAgentInfo,
   herdrPaneIdFromEvent,
   herdrPaneInfo,
   herdrPaneInfoFromEvent,
@@ -16,14 +17,20 @@ import {
   isHerdrSocketSubscription,
 } from "./herdr-socket-api.ts";
 
-test("tracks the current Herdr 0.7.4 socket schema", () => {
-  assert.equal(HERDR_SOCKET_PROTOCOL, 16);
+test("tracks the current Herdr 0.7.5 socket schema", () => {
+  assert.equal(HERDR_SOCKET_PROTOCOL, 17);
   assert.equal(HERDR_SOCKET_SCHEMA_VERSION, 1);
-  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.7.4");
-  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "a22454f27ce096585e19d1787dba43f56d1505cf");
+  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.7.5");
+  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "0f161fac287011b3e216383e2b8482f049fd6a7b");
   assert.equal(isHerdrSocketMethod("workspace.report_metadata"), true);
   assert.equal(isHerdrSocketMethod("pane.graphics.set"), true);
   assert.equal(isHerdrSocketMethod("popup.close"), true);
+  assert.equal(isHerdrSocketMethod("agent.send_keys"), true);
+  assert.equal(isHerdrSocketMethod("agent.prompt"), true);
+  assert.equal(isHerdrSocketMethod("agent.wait"), true);
+  assert.equal(isHerdrSocketMethod("agent.view.set"), true);
+  assert.equal(isHerdrSocketMethod("agent.view.clear"), true);
+  assert.equal(isHerdrSocketMethod("agent.send"), false);
   assert.equal(isHerdrSocketMethod("pane.graphics.stream"), false);
   assert.equal(isHerdrSocketSubscription("workspace.metadata_updated"), true);
   assert.equal(isHerdrSocketSubscription("pane.updated"), true);
@@ -153,6 +160,68 @@ test("parses Herdr workspace metadata and pane presentation snapshots", () => {
   });
 });
 
+test("parses Herdr 0.7.5 agent lifecycle snapshots", () => {
+  assert.deepEqual(herdrAgentInfo({
+    agent: {
+      terminal_id: "term-1",
+      name: "reviewer",
+      agent: "codex",
+      display_agent: "Codex review",
+      agent_status: "working",
+      workspace_id: "w1",
+      tab_id: "w1:t1",
+      pane_id: "w1:p1",
+      focused: true,
+      revision: 4,
+      launch_pending: false,
+      interactive_ready: true,
+      state_change_seq: 12,
+      title: "Review auth",
+      terminal_title_stripped: "Codex",
+      tokens: { model: "gpt-5" },
+    },
+  }), {
+    terminal_id: "term-1",
+    name: "reviewer",
+    agent: "codex",
+    display_agent: "Codex review",
+    agent_status: "working",
+    workspace_id: "w1",
+    tab_id: "w1:t1",
+    pane_id: "w1:p1",
+    focused: true,
+    revision: 4,
+    launch_pending: false,
+    interactive_ready: true,
+    state_change_seq: 12,
+    title: "Review auth",
+    terminal_title_stripped: "Codex",
+    tokens: { model: "gpt-5" },
+  });
+
+  assert.deepEqual(herdrAgentInfo({
+    terminal_id: "term-old",
+    agent_status: "idle",
+    workspace_id: "w1",
+    tab_id: "w1:t1",
+    pane_id: "w1:p2",
+    focused: false,
+    revision: 1,
+  }), {
+    terminal_id: "term-old",
+    agent_status: "idle",
+    workspace_id: "w1",
+    tab_id: "w1:t1",
+    pane_id: "w1:p2",
+    focused: false,
+    revision: 1,
+    launch_pending: false,
+    interactive_ready: false,
+    state_change_seq: 0,
+    tokens: {},
+  });
+});
+
 test("rejects malformed Herdr resource snapshots", () => {
   assert.equal(herdrWorkspaceInfoFromEvent({ workspace: { label: "missing id" } }), undefined);
   assert.equal(herdrWorkspaceInfoFromEvent({
@@ -166,6 +235,7 @@ test("rejects malformed Herdr resource snapshots", () => {
     tokens: { summary: 3 },
   }), undefined);
   assert.equal(herdrPaneInfoFromEvent({ pane: { pane_id: "w1:p1" } }), undefined);
+  assert.equal(herdrAgentInfo({ agent: { pane_id: "w1:p1" } }), undefined);
   assert.equal(herdrPaneInfoFromEvent({
     pane_id: "w1:p1",
     workspace_id: "w1",

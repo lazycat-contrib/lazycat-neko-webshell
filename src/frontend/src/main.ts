@@ -60,6 +60,7 @@ import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/l
 import {
   HERDR_PANE_RESIZE_AMOUNT,
   herdrCurrentPaneId,
+  herdrEventChangesAgentList,
   herdrEventChangesDock,
   herdrEventSocketUrl,
   herdrEventShowsStatus,
@@ -72,6 +73,14 @@ import {
   selectHerdrTerminalPane,
 } from "./herdr-backend";
 import type { HerdrPaneResizeDirection } from "./herdr-backend";
+import { createHerdrAgentActions } from "./herdr-agent-actions";
+import {
+  herdrAgentInteractionsAvailable,
+  normalizeHerdrAgentFilter,
+  renderHerdrAgentMenuView,
+  type HerdrAgentFilter,
+} from "./herdr-agent-view";
+import { herdrEventMessage } from "./herdr-event-presentation";
 import { isHerdrSocketMethod } from "./herdr-socket-api";
 import { applyHerdrResourceEvent } from "./herdr-state-events";
 import { createHerdrWheelInputBatcher } from "./herdr-wheel-input-batcher";
@@ -99,10 +108,11 @@ import { isMobileOverlayMode, prepareMobileOverlay } from "./mobile/overlay";
 import { createMobileSymbolAgentController } from "./mobile/symbol-agent-controller";
 import { createMobileTerminalGestureController, isCoarseTouchPointer } from "./mobile/terminal-gestures";
 import {
-  forwardTouchContextMenuToRestty,
+  forwardPaneContextMenuToRestty,
   hideResttyPaneContextMenus,
+  interceptHerdrContextMenuPointer,
   openResttyPaneContextMenu,
-} from "./mobile/restty-context-menu";
+} from "./restty-context-menu";
 import {
   dismissNotification,
 } from "./notifications-api";
@@ -602,6 +612,7 @@ let selectedSelectorGeneration = 0;
 let selectedSelectorExplicit = initialSelectorExplicit;
 let herdrState: HerdrBridgeState | undefined;
 let herdrStateGeneration = 0;
+let herdrAgentFilter: HerdrAgentFilter = "all";
 let herdrEventSocket: WebSocket | undefined;
 let herdrEventSocketSelector = "";
 let herdrEventSocketOpeningSelector = "";
@@ -680,6 +691,22 @@ const terminalControl = createTerminalControlController({
 
 const activeAIChatTerminalPane = () => activeHerdrTerminalPane() ?? activePane();
 const activeTerminalInputPane = () => activeHerdrTerminalPane() ?? activePane();
+const herdrAgentActions = createHerdrAgentActions({
+  selectedSelector: () => selectedSelector,
+  selectedGeneration: () => selectedSelectorGeneration,
+  requestFocus: async ({ selector, target }) => {
+    await runHerdrSocketRequest("agent.focus", { target }, {
+      selector,
+      id: "lazycat-webshell:agent-focus",
+      mirrorNotification: false,
+    });
+  },
+  isCurrent: isCurrentSelectorRequest,
+  onFocused: (selector) => scheduleHerdrActionRefresh(selector, [0, 120]),
+  onError: (error) => {
+    setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
+  },
+});
 const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
   pane: activeAIChatTerminalPane,
   tab: (pane) => pane ? tabForPane(pane) ?? activeTab() : activeTab(),
@@ -707,6 +734,17 @@ const aiChat = createAIChatController({
   activeTerminalTarget: activeAIChatTerminalTarget,
   inputElement: () => document.querySelector<HTMLTextAreaElement>("#aiChatInput"),
   actionClient,
+  requestHerdrAgentPrompt: async (params) => {
+    const envelope = await runHerdrSocketRequest(
+      "agent.prompt",
+      params,
+      {
+        id: "lazycat-webshell:agent-prompt",
+        mirrorNotification: false,
+      },
+    );
+    return envelope.result;
+  },
   tr,
   createId: newId,
   onStatus: setPluginStatus,
@@ -1561,6 +1599,8 @@ function bindSettings() {
     const action = aiButton.dataset.aiAction ?? "";
     if (action === "send-chat") {
       void aiChat.run();
+    } else if (action === "send-herdr-agent") {
+      void aiChat.promptHerdrAgent();
     } else if (action === "copy-output") {
       aiChat.copyOutput();
     } else if (action === "copy-message") {
@@ -1880,6 +1920,22 @@ function bindActions() {
     void refreshHerdrState(selectedSelector);
   });
   elements.herdrWorkspaceMenuList.addEventListener("click", (event) => {
+    const filterButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-agent-filter]")
+      : null;
+    if (filterButton) {
+      herdrAgentFilter = normalizeHerdrAgentFilter(filterButton.dataset.herdrAgentFilter);
+      renderHerdrWorkspaceMenu();
+      return;
+    }
+    const agentButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-agent-pane]")
+      : null;
+    if (agentButton) {
+      closeHerdrWorkspaceMenu();
+      void herdrAgentActions.focus(agentButton.dataset.herdrAgentPane ?? "");
+      return;
+    }
     const closeButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-herdr-close-workspace]")
       : null;
@@ -1898,6 +1954,15 @@ function bindActions() {
   });
   elements.herdrWorkspaceMenuList.addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
+    const agentButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-herdr-agent-pane]")
+      : null;
+    if (agentButton) {
+      event.preventDefault();
+      closeHerdrWorkspaceMenu();
+      void herdrAgentActions.focus(agentButton.dataset.herdrAgentPane ?? "");
+      return;
+    }
     const button = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
       : null;
@@ -3426,6 +3491,7 @@ function renderAIChatTool(plugin: PluginDescriptor): string {
     targetTerminalLabel: target?.label ?? tr("status.noTarget"),
     sendTerminalContext: session.sendTerminalContext,
     terminalContextPreview: session.sendTerminalContext ? recentAIContext(activeAIChatTerminalPane()) : "",
+    herdrAgentPromptAvailable: aiChat.canPromptHerdrAgent(),
     voiceReplyEnabled: settings.aiVoiceReplyEnabled,
     voiceReplyStateForMessage: (messageIndex, content) => aiVoiceReply.stateFor(session.id, messageIndex, content),
     tr,
@@ -4450,7 +4516,7 @@ function handleHerdrEventMessage(raw: unknown) {
   if (!envelope.event) return;
   const event = envelope.event;
   const data = envelope.data ?? {};
-  const message = herdrEventShowsStatus(event) ? herdrEventMessage(event, data) : "";
+  const message = herdrEventShowsStatus(event) ? herdrEventMessage(event, data, tr) : "";
   if (message) {
     setGlobalStatus(message, herdrEventTone(event, data));
   }
@@ -4472,27 +4538,12 @@ function handleHerdrEventMessage(raw: unknown) {
       renderHerdrDock();
     }
   }
-  if (herdrEventChangesDock(event) && !resourceEventApplied) {
+  if (herdrEventChangesAgentList(event)) {
+    const selector = normalizeSelector(selectedSelector);
+    if (selector) scheduleHerdrActionRefresh(selector, [120]);
+  } else if (herdrEventChangesDock(event) && !resourceEventApplied) {
     scheduleHerdrEventRefresh();
   }
-}
-
-function herdrEventMessage(event: string, data: JsonRecord): string {
-  if (event === "pane.agent_status_changed") {
-    const status = stringField(data, "agent_status") || stringField(data, "state");
-    const agent = stringField(data, "display_agent") || stringField(data, "agent") || "agent";
-    const detail = stringField(data, "message") || status;
-    return tr("status.herdrEventAgent", { agent, status: detail || status || "updated" });
-  }
-  if (event === "pane.agent_detected") {
-    const agent = stringField(data, "agent") || "agent";
-    return tr("status.herdrEventAgent", { agent, status: "detected" });
-  }
-  const subject = stringField(data, "pane_id")
-    || stringField(data, "tab_id")
-    || stringField(data, "workspace_id")
-    || event;
-  return tr("status.herdrEvent", { event, subject });
 }
 
 function scheduleHerdrEventRefresh() {
@@ -4811,7 +4862,7 @@ function renderHerdrWorkspaceMenu() {
     return;
   }
   const workspaces = herdrState?.workspaces ?? [];
-  elements.herdrWorkspaceMenuList.innerHTML = renderHerdrWorkspaceMenuView(
+  const workspaceView = renderHerdrWorkspaceMenuView(
     workspaces,
     {
       tabs: tr("field.tabs"),
@@ -4820,6 +4871,18 @@ function renderHerdrWorkspaceMenu() {
     },
     herdrState?.message || tr("status.herdrUnavailable"),
   );
+  const agentView = herdrAgentInteractionsAvailable(herdrState)
+    ? renderHerdrAgentMenuView(herdrState?.agents ?? [], herdrAgentFilter, {
+      title: tr("section.herdrAgents"),
+      all: tr("filter.all"),
+      working: tr("status.working"),
+      blocked: tr("status.blocked"),
+      done: tr("status.done"),
+      empty: tr("status.noHerdrAgents"),
+      focus: tr("action.focusHerdrAgent"),
+    })
+    : "";
+  elements.herdrWorkspaceMenuList.innerHTML = `${workspaceView}${agentView}`;
   elements.herdrWorkspaceMenuStatus.textContent = herdrState?.message ?? "";
   updateIcons();
 }
@@ -5175,6 +5238,12 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
   const workspacePaneId = restoredId || newId();
   const id = workspaceEntityId(tab.selector, "pane", workspacePaneId);
   const mount = createTerminalPaneMount(id, `${tab.label} pane`, {
+    onPointerDownCapture: (event) => {
+      const current = findPaneById(id);
+      if (current && interceptHerdrContextMenuPointer(current, event)) {
+        activatePane(current.tabId, id, { focus: false });
+      }
+    },
     onPointerDown: (event) => {
       const current = findPaneById(id);
       if (current) {
@@ -5184,6 +5253,10 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
           requestAnimationFrame(() => focusPaneCanvas(current));
         }
       }
+    },
+    onPointerUpCapture: (event) => {
+      const current = findPaneById(id);
+      if (current) interceptHerdrContextMenuPointer(current, event);
     },
     onPointerUp: (event) => {
       if (event.pointerType !== "touch") return;
@@ -5215,7 +5288,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     onContextMenu: (event) => {
       const current = findPaneById(id);
       if (current) {
-        forwardTouchContextMenuToRestty(current, event);
+        forwardPaneContextMenuToRestty(current, event);
       }
     },
     onMouseUp: () => {
