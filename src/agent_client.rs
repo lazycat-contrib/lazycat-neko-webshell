@@ -1502,7 +1502,7 @@ mod tests {
     }
 
     #[test]
-    fn application_release_reuses_the_legacy_supported_agent_version() {
+    fn minimum_agent_version_rejects_the_legacy_agent_version() {
         let installed = AgentResponse {
             ok: Some(true),
             version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
@@ -1516,7 +1516,7 @@ mod tests {
         };
 
         assert_eq!(running_agent_version(&installed), Some(1));
-        assert!(running_agent_is_acceptable(&installed));
+        assert!(!running_agent_is_acceptable(&installed));
     }
 
     #[test]
