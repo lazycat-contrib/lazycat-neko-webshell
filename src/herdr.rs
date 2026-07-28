@@ -208,6 +208,14 @@ struct HerdrPingInfo {
     capabilities: Option<HerdrCapabilitiesInfo>,
 }
 
+#[derive(Debug, Default)]
+struct HerdrBridgeResources {
+    workspaces: Vec<HerdrWorkspaceInfo>,
+    tabs: Vec<HerdrTabInfo>,
+    panes: Vec<HerdrPaneInfo>,
+    agents: Vec<HerdrAgentInfo>,
+}
+
 #[derive(Debug)]
 pub(crate) struct HerdrBridgeError {
     status: StatusCode,
@@ -501,10 +509,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
                 false,
                 Some(err.message),
                 HerdrPingInfo::default(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
+                HerdrBridgeResources::default(),
             );
         }
     };
@@ -515,27 +520,12 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
     {
         match run_herdr_request(target, "session.snapshot", json!({})).await {
             Ok(response) => {
-                let workspaces = parse_workspaces(&response);
-                let focused_workspace_id =
-                    parse_snapshot_focused_workspace_id(&response).or_else(|| {
-                        workspaces
-                            .iter()
-                            .find(|workspace| workspace.focused)
-                            .or_else(|| workspaces.first())
-                            .map(|workspace| workspace.workspace_id.clone())
-                    });
-                let tabs = parse_tabs(&response)
-                    .into_iter()
-                    .filter(|tab| {
-                        focused_workspace_id
-                            .as_deref()
-                            .is_none_or(|workspace_id| tab.workspace_id == workspace_id)
-                    })
-                    .collect();
-                let panes = parse_panes(&response);
-                let agents = parse_agents(&response);
                 return build_herdr_state(
-                    target, true, None, ping_info, workspaces, tabs, panes, agents,
+                    target,
+                    true,
+                    None,
+                    ping_info,
+                    parse_herdr_session_snapshot(&response),
                 );
             }
             Err(err) => {
@@ -556,10 +546,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
                 true,
                 Some(err.message),
                 ping_info,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
+                HerdrBridgeResources::default(),
             );
         }
     };
@@ -594,11 +581,38 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
         true,
         None,
         ping_info,
+        HerdrBridgeResources {
+            workspaces,
+            tabs,
+            ..HerdrBridgeResources::default()
+        },
+    )
+}
+
+fn parse_herdr_session_snapshot(response: &Value) -> HerdrBridgeResources {
+    let workspaces = parse_workspaces(response);
+    let focused_workspace_id = parse_snapshot_focused_workspace_id(response).or_else(|| {
+        workspaces
+            .iter()
+            .find(|workspace| workspace.focused)
+            .or_else(|| workspaces.first())
+            .map(|workspace| workspace.workspace_id.clone())
+    });
+    let tabs = parse_tabs(response)
+        .into_iter()
+        .filter(|tab| {
+            focused_workspace_id
+                .as_deref()
+                .is_none_or(|workspace_id| tab.workspace_id == workspace_id)
+        })
+        .collect();
+
+    HerdrBridgeResources {
         workspaces,
         tabs,
-        Vec::new(),
-        Vec::new(),
-    )
+        panes: parse_panes(response),
+        agents: parse_agents(response),
+    }
 }
 
 fn build_herdr_state(
@@ -606,10 +620,7 @@ fn build_herdr_state(
     available: bool,
     message: Option<String>,
     ping_info: HerdrPingInfo,
-    workspaces: Vec<HerdrWorkspaceInfo>,
-    tabs: Vec<HerdrTabInfo>,
-    panes: Vec<HerdrPaneInfo>,
-    agents: Vec<HerdrAgentInfo>,
+    resources: HerdrBridgeResources,
 ) -> HerdrBridgeState {
     HerdrBridgeState {
         selector: target.selector.clone(),
@@ -623,10 +634,10 @@ fn build_herdr_state(
         socket_source_revision: HERDR_SOCKET_CONTRACT.source_revision.clone(),
         protocol_compatible: ping_info.protocol.map(herdr_protocol_is_supported),
         capabilities: ping_info.capabilities,
-        workspaces,
-        tabs,
-        panes,
-        agents,
+        workspaces: resources.workspaces,
+        tabs: resources.tabs,
+        panes: resources.panes,
+        agents: resources.agents,
     }
 }
 
