@@ -1,5 +1,6 @@
 import { qs } from "./utils";
 import { renderAboutDialog } from "./about-view";
+import { renderHerdrJumpShell } from "./herdr-jump-shell";
 import { renderMobileKeyboardView } from "./mobile/keyboard-view";
 import { renderMobileSettingsView } from "./mobile/settings-view";
 import { renderTerminalControlSettingsView } from "./terminal-control/settings-view";
@@ -23,7 +24,6 @@ export type ShellElements = {
   herdrWorkspaceSwitcher: HTMLDivElement;
   herdrWorkspaceButton: HTMLButtonElement;
   herdrWorkspaceMenu: HTMLDivElement;
-  herdrWorkspaceRefresh: HTMLButtonElement;
   herdrWorkspaceMenuList: HTMLDivElement;
   herdrWorkspaceMenuStatus: HTMLParagraphElement;
   herdrDock: HTMLElement;
@@ -34,6 +34,11 @@ export type ShellElements = {
   herdrRefresh: HTMLButtonElement;
   herdrNewWorkspace: HTMLButtonElement;
   herdrNewTab: HTMLButtonElement;
+  herdrMoreButton: HTMLButtonElement;
+  herdrMoreMenu: HTMLDivElement;
+  herdrCloseWorkspace: HTMLButtonElement;
+  herdrCurrentWorkspaceLabel: HTMLElement;
+  herdrCurrentTargetLabel: HTMLElement;
   terminalStage: HTMLDivElement;
   mobileShortcuts: HTMLDivElement;
   terminalInputActionsSurface: HTMLDivElement;
@@ -148,21 +153,6 @@ export function renderShell(app: HTMLElement): ShellElements {
           </div>
         </div>
         <div class="topbar-actions">
-          <div class="herdr-workspace-switcher" id="herdrWorkspaceSwitcher" hidden>
-            <button class="icon-button" id="herdrWorkspaceButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Herdr workspaces" title="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces" data-i18n-title="section.herdrWorkspaces">
-              <i data-lucide="folder-tree"></i>
-            </button>
-            <div class="herdr-workspace-menu" id="herdrWorkspaceMenu" role="dialog" aria-label="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces" hidden>
-              <div class="menu-head">
-                <span data-i18n="section.herdrWorkspaces">Herdr workspaces</span>
-                <button class="icon-button" id="herdrWorkspaceRefresh" type="button" aria-label="Refresh Herdr" title="Refresh Herdr" data-i18n-aria="action.refreshHerdr" data-i18n-title="action.refreshHerdr">
-                  <i data-lucide="refresh-cw"></i>
-                </button>
-              </div>
-              <div class="herdr-workspace-menu-list" id="herdrWorkspaceMenuList" role="listbox" aria-label="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces"></div>
-              <p class="herdr-workspace-menu-status" id="herdrWorkspaceMenuStatus" aria-live="polite"></p>
-            </div>
-          </div>
           <div class="instance-switcher" id="instanceSwitcher">
             <button class="icon-button status-icon" id="instanceButton" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Switch instance" title="Switch instance" data-i18n-aria="action.switchInstance" data-i18n-title="action.switchInstance">
               <span class="status-dot" id="instanceStatusDot" data-status="unknown"></span>
@@ -270,25 +260,7 @@ export function renderShell(app: HTMLElement): ShellElements {
 
       ${renderAboutDialog()}
 
-      <section class="herdr-dock" id="herdrDock" aria-label="Herdr controls" data-i18n-aria="section.herdr" hidden>
-        <div class="herdr-workspaces" id="herdrWorkspaceList" role="listbox" aria-label="Herdr workspaces" data-i18n-aria="section.herdrWorkspaces"></div>
-        <div class="herdr-tabs-shell">
-          <div class="herdr-tabs" id="herdrTabList" role="tablist" aria-label="Herdr tabs" data-i18n-aria="section.herdrTabs"></div>
-          <button class="herdr-icon-button" id="herdrNewWorkspace" type="button" aria-label="New Herdr space" title="New Herdr space" data-i18n-aria="action.newHerdrSpace" data-i18n-title="action.newHerdrSpace">
-            <i data-lucide="folder-plus"></i>
-          </button>
-          <button class="herdr-icon-button" id="herdrNewTab" type="button" aria-label="New Herdr tab" title="New Herdr tab" data-i18n-aria="action.newHerdrTab" data-i18n-title="action.newHerdrTab">
-            <i data-lucide="plus"></i>
-          </button>
-          <span class="herdr-protocol-notice" id="herdrProtocolNotice" role="img" hidden>
-            <i data-lucide="arrow-up"></i>
-          </span>
-          <button class="herdr-icon-button" id="herdrRefresh" type="button" aria-label="Refresh Herdr" title="Refresh Herdr" data-i18n-aria="action.refreshHerdr" data-i18n-title="action.refreshHerdr">
-            <i data-lucide="refresh-cw"></i>
-          </button>
-        </div>
-        <p class="herdr-status" id="herdrStatus" aria-live="polite"></p>
-      </section>
+      ${renderHerdrJumpShell()}
 
       <section id="terminalStage" class="terminal-stage" aria-label="Terminal" data-i18n-aria="app.title">
         <div class="empty-state" id="emptyState">
@@ -600,7 +572,6 @@ export function renderShell(app: HTMLElement): ShellElements {
     herdrWorkspaceSwitcher: qs<HTMLDivElement>("#herdrWorkspaceSwitcher"),
     herdrWorkspaceButton: qs<HTMLButtonElement>("#herdrWorkspaceButton"),
     herdrWorkspaceMenu: qs<HTMLDivElement>("#herdrWorkspaceMenu"),
-    herdrWorkspaceRefresh: qs<HTMLButtonElement>("#herdrWorkspaceRefresh"),
     herdrWorkspaceMenuList: qs<HTMLDivElement>("#herdrWorkspaceMenuList"),
     herdrWorkspaceMenuStatus: qs<HTMLParagraphElement>("#herdrWorkspaceMenuStatus"),
     herdrDock: qs<HTMLElement>("#herdrDock"),
@@ -611,6 +582,11 @@ export function renderShell(app: HTMLElement): ShellElements {
     herdrRefresh: qs<HTMLButtonElement>("#herdrRefresh"),
     herdrNewWorkspace: qs<HTMLButtonElement>("#herdrNewWorkspace"),
     herdrNewTab: qs<HTMLButtonElement>("#herdrNewTab"),
+    herdrMoreButton: qs<HTMLButtonElement>("#herdrMoreButton"),
+    herdrMoreMenu: qs<HTMLDivElement>("#herdrMoreMenu"),
+    herdrCloseWorkspace: qs<HTMLButtonElement>("#herdrCloseWorkspace"),
+    herdrCurrentWorkspaceLabel: qs<HTMLElement>("#herdrCurrentWorkspaceLabel"),
+    herdrCurrentTargetLabel: qs<HTMLElement>("#herdrCurrentTargetLabel"),
     terminalStage: qs<HTMLDivElement>("#terminalStage"),
     mobileShortcuts: qs<HTMLDivElement>("#mobileShortcuts"),
     terminalInputActionsSurface: qs<HTMLDivElement>("#terminalInputActionsSurface"),

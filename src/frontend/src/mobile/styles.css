@@ -1483,3 +1483,269 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   position: relative;
   z-index: 1;
 }
+
+@media (max-width: 760px), (pointer: coarse), (any-pointer: coarse) {
+  .herdr-dock:has(.herdr-workspace-menu:not([hidden])) {
+    z-index: 90;
+  }
+
+  .herdr-dock {
+    display: block;
+    min-height: 48px;
+    padding: 2px max(8px, var(--lzc-safe-area-inset-right));
+  }
+
+  .herdr-workspace-switcher,
+  .herdr-context-button {
+    width: 100%;
+  }
+
+  .herdr-context-button {
+    min-height: 44px;
+    border-color: transparent;
+    background: transparent;
+    padding-inline: 8px;
+  }
+
+  .herdr-context-copy strong {
+    font-size: 12px;
+  }
+
+  .herdr-context-copy small {
+    display: block;
+    margin-top: 1px;
+  }
+
+  .herdr-current-targets,
+  .herdr-dock-actions,
+  .herdr-dock > .herdr-status {
+    display: none;
+  }
+
+  .herdr-jump-scrim {
+    position: fixed;
+    z-index: 80;
+    inset: 0;
+    display: block;
+    background: rgba(0, 0, 0, 0.52);
+    opacity: 1;
+    transition: opacity var(--motion-drawer-out) var(--ease-out), display var(--motion-drawer-out);
+    transition-behavior: normal, allow-discrete;
+  }
+
+  .herdr-jump-scrim[hidden] {
+    display: none;
+    opacity: 0;
+  }
+
+  .herdr-workspace-menu {
+    position: fixed;
+    z-index: 82;
+    top: auto;
+    right: max(8px, var(--lzc-safe-area-inset-right));
+    bottom: 0;
+    left: max(8px, var(--lzc-safe-area-inset-left));
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+    width: auto;
+    max-height: min(82vh, calc(var(--app-viewport-height) - max(20px, var(--lzc-safe-area-inset-top))));
+    overflow: hidden;
+    padding: 0 10px max(10px, var(--lzc-safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+    transform: translateY(0);
+    transform-origin: bottom center;
+    transition: opacity var(--motion-drawer-in) var(--ease-out), transform var(--motion-drawer-in) var(--ease-drawer, cubic-bezier(0.32, 0.72, 0, 1)), display var(--motion-drawer-in);
+    transition-behavior: normal, normal, allow-discrete;
+    touch-action: pan-y;
+  }
+
+  .herdr-workspace-menu[hidden] {
+    display: none;
+    opacity: 0;
+    transform: translateY(100%);
+    transition-duration: var(--motion-drawer-out), var(--motion-drawer-out), var(--motion-drawer-out);
+  }
+
+  @starting-style {
+    .herdr-workspace-menu:not([hidden]) {
+      opacity: 0;
+      transform: translateY(100%);
+    }
+  }
+
+  .herdr-workspace-menu[data-dragging="true"] {
+    transition-duration: 0ms;
+  }
+
+  .herdr-jump-drag-region {
+    display: grid;
+    place-items: center;
+    min-height: 24px;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .herdr-jump-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--line-strong);
+  }
+
+  .herdr-jump-head {
+    grid-template-columns: minmax(0, 1fr) auto 44px;
+    min-height: 48px;
+    padding: 0 0 8px;
+  }
+
+  .herdr-jump-head > strong {
+    font-size: 16px;
+  }
+
+  .herdr-jump-close {
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text);
+  }
+
+  .herdr-jump-close:active {
+    background: var(--control-active-bg);
+  }
+
+  .herdr-density-switch button {
+    min-width: 62px;
+    min-height: 44px;
+    font-size: 11px;
+  }
+
+  .herdr-workspace-menu-list {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 2px 0 8px;
+  }
+
+  .herdr-jump-group {
+    gap: 8px;
+    padding: 10px 8px;
+  }
+
+  .herdr-jump-workspace,
+  .herdr-target-chip {
+    min-height: 44px;
+  }
+
+  .herdr-jump-workspace {
+    padding-inline: 8px;
+  }
+
+  .herdr-jump-targets {
+    gap: 8px;
+  }
+
+  .herdr-target-chip {
+    min-width: 52px;
+    max-width: min(210px, 68vw);
+    padding-inline: 12px;
+  }
+
+  .herdr-workspace-menu-status {
+    margin: 2px 8px 6px;
+  }
+
+  .herdr-mobile-jump-actions {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
+
+  .herdr-mobile-jump-actions > button {
+    justify-content: center;
+    min-height: 48px;
+    border: 1px solid var(--component-border);
+    border-radius: var(--radius-md);
+    background: var(--component-wash), var(--surface);
+    color: var(--text);
+  }
+
+  .herdr-mobile-jump-actions > button:first-child {
+    background: var(--accent-soft);
+    color: var(--accent-fg);
+  }
+
+  .herdr-mobile-jump-actions > button:nth-child(2) {
+    min-width: 48px;
+  }
+
+  .herdr-mobile-more-actions {
+    position: absolute;
+    right: 0;
+    bottom: 56px;
+    display: grid;
+    min-width: 220px;
+    padding: 6px;
+    border: 1px solid var(--menu-border);
+    border-radius: var(--radius-md);
+    background: var(--menu-material), var(--menu-wash), var(--menu-bg);
+    box-shadow: var(--shadow-popover);
+  }
+
+  .herdr-mobile-more-actions[hidden] {
+    display: none;
+  }
+
+  .herdr-mobile-more-actions button {
+    min-height: 44px;
+  }
+
+  .webshell[data-tab-layout="vertical"] .herdr-dock,
+  .webshell[data-tab-layout="vertical"].has-named-tabs .herdr-dock {
+    left: calc(var(--app-viewport-offset-left) + 48px);
+  }
+
+  .webshell[data-tab-layout="vertical"] .herdr-workspace-menu,
+  .webshell[data-tab-layout="vertical"].has-named-tabs .herdr-workspace-menu {
+    top: auto;
+    right: max(8px, var(--lzc-safe-area-inset-right));
+    bottom: 0;
+    left: max(calc(var(--app-viewport-offset-left) + 56px), var(--lzc-safe-area-inset-left));
+    width: auto;
+  }
+}
+
+@media (max-width: 900px) and (orientation: landscape) and (pointer: coarse) {
+  .herdr-workspace-menu {
+    right: max(16px, calc((100vw - 720px) / 2));
+    left: max(16px, calc((100vw - 720px) / 2));
+    max-height: calc(var(--app-viewport-height) - max(8px, var(--lzc-safe-area-inset-top)));
+  }
+
+  .herdr-workspace-menu-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .herdr-jump-scrim,
+  .herdr-workspace-menu,
+  .herdr-workspace-menu[hidden] {
+    transition-duration: 0ms;
+    transform: none;
+  }
+
+  @starting-style {
+    .herdr-workspace-menu:not([hidden]) {
+      transform: none;
+    }
+  }
+}

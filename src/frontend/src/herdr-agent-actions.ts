@@ -15,17 +15,26 @@ type HerdrAgentActionsDeps = {
 };
 
 export function createHerdrAgentActions(deps: HerdrAgentActionsDeps) {
+  let focusQueue = Promise.resolve();
   return {
     async focus(paneId: string) {
       const target = paneId.trim();
       const selector = normalizeSelector(deps.selectedSelector());
       if (!target || !selector) return;
       const generation = deps.selectedGeneration();
+      const previous = focusQueue;
+      let releaseQueue: () => void = () => {};
+      focusQueue = new Promise<void>((resolve) => {
+        releaseQueue = resolve;
+      });
       try {
+        await previous;
         await deps.requestFocus({ selector, target });
         if (deps.isCurrent(selector, generation)) deps.onFocused(selector);
       } catch (error) {
         if (deps.isCurrent(selector, generation)) deps.onError(error);
+      } finally {
+        releaseQueue();
       }
     },
   };

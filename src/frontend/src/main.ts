@@ -74,21 +74,12 @@ import {
 } from "./herdr-backend";
 import type { HerdrPaneResizeDirection } from "./herdr-backend";
 import { createHerdrAgentActions } from "./herdr-agent-actions";
-import {
-  herdrAgentInteractionsAvailable,
-  normalizeHerdrAgentFilter,
-  renderHerdrAgentMenuView,
-  type HerdrAgentFilter,
-} from "./herdr-agent-view";
+import { createHerdrJumpController } from "./herdr-jump-controller";
+import { createHerdrRefreshCoordinator } from "./herdr-refresh-coordinator";
 import { herdrEventMessage } from "./herdr-event-presentation";
 import { isHerdrSocketMethod } from "./herdr-socket-api";
 import { applyHerdrResourceEvent } from "./herdr-state-events";
 import { createHerdrWheelInputBatcher } from "./herdr-wheel-input-batcher";
-import {
-  renderHerdrWorkspaceMenuView,
-  syncHerdrTabButtons,
-  syncHerdrWorkspaceButtons,
-} from "./herdr-views";
 import { translate, type MessageKey } from "./i18n";
 import { renderInstanceListView } from "./instance-views";
 import {
@@ -104,6 +95,7 @@ import { createMobileQuickPhraseSettingsController } from "./mobile/quick-phrase
 import { createMobileKeyboardController } from "./mobile/keyboard-controller";
 import { formatMobileClockTime } from "./mobile/clock";
 import { createMobileClockController } from "./mobile/clock-controller";
+import { createHerdrJumpMobileAdapter } from "./mobile/herdr-jump-adapter";
 import { isMobileOverlayMode, prepareMobileOverlay } from "./mobile/overlay";
 import { createMobileSymbolAgentController } from "./mobile/symbol-agent-controller";
 import { createMobileTerminalGestureController, isCoarseTouchPointer } from "./mobile/terminal-gestures";
@@ -470,6 +462,7 @@ const initialSelector = normalizeSelector(params.get("name") ?? "");
 const initialSelectorExplicit = params.has("name") && Boolean(initialSelector);
 
 const elements = renderShell(qs<HTMLDivElement>("#app"));
+let herdrJumpController: ReturnType<typeof createHerdrJumpController> | undefined;
 const imageUploadProgress = createUploadProgressController(elements.webshell);
 const mobileKeyboard = createMobileKeyboardController({
   root: elements.mobileShortcuts,
@@ -612,7 +605,6 @@ let selectedSelectorGeneration = 0;
 let selectedSelectorExplicit = initialSelectorExplicit;
 let herdrState: HerdrBridgeState | undefined;
 let herdrStateGeneration = 0;
-let herdrAgentFilter: HerdrAgentFilter = "all";
 let herdrEventSocket: WebSocket | undefined;
 let herdrEventSocketSelector = "";
 let herdrEventSocketOpeningSelector = "";
@@ -620,6 +612,7 @@ let herdrEventSocketGeneration = 0;
 let herdrEventReconnectTimer: number | undefined;
 let herdrEventRefreshTimer: number | undefined;
 let herdrActionRefreshTimers: number[] = [];
+const herdrRefreshCoordinator = createHerdrRefreshCoordinator(performHerdrStateRefresh);
 let sessionBackendsState: SessionBackendsState | undefined;
 let sessionBackendsGeneration = 0;
 const herdrAutoRestoredSelectors = new Set<string>();
@@ -691,20 +684,63 @@ const terminalControl = createTerminalControlController({
 
 const activeAIChatTerminalPane = () => activeHerdrTerminalPane() ?? activePane();
 const activeTerminalInputPane = () => activeHerdrTerminalPane() ?? activePane();
-const herdrAgentActions = createHerdrAgentActions({
+const herdrJumpActions = createHerdrAgentActions({
   selectedSelector: () => selectedSelector,
   selectedGeneration: () => selectedSelectorGeneration,
   requestFocus: async ({ selector, target }) => {
-    await runHerdrSocketRequest("agent.focus", { target }, {
+    await runHerdrSocketRequest("pane.focus", { pane_id: target }, {
       selector,
-      id: "lazycat-webshell:agent-focus",
+      id: "lazycat-webshell:pane-focus",
       mirrorNotification: false,
     });
   },
   isCurrent: isCurrentSelectorRequest,
   onFocused: (selector) => scheduleHerdrActionRefresh(selector, [0, 120]),
-  onError: (error) => {
-    setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
+  onError: (error) => setGlobalStatus(
+    tr("status.herdrActionFailed", { message: errorMessage(error) }),
+    "error",
+  ),
+});
+herdrJumpController = createHerdrJumpController({
+  elements: {
+    dock: elements.herdrDock,
+    switcher: elements.herdrWorkspaceSwitcher,
+    trigger: elements.herdrWorkspaceButton,
+    menu: elements.herdrWorkspaceMenu,
+    list: elements.herdrWorkspaceMenuList,
+    status: elements.herdrWorkspaceMenuStatus,
+    currentTargets: elements.herdrTabList,
+    currentWorkspaceLabel: elements.herdrCurrentWorkspaceLabel,
+    currentTargetLabel: elements.herdrCurrentTargetLabel,
+    moreButton: elements.herdrMoreButton,
+    moreMenu: elements.herdrMoreMenu,
+  },
+  tr,
+  createPlatform: (onRequestClose) => createHerdrJumpMobileAdapter({
+    menu: elements.herdrWorkspaceMenu,
+    switcher: elements.herdrWorkspaceSwitcher,
+    onRequestClose,
+  }),
+  prepareMobileOverlay,
+  updateIcons,
+  refresh: async () => {
+    if (selectedSelector) await refreshHerdrState(selectedSelector);
+  },
+  focusWorkspace: async (workspaceId) => {
+    await restoreHerdrWorkspace(workspaceId);
+  },
+  focusTab: async (tabId) => {
+    await runHerdrAction("focus_tab", { tabId });
+  },
+  focusPane: herdrJumpActions.focus,
+  createTab: async () => {
+    await runHerdrAction("create_tab", { workspaceId: focusedHerdrWorkspace()?.workspace_id });
+  },
+  createWorkspace: async () => {
+    await runHerdrAction("create_workspace");
+  },
+  closeWorkspace: async () => {
+    await runHerdrAction("close_workspace", { workspaceId: focusedHerdrWorkspace()?.workspace_id });
   },
 });
 const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
@@ -1907,115 +1943,6 @@ function bindActions() {
     switchTab: activateAdjacentTab,
   });
   elements.emptyNewTab.addEventListener("click", () => void createSelectedTab());
-  elements.herdrRefresh.addEventListener("click", () => void refreshHerdrState(selectedSelector));
-  elements.herdrNewWorkspace.addEventListener("click", () => {
-    void runHerdrAction("create_workspace");
-  });
-  elements.herdrWorkspaceButton.addEventListener("click", (event) => {
-    event.stopPropagation();
-    void toggleHerdrWorkspaceMenu();
-  });
-  elements.herdrWorkspaceRefresh.addEventListener("click", (event) => {
-    event.stopPropagation();
-    void refreshHerdrState(selectedSelector);
-  });
-  elements.herdrWorkspaceMenuList.addEventListener("click", (event) => {
-    const filterButton = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-agent-filter]")
-      : null;
-    if (filterButton) {
-      herdrAgentFilter = normalizeHerdrAgentFilter(filterButton.dataset.herdrAgentFilter);
-      renderHerdrWorkspaceMenu();
-      return;
-    }
-    const agentButton = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-agent-pane]")
-      : null;
-    if (agentButton) {
-      closeHerdrWorkspaceMenu();
-      void herdrAgentActions.focus(agentButton.dataset.herdrAgentPane ?? "");
-      return;
-    }
-    const closeButton = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-close-workspace]")
-      : null;
-    if (closeButton) {
-      event.preventDefault();
-      event.stopPropagation();
-      void runHerdrAction("close_workspace", { workspaceId: closeButton.dataset.herdrCloseWorkspace });
-      return;
-    }
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
-      : null;
-    if (!button) return;
-    closeHerdrWorkspaceMenu();
-    void restoreHerdrWorkspace(button.dataset.herdrWorkspace);
-  });
-  elements.herdrWorkspaceMenuList.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    const agentButton = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-agent-pane]")
-      : null;
-    if (agentButton) {
-      event.preventDefault();
-      closeHerdrWorkspaceMenu();
-      void herdrAgentActions.focus(agentButton.dataset.herdrAgentPane ?? "");
-      return;
-    }
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
-      : null;
-    if (!button) return;
-    event.preventDefault();
-    closeHerdrWorkspaceMenu();
-    void restoreHerdrWorkspace(button.dataset.herdrWorkspace);
-  });
-  elements.herdrNewTab.addEventListener("click", () => {
-    const workspaceId = focusedHerdrWorkspace()?.workspace_id;
-    void runHerdrAction("create_tab", { workspaceId });
-  });
-  elements.herdrWorkspaceList.addEventListener("click", (event) => {
-    const closeButton = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-close-workspace]")
-      : null;
-    if (closeButton) {
-      event.preventDefault();
-      event.stopPropagation();
-      void runHerdrAction("close_workspace", { workspaceId: closeButton.dataset.herdrCloseWorkspace });
-      return;
-    }
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
-      : null;
-    if (!button) return;
-    void runHerdrAction("focus_workspace", { workspaceId: button.dataset.herdrWorkspace });
-  });
-  elements.herdrWorkspaceList.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-workspace]")
-      : null;
-    if (!button) return;
-    event.preventDefault();
-    void runHerdrAction("focus_workspace", { workspaceId: button.dataset.herdrWorkspace });
-  });
-  elements.herdrTabList.addEventListener("click", (event) => {
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-tab]")
-      : null;
-    if (!button) return;
-    void runHerdrAction("focus_tab", { tabId: button.dataset.herdrTab });
-  });
-  elements.herdrTabList.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    const button = event.target instanceof Element
-      ? event.target.closest<HTMLButtonElement>("[data-herdr-tab]")
-      : null;
-    if (!button) return;
-    event.preventDefault();
-    void runHerdrAction("focus_tab", { tabId: button.dataset.herdrTab });
-  });
   elements.removeFont.addEventListener("click", () => void removeSelectedFont());
   elements.fitTerminal.addEventListener("click", () => void toggleFullscreen());
   elements.shortcutHelpButton.addEventListener("click", (event) => {
@@ -2873,6 +2800,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   renderNotifications();
   terminalInputActions.render();
   terminalControl.render();
+  renderHerdrWorkspaceMenu();
 
   for (const pane of allPanes()) {
     applyTerminalAppearance(pane, appearance, reportFontLoadError);
@@ -4245,6 +4173,13 @@ async function refreshHerdrState(
   selector: string,
   generation = selectedSelectorGeneration,
 ): Promise<boolean> {
+  return herdrRefreshCoordinator.refresh(selector, generation);
+}
+
+async function performHerdrStateRefresh(
+  selector: string,
+  generation: number,
+): Promise<boolean> {
   if (!runtimeInfo.lightosFeaturesEnabled) {
     clearHerdrState();
     return false;
@@ -4315,6 +4250,7 @@ async function runHerdrAction(
       clearHerdrState();
       return;
     }
+    herdrStateGeneration += 1;
     herdrState = state;
     renderTabs();
     renderHerdrDock();
@@ -4533,6 +4469,7 @@ function handleHerdrEventMessage(raw: unknown) {
     const result = applyHerdrResourceEvent(herdrState, event, data);
     resourceEventApplied = result.applied;
     if (result.applied) {
+      herdrStateGeneration += 1;
       herdrState = result.state;
       renderTabs();
       renderHerdrDock();
@@ -4609,6 +4546,7 @@ function closeHerdrEventSocket() {
 
 function clearHerdrState() {
   herdrStateGeneration += 1;
+  herdrRefreshCoordinator.clearQueued();
   herdrState = undefined;
   clearHerdrActionRefreshTimers();
   stopHerdrEventBridge();
@@ -4619,11 +4557,11 @@ function clearHerdrState() {
 
 function renderHerdrDock() {
   if (!runtimeInfo.lightosFeaturesEnabled) {
+    herdrJumpController?.close();
     elements.webshell.classList.remove("has-herdr");
     elements.herdrDock.hidden = true;
     elements.herdrWorkspaceSwitcher.hidden = true;
-    syncHerdrWorkspaceButtons(elements.herdrWorkspaceList, undefined, tr("action.closeHerdrSpace"));
-    syncHerdrTabButtons(elements.herdrTabList, undefined, []);
+    herdrJumpController?.render(undefined);
     elements.herdrStatus.textContent = "";
     renderHerdrProtocolNotice(undefined);
     stopHerdrEventBridge();
@@ -4633,14 +4571,9 @@ function renderHerdrDock() {
   const showHerdrControls = hasHerdrControls && Boolean(activeHerdrTerminalPane());
   updateSessionBackendSettings();
   if (!showHerdrControls) {
+    herdrJumpController?.close();
     elements.webshell.classList.remove("has-herdr");
     elements.herdrDock.hidden = true;
-    elements.herdrWorkspaceList.hidden = false;
-    elements.herdrTabList.parentElement?.removeAttribute("hidden");
-    elements.herdrNewWorkspace.hidden = false;
-    elements.herdrNewTab.hidden = false;
-    syncHerdrWorkspaceButtons(elements.herdrWorkspaceList, undefined, tr("action.closeHerdrSpace"));
-    syncHerdrTabButtons(elements.herdrTabList, undefined, []);
     elements.herdrStatus.textContent = "";
     renderHerdrProtocolNotice(undefined);
     renderHerdrWorkspaceMenu();
@@ -4650,25 +4583,10 @@ function renderHerdrDock() {
 
   elements.webshell.classList.add("has-herdr");
   elements.herdrDock.hidden = false;
-  elements.herdrWorkspaceList.hidden = false;
-  elements.herdrTabList.parentElement?.toggleAttribute("hidden", false);
-  elements.herdrNewWorkspace.hidden = false;
-  elements.herdrNewTab.hidden = false;
-  const workspaceListRendered = syncHerdrWorkspaceButtons(
-    elements.herdrWorkspaceList,
-    herdrState?.workspaces,
-    tr("action.closeHerdrSpace"),
-  );
-  const tabListRendered = syncHerdrTabButtons(
-    elements.herdrTabList,
-    herdrState?.tabs,
-    herdrState?.panes ?? [],
-  );
   elements.herdrStatus.textContent = herdrState?.message ?? "";
   renderHerdrProtocolNotice(herdrState);
   renderHerdrWorkspaceMenu();
   void syncHerdrEventBridge();
-  if (workspaceListRendered || tabListRendered) updateIcons();
 }
 
 function renderHerdrProtocolNotice(state: HerdrBridgeState | undefined) {
@@ -4830,61 +4748,16 @@ function closeNewTabMenu() {
   elements.newTabButton.setAttribute("aria-expanded", "false");
 }
 
-async function toggleHerdrWorkspaceMenu() {
-  if (elements.herdrWorkspaceMenu.hidden) {
-    await openHerdrWorkspaceMenu();
-    return;
-  }
-  closeHerdrWorkspaceMenu();
-}
-
-async function openHerdrWorkspaceMenu() {
-  prepareMobileOverlay();
-  elements.herdrWorkspaceMenu.hidden = false;
-  elements.herdrWorkspaceButton.setAttribute("aria-expanded", "true");
-  renderHerdrWorkspaceMenu();
-  if (selectedSelector) {
-    await refreshHerdrState(selectedSelector);
-  }
-  renderHerdrWorkspaceMenu();
-  updateIcons();
-}
-
 function closeHerdrWorkspaceMenu() {
-  elements.herdrWorkspaceMenu.hidden = true;
-  elements.herdrWorkspaceButton.setAttribute("aria-expanded", "false");
+  herdrJumpController?.close();
 }
 
 function renderHerdrWorkspaceMenu() {
-  if (!sessionBackendInstalled(sessionBackendsState, "herdr")) {
-    elements.herdrWorkspaceMenuList.replaceChildren();
-    elements.herdrWorkspaceMenuStatus.textContent = "";
-    return;
-  }
-  const workspaces = herdrState?.workspaces ?? [];
-  const workspaceView = renderHerdrWorkspaceMenuView(
-    workspaces,
-    {
-      tabs: tr("field.tabs"),
-      panes: tr("field.panes"),
-      close: tr("action.closeHerdrSpace"),
-    },
-    herdrState?.message || tr("status.herdrUnavailable"),
-  );
-  const agentView = herdrAgentInteractionsAvailable(herdrState)
-    ? renderHerdrAgentMenuView(herdrState?.agents ?? [], herdrAgentFilter, {
-      title: tr("section.herdrAgents"),
-      all: tr("filter.all"),
-      working: tr("status.working"),
-      blocked: tr("status.blocked"),
-      done: tr("status.done"),
-      empty: tr("status.noHerdrAgents"),
-      focus: tr("action.focusHerdrAgent"),
-    })
-    : "";
-  elements.herdrWorkspaceMenuList.innerHTML = `${workspaceView}${agentView}`;
-  elements.herdrWorkspaceMenuStatus.textContent = herdrState?.message ?? "";
-  updateIcons();
+  const installed = sessionBackendInstalled(sessionBackendsState, "herdr");
+  herdrJumpController?.render(installed ? herdrState : undefined);
+  elements.herdrWorkspaceMenuStatus.textContent = installed
+    ? herdrState?.message ?? ""
+    : tr("status.herdrUnavailable");
 }
 
 function focusedHerdrWorkspace(): HerdrWorkspaceInfo | undefined {

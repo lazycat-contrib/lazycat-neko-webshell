@@ -550,30 +550,27 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
             );
         }
     };
-    let focused_workspace = workspaces
-        .iter()
-        .find(|workspace| workspace.focused)
-        .or_else(|| workspaces.first());
-    let tabs = if let Some(workspace) = focused_workspace {
-        match run_herdr_request(
-            target,
-            "tab.list",
-            json!({ "workspace_id": workspace.workspace_id }),
-        )
-        .await
-        {
-            Ok(response) => parse_tabs(&response),
-            Err(err) => {
-                warn!(
-                    error = %err.message,
-                    selector = %target.selector,
-                    "failed to list Herdr tabs"
-                );
-                Vec::new()
-            }
+    let tabs = match run_herdr_request(target, "tab.list", json!({})).await {
+        Ok(response) => parse_tabs(&response),
+        Err(err) => {
+            warn!(
+                error = %err.message,
+                selector = %target.selector,
+                "failed to list Herdr tabs"
+            );
+            Vec::new()
         }
-    } else {
-        Vec::new()
+    };
+    let panes = match run_herdr_request(target, "pane.list", json!({})).await {
+        Ok(response) => parse_panes(&response),
+        Err(err) => {
+            warn!(
+                error = %err.message,
+                selector = %target.selector,
+                "failed to list Herdr panes"
+            );
+            Vec::new()
+        }
     };
 
     build_herdr_state(
@@ -584,32 +581,16 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
         HerdrBridgeResources {
             workspaces,
             tabs,
+            panes,
             ..HerdrBridgeResources::default()
         },
     )
 }
 
 fn parse_herdr_session_snapshot(response: &Value) -> HerdrBridgeResources {
-    let workspaces = parse_workspaces(response);
-    let focused_workspace_id = parse_snapshot_focused_workspace_id(response).or_else(|| {
-        workspaces
-            .iter()
-            .find(|workspace| workspace.focused)
-            .or_else(|| workspaces.first())
-            .map(|workspace| workspace.workspace_id.clone())
-    });
-    let tabs = parse_tabs(response)
-        .into_iter()
-        .filter(|tab| {
-            focused_workspace_id
-                .as_deref()
-                .is_none_or(|workspace_id| tab.workspace_id == workspace_id)
-        })
-        .collect();
-
     HerdrBridgeResources {
-        workspaces,
-        tabs,
+        workspaces: parse_workspaces(response),
+        tabs: parse_tabs(response),
         panes: parse_panes(response),
         agents: parse_agents(response),
     }
@@ -1203,7 +1184,7 @@ fn parse_workspaces(response: &Value) -> Vec<HerdrWorkspaceInfo> {
                 label: value
                     .get("label")
                     .and_then(Value::as_str)
-                    .unwrap_or("workspace")
+                    .unwrap_or_default()
                     .to_owned(),
                 focused: value
                     .get("focused")
@@ -1299,7 +1280,7 @@ fn parse_tabs(response: &Value) -> Vec<HerdrTabInfo> {
                 label: value
                     .get("label")
                     .and_then(Value::as_str)
-                    .unwrap_or("tab")
+                    .unwrap_or_default()
                     .to_owned(),
                 focused: value
                     .get("focused")
@@ -1319,15 +1300,6 @@ fn herdr_result_collection<'a>(response: &'a Value, key: &str) -> Option<&'a Vec
             .and_then(|snapshot| snapshot.get(key))
             .and_then(Value::as_array)
     })
-}
-
-fn parse_snapshot_focused_workspace_id(response: &Value) -> Option<String> {
-    response
-        .get("result")
-        .and_then(|result| result.get("snapshot"))
-        .and_then(|snapshot| snapshot.get("focused_workspace_id"))
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
 }
 
 fn parse_herdr_ping(response: &Value) -> HerdrPingInfo {
@@ -1457,9 +1429,8 @@ mod tests {
         HERDR_SOCKET_CONTRACT, HerdrTerminalOperation, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
         herdr_protocol_is_supported, herdr_protocol_supports_session_snapshot,
         herdr_request_timeout, is_allowed_herdr_method, normalize_herdr_request_params,
-        parse_agents, parse_herdr_ping, parse_panes, parse_snapshot_focused_workspace_id,
-        parse_tabs, parse_workspaces, shell_quote, terminal_mcp_operation_request,
-        validate_herdr_wire_request,
+        parse_agents, parse_herdr_ping, parse_herdr_session_snapshot, parse_panes, parse_tabs,
+        parse_workspaces, shell_quote, terminal_mcp_operation_request, validate_herdr_wire_request,
     };
 
     #[test]
@@ -1546,6 +1517,19 @@ mod tests {
     }
 
     #[test]
+    fn leaves_missing_workspace_and_tab_labels_for_frontend_localization() {
+        let workspaces = parse_workspaces(&json!({
+            "result": { "workspaces": [{ "workspace_id": "w1", "number": 1 }] }
+        }));
+        let tabs = parse_tabs(&json!({
+            "result": { "tabs": [{ "tab_id": "t1", "workspace_id": "w1", "number": 1 }] }
+        }));
+
+        assert_eq!(workspaces[0].label, "");
+        assert_eq!(tabs[0].label, "");
+    }
+
+    #[test]
     fn parses_workspace_and_tab_lists_from_herdr_snapshot_response() {
         let response = json!({
             "result": {
@@ -1610,10 +1594,6 @@ mod tests {
         let tabs = parse_tabs(&response);
         let panes = parse_panes(&response);
         let agents = parse_agents(&response);
-        assert_eq!(
-            parse_snapshot_focused_workspace_id(&response).as_deref(),
-            Some("w1")
-        );
         assert_eq!(workspaces.len(), 1);
         assert_eq!(workspaces[0].workspace_id, "w1");
         assert_eq!(
@@ -1636,6 +1616,60 @@ mod tests {
         assert!(agents[0].interactive_ready);
         assert!(!agents[0].launch_pending);
         assert_eq!(agents[0].state_change_seq, 12);
+    }
+
+    #[test]
+    fn snapshot_keeps_tabs_from_background_workspaces_for_jump_navigation() {
+        let response = json!({
+            "result": {
+                "type": "session_snapshot",
+                "snapshot": {
+                    "focused_workspace_id": "w1",
+                    "workspaces": [
+                        {
+                            "workspace_id": "w1",
+                            "number": 1,
+                            "label": "current",
+                            "focused": true,
+                            "active_tab_id": "w1:t1",
+                            "tab_count": 1,
+                            "pane_count": 1
+                        },
+                        {
+                            "workspace_id": "w2",
+                            "number": 2,
+                            "label": "background",
+                            "focused": false,
+                            "active_tab_id": "w2:t1",
+                            "tab_count": 1,
+                            "pane_count": 1
+                        }
+                    ],
+                    "tabs": [
+                        {
+                            "tab_id": "w1:t1",
+                            "workspace_id": "w1",
+                            "number": 1,
+                            "label": "one",
+                            "focused": true,
+                            "pane_count": 1
+                        },
+                        {
+                            "tab_id": "w2:t1",
+                            "workspace_id": "w2",
+                            "number": 1,
+                            "label": "two",
+                            "focused": true,
+                            "pane_count": 1
+                        }
+                    ]
+                }
+            }
+        });
+
+        let resources = parse_herdr_session_snapshot(&response);
+        assert_eq!(resources.tabs.len(), 2);
+        assert_eq!(resources.tabs[1].workspace_id, "w2");
     }
 
     #[test]

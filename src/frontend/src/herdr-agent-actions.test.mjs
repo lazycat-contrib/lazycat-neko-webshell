@@ -44,3 +44,27 @@ test("focuses the captured Herdr selector and ignores a stale completion", async
   assert.deepEqual(refreshed, []);
   assert.deepEqual(errors, []);
 });
+
+test("serializes pane focus requests so the last click wins", async () => {
+  const first = deferred();
+  const requests = [];
+  const actions = createHerdrAgentActions({
+    selectedSelector: () => "alpha@owner",
+    selectedGeneration: () => 1,
+    requestFocus: async (request) => {
+      requests.push(request.target);
+      if (request.target === "p1") await first.promise;
+    },
+    isCurrent: () => true,
+    onFocused: () => {},
+    onError: () => {},
+  });
+
+  const focusFirst = actions.focus("p1");
+  const focusSecond = actions.focus("p2");
+  await Promise.resolve();
+  assert.deepEqual(requests, ["p1"]);
+  first.resolve();
+  await Promise.all([focusFirst, focusSecond]);
+  assert.deepEqual(requests, ["p1", "p2"]);
+});
