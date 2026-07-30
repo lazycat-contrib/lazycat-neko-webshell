@@ -29,6 +29,7 @@ export function createHerdrAgentActions(deps: HerdrAgentActionsDeps) {
       });
       try {
         await previous;
+        if (!deps.isCurrent(selector, generation)) return;
         await deps.requestFocus({ selector, target });
         if (deps.isCurrent(selector, generation)) deps.onFocused(selector);
       } catch (error) {

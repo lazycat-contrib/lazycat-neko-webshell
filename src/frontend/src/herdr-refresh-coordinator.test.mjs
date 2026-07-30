@@ -11,7 +11,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-test("coalesces concurrent Herdr refreshes into the active and latest request", async () => {
+test("coalesces equal refreshes and resolves a superseded queued request as stale", async () => {
   const first = deferred();
   const requests = [];
   const coordinator = createHerdrRefreshCoordinator(async (selector, generation) => {
@@ -21,11 +21,14 @@ test("coalesces concurrent Herdr refreshes into the active and latest request", 
   });
 
   const active = coordinator.refresh("alpha", 1);
-  const coalesced = coordinator.refresh("alpha", 2);
-  coordinator.refresh("beta", 3);
+  const sharedActive = coordinator.refresh("alpha", 1);
+  const superseded = coordinator.refresh("alpha", 2);
+  const latest = coordinator.refresh("beta", 3);
   first.resolve();
 
   assert.equal(await active, true);
-  assert.equal(await coalesced, true);
+  assert.equal(await sharedActive, true);
+  assert.equal(await superseded, false);
+  assert.equal(await latest, true);
   assert.deepEqual(requests, [["alpha", 1], ["beta", 3]]);
 });

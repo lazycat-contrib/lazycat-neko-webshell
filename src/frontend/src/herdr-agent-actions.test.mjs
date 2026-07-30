@@ -13,7 +13,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test("focuses the captured Herdr selector and ignores a stale completion", async () => {
+test("drops a captured Herdr focus before sending when the selector becomes stale", async () => {
   let selector = "alpha@owner";
   let generation = 4;
   const pending = deferred();
@@ -37,10 +37,10 @@ test("focuses the captured Herdr selector and ignores a stale completion", async
   const focus = actions.focus(" w1:p1 ");
   selector = "beta@owner";
   generation = 5;
-  pending.resolve();
   await focus;
 
-  assert.deepEqual(requests, [{ selector: "alpha@owner", target: "w1:p1" }]);
+  pending.resolve();
+  assert.deepEqual(requests, []);
   assert.deepEqual(refreshed, []);
   assert.deepEqual(errors, []);
 });

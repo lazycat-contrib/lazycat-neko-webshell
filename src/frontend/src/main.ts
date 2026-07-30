@@ -4550,7 +4550,6 @@ function clearHerdrState() {
   herdrState = undefined;
   clearHerdrActionRefreshTimers();
   stopHerdrEventBridge();
-  renderHerdrWorkspaceMenu();
   renderTabs();
   renderHerdrDock();
 }
