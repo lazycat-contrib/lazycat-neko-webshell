@@ -2,7 +2,7 @@
 
 [English](./README.en.md)
 
-当前版本：`0.6.4`
+当前版本：`0.6.5`
 
 Neko Webshell 是浏览器里的 WebShell 工作台。它默认面向 LazyCat / LightOS 的应用实例，也可以关闭 LightOS 初始化后作为通用 WebShell 使用，并通过 SSH profile 管理远程终端目标。
 

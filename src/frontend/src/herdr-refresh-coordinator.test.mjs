@@ -50,3 +50,14 @@ test("runs a trailing refresh when Herdr state changes during an active request"
   assert.equal(await trailing, true);
   assert.deepEqual(requests, [["alpha", 1], ["alpha", 1]]);
 });
+
+test("keeps event reconciliation refreshes distinct from normal availability checks", async () => {
+  const requests = [];
+  const coordinator = createHerdrRefreshCoordinator(async (selector, generation, mode) => {
+    requests.push([selector, generation, mode]);
+    return true;
+  });
+
+  assert.equal(await coordinator.refresh("alpha", 1, 7, "preserve-available"), true);
+  assert.deepEqual(requests, [["alpha", 1, "preserve-available"]]);
+});

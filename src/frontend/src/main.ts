@@ -60,12 +60,7 @@ import { CapabilityService, type Instance, type PluginDescriptor } from "./gen/l
 import {
   HERDR_PANE_RESIZE_AMOUNT,
   herdrCurrentPaneId,
-  herdrEventChangesAgentList,
-  herdrEventChangesDock,
-  herdrEventNeedsStateReconciliation,
-  herdrEventNeedsStateRefresh,
   herdrEventSocketUrl,
-  herdrEventShowsStatus,
   herdrEventSubscriptions,
   herdrEventTone,
   herdrFocusedOrFirstPaneId,
@@ -83,10 +78,12 @@ import {
 import { createHerdrInteractionQueue } from "./herdr-interaction-queue";
 import { createHerdrJumpController } from "./herdr-jump-controller";
 import { createHerdrNavigationController } from "./herdr-navigation";
-import { createHerdrRefreshCoordinator } from "./herdr-refresh-coordinator";
+import { createHerdrEventRefreshLoop } from "./herdr-event-refresh-loop";
+import { createHerdrEventStreamPolicy } from "./herdr-event-stream-policy";
+import { createHerdrRefreshCoordinator, type HerdrRefreshMode } from "./herdr-refresh-coordinator";
 import { herdrEventMessage } from "./herdr-event-presentation";
 import { isHerdrSocketMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
-import { applyHerdrResourceEvent } from "./herdr-state-events";
+import { herdrBridgeStatesEqual } from "./herdr-state-snapshot";
 import {
   createHerdrStateMutationRunner,
   herdrStateMutationChangesVisibleTerminal,
@@ -446,8 +443,6 @@ const HERDR_REPLAY_TAIL_FRAMES = 80;
 const HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS = 500;
 const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
 const HERDR_ACTION_REFRESH_DELAYS_MS = [120, 450, 900, 1800, 3000] as const;
-const HERDR_EVENT_REFRESH_DELAYS_MS = [0, 300, 900, 1800, 3000] as const;
-const HERDR_EVENT_RECONCILE_DELAYS_MS = [300, 900] as const;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
@@ -624,10 +619,15 @@ let herdrEventSocketSelector = "";
 let herdrEventSocketOpeningSelector = "";
 let herdrEventSocketGeneration = 0;
 let herdrEventReconnectTimer: number | undefined;
-let herdrEventRefreshTimer: number | undefined;
-let herdrEventReconcileTimer: number | undefined;
 let herdrActionRefreshTimers: number[] = [];
+const herdrEventStreamPolicy = createHerdrEventStreamPolicy();
 const herdrRefreshCoordinator = createHerdrRefreshCoordinator(performHerdrStateRefresh);
+const herdrEventRefreshLoop = createHerdrEventRefreshLoop({
+  setTimer: (callback, delay) => window.setTimeout(callback, delay),
+  clearTimer: (timer) => window.clearTimeout(timer),
+  run: reconcileHerdrEventState,
+  retryDelay: (token, attempt) => herdrEventStreamPolicy.retryDelay(token, attempt),
+});
 let sessionBackendsState: SessionBackendsState | undefined;
 let sessionBackendsGeneration = 0;
 const herdrAutoRestoredSelectors = new Set<string>();
@@ -4226,13 +4226,15 @@ function canMutateHerdrState(selector: string, report = true): boolean {
 async function refreshHerdrState(
   selector: string,
   generation = selectedSelectorGeneration,
+  mode: HerdrRefreshMode = "normal",
 ): Promise<boolean> {
-  return herdrRefreshCoordinator.refresh(selector, generation, herdrStateRevision);
+  return herdrRefreshCoordinator.refresh(selector, generation, herdrStateRevision, mode);
 }
 
 async function performHerdrStateRefresh(
   selector: string,
   generation: number,
+  mode: HerdrRefreshMode,
 ): Promise<boolean> {
   if (!runtimeInfo.lightosFeaturesEnabled) {
     clearHerdrState();
@@ -4250,13 +4252,23 @@ async function performHerdrStateRefresh(
       return false;
     }
     if (!state.available) {
+      if (mode === "preserve-available" && herdrState?.available) return false;
       clearHerdrState();
       return false;
     }
+    const previousFocusedPaneId = herdrState?.focused_pane_id;
+    const stateChanged = !herdrBridgeStatesEqual(herdrState, state);
     advanceHerdrStateRevision();
     herdrState = state;
-    renderTabs();
-    renderHerdrDock();
+    if (stateChanged) {
+      renderTabs();
+      renderHerdrDock();
+      mobileSymbolAgent.invalidate();
+      void mobileSymbolAgent.refresh();
+      if (previousFocusedPaneId !== state.focused_pane_id) {
+        refreshHerdrTerminalAfterAction(requestSelector, "focus_tab");
+      }
+    }
     void maybeAutoRestoreHerdrEntry(requestSelector);
     return true;
   } catch (error) {
@@ -4484,6 +4496,7 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   herdrEventSocketOpeningSelector = "";
   socket.addEventListener("open", () => {
     if (herdrEventSocket !== socket || generation !== herdrEventSocketGeneration) return;
+    herdrEventStreamPolicy.beginSubscription(paneIds);
     socket.send(JSON.stringify({
       id: "lazycat-webshell:events",
       method: "events.subscribe",
@@ -4499,6 +4512,8 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   socket.addEventListener("close", () => {
     if (herdrEventSocket !== socket || generation !== herdrEventSocketGeneration) return;
     herdrEventSocket = undefined;
+    herdrEventStreamPolicy.reset();
+    herdrEventRefreshLoop.reset();
     scheduleHerdrEventReconnect(selector, generation);
   });
   socket.addEventListener("error", () => {
@@ -4523,72 +4538,36 @@ function handleHerdrEventMessage(raw: unknown) {
     }
     return;
   }
-  if (!envelope.event) return;
-  const event = envelope.event;
-  const data = envelope.data ?? {};
-  const message = herdrEventShowsStatus(event) ? herdrEventMessage(event, data, tr) : "";
-  if (message) {
-    setGlobalStatus(message, herdrEventTone(event, data));
+  const streamDecision = herdrEventStreamPolicy.handle(envelope);
+  if (streamDecision.presentEvent && envelope.event) {
+    const data = envelope.data ?? {};
+    const message = herdrEventMessage(envelope.event, data, tr);
+    if (message) setGlobalStatus(message, herdrEventTone(envelope.event, data));
   }
-  if (
-    event === "pane.agent_detected"
-    || event === "pane.agent_status_changed"
-    || event === "pane.updated"
-  ) {
-    mobileSymbolAgent.invalidate();
-    void mobileSymbolAgent.refresh();
-  }
-  let resourceEventApplied = false;
-  if (herdrState) {
-    const result = applyHerdrResourceEvent(herdrState, event, data);
-    resourceEventApplied = result.applied;
-    if (result.applied) {
-      invalidatePendingHerdrStateRefresh();
-      herdrState = result.state;
-      renderTabs();
-      renderHerdrDock();
-    }
-  }
-  if (resourceEventApplied && event === "pane.focused") {
-    const selector = normalizeSelector(selectedSelector);
-    if (selector) refreshHerdrTerminalAfterAction(selector, "focus_tab");
-  }
-  const changesAgentList = herdrEventChangesAgentList(event);
-  const changesDock = herdrEventChangesDock(event);
-  if (!resourceEventApplied && (changesAgentList || changesDock)) {
-    invalidatePendingHerdrStateRefresh();
-  }
-  if (changesAgentList) {
-    const selector = normalizeSelector(selectedSelector);
-    if (selector) scheduleHerdrActionRefresh(selector, [120]);
-  } else if (herdrEventNeedsStateRefresh(event, resourceEventApplied)) {
-    scheduleHerdrEventRefresh();
-  } else if (herdrEventNeedsStateReconciliation(event, resourceEventApplied)) {
-    scheduleHerdrEventReconciliation();
+  if (streamDecision.requestReconcile) {
+    herdrEventRefreshLoop.request(streamDecision.token);
   }
 }
 
-function scheduleHerdrEventRefresh() {
-  window.clearTimeout(herdrEventRefreshTimer);
+async function reconcileHerdrEventState(token: number): Promise<boolean> {
+  if (!herdrEventStreamPolicy.isCurrent(token)) return true;
   const requestSelector = normalizeSelector(selectedSelector);
   const generation = selectedSelectorGeneration;
-  herdrEventRefreshTimer = window.setTimeout(() => {
-    herdrEventRefreshTimer = undefined;
-    if (!requestSelector || !isCurrentSelectorRequest(requestSelector, generation)) return;
-    scheduleHerdrActionRefresh(requestSelector, HERDR_EVENT_REFRESH_DELAYS_MS);
+  if (!requestSelector || !isCurrentSelectorRequest(requestSelector, generation)) return true;
+  advanceHerdrStateRevision();
+  const refreshed = await refreshHerdrState(requestSelector, generation, "preserve-available");
+  if (!isCurrentSelectorRequest(requestSelector, generation)) return true;
+  if (!refreshed) return false;
+
+  syncAIChatForActiveTerminal();
+  const reconciliation = herdrEventStreamPolicy.reconciled(
+    token,
+    herdrState?.panes.map((pane) => pane.pane_id) ?? [],
+  );
+  if (reconciliation.resubscribe) {
     void syncHerdrEventBridge({ force: true });
-  }, 120);
-}
-
-function scheduleHerdrEventReconciliation() {
-  window.clearTimeout(herdrEventReconcileTimer);
-  const requestSelector = normalizeSelector(selectedSelector);
-  const generation = selectedSelectorGeneration;
-  herdrEventReconcileTimer = window.setTimeout(() => {
-    herdrEventReconcileTimer = undefined;
-    if (!requestSelector || !isCurrentSelectorRequest(requestSelector, generation)) return;
-    scheduleHerdrActionRefresh(requestSelector, HERDR_EVENT_RECONCILE_DELAYS_MS);
-  }, 120);
+  }
+  return true;
 }
 
 function scheduleHerdrActionRefresh(
@@ -4631,11 +4610,9 @@ function stopHerdrEventBridge() {
 
 function closeHerdrEventSocket() {
   window.clearTimeout(herdrEventReconnectTimer);
-  window.clearTimeout(herdrEventRefreshTimer);
-  window.clearTimeout(herdrEventReconcileTimer);
   herdrEventReconnectTimer = undefined;
-  herdrEventRefreshTimer = undefined;
-  herdrEventReconcileTimer = undefined;
+  herdrEventStreamPolicy.reset();
+  herdrEventRefreshLoop.reset();
   const socket = herdrEventSocket;
   herdrEventSocket = undefined;
   herdrEventSocketSelector = "";
