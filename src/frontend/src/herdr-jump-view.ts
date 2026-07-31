@@ -60,7 +60,8 @@ function renderTarget(target: HerdrJumpTarget, density: HerdrJumpDensity, labels
   return `
     <button class="herdr-target-chip" type="button" ${targetAttribute} data-status="${escapeAttr(target.status)}" data-current="${target.current}" data-density="${density}" aria-current="${target.current ? "true" : "false"}" aria-label="${escapeAttr(accessibleLabel)}" title="${escapeAttr(target.title)}">
       ${renderAgentIcon(target.icon)}
-      ${density === "compact" ? `<span class="herdr-target-compact-sequence">${escapeHtml(target.sequence)}</span>` : normalLabel}
+      ${normalLabel}
+      ${density === "compact" ? `<span class="herdr-target-compact-sequence">${escapeHtml(target.sequence)}</span>` : ""}
       ${target.current ? `<i class="herdr-target-check" data-lucide="check"></i>` : ""}
     </button>
   `;

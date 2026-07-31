@@ -1515,8 +1515,20 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
     background: transparent;
   }
 
-  .herdr-current-targets,
   .herdr-dock > .herdr-status {
+    display: none;
+  }
+
+  .herdr-current-targets {
+    flex: 1 1 auto;
+  }
+
+  .herdr-current-targets .herdr-target-chip[data-density="compact"] .herdr-target-name,
+  .herdr-current-targets .herdr-target-chip[data-density="compact"] .herdr-target-sequence {
+    display: inline;
+  }
+
+  .herdr-current-targets .herdr-target-compact-sequence {
     display: none;
   }
 

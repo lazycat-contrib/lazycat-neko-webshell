@@ -2166,6 +2166,11 @@ textarea:focus-visible {
   padding-inline: 8px;
 }
 
+.herdr-target-chip[data-density="compact"] .herdr-target-name,
+.herdr-target-chip[data-density="compact"] .herdr-target-sequence {
+  display: none;
+}
+
 .herdr-target-name {
   min-width: 0;
   overflow: hidden;

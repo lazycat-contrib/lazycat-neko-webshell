@@ -214,6 +214,7 @@ test("renders compact icon sequences and normal duplicate suffixes as density ch
   const compact = renderHerdrJumpGroups(model, "compact", ui);
   assert.match(compact, /herdr-target-compact-sequence">1\.1/);
   assert.match(compact, /herdr-target-compact-sequence">1\.2/);
+  assert.match(compact, /herdr-target-name">Codex/);
   assert.match(compact, /data-agent-icon="codex"/);
   assert.match(compact, />Current</);
 
