@@ -74,11 +74,20 @@ import {
 } from "./herdr-backend";
 import type { HerdrPaneResizeDirection } from "./herdr-backend";
 import { createHerdrAgentActions } from "./herdr-agent-actions";
+import {
+  scheduleHerdrAction,
+  type HerdrActionOptionsSource,
+} from "./herdr-action-scheduler";
+import { createHerdrInteractionQueue } from "./herdr-interaction-queue";
 import { createHerdrJumpController } from "./herdr-jump-controller";
 import { createHerdrRefreshCoordinator } from "./herdr-refresh-coordinator";
 import { herdrEventMessage } from "./herdr-event-presentation";
 import { isHerdrSocketMethod } from "./herdr-socket-api";
 import { applyHerdrResourceEvent } from "./herdr-state-events";
+import {
+  createHerdrStateMutationRunner,
+  herdrStateMutationChangesVisibleTerminal,
+} from "./herdr-state-mutation";
 import { createHerdrWheelInputBatcher } from "./herdr-wheel-input-batcher";
 import { translate, type MessageKey } from "./i18n";
 import { renderInstanceListView } from "./instance-views";
@@ -605,6 +614,7 @@ let selectedSelectorGeneration = 0;
 let selectedSelectorExplicit = initialSelectorExplicit;
 let herdrState: HerdrBridgeState | undefined;
 let herdrStateGeneration = 0;
+let herdrStateRevision = 0;
 let herdrEventSocket: WebSocket | undefined;
 let herdrEventSocketSelector = "";
 let herdrEventSocketOpeningSelector = "";
@@ -684,18 +694,39 @@ const terminalControl = createTerminalControlController({
 
 const activeAIChatTerminalPane = () => activeHerdrTerminalPane() ?? activePane();
 const activeTerminalInputPane = () => activeHerdrTerminalPane() ?? activePane();
+const herdrInteractionQueue = createHerdrInteractionQueue();
+const runHerdrStateMutationRequest = createHerdrStateMutationRunner({
+  selectedSelector: () => selectedSelector,
+  selectedGeneration: () => selectedSelectorGeneration,
+  request: runHerdrSocketRequest,
+  isCurrent: isCurrentSelectorRequest,
+  canMutate: (selector) => canMutateHerdrState(selector, false),
+  blockedError: () => new Error(tr("status.terminalControlObserver")),
+  invalidate: invalidatePendingHerdrStateRefresh,
+  reconcile: (method, selector) => {
+    if (herdrStateMutationChangesVisibleTerminal(method)) {
+      const match = findPaneBySessionBackend(selector, "herdr");
+      if (match) refreshHerdrPaneTerminalAfterAction(match.pane);
+    }
+    scheduleHerdrActionRefresh(selector, [0, 120]);
+  },
+});
 const herdrJumpActions = createHerdrAgentActions({
   selectedSelector: () => selectedSelector,
   selectedGeneration: () => selectedSelectorGeneration,
   requestFocus: async ({ selector, target }) => {
-    await runHerdrSocketRequest("pane.focus", { pane_id: target }, {
+    await runHerdrStateMutationRequest("pane.focus", { pane_id: target }, {
       selector,
       id: "lazycat-webshell:pane-focus",
       mirrorNotification: false,
     });
   },
   isCurrent: isCurrentSelectorRequest,
-  onFocused: (selector) => scheduleHerdrActionRefresh(selector, [0, 120]),
+  runSerial: (task) => herdrInteractionQueue.runLatest("focus", task),
+  onFocused: (selector) => {
+    refreshHerdrTerminalAfterAction(selector, "focus_tab");
+    scheduleHerdrActionRefresh(selector, [0, 120]);
+  },
   onError: (error) => setGlobalStatus(
     tr("status.herdrActionFailed", { message: errorMessage(error) }),
     "error",
@@ -710,8 +741,6 @@ herdrJumpController = createHerdrJumpController({
     list: elements.herdrWorkspaceMenuList,
     status: elements.herdrWorkspaceMenuStatus,
     currentTargets: elements.herdrTabList,
-    currentWorkspaceLabel: elements.herdrCurrentWorkspaceLabel,
-    currentTargetLabel: elements.herdrCurrentTargetLabel,
     moreButton: elements.herdrMoreButton,
     moreMenu: elements.herdrMoreMenu,
   },
@@ -734,13 +763,13 @@ herdrJumpController = createHerdrJumpController({
   },
   focusPane: herdrJumpActions.focus,
   createTab: async () => {
-    await runHerdrAction("create_tab", { workspaceId: focusedHerdrWorkspace()?.workspace_id });
+    await runHerdrAction("create_tab", () => ({ workspaceId: focusedHerdrWorkspace()?.workspace_id }));
   },
   createWorkspace: async () => {
     await runHerdrAction("create_workspace");
   },
   closeWorkspace: async () => {
-    await runHerdrAction("close_workspace", { workspaceId: focusedHerdrWorkspace()?.workspace_id });
+    await runHerdrAction("close_workspace", () => ({ workspaceId: focusedHerdrWorkspace()?.workspace_id }));
   },
 });
 const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
@@ -2478,7 +2507,7 @@ async function splitHerdrPane(pane: TerminalPane, placement: SplitPlacement): Pr
   }
   const selector = await ensureHerdrSocketReady(pane);
   const paneId = await currentHerdrPaneId(selector);
-  await runHerdrSocketRequest("pane.split", {
+  await runHerdrStateMutationRequest("pane.split", {
     target_pane_id: paneId,
     direction,
     focus: true,
@@ -2500,7 +2529,7 @@ async function resizeHerdrPane(
 ): Promise<boolean> {
   const selector = await ensureHerdrSocketReady(pane);
   const paneId = await currentHerdrPaneId(selector);
-  await runHerdrSocketRequest("pane.resize", {
+  await runHerdrStateMutationRequest("pane.resize", {
     pane_id: paneId,
     direction,
     amount: HERDR_PANE_RESIZE_AMOUNT,
@@ -2519,7 +2548,7 @@ async function resizeHerdrPane(
 async function closeHerdrPane(pane: TerminalPane): Promise<boolean> {
   const selector = await ensureHerdrSocketReady(pane);
   const paneId = await currentHerdrPaneId(selector);
-  await runHerdrSocketRequest("pane.close", { pane_id: paneId }, {
+  await runHerdrStateMutationRequest("pane.close", { pane_id: paneId }, {
     selector,
     id: "lazycat-webshell:pane-close",
     mirrorNotification: false,
@@ -4169,11 +4198,25 @@ function clearSessionBackendsState() {
   renderHerdrDock();
 }
 
+function advanceHerdrStateRevision() {
+  herdrStateRevision += 1;
+}
+
+function invalidatePendingHerdrStateRefresh() {
+  herdrStateGeneration += 1;
+  advanceHerdrStateRevision();
+}
+
+function canMutateHerdrState(selector: string, report = true): boolean {
+  const match = findPaneBySessionBackend(selector, "herdr");
+  return !match || terminalControl.canWrite(match.pane, { report });
+}
+
 async function refreshHerdrState(
   selector: string,
   generation = selectedSelectorGeneration,
 ): Promise<boolean> {
-  return herdrRefreshCoordinator.refresh(selector, generation);
+  return herdrRefreshCoordinator.refresh(selector, generation, herdrStateRevision);
 }
 
 async function performHerdrStateRefresh(
@@ -4199,6 +4242,7 @@ async function performHerdrStateRefresh(
       clearHerdrState();
       return false;
     }
+    advanceHerdrStateRevision();
     herdrState = state;
     renderTabs();
     renderHerdrDock();
@@ -4206,7 +4250,6 @@ async function performHerdrStateRefresh(
     return true;
   } catch (error) {
     if (requestId === herdrStateGeneration && isCurrentSelectorRequest(requestSelector, generation)) {
-      clearHerdrState();
       if (settings.debugMode) {
         setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
       }
@@ -4236,32 +4279,44 @@ async function maybeAutoRestoreHerdrEntry(selector: string) {
 
 async function runHerdrAction(
   action: HerdrAction,
-  options: {
-    workspaceId?: string;
-    tabId?: string;
-  } = {},
-) {
+  options: HerdrActionOptionsSource = {},
+): Promise<boolean> {
   const selector = selectedSelector;
-  if (!selector || !herdrState?.available) return;
-  elements.herdrStatus.textContent = "";
-  try {
-    const state = await runHerdrActionRequest(selector, action, options);
-    if (!isCurrentSelectorRequest(selector, selectedSelectorGeneration) || !state.available) {
-      clearHerdrState();
-      return;
+  if (!selector || !herdrState?.available) return false;
+  const generation = selectedSelectorGeneration;
+  const task = async (resolvedOptions: Parameters<typeof runHerdrActionRequest>[2]) => {
+    if (!isCurrentSelectorRequest(selector, generation) || !herdrState?.available) return false;
+    if (!canMutateHerdrState(selector)) return false;
+    elements.herdrStatus.textContent = "";
+    try {
+      const state = await runHerdrActionRequest(selector, action, resolvedOptions);
+      if (!isCurrentSelectorRequest(selector, generation)) return false;
+      if (!state.available) {
+        clearHerdrState();
+        return false;
+      }
+      invalidatePendingHerdrStateRefresh();
+      herdrState = state;
+      renderTabs();
+      renderHerdrDock();
+      refreshHerdrTerminalAfterAction(selector, action);
+      scheduleHerdrActionRefresh(selector);
+      void syncHerdrEventBridge({ force: true });
+      syncAIChatForActiveTerminal();
+      focusActivePaneCanvas();
+      return true;
+    } catch (error) {
+      if (isCurrentSelectorRequest(selector, generation)) {
+        invalidatePendingHerdrStateRefresh();
+        refreshHerdrTerminalAfterAction(selector, action);
+        scheduleHerdrActionRefresh(selector, [0, 120]);
+        elements.herdrStatus.textContent = tr("status.herdrActionFailed", { message: errorMessage(error) });
+      }
+      return false;
     }
-    herdrStateGeneration += 1;
-    herdrState = state;
-    renderTabs();
-    renderHerdrDock();
-    refreshHerdrTerminalAfterAction(selector, action);
-    scheduleHerdrActionRefresh(selector);
-    void syncHerdrEventBridge({ force: true });
-    syncAIChatForActiveTerminal();
-    focusActivePaneCanvas();
-  } catch (error) {
-    elements.herdrStatus.textContent = tr("status.herdrActionFailed", { message: errorMessage(error) });
-  }
+  };
+  const result = await scheduleHerdrAction(herdrInteractionQueue, action, options, task);
+  return result ?? false;
 }
 
 function refreshHerdrTerminalAfterAction(selector: string, action: HerdrAction) {
@@ -4330,8 +4385,9 @@ async function restoreHerdrWorkspace(workspaceId: string | undefined) {
     setGlobalStatus(tr("status.herdrUnavailable"), "error");
     return;
   }
-  await runHerdrAction("focus_workspace", { workspaceId: normalized });
-  setGlobalStatus(tr("status.herdrWorkspaceFocused"), "ok");
+  if (await runHerdrAction("focus_workspace", { workspaceId: normalized })) {
+    setGlobalStatus(tr("status.herdrWorkspaceFocused"), "ok");
+  }
 }
 
 async function runHerdrSocketRequest(
@@ -4469,16 +4525,21 @@ function handleHerdrEventMessage(raw: unknown) {
     const result = applyHerdrResourceEvent(herdrState, event, data);
     resourceEventApplied = result.applied;
     if (result.applied) {
-      herdrStateGeneration += 1;
+      invalidatePendingHerdrStateRefresh();
       herdrState = result.state;
       renderTabs();
       renderHerdrDock();
     }
   }
-  if (herdrEventChangesAgentList(event)) {
+  const changesAgentList = herdrEventChangesAgentList(event);
+  const changesDock = herdrEventChangesDock(event);
+  if (!resourceEventApplied && (changesAgentList || changesDock)) {
+    invalidatePendingHerdrStateRefresh();
+  }
+  if (changesAgentList) {
     const selector = normalizeSelector(selectedSelector);
     if (selector) scheduleHerdrActionRefresh(selector, [120]);
-  } else if (herdrEventChangesDock(event) && !resourceEventApplied) {
+  } else if (changesDock && !resourceEventApplied) {
     scheduleHerdrEventRefresh();
   }
 }
@@ -4506,6 +4567,7 @@ function scheduleHerdrActionRefresh(
     const timer = window.setTimeout(() => {
       herdrActionRefreshTimers = herdrActionRefreshTimers.filter((item) => item !== timer);
       if (!isCurrentSelectorRequest(requestSelector, generation)) return;
+      advanceHerdrStateRevision();
       void refreshHerdrState(requestSelector, generation).then(() => syncAIChatForActiveTerminal());
     }, delay);
     herdrActionRefreshTimers.push(timer);
@@ -4545,7 +4607,7 @@ function closeHerdrEventSocket() {
 }
 
 function clearHerdrState() {
-  herdrStateGeneration += 1;
+  invalidatePendingHerdrStateRefresh();
   herdrRefreshCoordinator.clearQueued();
   herdrState = undefined;
   clearHerdrActionRefreshTimers();
@@ -6111,35 +6173,42 @@ async function commitTabRename(tabId: string, value: string) {
 async function syncHerdrWorkspaceRenameForTab(tab: TerminalTab, label: string) {
   const nextLabel = label.trim();
   if (!nextLabel || !isHerdrTab(tab)) return;
-  if (!herdrState?.available || normalizeSelector(herdrState.selector) !== normalizeSelector(tab.selector)) {
-    await refreshHerdrState(tab.selector);
+  const selector = normalizeSelector(tab.selector);
+  const generation = selectedSelectorGeneration;
+  if (!isCurrentSelectorRequest(selector, generation) || !canMutateHerdrState(selector)) return;
+  if (!herdrState?.available || normalizeSelector(herdrState.selector) !== selector) {
+    const refreshed = await refreshHerdrState(selector, generation);
+    if (!refreshed || !isCurrentSelectorRequest(selector, generation)) return;
   }
+  if (!herdrState?.available || normalizeSelector(herdrState.selector) !== selector) return;
   const workspace = focusedHerdrWorkspace();
   if (!workspace?.workspace_id) return;
   applyHerdrWorkspaceLabel(workspace.workspace_id, nextLabel);
   renderTabs();
   renderHerdrDock();
   if (workspace.label.trim() === nextLabel) {
-    await refreshHerdrState(tab.selector);
+    await refreshHerdrState(selector, generation);
     return;
   }
   try {
-    await runHerdrSocketRequest("workspace.rename", {
+    await runHerdrStateMutationRequest("workspace.rename", {
       workspace_id: workspace.workspace_id,
       label: nextLabel,
     }, {
-      selector: tab.selector,
+      selector,
       id: `lazycat-webshell:workspace-rename:${tab.id}`,
       mirrorNotification: false,
     });
-    await refreshHerdrState(tab.selector);
+    await refreshHerdrState(selector, generation);
   } catch (error) {
+    await refreshHerdrState(selector, generation);
     setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
   }
 }
 
 function applyHerdrWorkspaceLabel(workspaceId: string, label: string) {
   if (!herdrState?.available) return;
+  invalidatePendingHerdrStateRefresh();
   herdrState = {
     ...herdrState,
     workspaces: herdrState.workspaces.map((workspace) => {

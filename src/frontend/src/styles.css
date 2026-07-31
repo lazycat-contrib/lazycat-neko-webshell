@@ -2068,7 +2068,7 @@ textarea:focus-visible {
 
 /* Herdr jump navigation */
 .herdr-dock {
-  grid-template-columns: minmax(168px, 240px) minmax(0, 1fr) auto minmax(0, auto);
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, auto);
   gap: 8px;
   min-height: 44px;
   padding-block: 5px;
@@ -2078,7 +2078,6 @@ textarea:focus-visible {
   min-width: 0;
 }
 
-.herdr-context-button,
 .herdr-target-chip,
 .herdr-jump-workspace,
 .herdr-density-switch button,
@@ -2087,36 +2086,26 @@ textarea:focus-visible {
   font: inherit;
 }
 
-.herdr-context-button {
-  display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 14px;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
+.herdr-jump-trigger {
+  width: 34px;
+  min-width: 34px;
   min-height: 32px;
-  border: 1px solid var(--component-border);
-  border-radius: var(--radius-sm);
-  background: var(--component-wash), var(--surface);
   color: var(--control-fg);
-  padding: 0 9px;
-  text-align: left;
   transition: border-color 140ms ease, background-color 140ms ease, transform var(--motion-press) var(--ease-out);
 }
 
-.herdr-context-button:hover,
-.herdr-context-button[aria-expanded="true"] {
+.herdr-jump-trigger[aria-expanded="true"] {
   border-color: var(--line-strong);
   background: var(--control-hover-bg);
 }
 
-.herdr-context-button:active,
 .herdr-icon-button:active,
 .herdr-target-chip:active,
 .herdr-density-switch button:active {
   transform: scale(0.97);
 }
 
-.herdr-context-button:focus-visible,
+.herdr-jump-trigger:focus-visible,
 .herdr-target-chip:focus-visible,
 .herdr-jump-workspace:focus-visible,
 .herdr-density-switch button:focus-visible,
@@ -2126,34 +2115,9 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-.herdr-context-button > svg {
+.herdr-jump-trigger > svg {
   width: 16px;
   height: 16px;
-}
-
-.herdr-context-copy,
-.herdr-context-copy strong,
-.herdr-context-copy small {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.herdr-context-copy strong {
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.herdr-context-copy small {
-  display: none;
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.herdr-context-chevron {
-  color: var(--muted);
 }
 
 .herdr-current-targets {
@@ -2259,12 +2223,21 @@ textarea:focus-visible {
 .herdr-agent-icon[data-agent-icon="qoder"] { --herdr-agent-mask: url("@lobehub/icons-static-svg/icons/qoder.svg"); }
 
 .herdr-workspace-menu {
+  --menu-bg: var(--surface-raised);
+  --menu-border: var(--line);
+  --menu-text: var(--text);
+  --menu-muted: var(--muted);
+  --menu-hover-bg: color-mix(in srgb, var(--text) 7%, transparent);
+  --menu-material:
+    linear-gradient(180deg, var(--topbar-wash-a), transparent 46%),
+    radial-gradient(circle at 18% 0, var(--topbar-wash-b), transparent 52%);
   position: fixed;
   top: auto;
   right: auto;
   width: min(440px, calc(100vw - 16px));
   max-height: min(520px, calc(var(--app-viewport-height) - 16px));
   padding: 8px;
+  color: var(--text);
   transform-origin: var(--herdr-popover-origin, top left);
 }
 
@@ -2466,7 +2439,7 @@ textarea:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .herdr-context-button,
+  .herdr-jump-trigger,
   .herdr-target-chip,
   .herdr-density-switch button,
   .herdr-workspace-menu,

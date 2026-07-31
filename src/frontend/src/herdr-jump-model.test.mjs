@@ -7,6 +7,7 @@ import {
   defaultHerdrJumpDensity,
   normalizeHerdrJumpDensity,
 } from "./herdr-jump-model.ts";
+import { renderHerdrJumpShell } from "./herdr-jump-shell.ts";
 import { renderHerdrJumpGroups } from "./herdr-jump-view.ts";
 
 const labels = {
@@ -196,4 +197,13 @@ test("renders compact icon sequences and normal duplicate suffixes as density ch
   assert.match(normal, /herdr-target-name">Codex/);
   assert.match(normal, /herdr-target-sequence">1\.1/);
   assert.match(normal, /herdr-target-sequence">1\.2/);
+});
+
+test("renders the Herdr jump trigger as a single icon instead of a select-like field", () => {
+  const html = renderHerdrJumpShell();
+
+  assert.match(html, /class="herdr-icon-button herdr-jump-trigger"/);
+  assert.doesNotMatch(html, /herdr-context-copy/);
+  assert.doesNotMatch(html, /herdr-context-chevron/);
+  assert.match(html, /aria-label="Jump to"/);
 });

@@ -12,8 +12,6 @@ type HerdrJumpElements = {
   list: HTMLElement;
   status: HTMLElement;
   currentTargets: HTMLElement;
-  currentWorkspaceLabel: HTMLElement;
-  currentTargetLabel: HTMLElement;
   moreButton: HTMLButtonElement;
   moreMenu: HTMLElement;
 };
@@ -78,10 +76,6 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     elements.dock.dataset.herdrDensity = mode;
     elements.list.innerHTML = renderHerdrJumpGroups(model, mode, viewLabels);
     elements.currentTargets.innerHTML = renderHerdrCurrentTargets(model, mode, viewLabels);
-    elements.currentWorkspaceLabel.textContent = model.currentWorkspace?.label ?? deps.tr("section.herdrWorkspaces");
-    elements.currentTargetLabel.textContent = model.currentTarget
-      ? `${model.currentTarget.label} · ${model.currentTarget.sequence}`
-      : deps.tr("status.noHerdrPanes");
     elements.menu.querySelectorAll<HTMLButtonElement>("[data-herdr-density]").forEach((button) => {
       button.setAttribute("aria-pressed", String(button.dataset.herdrDensity === mode));
     });

@@ -45,7 +45,7 @@ test("drops a captured Herdr focus before sending when the selector becomes stal
   assert.deepEqual(errors, []);
 });
 
-test("serializes pane focus requests so the last click wins", async () => {
+test("serializes pane focus requests and drops superseded queued clicks", async () => {
   const first = deferred();
   const requests = [];
   const actions = createHerdrAgentActions({
@@ -62,9 +62,10 @@ test("serializes pane focus requests so the last click wins", async () => {
 
   const focusFirst = actions.focus("p1");
   const focusSecond = actions.focus("p2");
+  const focusThird = actions.focus("p3");
   await Promise.resolve();
   assert.deepEqual(requests, ["p1"]);
   first.resolve();
-  await Promise.all([focusFirst, focusSecond]);
-  assert.deepEqual(requests, ["p1", "p2"]);
+  await Promise.all([focusFirst, focusSecond, focusThird]);
+  assert.deepEqual(requests, ["p1", "p3"]);
 });

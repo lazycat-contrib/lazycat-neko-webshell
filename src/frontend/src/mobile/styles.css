@@ -1490,30 +1490,29 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   }
 
   .herdr-dock {
-    display: block;
+    display: flex;
+    align-items: center;
     min-height: 48px;
-    padding: 2px max(8px, var(--lzc-safe-area-inset-right));
+    padding-block: 2px;
+    padding-inline-start: max(8px, var(--lzc-safe-area-inset-left));
+    padding-inline-end: max(8px, var(--lzc-safe-area-inset-right));
   }
 
-  .herdr-workspace-switcher,
-  .herdr-context-button {
-    width: 100%;
+  .herdr-workspace-switcher {
+    width: auto;
   }
 
-  .herdr-context-button {
+  .herdr-jump-trigger {
+    width: 44px;
+    min-width: 44px;
     min-height: 44px;
     border-color: transparent;
     background: transparent;
-    padding-inline: 8px;
   }
 
-  .herdr-context-copy strong {
-    font-size: 12px;
-  }
-
-  .herdr-context-copy small {
-    display: block;
-    margin-top: 1px;
+  .herdr-jump-trigger:hover:not([aria-expanded="true"]) {
+    border-color: transparent;
+    background: transparent;
   }
 
   .herdr-current-targets,
@@ -1668,7 +1667,10 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   }
 
   .herdr-mobile-jump-actions > button {
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
+    gap: 8px;
     min-height: 48px;
     border: 1px solid var(--component-border);
     border-radius: var(--radius-md);
@@ -1704,6 +1706,18 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 
   .herdr-mobile-more-actions button {
     min-height: 44px;
+  }
+
+  .herdr-mobile-jump-actions button > svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    stroke-width: 1.8;
+  }
+
+  .herdr-mobile-jump-actions button > span {
+    line-height: 1.15;
   }
 
   .webshell[data-tab-layout="vertical"] .herdr-dock,

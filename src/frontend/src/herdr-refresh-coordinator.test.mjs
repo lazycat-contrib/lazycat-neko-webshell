@@ -32,3 +32,21 @@ test("coalesces equal refreshes and resolves a superseded queued request as stal
   assert.equal(await latest, true);
   assert.deepEqual(requests, [["alpha", 1], ["beta", 3]]);
 });
+
+test("runs a trailing refresh when Herdr state changes during an active request", async () => {
+  const first = deferred();
+  const requests = [];
+  const coordinator = createHerdrRefreshCoordinator(async (selector, generation) => {
+    requests.push([selector, generation]);
+    if (requests.length === 1) await first.promise;
+    return true;
+  });
+
+  const active = coordinator.refresh("alpha", 1, 7);
+  const trailing = coordinator.refresh("alpha", 1, 8);
+  first.resolve();
+
+  assert.equal(await active, true);
+  assert.equal(await trailing, true);
+  assert.deepEqual(requests, [["alpha", 1], ["alpha", 1]]);
+});

@@ -9,13 +9,8 @@ export function renderHerdrJumpShell(): string {
   return `
     <section class="herdr-dock" id="herdrDock" aria-label="Herdr controls" data-i18n-aria="section.herdr" hidden>
       <div class="herdr-workspace-switcher" id="herdrWorkspaceSwitcher">
-        <button class="herdr-context-button" id="herdrWorkspaceButton" type="button" aria-haspopup="dialog" aria-controls="herdrWorkspaceMenu" aria-expanded="false" aria-label="Jump to" title="Jump to" data-i18n-aria="action.herdrJumpTo" data-i18n-title="action.herdrJumpTo">
+        <button class="herdr-icon-button herdr-jump-trigger" id="herdrWorkspaceButton" type="button" aria-haspopup="dialog" aria-controls="herdrWorkspaceMenu" aria-expanded="false" aria-label="Jump to" title="Jump to" data-i18n-aria="action.herdrJumpTo" data-i18n-title="action.herdrJumpTo">
           <i data-lucide="folder-tree"></i>
-          <span class="herdr-context-copy">
-            <strong id="herdrCurrentWorkspaceLabel"></strong>
-            <small id="herdrCurrentTargetLabel"></small>
-          </span>
-          <i class="herdr-context-chevron" data-lucide="chevrons-up-down"></i>
         </button>
         ${renderHerdrJumpMobileBackdrop()}
         <div class="herdr-workspace-menu" id="herdrWorkspaceMenu" role="dialog" aria-label="Jump to" data-i18n-aria="action.herdrJumpTo" hidden>
