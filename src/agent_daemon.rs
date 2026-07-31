@@ -71,8 +71,31 @@ pub fn run_agent_command(args: &[String]) -> anyhow::Result<()> {
         "daemon" => run_daemon_command(&args[1..]),
         "request" => run_request_command(&args[1..]),
         "attach" => run_attach_command(&args[1..]),
+        "herdr-socket-bridge" => run_herdr_socket_bridge_command(&args[1..]),
         _ => bail!("unknown agent command {command:?}"),
     }
+}
+
+fn run_herdr_socket_bridge_command(args: &[String]) -> anyhow::Result<()> {
+    let options = parse_options(args)?;
+    let explicit = options.get("socket").map(Path::new);
+    let login_user = options.get("login-user").map_or("", String::as_str);
+    let mode = options.get("mode").map_or("stream", String::as_str);
+    if explicit.is_none() && login_user.trim().is_empty() {
+        bail!("--socket or --login-user is required");
+    }
+    let socket =
+        neko_herdr_socket_bridge::find_herdr_socket(neko_herdr_socket_bridge::SocketSearch {
+            explicit,
+            login_user,
+        })
+        .context("failed to locate Herdr socket")?;
+    match mode {
+        "request" => neko_herdr_socket_bridge::request_stdio(&socket),
+        "stream" => neko_herdr_socket_bridge::bridge_stdio(&socket),
+        _ => bail!("unsupported Herdr socket bridge mode {mode:?}"),
+    }
+    .with_context(|| format!("failed to bridge Herdr socket at {}", socket.display()))
 }
 
 fn run_daemon_command(args: &[String]) -> anyhow::Result<()> {
@@ -659,8 +682,8 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 4);
-        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 3);
+        assert_eq!(AGENT_VERSION, 5);
+        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 5);
     }
 
     #[test]

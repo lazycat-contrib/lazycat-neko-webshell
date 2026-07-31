@@ -4,7 +4,8 @@ import test from "node:test";
 import {
   herdrEventChangesAgentList,
   herdrEventChangesDock,
-  herdrEventRequiresStateRefresh,
+  herdrEventNeedsStateReconciliation,
+  herdrEventNeedsStateRefresh,
   herdrEventShowsStatus,
   herdrEventTone,
 } from "./herdr-backend.ts";
@@ -20,11 +21,16 @@ test("treats Herdr metadata snapshots as silent dock changes", () => {
   assert.equal(herdrEventShowsStatus("pane.updated"), false);
 });
 
-test("reconciles every Herdr focus signal with an authoritative state snapshot", () => {
+test("keeps applied Herdr focus signals on the realtime path", () => {
   for (const event of ["workspace.focused", "tab.focused", "pane.focused"]) {
-    assert.equal(herdrEventRequiresStateRefresh(event), true);
+    assert.equal(herdrEventNeedsStateRefresh(event, true), false);
+    assert.equal(herdrEventNeedsStateRefresh(event, false), true);
+    assert.equal(herdrEventNeedsStateReconciliation(event, true), true);
+    assert.equal(herdrEventNeedsStateReconciliation(event, false), false);
   }
-  assert.equal(herdrEventRequiresStateRefresh("pane.updated"), false);
+  assert.equal(herdrEventNeedsStateRefresh("tab.created", false), true);
+  assert.equal(herdrEventNeedsStateRefresh("pane.agent_detected", false), false);
+  assert.equal(herdrEventNeedsStateReconciliation("tab.created", true), false);
 });
 
 test("uses the final status when Herdr reports an agent release", () => {

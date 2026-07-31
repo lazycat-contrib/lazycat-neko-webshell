@@ -62,7 +62,8 @@ import {
   herdrCurrentPaneId,
   herdrEventChangesAgentList,
   herdrEventChangesDock,
-  herdrEventRequiresStateRefresh,
+  herdrEventNeedsStateReconciliation,
+  herdrEventNeedsStateRefresh,
   herdrEventSocketUrl,
   herdrEventShowsStatus,
   herdrEventSubscriptions,
@@ -446,6 +447,7 @@ const HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS = 500;
 const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
 const HERDR_ACTION_REFRESH_DELAYS_MS = [120, 450, 900, 1800, 3000] as const;
 const HERDR_EVENT_REFRESH_DELAYS_MS = [0, 300, 900, 1800, 3000] as const;
+const HERDR_EVENT_RECONCILE_DELAYS_MS = [300, 900] as const;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
 const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
@@ -623,6 +625,7 @@ let herdrEventSocketOpeningSelector = "";
 let herdrEventSocketGeneration = 0;
 let herdrEventReconnectTimer: number | undefined;
 let herdrEventRefreshTimer: number | undefined;
+let herdrEventReconcileTimer: number | undefined;
 let herdrActionRefreshTimers: number[] = [];
 const herdrRefreshCoordinator = createHerdrRefreshCoordinator(performHerdrStateRefresh);
 let sessionBackendsState: SessionBackendsState | undefined;
@@ -4457,12 +4460,19 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   closeHerdrEventSocket();
   const generation = ++herdrEventSocketGeneration;
   herdrEventSocketOpeningSelector = selector;
-  const paneIds = await fetchHerdrPaneIds(selector).catch((error) => {
+  let paneIds: string[];
+  try {
+    paneIds = await fetchHerdrPaneIds(selector);
+  } catch (error) {
     if (settings.debugMode) {
       setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
     }
-    return [];
-  });
+    if (generation === herdrEventSocketGeneration && normalizeSelector(selectedSelector) === selector) {
+      herdrEventSocketOpeningSelector = "";
+      scheduleHerdrEventReconnect(selector, generation);
+    }
+    return;
+  }
   if (generation !== herdrEventSocketGeneration || normalizeSelector(selectedSelector) !== selector) {
     if (herdrEventSocketOpeningSelector === selector) herdrEventSocketOpeningSelector = "";
     return;
@@ -4551,11 +4561,10 @@ function handleHerdrEventMessage(raw: unknown) {
   if (changesAgentList) {
     const selector = normalizeSelector(selectedSelector);
     if (selector) scheduleHerdrActionRefresh(selector, [120]);
-  } else if (
-    changesDock
-    && (!resourceEventApplied || herdrEventRequiresStateRefresh(event))
-  ) {
+  } else if (herdrEventNeedsStateRefresh(event, resourceEventApplied)) {
     scheduleHerdrEventRefresh();
+  } else if (herdrEventNeedsStateReconciliation(event, resourceEventApplied)) {
+    scheduleHerdrEventReconciliation();
   }
 }
 
@@ -4568,6 +4577,17 @@ function scheduleHerdrEventRefresh() {
     if (!requestSelector || !isCurrentSelectorRequest(requestSelector, generation)) return;
     scheduleHerdrActionRefresh(requestSelector, HERDR_EVENT_REFRESH_DELAYS_MS);
     void syncHerdrEventBridge({ force: true });
+  }, 120);
+}
+
+function scheduleHerdrEventReconciliation() {
+  window.clearTimeout(herdrEventReconcileTimer);
+  const requestSelector = normalizeSelector(selectedSelector);
+  const generation = selectedSelectorGeneration;
+  herdrEventReconcileTimer = window.setTimeout(() => {
+    herdrEventReconcileTimer = undefined;
+    if (!requestSelector || !isCurrentSelectorRequest(requestSelector, generation)) return;
+    scheduleHerdrActionRefresh(requestSelector, HERDR_EVENT_RECONCILE_DELAYS_MS);
   }, 120);
 }
 
@@ -4612,8 +4632,10 @@ function stopHerdrEventBridge() {
 function closeHerdrEventSocket() {
   window.clearTimeout(herdrEventReconnectTimer);
   window.clearTimeout(herdrEventRefreshTimer);
+  window.clearTimeout(herdrEventReconcileTimer);
   herdrEventReconnectTimer = undefined;
   herdrEventRefreshTimer = undefined;
+  herdrEventReconcileTimer = undefined;
   const socket = herdrEventSocket;
   herdrEventSocket = undefined;
   herdrEventSocketSelector = "";

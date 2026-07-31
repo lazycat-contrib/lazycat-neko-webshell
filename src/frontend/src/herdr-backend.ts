@@ -124,8 +124,12 @@ export function herdrEventChangesAgentList(event: string): boolean {
     || event === "pane.agent_status_changed";
 }
 
-export function herdrEventRequiresStateRefresh(event: string): boolean {
-  return HERDR_FOCUS_EVENTS.has(event);
+export function herdrEventNeedsStateRefresh(event: string, resourceEventApplied: boolean): boolean {
+  return herdrEventChangesDock(event) && !resourceEventApplied;
+}
+
+export function herdrEventNeedsStateReconciliation(event: string, resourceEventApplied: boolean): boolean {
+  return resourceEventApplied && HERDR_FOCUS_EVENTS.has(event);
 }
 
 export function herdrEventShowsStatus(event: string): boolean {

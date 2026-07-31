@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "lazycat-neko-webshell"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -1715,6 +1715,7 @@ dependencies = [
  "http-body",
  "lzc-sdk",
  "mime_guess",
+ "neko-herdr-socket-bridge",
  "ngrok",
  "portable-pty",
  "quinn",
@@ -1929,6 +1930,10 @@ dependencies = [
  "tokio-util",
  "tracing",
 ]
+
+[[package]]
+name = "neko-herdr-socket-bridge"
+version = "0.1.0"
 
 [[package]]
 name = "ngrok"

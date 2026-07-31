@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
 use base64::Engine as _;
@@ -33,9 +33,11 @@ const LEGACY_V0_5_35_AGENT_VERSION: u64 = 1;
 const AGENT_READY_MARKER: &str = "lazycat-neko-webshell-agent-ready";
 const AGENT_LOCK_READY_MARKER: &str = "lazycat-neko-webshell-agent-lock-ready";
 const AGENT_LOG_TAIL_LINES: usize = 80;
+const AGENT_READY_CACHE_TTL: Duration = Duration::from_secs(5);
 
 static AGENT_ENSURE_LOCKS: OnceLock<StdMutex<HashMap<String, Weak<AsyncMutex<()>>>>> =
     OnceLock::new();
+static AGENT_READY_CACHE: OnceLock<StdMutex<HashMap<String, Instant>>> = OnceLock::new();
 
 #[cfg(not(debug_assertions))]
 include!(concat!(env!("OUT_DIR"), "/embedded_agent.rs"));
@@ -146,6 +148,27 @@ fn selector_ensure_lock(selector: &str) -> Arc<AsyncMutex<()>> {
     let lock = Arc::new(AsyncMutex::new(()));
     locks.insert(selector.to_owned(), Arc::downgrade(&lock));
     lock
+}
+
+fn agent_was_recently_ensured(selector: &str, now: Instant) -> bool {
+    let ready = AGENT_READY_CACHE.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut ready = ready
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    ready.retain(|_, verified_at| agent_ready_cache_entry_is_fresh(*verified_at, now));
+    ready.contains_key(selector)
+}
+
+fn mark_agent_ensured(selector: &str) {
+    let ready = AGENT_READY_CACHE.get_or_init(|| StdMutex::new(HashMap::new()));
+    ready
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(selector.to_owned(), Instant::now());
+}
+
+fn agent_ready_cache_entry_is_fresh(verified_at: Instant, now: Instant) -> bool {
+    now.saturating_duration_since(verified_at) < AGENT_READY_CACHE_TTL
 }
 
 fn remote_agent_lock_script(selector: &str) -> String {
@@ -268,6 +291,19 @@ impl AgentClient {
             .arg(replay_after.to_string());
         command
     }
+
+    pub fn interactive_command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(LIGHTOSCTL);
+        command.args([
+            "exec",
+            "-i",
+            self.selector.as_str(),
+            AGENT_INSTALL_PATH,
+            "agent",
+        ]);
+        command.args(args);
+        command
+    }
 }
 
 pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<AgentClient> {
@@ -279,18 +315,25 @@ pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<Agen
                 .unwrap_or_else(|| "invalid LightOS selector".to_owned())
         )
     })?;
-    let ensure_lock = selector_ensure_lock(selector);
-    let _ensure_guard = ensure_lock.lock().await;
     let username = username.trim().to_owned();
     let client = AgentClient {
         selector: selector.to_owned(),
         username,
         socket_path: scoped_socket_path(selector),
     };
+    if agent_was_recently_ensured(selector, Instant::now()) {
+        return Ok(client);
+    }
+    let ensure_lock = selector_ensure_lock(selector);
+    let _ensure_guard = ensure_lock.lock().await;
+    if agent_was_recently_ensured(selector, Instant::now()) {
+        return Ok(client);
+    }
     let expected = agent_payload_identity().await?;
 
     if let Ok(response) = ping_agent(&client).await {
         if running_agent_is_acceptable(&response) {
+            mark_agent_ensured(selector);
             return Ok(client);
         }
         reject_unsupported_newer_agent(&response)?;
@@ -300,6 +343,9 @@ pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<Agen
     let result = ensure_agent_locked(&client, &expected).await;
     if let Err(err) = remote_lock.release().await {
         warn!(selector = %selector, error = %err, "failed to release webshell agent upgrade lock");
+    }
+    if result.is_ok() {
+        mark_agent_ensured(selector);
     }
     result
 }
@@ -1315,6 +1361,19 @@ mod tests {
         assert!(script.contains("[ -x \"$agent\" ]"));
         assert!(script.contains(agent_path));
         assert!(script.contains(AGENT_READY_MARKER));
+    }
+
+    #[test]
+    fn agent_ready_cache_has_a_short_burst_window() {
+        let verified_at = Instant::now();
+        assert!(agent_ready_cache_entry_is_fresh(
+            verified_at,
+            verified_at + AGENT_READY_CACHE_TTL - Duration::from_millis(1)
+        ));
+        assert!(!agent_ready_cache_entry_is_fresh(
+            verified_at,
+            verified_at + AGENT_READY_CACHE_TTL
+        ));
     }
 
     #[test]
