@@ -12,7 +12,7 @@ type HerdrAgentActionsDeps = {
   requestFocus: (request: HerdrAgentFocusRequest) => Promise<void>;
   isCurrent: (selector: string, generation: number) => boolean;
   runSerial?: HerdrInteractionRunner;
-  onFocused: (selector: string) => void;
+  onFocused: (selector: string, target: string) => void;
   onError: (error: unknown) => void;
 };
 
@@ -29,7 +29,7 @@ export function createHerdrAgentActions(deps: HerdrAgentActionsDeps) {
         try {
           if (!deps.isCurrent(selector, generation)) return;
           await deps.requestFocus({ selector, target });
-          if (deps.isCurrent(selector, generation)) deps.onFocused(selector);
+          if (deps.isCurrent(selector, generation)) deps.onFocused(selector, target);
         } catch (error) {
           if (deps.isCurrent(selector, generation)) deps.onError(error);
         }

@@ -69,3 +69,19 @@ test("serializes pane focus requests and drops superseded queued clicks", async 
   await Promise.all([focusFirst, focusSecond, focusThird]);
   assert.deepEqual(requests, ["p1", "p3"]);
 });
+
+test("reports the focused pane target after a successful request", async () => {
+  const focused = [];
+  const actions = createHerdrAgentActions({
+    selectedSelector: () => "alpha@owner",
+    selectedGeneration: () => 1,
+    requestFocus: async () => {},
+    isCurrent: () => true,
+    onFocused: (selector, target) => focused.push([selector, target]),
+    onError: () => {},
+  });
+
+  await actions.focus(" w2:p2 ");
+
+  assert.deepEqual(focused, [["alpha@owner", "w2:p2"]]);
+});

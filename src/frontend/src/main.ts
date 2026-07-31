@@ -83,7 +83,7 @@ import { createHerdrJumpController } from "./herdr-jump-controller";
 import { createHerdrRefreshCoordinator } from "./herdr-refresh-coordinator";
 import { herdrEventMessage } from "./herdr-event-presentation";
 import { isHerdrSocketMethod } from "./herdr-socket-api";
-import { applyHerdrResourceEvent } from "./herdr-state-events";
+import { applyHerdrPaneFocus, applyHerdrResourceEvent } from "./herdr-state-events";
 import {
   createHerdrStateMutationRunner,
   herdrStateMutationChangesVisibleTerminal,
@@ -723,7 +723,16 @@ const herdrJumpActions = createHerdrAgentActions({
   },
   isCurrent: isCurrentSelectorRequest,
   runSerial: (task) => herdrInteractionQueue.runLatest("focus", task),
-  onFocused: (selector) => {
+  onFocused: (selector, target) => {
+    if (herdrState) {
+      const result = applyHerdrPaneFocus(herdrState, target);
+      if (result.applied) {
+        invalidatePendingHerdrStateRefresh();
+        herdrState = result.state;
+        renderTabs();
+        renderHerdrDock();
+      }
+    }
     refreshHerdrTerminalAfterAction(selector, "focus_tab");
     scheduleHerdrActionRefresh(selector, [0, 120]);
   },
@@ -4530,6 +4539,10 @@ function handleHerdrEventMessage(raw: unknown) {
       renderTabs();
       renderHerdrDock();
     }
+  }
+  if (resourceEventApplied && event === "pane.focused") {
+    const selector = normalizeSelector(selectedSelector);
+    if (selector) refreshHerdrTerminalAfterAction(selector, "focus_tab");
   }
   const changesAgentList = herdrEventChangesAgentList(event);
   const changesDock = herdrEventChangesDock(event);
