@@ -158,7 +158,7 @@ export type HerdrBridgeState = {
   agents: HerdrAgentInfo[];
 };
 
-export type HerdrAction = "focus_workspace" | "focus_tab" | "create_tab" | "close_workspace" | "create_workspace";
+export type HerdrAction = "focus_workspace" | "focus_tab" | "focus_pane" | "create_tab" | "close_workspace" | "create_workspace";
 
 export type SessionBackendId = "webshell" | "herdr" | "zellij" | "ssh";
 

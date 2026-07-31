@@ -63,6 +63,7 @@ pub struct HerdrActionRequest {
     action: HerdrAction,
     workspace_id: Option<String>,
     tab_id: Option<String>,
+    pane_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +93,7 @@ pub struct HerdrOutputSequenceResponse {
 enum HerdrAction {
     FocusWorkspace,
     FocusTab,
+    FocusPane,
     CreateTab,
     CloseWorkspace,
     CreateWorkspace,
@@ -369,6 +371,13 @@ pub(crate) async fn post_herdr_action(
         HerdrAction::FocusTab => {
             let tab_id = required_id(request.tab_id.as_deref(), "tab_id")?;
             run_herdr_request(&target, "tab.focus", json!({ "tab_id": tab_id })).await?;
+        }
+        HerdrAction::FocusPane => {
+            let pane_id = required_id(request.pane_id.as_deref(), "pane_id")?;
+            let ping = run_herdr_request(&target, "ping", json!({})).await?;
+            let (method, params) =
+                herdr_pane_focus_request(parse_herdr_ping(&ping).protocol, &pane_id);
+            run_herdr_request(&target, method, params).await?;
         }
         HerdrAction::CreateTab => {
             run_herdr_request(
@@ -1345,6 +1354,14 @@ fn herdr_protocol_supports_session_snapshot(protocol: u32) -> bool {
     protocol >= 16
 }
 
+fn herdr_pane_focus_request(protocol: Option<u32>, pane_id: &str) -> (&'static str, Value) {
+    if protocol.is_some_and(|protocol| protocol < 16) {
+        ("agent.focus", json!({ "target": pane_id }))
+    } else {
+        ("pane.focus", json!({ "pane_id": pane_id }))
+    }
+}
+
 fn json_usize(value: &Value, key: &str) -> usize {
     value
         .get(key)
@@ -1427,10 +1444,11 @@ mod tests {
 
     use super::{
         HERDR_SOCKET_CONTRACT, HerdrTerminalOperation, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
-        herdr_protocol_is_supported, herdr_protocol_supports_session_snapshot,
-        herdr_request_timeout, is_allowed_herdr_method, normalize_herdr_request_params,
-        parse_agents, parse_herdr_ping, parse_herdr_session_snapshot, parse_panes, parse_tabs,
-        parse_workspaces, shell_quote, terminal_mcp_operation_request, validate_herdr_wire_request,
+        herdr_pane_focus_request, herdr_protocol_is_supported,
+        herdr_protocol_supports_session_snapshot, herdr_request_timeout, is_allowed_herdr_method,
+        normalize_herdr_request_params, parse_agents, parse_herdr_ping,
+        parse_herdr_session_snapshot, parse_panes, parse_tabs, parse_workspaces, shell_quote,
+        terminal_mcp_operation_request, validate_herdr_wire_request,
     };
 
     #[test]
@@ -1729,6 +1747,18 @@ mod tests {
         assert!(!herdr_protocol_supports_session_snapshot(14));
         assert!(herdr_protocol_supports_session_snapshot(16));
         assert!(herdr_protocol_supports_session_snapshot(17));
+    }
+
+    #[test]
+    fn pane_focus_uses_the_legacy_agent_action_before_protocol_16() {
+        assert_eq!(
+            herdr_pane_focus_request(Some(14), "w2:p2"),
+            ("agent.focus", json!({ "target": "w2:p2" }))
+        );
+        assert_eq!(
+            herdr_pane_focus_request(Some(16), "w2:p2"),
+            ("pane.focus", json!({ "pane_id": "w2:p2" }))
+        );
     }
 
     #[test]

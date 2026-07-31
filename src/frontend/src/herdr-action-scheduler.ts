@@ -1,7 +1,7 @@
 import type { HerdrInteractionQueue } from "./herdr-interaction-queue.ts";
 import type { HerdrAction } from "./types.ts";
 
-export type HerdrStructuralAction = Exclude<HerdrAction, "focus_workspace" | "focus_tab">;
+export type HerdrStructuralAction = Exclude<HerdrAction, "focus_workspace" | "focus_tab" | "focus_pane">;
 
 export type HerdrActionOptions = {
   workspaceId?: string;

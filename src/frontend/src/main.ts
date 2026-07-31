@@ -717,7 +717,8 @@ const herdrNavigation = createHerdrNavigationController({
   selectedGeneration: () => selectedSelectorGeneration,
   currentState: () => herdrState,
   isCurrent: isCurrentSelectorRequest,
-  request: runHerdrSocketRequest,
+  request: runHerdrActionRequest,
+  runSerial: (task) => herdrInteractionQueue.run(task),
   applyState: (state) => {
     herdrState = state;
     renderTabs();
@@ -4334,6 +4335,7 @@ function refreshHerdrTerminalAfterAction(selector: string, action: HerdrAction) 
 function herdrActionChangesVisibleScreen(action: HerdrAction): boolean {
   return action === "focus_workspace"
     || action === "focus_tab"
+    || action === "focus_pane"
     || action === "create_workspace"
     || action === "create_tab"
     || action === "close_workspace";

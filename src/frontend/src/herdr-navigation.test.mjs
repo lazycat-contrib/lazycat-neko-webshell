@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createHerdrInteractionQueue } from "./herdr-interaction-queue.ts";
 import { createHerdrNavigationController } from "./herdr-navigation.ts";
 
 function deferred() {
@@ -40,6 +41,17 @@ function bridgeState() {
   };
 }
 
+function focusedTabState(tabId) {
+  const state = bridgeState();
+  const tab = state.tabs.find((item) => item.tab_id === tabId);
+  const workspace = state.workspaces.find((item) => item.workspace_id === tab.workspace_id);
+  for (const item of state.workspaces) item.focused = item === workspace;
+  for (const item of state.tabs) item.focused = item === tab;
+  workspace.active_tab_id = tabId;
+  for (const pane of state.panes) pane.focused = pane.tab_id === tabId && pane === state.panes.find((item) => item.tab_id === tabId);
+  return state;
+}
+
 function navigationHarness(overrides = {}) {
   let state = bridgeState();
   const requests = [];
@@ -51,10 +63,11 @@ function navigationHarness(overrides = {}) {
     selectedGeneration: () => 7,
     currentState: () => state,
     isCurrent: (selector, generation) => selector === "alpha@owner" && generation === 7,
-    request: async (method, params, options) => {
-      requests.push({ method, params, options });
-      return { result: { ok: true } };
+    request: async (selector, action, options) => {
+      requests.push({ selector, action, options });
+      return state;
     },
+    runSerial: (task) => task(),
     applyState: (next) => { state = next; },
     invalidate: () => invalidations.push("invalidate"),
     onSettled: (selector, target) => settled.push([selector, target]),
@@ -64,84 +77,71 @@ function navigationHarness(overrides = {}) {
   return { controller, requests, settled, errors, invalidations, state: () => state };
 }
 
-test("sends tab focus immediately and applies the optimistic focus before the request completes", async () => {
+test("applies the authoritative Herdr snapshot only after tab focus completes", async () => {
   const pending = deferred();
+  const authoritative = focusedTabState("t2");
   const harness = navigationHarness({
-    request: async (method, params, options) => {
-      harness.requests.push({ method, params, options });
-      await pending.promise;
-      return { result: { ok: true } };
+    request: async (selector, action, options) => {
+      harness.requests.push({ selector, action, options });
+      return pending.promise;
     },
   });
 
   const focus = harness.controller.focusTab("t2");
 
   assert.deepEqual(harness.requests, [{
-    method: "tab.focus",
-    params: { tab_id: "t2" },
-    options: { id: "lazycat-webshell:tab-focus", selector: "alpha@owner", mirrorNotification: false },
+    selector: "alpha@owner",
+    action: "focus_tab",
+    options: { tabId: "t2" },
   }]);
-  assert.deepEqual(harness.state().tabs.map((tab) => tab.focused), [false, true, false]);
-  assert.deepEqual(harness.invalidations, ["invalidate"]);
+  assert.deepEqual(harness.state().tabs.map((tab) => tab.focused), [true, false, false]);
 
-  pending.resolve();
+  pending.resolve(authoritative);
   await focus;
+  assert.deepEqual(harness.state().tabs.map((tab) => tab.focused), [false, true, false]);
+  assert.deepEqual(harness.state().panes.map((pane) => pane.focused), [false, true, false, false]);
+  assert.deepEqual(harness.invalidations, ["invalidate", "invalidate"]);
 });
 
-test("uses tab.focus for a single-pane target and pane.focus only for a split target", async () => {
-  const single = navigationHarness();
-  await single.controller.focusPane("p4");
-  assert.deepEqual(single.requests[0], {
-    method: "tab.focus",
-    params: { tab_id: "t3" },
-    options: { id: "lazycat-webshell:tab-focus", selector: "alpha@owner", mirrorNotification: false },
-  });
-
-  const split = navigationHarness();
-  await split.controller.focusPane("p3");
-  assert.deepEqual(split.requests[0], {
-    method: "pane.focus",
-    params: { pane_id: "p3" },
-    options: { id: "lazycat-webshell:pane-focus", selector: "alpha@owner", mirrorNotification: false },
-  });
-});
-
-test("uses the legacy agent.focus method for split panes before protocol 16", async () => {
+test("routes workspace, tab, and pane navigation through snapshot-returning actions", async () => {
   const harness = navigationHarness();
-  harness.state().herdr_protocol = 14;
 
-  await harness.controller.focusPane("p3");
+  await harness.controller.focusWorkspace(" w2 ");
+  await harness.controller.focusTab(" t3 ");
+  await harness.controller.focusPane(" p4 ");
 
-  assert.deepEqual(harness.requests[0], {
-    method: "agent.focus",
-    params: { target: "p3" },
-    options: { id: "lazycat-webshell:agent-focus", selector: "alpha@owner", mirrorNotification: false },
-  });
+  assert.deepEqual(harness.requests, [
+    { selector: "alpha@owner", action: "focus_workspace", options: { workspaceId: "w2" } },
+    { selector: "alpha@owner", action: "focus_tab", options: { tabId: "t3" } },
+    { selector: "alpha@owner", action: "focus_pane", options: { paneId: "p4" } },
+  ]);
 });
 
-test("does not queue a newer navigation click behind a slow request", async () => {
+test("serializes navigation so an older Herdr focus cannot finish after a newer click", async () => {
   const first = deferred();
+  const queue = createHerdrInteractionQueue();
   const harness = navigationHarness({
-    request: async (method, params, options) => {
-      harness.requests.push({ method, params, options });
-      if (params.tab_id === "t2") await first.promise;
-      return { result: { ok: true } };
+    runSerial: (task) => queue.run(task),
+    request: async (selector, action, options) => {
+      harness.requests.push({ selector, action, options });
+      if (options.tabId === "t2") return first.promise;
+      return focusedTabState("t1");
     },
   });
 
   const focusFirst = harness.controller.focusTab("t2");
   const focusLatest = harness.controller.focusTab("t1");
-  await focusLatest;
+  await Promise.resolve();
+  assert.deepEqual(harness.requests.map((request) => request.options.tabId), ["t2"]);
 
-  assert.deepEqual(harness.requests.map((request) => request.params.tab_id), ["t2", "t1"]);
+  first.resolve(focusedTabState("t2"));
+  await Promise.all([focusFirst, focusLatest]);
+
+  assert.deepEqual(harness.requests.map((request) => request.options.tabId), ["t2", "t1"]);
   assert.deepEqual(harness.state().tabs.map((tab) => tab.focused), [true, false, false]);
-
-  first.resolve();
-  await focusFirst;
-  assert.deepEqual(harness.settled, [["alpha@owner", { kind: "tab", id: "t1" }]]);
 });
 
-test("ignores a stale navigation completion after the selected Herdr session changes", async () => {
+test("ignores an authoritative snapshot after the selected Herdr session changes", async () => {
   let selector = "alpha@owner";
   let generation = 7;
   const pending = deferred();
@@ -151,19 +151,16 @@ test("ignores a stale navigation completion after the selected Herdr session cha
     isCurrent: (requestSelector, requestGeneration) => (
       requestSelector === selector && requestGeneration === generation
     ),
-    request: async (method, params, options) => {
-      harness.requests.push({ method, params, options });
-      await pending.promise;
-      return { result: { ok: true } };
-    },
+    request: async () => pending.promise,
   });
 
   const focus = harness.controller.focusWorkspace("w2");
   selector = "beta@owner";
   generation = 8;
-  pending.resolve();
+  pending.resolve(focusedTabState("t3"));
   await focus;
 
+  assert.deepEqual(harness.state().tabs.map((tab) => tab.focused), [true, false, false]);
   assert.deepEqual(harness.settled, []);
   assert.deepEqual(harness.errors, []);
 });

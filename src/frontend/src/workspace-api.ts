@@ -120,6 +120,7 @@ export async function runHerdrActionRequest(
   options: {
     workspaceId?: string;
     tabId?: string;
+    paneId?: string;
   } = {},
 ): Promise<HerdrBridgeState> {
   const response = await fetch(new URL("./api/herdr", window.location.href), {
@@ -131,6 +132,7 @@ export async function runHerdrActionRequest(
       action,
       workspace_id: options.workspaceId,
       tab_id: options.tabId,
+      pane_id: options.paneId,
     }),
   });
   await throwIfFailed(response);
