@@ -1,5 +1,11 @@
 import type { HerdrBridgeState } from "./types";
 
+export function herdrSnapshotResourcesComplete(
+  state: Pick<HerdrBridgeState, "resources_complete">,
+): boolean {
+  return state.resources_complete;
+}
+
 function snapshotValuesEqual(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true;
   if (Array.isArray(left) || Array.isArray(right)) {

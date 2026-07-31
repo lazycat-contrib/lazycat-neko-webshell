@@ -83,7 +83,7 @@ import { createHerdrEventStreamPolicy } from "./herdr-event-stream-policy";
 import { createHerdrRefreshCoordinator, type HerdrRefreshMode } from "./herdr-refresh-coordinator";
 import { herdrEventMessage } from "./herdr-event-presentation";
 import { isHerdrSocketMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
-import { herdrBridgeStatesEqual } from "./herdr-state-snapshot";
+import { herdrBridgeStatesEqual, herdrSnapshotResourcesComplete } from "./herdr-state-snapshot";
 import {
   createHerdrStateMutationRunner,
   herdrStateMutationChangesVisibleTerminal,
@@ -4253,6 +4253,11 @@ async function performHerdrStateRefresh(
     }
     if (!state.available) {
       if (mode === "preserve-available" && herdrState?.available) return false;
+      clearHerdrState();
+      return false;
+    }
+    if (!herdrSnapshotResourcesComplete(state)) {
+      if (herdrState?.available) return false;
       clearHerdrState();
       return false;
     }

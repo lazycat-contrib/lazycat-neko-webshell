@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { herdrBridgeStatesEqual } from "./herdr-state-snapshot.ts";
+import { herdrBridgeStatesEqual, herdrSnapshotResourcesComplete } from "./herdr-state-snapshot.ts";
+
+test("rejects partial Herdr resource snapshots", () => {
+  assert.equal(herdrSnapshotResourcesComplete({ resources_complete: true }), true);
+  assert.equal(herdrSnapshotResourcesComplete({ resources_complete: false }), false);
+});
 
 test("compares authoritative Herdr snapshots without depending on object key order", () => {
   const current = {

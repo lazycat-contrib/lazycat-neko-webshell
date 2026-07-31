@@ -101,6 +101,7 @@ enum HerdrAction {
 pub struct HerdrBridgeState {
     selector: String,
     available: bool,
+    resources_complete: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -546,6 +547,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
             return build_herdr_state(
                 target,
                 false,
+                false,
                 Some(err.message),
                 HerdrPingInfo::default(),
                 HerdrBridgeResources::default(),
@@ -561,6 +563,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
             Ok(response) => {
                 return build_herdr_state(
                     target,
+                    true,
                     true,
                     None,
                     ping_info,
@@ -583,15 +586,18 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
             return build_herdr_state(
                 target,
                 true,
+                false,
                 Some(err.message),
                 ping_info,
                 HerdrBridgeResources::default(),
             );
         }
     };
+    let mut resources_complete = true;
     let tabs = match run_herdr_request(target, "tab.list", json!({})).await {
         Ok(response) => parse_tabs(&response),
         Err(err) => {
+            resources_complete = false;
             warn!(
                 error = %err.message,
                 selector = %target.selector,
@@ -603,6 +609,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
     let panes = match run_herdr_request(target, "pane.list", json!({})).await {
         Ok(response) => parse_panes(&response),
         Err(err) => {
+            resources_complete = false;
             warn!(
                 error = %err.message,
                 selector = %target.selector,
@@ -615,6 +622,7 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
     build_herdr_state(
         target,
         true,
+        resources_complete,
         None,
         ping_info,
         HerdrBridgeResources {
@@ -666,6 +674,7 @@ fn parse_herdr_session_snapshot(response: &Value) -> HerdrBridgeResources {
 fn build_herdr_state(
     target: &AuthorizedHerdrTarget,
     available: bool,
+    resources_complete: bool,
     message: Option<String>,
     ping_info: HerdrPingInfo,
     resources: HerdrBridgeResources,
@@ -673,6 +682,7 @@ fn build_herdr_state(
     HerdrBridgeState {
         selector: target.selector.clone(),
         available,
+        resources_complete,
         message,
         herdr_version: ping_info.version,
         herdr_protocol: ping_info.protocol,

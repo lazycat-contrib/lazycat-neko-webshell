@@ -143,6 +143,7 @@ export type HerdrAgentInfo = {
 export type HerdrBridgeState = {
   selector: string;
   available: boolean;
+  resources_complete: boolean;
   message?: string;
   herdr_version?: string;
   herdr_protocol?: number;
