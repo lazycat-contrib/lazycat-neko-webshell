@@ -73,17 +73,18 @@ import {
   selectHerdrTerminalPane,
 } from "./herdr-backend";
 import type { HerdrPaneResizeDirection } from "./herdr-backend";
-import { createHerdrAgentActions, herdrPaneFocusRequest } from "./herdr-agent-actions";
 import {
   scheduleHerdrAction,
   type HerdrActionOptionsSource,
+  type HerdrStructuralAction,
 } from "./herdr-action-scheduler";
 import { createHerdrInteractionQueue } from "./herdr-interaction-queue";
 import { createHerdrJumpController } from "./herdr-jump-controller";
+import { createHerdrNavigationController } from "./herdr-navigation";
 import { createHerdrRefreshCoordinator } from "./herdr-refresh-coordinator";
 import { herdrEventMessage } from "./herdr-event-presentation";
 import { isHerdrSocketMethod } from "./herdr-socket-api";
-import { applyHerdrPaneFocus, applyHerdrResourceEvent } from "./herdr-state-events";
+import { applyHerdrResourceEvent } from "./herdr-state-events";
 import {
   createHerdrStateMutationRunner,
   herdrStateMutationChangesVisibleTerminal,
@@ -711,31 +712,24 @@ const runHerdrStateMutationRequest = createHerdrStateMutationRunner({
     scheduleHerdrActionRefresh(selector, [0, 120]);
   },
 });
-const herdrJumpActions = createHerdrAgentActions({
+const herdrNavigation = createHerdrNavigationController({
   selectedSelector: () => selectedSelector,
   selectedGeneration: () => selectedSelectorGeneration,
-  requestFocus: async ({ selector, target }) => {
-    const request = herdrPaneFocusRequest(herdrState?.herdr_protocol, target);
-    await runHerdrStateMutationRequest(request.method, request.params, {
-      selector,
-      id: request.id,
-      mirrorNotification: false,
-    });
-  },
+  currentState: () => herdrState,
   isCurrent: isCurrentSelectorRequest,
-  runSerial: (task) => herdrInteractionQueue.runLatest("focus", task),
-  onFocused: (selector, target) => {
-    if (herdrState) {
-      const result = applyHerdrPaneFocus(herdrState, target);
-      if (result.applied) {
-        invalidatePendingHerdrStateRefresh();
-        herdrState = result.state;
-        renderTabs();
-        renderHerdrDock();
-      }
-    }
+  request: runHerdrSocketRequest,
+  applyState: (state) => {
+    herdrState = state;
+    renderTabs();
+    renderHerdrDock();
+  },
+  invalidate: invalidatePendingHerdrStateRefresh,
+  onSettled: (selector) => {
     refreshHerdrTerminalAfterAction(selector, "focus_tab");
     scheduleHerdrActionRefresh(selector, [0, 120]);
+    void syncHerdrEventBridge({ force: true });
+    syncAIChatForActiveTerminal();
+    focusActivePaneCanvas();
   },
   onError: (error) => setGlobalStatus(
     tr("status.herdrActionFailed", { message: errorMessage(error) }),
@@ -769,9 +763,11 @@ herdrJumpController = createHerdrJumpController({
     await restoreHerdrWorkspace(workspaceId);
   },
   focusTab: async (tabId) => {
-    await runHerdrAction("focus_tab", { tabId });
+    await herdrNavigation.focusTab(tabId);
   },
-  focusPane: herdrJumpActions.focus,
+  focusPane: async (paneId) => {
+    await herdrNavigation.focusPane(paneId);
+  },
   createTab: async () => {
     await runHerdrAction("create_tab", () => ({ workspaceId: focusedHerdrWorkspace()?.workspace_id }));
   },
@@ -4288,7 +4284,7 @@ async function maybeAutoRestoreHerdrEntry(selector: string) {
 }
 
 async function runHerdrAction(
-  action: HerdrAction,
+  action: HerdrStructuralAction,
   options: HerdrActionOptionsSource = {},
 ): Promise<boolean> {
   const selector = selectedSelector;
@@ -4325,8 +4321,7 @@ async function runHerdrAction(
       return false;
     }
   };
-  const result = await scheduleHerdrAction(herdrInteractionQueue, action, options, task);
-  return result ?? false;
+  return scheduleHerdrAction(herdrInteractionQueue, options, task);
 }
 
 function refreshHerdrTerminalAfterAction(selector: string, action: HerdrAction) {
@@ -4395,7 +4390,7 @@ async function restoreHerdrWorkspace(workspaceId: string | undefined) {
     setGlobalStatus(tr("status.herdrUnavailable"), "error");
     return;
   }
-  if (await runHerdrAction("focus_workspace", { workspaceId: normalized })) {
+  if (await herdrNavigation.focusWorkspace(normalized)) {
     setGlobalStatus(tr("status.herdrWorkspaceFocused"), "ok");
   }
 }

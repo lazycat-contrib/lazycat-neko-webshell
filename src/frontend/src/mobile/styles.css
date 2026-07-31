@@ -1516,9 +1516,21 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   }
 
   .herdr-current-targets,
-  .herdr-dock-actions,
   .herdr-dock > .herdr-status {
     display: none;
+  }
+
+  .herdr-dock-actions {
+    display: flex;
+    margin-left: auto;
+  }
+
+  .herdr-dock-actions .herdr-icon-button {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    border-color: transparent;
+    background: transparent;
   }
 
   .herdr-jump-scrim {
@@ -1545,7 +1557,7 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
     bottom: 0;
     left: max(8px, var(--lzc-safe-area-inset-left));
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
     width: auto;
     max-height: min(82vh, calc(var(--app-viewport-height) - max(20px, var(--lzc-safe-area-inset-top))));
     overflow: hidden;
@@ -1655,69 +1667,6 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 
   .herdr-workspace-menu-status {
     margin: 2px 8px 6px;
-  }
-
-  .herdr-mobile-jump-actions {
-    position: relative;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 8px;
-    padding-top: 8px;
-    border-top: 1px solid var(--line);
-  }
-
-  .herdr-mobile-jump-actions > button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    min-height: 48px;
-    border: 1px solid var(--component-border);
-    border-radius: var(--radius-md);
-    background: var(--component-wash), var(--surface);
-    color: var(--text);
-  }
-
-  .herdr-mobile-jump-actions > button:first-child {
-    background: var(--accent-soft);
-    color: var(--accent-fg);
-  }
-
-  .herdr-mobile-jump-actions > button:nth-child(2) {
-    min-width: 48px;
-  }
-
-  .herdr-mobile-more-actions {
-    position: absolute;
-    right: 0;
-    bottom: 56px;
-    display: grid;
-    min-width: 220px;
-    padding: 6px;
-    border: 1px solid var(--menu-border);
-    border-radius: var(--radius-md);
-    background: var(--menu-material), var(--menu-wash), var(--menu-bg);
-    box-shadow: var(--shadow-popover);
-  }
-
-  .herdr-mobile-more-actions[hidden] {
-    display: none;
-  }
-
-  .herdr-mobile-more-actions button {
-    min-height: 44px;
-  }
-
-  .herdr-mobile-jump-actions button > svg {
-    display: block;
-    width: 18px;
-    height: 18px;
-    flex: 0 0 18px;
-    stroke-width: 1.8;
-  }
-
-  .herdr-mobile-jump-actions button > span {
-    line-height: 1.15;
   }
 
   .webshell[data-tab-layout="vertical"] .herdr-dock,

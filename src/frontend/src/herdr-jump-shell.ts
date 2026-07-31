@@ -1,5 +1,4 @@
 import {
-  renderHerdrJumpMobileActions,
   renderHerdrJumpMobileBackdrop,
   renderHerdrJumpMobileCloseButton,
   renderHerdrJumpMobileDragRegion,
@@ -25,21 +24,27 @@ export function renderHerdrJumpShell(): string {
           </div>
           <div class="herdr-workspace-menu-list" id="herdrWorkspaceMenuList"></div>
           <p class="herdr-workspace-menu-status" id="herdrWorkspaceMenuStatus" aria-live="polite"></p>
-          ${renderHerdrJumpMobileActions()}
         </div>
       </div>
       <div class="herdr-current-targets" id="herdrTabList" role="list" aria-label="Herdr panes" data-i18n-aria="section.herdrPanes"></div>
       <div id="herdrWorkspaceList" hidden></div>
       <div class="herdr-dock-actions">
         <button class="herdr-icon-button" id="herdrNewTab" type="button" data-herdr-jump-action="create-tab" aria-label="New Herdr tab" title="New Herdr tab" data-i18n-aria="action.newHerdrTab" data-i18n-title="action.newHerdrTab">
-          <i data-lucide="plus"></i>
+          <i data-lucide="square-plus"></i>
+        </button>
+        <button class="herdr-icon-button" id="herdrNewWorkspace" type="button" data-herdr-jump-action="create-workspace" aria-label="New Herdr space" title="New Herdr space" data-i18n-aria="action.newHerdrSpace" data-i18n-title="action.newHerdrSpace">
+          <svg data-icon="layers-plus" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 .83.18 2 2 0 0 0 .83-.18l8.58-3.9a1 1 0 0 0 0-1.831z"></path>
+            <path d="M16 17h6"></path><path d="M19 14v6"></path>
+            <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 .825.178"></path>
+            <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l2.116-.962"></path>
+          </svg>
         </button>
         <div class="herdr-more-shell">
           <button class="herdr-icon-button" id="herdrMoreButton" type="button" aria-haspopup="menu" aria-controls="herdrMoreMenu" aria-expanded="false" aria-label="More" title="More" data-i18n-aria="action.more" data-i18n-title="action.more">
             <i data-lucide="ellipsis"></i>
           </button>
           <div class="herdr-more-menu" id="herdrMoreMenu" role="menu" hidden>
-            <button id="herdrNewWorkspace" type="button" role="menuitem" data-herdr-jump-action="create-workspace"><i data-lucide="folder-plus"></i><span data-i18n="action.newHerdrSpace">New Herdr space</span></button>
             <button id="herdrRefresh" type="button" role="menuitem" data-herdr-jump-action="refresh"><i data-lucide="refresh-cw"></i><span data-i18n="action.refreshHerdr">Refresh Herdr</span></button>
             <button class="danger" id="herdrCloseWorkspace" type="button" role="menuitem" data-herdr-jump-action="close-workspace"><i data-lucide="folder-x"></i><span data-i18n="action.closeHerdrSpace">Close Herdr space</span></button>
             <span class="herdr-protocol-notice" id="herdrProtocolNotice" role="img" hidden><i data-lucide="arrow-up"></i></span>

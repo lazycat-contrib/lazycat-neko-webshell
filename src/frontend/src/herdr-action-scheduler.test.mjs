@@ -12,35 +12,35 @@ function deferred() {
   return { promise, resolve };
 }
 
-test("resolves structural action options after preceding navigation", async () => {
+test("resolves structural action options after preceding structural work", async () => {
   const first = deferred();
   const order = [];
   let focusedWorkspaceId = "w0";
   let optionResolutions = 0;
   const queue = createHerdrInteractionQueue();
-  const active = scheduleHerdrAction(queue, "focus_workspace", {}, async () => {
-    order.push("focus-a");
+  const active = scheduleHerdrAction(queue, {}, async () => {
+    order.push("create-workspace-a");
     await first.promise;
   });
-  const preceding = scheduleHerdrAction(queue, "focus_workspace", {}, async () => {
+  const preceding = scheduleHerdrAction(queue, {}, async () => {
     focusedWorkspaceId = "w1";
-    order.push("focus-b");
+    order.push("close-workspace-b");
   });
-  const structural = scheduleHerdrAction(queue, "create_tab", () => {
+  const structural = scheduleHerdrAction(queue, () => {
     optionResolutions += 1;
     return { workspaceId: focusedWorkspaceId };
   }, async (options) => order.push(`create-tab:${options.workspaceId}`));
-  const following = scheduleHerdrAction(queue, "focus_workspace", {}, async () => {
+  const following = scheduleHerdrAction(queue, {}, async () => {
     focusedWorkspaceId = "w2";
-    order.push("focus-c");
+    order.push("create-workspace-c");
   });
 
   await Promise.resolve();
-  assert.deepEqual(order, ["focus-a"]);
+  assert.deepEqual(order, ["create-workspace-a"]);
   assert.equal(optionResolutions, 0);
   first.resolve();
   await Promise.all([active, preceding, structural, following]);
 
-  assert.deepEqual(order, ["focus-a", "focus-b", "create-tab:w1", "focus-c"]);
+  assert.deepEqual(order, ["create-workspace-a", "close-workspace-b", "create-tab:w1", "create-workspace-c"]);
   assert.equal(optionResolutions, 1);
 });

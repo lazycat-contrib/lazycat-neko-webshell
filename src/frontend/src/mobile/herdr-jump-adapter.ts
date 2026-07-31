@@ -70,17 +70,6 @@ export function createHerdrJumpMobileAdapter(deps: HerdrJumpMobileAdapterDeps): 
         }
       }
     },
-    toggleMobileMore() {
-      const actions = deps.menu.querySelector<HTMLElement>(".herdr-mobile-more-actions");
-      const button = deps.menu.querySelector<HTMLButtonElement>("[data-herdr-mobile-more]");
-      const opening = Boolean(actions?.hidden);
-      actions?.toggleAttribute("hidden", !opening);
-      button?.setAttribute("aria-expanded", String(opening));
-    },
-    closeMobileMore() {
-      deps.menu.querySelector<HTMLElement>(".herdr-mobile-more-actions")?.setAttribute("hidden", "");
-      deps.menu.querySelector<HTMLButtonElement>("[data-herdr-mobile-more]")?.setAttribute("aria-expanded", "false");
-    },
     onDeviceChange(handler) {
       deviceChangeHandler = handler;
     },

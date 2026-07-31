@@ -7,10 +7,10 @@ export type HerdrSocketRequestOptions = {
   mirrorNotification?: boolean;
 };
 
-export function herdrStateMutationChangesVisibleTerminal(method: string): boolean {
-  return method === "agent.focus"
-    || method === "pane.focus"
-    || method === "pane.split"
+export type HerdrStateMutationMethod = "pane.split" | "pane.resize" | "pane.close" | "workspace.rename";
+
+export function herdrStateMutationChangesVisibleTerminal(method: HerdrStateMutationMethod): boolean {
+  return method === "pane.split"
     || method === "pane.resize"
     || method === "pane.close";
 }
@@ -27,12 +27,12 @@ type HerdrStateMutationRunnerDeps = {
   canMutate: (selector: string) => boolean;
   blockedError: () => Error;
   invalidate: () => void;
-  reconcile: (method: string, selector: string) => void;
+  reconcile: (method: HerdrStateMutationMethod, selector: string) => void;
 };
 
 export function createHerdrStateMutationRunner(deps: HerdrStateMutationRunnerDeps) {
   return async function runHerdrStateMutation(
-    method: string,
+    method: HerdrStateMutationMethod,
     params: JsonRecord = {},
     options: HerdrSocketRequestOptions = {},
   ): Promise<HerdrSocketEnvelope> {

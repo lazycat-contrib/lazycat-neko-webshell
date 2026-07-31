@@ -2081,8 +2081,7 @@ textarea:focus-visible {
 .herdr-target-chip,
 .herdr-jump-workspace,
 .herdr-density-switch button,
-.herdr-more-menu button,
-.herdr-mobile-jump-actions button {
+.herdr-more-menu button {
   font: inherit;
 }
 
@@ -2109,8 +2108,7 @@ textarea:focus-visible {
 .herdr-target-chip:focus-visible,
 .herdr-jump-workspace:focus-visible,
 .herdr-density-switch button:focus-visible,
-.herdr-more-menu button:focus-visible,
-.herdr-mobile-jump-actions button:focus-visible {
+.herdr-more-menu button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
@@ -2247,7 +2245,6 @@ textarea:focus-visible {
 
 .herdr-jump-drag-region,
 .herdr-jump-close,
-.herdr-mobile-jump-actions,
 .herdr-jump-scrim {
   display: none;
 }
@@ -2400,8 +2397,7 @@ textarea:focus-visible {
   transform: translateY(-4px) scale(0.98);
 }
 
-.herdr-more-menu button,
-.herdr-mobile-more-actions button {
+.herdr-more-menu button {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -2414,18 +2410,15 @@ textarea:focus-visible {
   text-align: left;
 }
 
-.herdr-more-menu button:hover,
-.herdr-mobile-more-actions button:hover {
+.herdr-more-menu button:hover {
   background: var(--control-hover-bg);
 }
 
-.herdr-more-menu button.danger,
-.herdr-mobile-more-actions button.danger {
+.herdr-more-menu button.danger {
   color: var(--danger);
 }
 
-.herdr-more-menu svg,
-.herdr-mobile-more-actions svg {
+.herdr-more-menu svg {
   width: 15px;
   height: 15px;
 }
@@ -4119,6 +4112,21 @@ textarea {
   resize: vertical;
   font-family: var(--font-mono);
   line-height: 1.45;
+}
+
+/* Restty positions this hidden textarea at the terminal cursor for IME input. */
+.restty-pane-root textarea.pane-ime-input,
+.restty-pane-root textarea.restty-pane-ime-input {
+  width: 1em;
+  min-width: 0;
+  height: 1em;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  resize: none;
 }
 
 input[type="range"] {

@@ -11,52 +11,23 @@ function deferred() {
   return { promise, resolve };
 }
 
-test("does not coalesce navigation intents across structural actions", async () => {
+test("serializes structural actions in request order", async () => {
   const first = deferred();
   const order = [];
   const queue = createHerdrInteractionQueue();
-  const active = queue.runLatest("focus", async () => {
-    order.push("focus-a");
+  const active = queue.run(async () => {
+    order.push("create-workspace");
     await first.promise;
   });
-  const stale = queue.runLatest("focus", async () => order.push("focus-b"));
-  const structural = queue.run(async () => order.push("create-tab"));
-  const latest = queue.runLatest("focus", async () => order.push("focus-c"));
+  const createTab = queue.run(async () => order.push("create-tab"));
+  const closeWorkspace = queue.run(async () => order.push("close-workspace"));
 
   await Promise.resolve();
-  assert.deepEqual(order, ["focus-a"]);
+  assert.deepEqual(order, ["create-workspace"]);
   first.resolve();
-  await Promise.all([active, stale, structural, latest]);
+  await Promise.all([active, createTab, closeWorkspace]);
 
-  assert.deepEqual(order, ["focus-a", "focus-b", "create-tab", "focus-c"]);
-  assert.notEqual(await stale, undefined);
-});
-
-test("lets a structural action observe the navigation immediately before it", async () => {
-  const first = deferred();
-  const order = [];
-  let focusedWorkspaceId = "w0";
-  const queue = createHerdrInteractionQueue();
-  const active = queue.runLatest("focus", async () => {
-    order.push("focus-a");
-    await first.promise;
-  });
-  const preceding = queue.runLatest("focus", async () => {
-    focusedWorkspaceId = "w1";
-    order.push("focus-b");
-  });
-  const structural = queue.run(async () => order.push(`create-tab:${focusedWorkspaceId}`));
-  const following = queue.runLatest("focus", async () => {
-    focusedWorkspaceId = "w2";
-    order.push("focus-c");
-  });
-
-  await Promise.resolve();
-  assert.deepEqual(order, ["focus-a"]);
-  first.resolve();
-  await Promise.all([active, preceding, structural, following]);
-
-  assert.deepEqual(order, ["focus-a", "focus-b", "create-tab:w1", "focus-c"]);
+  assert.deepEqual(order, ["create-workspace", "create-tab", "close-workspace"]);
 });
 
 test("continues with the next interaction after a failure", async () => {

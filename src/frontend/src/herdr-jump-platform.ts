@@ -5,8 +5,6 @@ export type HerdrJumpPlatform = {
   isMobile: () => boolean;
   onOpen: () => void;
   onClose: (fromHistory: boolean) => void;
-  toggleMobileMore: () => void;
-  closeMobileMore: () => void;
   onDeviceChange: (handler: () => void) => void;
   destroy: () => void;
 };

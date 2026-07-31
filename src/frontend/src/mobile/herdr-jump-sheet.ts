@@ -27,20 +27,6 @@ export function renderHerdrJumpMobileCloseButton(): string {
   `;
 }
 
-export function renderHerdrJumpMobileActions(): string {
-  return `
-    <div class="herdr-mobile-jump-actions">
-      <button type="button" data-herdr-jump-action="create-tab" aria-label="New Herdr tab" data-i18n-aria="action.newHerdrTab"><i data-lucide="plus"></i><span data-i18n="action.newHerdrTab">New Herdr tab</span></button>
-      <button type="button" data-herdr-mobile-more aria-expanded="false"><i data-lucide="ellipsis"></i><span data-i18n="action.more">More</span></button>
-      <div class="herdr-mobile-more-actions" hidden>
-        <button type="button" data-herdr-jump-action="create-workspace"><i data-lucide="folder-plus"></i><span data-i18n="action.newHerdrSpace">New Herdr space</span></button>
-        <button type="button" data-herdr-jump-action="refresh"><i data-lucide="refresh-cw"></i><span data-i18n="action.refreshHerdr">Refresh Herdr</span></button>
-        <button type="button" class="danger" data-herdr-jump-action="close-workspace"><i data-lucide="folder-x"></i><span data-i18n="action.closeHerdrSpace">Close Herdr space</span></button>
-      </div>
-    </div>
-  `;
-}
-
 export function bindHerdrJumpSheetGesture(deps: HerdrJumpSheetDeps): () => void {
   let pointerId: number | undefined;
   let startY = 0;

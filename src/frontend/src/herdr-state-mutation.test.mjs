@@ -30,12 +30,12 @@ function mutationRunner(overrides = {}) {
 test("invalidates pending state only after a current Herdr mutation succeeds", async () => {
   const { run, requests, invalidations } = mutationRunner();
 
-  await run("pane.focus", { pane_id: "p2" }, { id: "focus" });
+  await run("pane.resize", { pane_id: "p2", amount: 2 }, { id: "resize" });
 
   assert.deepEqual(requests, [{
-    method: "pane.focus",
-    params: { pane_id: "p2" },
-    options: { id: "focus", selector: "alpha@owner" },
+    method: "pane.resize",
+    params: { pane_id: "p2", amount: 2 },
+    options: { id: "resize", selector: "alpha@owner" },
   }]);
   assert.deepEqual(invalidations, ["invalidate"]);
 });
@@ -59,18 +59,16 @@ test("blocks observers before sending a Herdr state mutation", async () => {
 test("reconciles current state when a Herdr mutation has an ambiguous failure", async () => {
   const { run, invalidations, reconciliations } = mutationRunner({
     request: async () => {
-      throw new Error("focus failed");
+      throw new Error("mutation failed");
     },
   });
 
-  await assert.rejects(run("pane.focus", { pane_id: "p2" }), /focus failed/);
+  await assert.rejects(run("pane.close", { pane_id: "p2" }), /mutation failed/);
   assert.deepEqual(invalidations, ["invalidate"]);
-  assert.deepEqual(reconciliations, [["pane.focus", "alpha@owner"]]);
+  assert.deepEqual(reconciliations, [["pane.close", "alpha@owner"]]);
 });
 
 test("replays only mutations that can change the visible terminal", () => {
-  assert.equal(herdrStateMutationChangesVisibleTerminal("agent.focus"), true);
-  assert.equal(herdrStateMutationChangesVisibleTerminal("pane.focus"), true);
   assert.equal(herdrStateMutationChangesVisibleTerminal("pane.split"), true);
   assert.equal(herdrStateMutationChangesVisibleTerminal("workspace.rename"), false);
 });

@@ -107,7 +107,6 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
 
   const close = (fromHistory = false) => {
     closeMore();
-    platform.closeMobileMore();
     if (elements.menu.hidden) return;
     elements.menu.hidden = true;
     elements.menu.style.removeProperty("left");
@@ -210,15 +209,9 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
       await deps.focusWorkspace(workspaceId);
       return;
     }
-    const mobileMore = target.closest<HTMLButtonElement>("[data-herdr-mobile-more]");
-    if (mobileMore) {
-      platform.toggleMobileMore();
-      return;
-    }
     const action = target.closest<HTMLButtonElement>("[data-herdr-jump-action]")?.dataset.herdrJumpAction;
     if (!action) return;
     closeMore();
-    platform.closeMobileMore();
     if (action !== "refresh") close();
     if (action === "create-tab") await deps.createTab();
     if (action === "create-workspace") await deps.createWorkspace();
