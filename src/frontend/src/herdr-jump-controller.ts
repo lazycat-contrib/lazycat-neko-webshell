@@ -181,7 +181,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
       close();
       return;
     }
-    const densityButton = target.closest<HTMLButtonElement>("[data-herdr-density]");
+    const densityButton = target.closest<HTMLButtonElement>("button[data-herdr-density]");
     if (densityButton) {
       const next = normalizeHerdrJumpDensity(densityButton.dataset.herdrDensity, device());
       writePreference(device(), next);
