@@ -69,6 +69,7 @@ test("reconciles current state when a Herdr mutation has an ambiguous failure", 
 });
 
 test("replays only mutations that can change the visible terminal", () => {
+  assert.equal(herdrStateMutationChangesVisibleTerminal("agent.focus"), true);
   assert.equal(herdrStateMutationChangesVisibleTerminal("pane.focus"), true);
   assert.equal(herdrStateMutationChangesVisibleTerminal("pane.split"), true);
   assert.equal(herdrStateMutationChangesVisibleTerminal("workspace.rename"), false);

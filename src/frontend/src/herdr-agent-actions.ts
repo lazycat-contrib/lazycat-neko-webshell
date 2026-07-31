@@ -1,5 +1,30 @@
 import { normalizeSelector } from "./workspace-selection.ts";
 import { createHerdrInteractionQueue, type HerdrInteractionRunner } from "./herdr-interaction-queue.ts";
+import type { JsonRecord } from "./types.ts";
+
+export type HerdrPaneFocusSocketRequest = {
+  method: "agent.focus" | "pane.focus";
+  params: JsonRecord;
+  id: string;
+};
+
+export function herdrPaneFocusRequest(
+  protocol: number | undefined,
+  paneId: string,
+): HerdrPaneFocusSocketRequest {
+  if (protocol !== undefined && protocol < 16) {
+    return {
+      method: "agent.focus",
+      params: { target: paneId },
+      id: "lazycat-webshell:agent-focus",
+    };
+  }
+  return {
+    method: "pane.focus",
+    params: { pane_id: paneId },
+    id: "lazycat-webshell:pane-focus",
+  };
+}
 
 type HerdrAgentFocusRequest = {
   selector: string;

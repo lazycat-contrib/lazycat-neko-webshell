@@ -75,7 +75,7 @@ test("keeps Herdr workspace, tab, and pane order while deriving compact sequence
   }, labels);
 
   assert.deepEqual(model.groups.map((group) => group.workspaceId), ["w1", "w2"]);
-  assert.deepEqual(model.groups[0].targets.map((target) => target.paneId), ["p1", "p2", "p3"]);
+  assert.deepEqual(model.groups[0].targets.map((target) => target.paneId), ["p1", "p2", undefined]);
   assert.deepEqual(model.groups[0].targets.map((target) => target.sequence), ["1.1", "1.2", "2"]);
   assert.equal(model.currentWorkspace?.workspaceId, "w1");
   assert.equal(model.currentTarget?.paneId, "p1");
@@ -133,6 +133,30 @@ test("keeps legacy Herdr tabs navigable when pane snapshots are unavailable", ()
   assert.match(html, /data-herdr-jump-tab="t1"/);
 });
 
+test("keeps single-pane targets on the legacy tab focus path", () => {
+  const model = buildHerdrJumpModel({
+    workspaces: [workspace()],
+    tabs: [tab()],
+    panes: [pane()],
+  }, labels);
+
+  assert.equal(model.currentTarget?.paneId, undefined);
+  assert.equal(model.currentTarget?.tabId, "t1");
+  const html = renderHerdrJumpGroups(model, "normal", {
+    jumpTo: "Jump to…",
+    compact: "Compact",
+    normal: "Normal",
+    density: "Display density",
+    current: "Current",
+    empty: "No panes",
+    focusWorkspace: "Focus workspace",
+    focusTab: "Focus tab",
+    focusPane: "Focus pane",
+  });
+  assert.match(html, /data-herdr-jump-tab="t1"/);
+  assert.doesNotMatch(html, /data-herdr-jump-pane=/);
+});
+
 test("keeps panes navigable when a partial fallback omits their tab metadata", () => {
   const model = buildHerdrJumpModel({
     workspaces: [workspace()],
@@ -140,7 +164,7 @@ test("keeps panes navigable when a partial fallback omits their tab metadata", (
     panes: [pane({ display_agent: "Claude Code", agent: "claude" })],
   }, labels);
 
-  assert.equal(model.currentTarget?.paneId, "p1");
+  assert.equal(model.currentTarget?.paneId, undefined);
   assert.equal(model.currentTarget?.tabId, "t1");
   assert.equal(model.currentTarget?.label, "Claude Code");
   assert.equal(model.currentTarget?.sequence, "1");

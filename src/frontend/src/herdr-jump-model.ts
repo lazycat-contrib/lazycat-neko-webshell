@@ -146,7 +146,7 @@ function targetsForTab(
       sequence,
     ]).join(" · ");
     return {
-      paneId: pane.pane_id,
+      ...(tabPanes.length > 1 ? { paneId: pane.pane_id } : {}),
       workspaceId: workspace.workspace_id,
       tabId: tab.tab_id,
       sequence,

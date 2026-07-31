@@ -8,7 +8,8 @@ export type HerdrSocketRequestOptions = {
 };
 
 export function herdrStateMutationChangesVisibleTerminal(method: string): boolean {
-  return method === "pane.focus"
+  return method === "agent.focus"
+    || method === "pane.focus"
     || method === "pane.split"
     || method === "pane.resize"
     || method === "pane.close";

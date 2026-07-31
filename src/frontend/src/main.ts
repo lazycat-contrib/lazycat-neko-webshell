@@ -73,7 +73,7 @@ import {
   selectHerdrTerminalPane,
 } from "./herdr-backend";
 import type { HerdrPaneResizeDirection } from "./herdr-backend";
-import { createHerdrAgentActions } from "./herdr-agent-actions";
+import { createHerdrAgentActions, herdrPaneFocusRequest } from "./herdr-agent-actions";
 import {
   scheduleHerdrAction,
   type HerdrActionOptionsSource,
@@ -715,9 +715,10 @@ const herdrJumpActions = createHerdrAgentActions({
   selectedSelector: () => selectedSelector,
   selectedGeneration: () => selectedSelectorGeneration,
   requestFocus: async ({ selector, target }) => {
-    await runHerdrStateMutationRequest("pane.focus", { pane_id: target }, {
+    const request = herdrPaneFocusRequest(herdrState?.herdr_protocol, target);
+    await runHerdrStateMutationRequest(request.method, request.params, {
       selector,
-      id: "lazycat-webshell:pane-focus",
+      id: request.id,
       mirrorNotification: false,
     });
   },

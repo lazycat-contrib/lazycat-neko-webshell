@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createHerdrAgentActions } from "./herdr-agent-actions.ts";
+import { createHerdrAgentActions, herdrPaneFocusRequest } from "./herdr-agent-actions.ts";
 
 function deferred() {
   let resolve;
@@ -84,4 +84,17 @@ test("reports the focused pane target after a successful request", async () => {
   await actions.focus(" w2:p2 ");
 
   assert.deepEqual(focused, [["alpha@owner", "w2:p2"]]);
+});
+
+test("uses the v0.5.40 agent focus path for legacy Herdr protocols", () => {
+  assert.deepEqual(herdrPaneFocusRequest(14, "w2:p2"), {
+    method: "agent.focus",
+    params: { target: "w2:p2" },
+    id: "lazycat-webshell:agent-focus",
+  });
+  assert.deepEqual(herdrPaneFocusRequest(16, "w2:p2"), {
+    method: "pane.focus",
+    params: { pane_id: "w2:p2" },
+    id: "lazycat-webshell:pane-focus",
+  });
 });
