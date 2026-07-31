@@ -8,6 +8,7 @@ import {
   HERDR_SOCKET_SOURCE_VERSION,
   herdrEventSubscriptions,
   herdrAgentInfo,
+  normalizeHerdrSocketEnvelope,
   herdrPaneIdFromEvent,
   herdrPaneInfo,
   herdrPaneInfoFromEvent,
@@ -16,6 +17,30 @@ import {
   isHerdrSocketMethod,
   isHerdrSocketSubscription,
 } from "./herdr-socket-api.ts";
+
+test("normalizes Herdr 0.7.5 wire event names to the subscribed dot notation", () => {
+  assert.deepEqual(normalizeHerdrSocketEnvelope({
+    event: "workspace_focused",
+    data: {
+      type: "workspace_focused",
+      workspace_id: "w2",
+    },
+  }), {
+    event: "workspace.focused",
+    data: {
+      type: "workspace_focused",
+      workspace_id: "w2",
+    },
+  });
+  assert.equal(
+    normalizeHerdrSocketEnvelope({ event: "pane_agent_status_changed" }).event,
+    "pane.agent_status_changed",
+  );
+  assert.equal(
+    normalizeHerdrSocketEnvelope({ event: "pane.scroll_changed" }).event,
+    "pane.scroll_changed",
+  );
+});
 
 test("tracks the current Herdr 0.7.5 socket schema", () => {
   assert.equal(HERDR_SOCKET_PROTOCOL, 17);

@@ -62,6 +62,7 @@ import {
   herdrCurrentPaneId,
   herdrEventChangesAgentList,
   herdrEventChangesDock,
+  herdrEventRequiresStateRefresh,
   herdrEventSocketUrl,
   herdrEventShowsStatus,
   herdrEventSubscriptions,
@@ -83,7 +84,7 @@ import { createHerdrJumpController } from "./herdr-jump-controller";
 import { createHerdrNavigationController } from "./herdr-navigation";
 import { createHerdrRefreshCoordinator } from "./herdr-refresh-coordinator";
 import { herdrEventMessage } from "./herdr-event-presentation";
-import { isHerdrSocketMethod } from "./herdr-socket-api";
+import { isHerdrSocketMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
 import { applyHerdrResourceEvent } from "./herdr-state-events";
 import {
   createHerdrStateMutationRunner,
@@ -4502,7 +4503,7 @@ function handleHerdrEventMessage(raw: unknown) {
   if (!text) return;
   let envelope: HerdrSocketEnvelope;
   try {
-    envelope = JSON.parse(text) as HerdrSocketEnvelope;
+    envelope = normalizeHerdrSocketEnvelope(JSON.parse(text) as HerdrSocketEnvelope);
   } catch {
     return;
   }
@@ -4550,7 +4551,10 @@ function handleHerdrEventMessage(raw: unknown) {
   if (changesAgentList) {
     const selector = normalizeSelector(selectedSelector);
     if (selector) scheduleHerdrActionRefresh(selector, [120]);
-  } else if (changesDock && !resourceEventApplied) {
+  } else if (
+    changesDock
+    && (!resourceEventApplied || herdrEventRequiresStateRefresh(event))
+  ) {
     scheduleHerdrEventRefresh();
   }
 }

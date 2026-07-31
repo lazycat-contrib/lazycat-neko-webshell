@@ -152,6 +152,9 @@ export type HerdrBridgeState = {
   socket_source_revision: string;
   protocol_compatible?: boolean;
   capabilities?: HerdrCapabilitiesInfo;
+  focused_workspace_id?: string;
+  focused_tab_id?: string;
+  focused_pane_id?: string;
   workspaces: HerdrWorkspaceInfo[];
   tabs: HerdrTabInfo[];
   panes: HerdrPaneInfo[];

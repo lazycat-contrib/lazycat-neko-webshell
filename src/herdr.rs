@@ -117,6 +117,12 @@ pub struct HerdrBridgeState {
     protocol_compatible: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     capabilities: Option<HerdrCapabilitiesInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    focused_workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    focused_tab_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    focused_pane_id: Option<String>,
     workspaces: Vec<HerdrWorkspaceInfo>,
     tabs: Vec<HerdrTabInfo>,
     panes: Vec<HerdrPaneInfo>,
@@ -212,6 +218,9 @@ struct HerdrPingInfo {
 
 #[derive(Debug, Default)]
 struct HerdrBridgeResources {
+    focused_workspace_id: Option<String>,
+    focused_tab_id: Option<String>,
+    focused_pane_id: Option<String>,
     workspaces: Vec<HerdrWorkspaceInfo>,
     tabs: Vec<HerdrTabInfo>,
     panes: Vec<HerdrPaneInfo>,
@@ -597,11 +606,39 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
 }
 
 fn parse_herdr_session_snapshot(response: &Value) -> HerdrBridgeResources {
+    let focused_workspace_id = parse_snapshot_focus_id(response, "focused_workspace_id");
+    let focused_tab_id = parse_snapshot_focus_id(response, "focused_tab_id");
+    let focused_pane_id = parse_snapshot_focus_id(response, "focused_pane_id");
+    let mut workspaces = parse_workspaces(response);
+    let mut tabs = parse_tabs(response);
+    let mut panes = parse_panes(response);
+    let mut agents = parse_agents(response);
+    if let Some(focused_id) = focused_workspace_id.as_deref() {
+        for workspace in &mut workspaces {
+            workspace.focused = workspace.workspace_id == focused_id;
+        }
+    }
+    if let Some(focused_id) = focused_tab_id.as_deref() {
+        for tab in &mut tabs {
+            tab.focused = tab.tab_id == focused_id;
+        }
+    }
+    if let Some(focused_id) = focused_pane_id.as_deref() {
+        for pane in &mut panes {
+            pane.focused = pane.pane_id == focused_id;
+        }
+        for agent in &mut agents {
+            agent.focused = agent.pane_id == focused_id;
+        }
+    }
     HerdrBridgeResources {
-        workspaces: parse_workspaces(response),
-        tabs: parse_tabs(response),
-        panes: parse_panes(response),
-        agents: parse_agents(response),
+        focused_workspace_id,
+        focused_tab_id,
+        focused_pane_id,
+        workspaces,
+        tabs,
+        panes,
+        agents,
     }
 }
 
@@ -624,6 +661,9 @@ fn build_herdr_state(
         socket_source_revision: HERDR_SOCKET_CONTRACT.source_revision.clone(),
         protocol_compatible: ping_info.protocol.map(herdr_protocol_is_supported),
         capabilities: ping_info.capabilities,
+        focused_workspace_id: resources.focused_workspace_id,
+        focused_tab_id: resources.focused_tab_id,
+        focused_pane_id: resources.focused_pane_id,
         workspaces: resources.workspaces,
         tabs: resources.tabs,
         panes: resources.panes,
@@ -1311,6 +1351,15 @@ fn herdr_result_collection<'a>(response: &'a Value, key: &str) -> Option<&'a Vec
     })
 }
 
+fn parse_snapshot_focus_id(response: &Value, key: &str) -> Option<String> {
+    response
+        .get("result")?
+        .get("snapshot")?
+        .get(key)?
+        .as_str()
+        .map(ToOwned::to_owned)
+}
+
 fn parse_herdr_ping(response: &Value) -> HerdrPingInfo {
     let Some(result) = response.get("result") else {
         return HerdrPingInfo::default();
@@ -1688,6 +1737,103 @@ mod tests {
         let resources = parse_herdr_session_snapshot(&response);
         assert_eq!(resources.tabs.len(), 2);
         assert_eq!(resources.tabs[1].workspace_id, "w2");
+    }
+
+    #[test]
+    fn session_snapshot_prefers_authoritative_top_level_focus_ids() {
+        let resources = parse_herdr_session_snapshot(&json!({
+            "result": {
+                "type": "session_snapshot",
+                "snapshot": {
+                    "focused_workspace_id": "w2",
+                    "focused_tab_id": "w2:t1",
+                    "focused_pane_id": "w2:p1",
+                    "workspaces": [
+                        {
+                            "workspace_id": "w1",
+                            "number": 1,
+                            "label": "one",
+                            "focused": true,
+                            "active_tab_id": "w1:t1",
+                            "tab_count": 1,
+                            "pane_count": 1
+                        },
+                        {
+                            "workspace_id": "w2",
+                            "number": 2,
+                            "label": "two",
+                            "focused": false,
+                            "active_tab_id": "w2:t1",
+                            "tab_count": 1,
+                            "pane_count": 1
+                        }
+                    ],
+                    "tabs": [
+                        {
+                            "tab_id": "w1:t1",
+                            "workspace_id": "w1",
+                            "number": 1,
+                            "label": "one",
+                            "focused": true,
+                            "pane_count": 1
+                        },
+                        {
+                            "tab_id": "w2:t1",
+                            "workspace_id": "w2",
+                            "number": 1,
+                            "label": "two",
+                            "focused": false,
+                            "pane_count": 1
+                        }
+                    ],
+                    "panes": [
+                        {
+                            "pane_id": "w1:p1",
+                            "workspace_id": "w1",
+                            "tab_id": "w1:t1",
+                            "focused": true
+                        },
+                        {
+                            "pane_id": "w2:p1",
+                            "workspace_id": "w2",
+                            "tab_id": "w2:t1",
+                            "focused": false
+                        }
+                    ]
+                }
+            }
+        }));
+
+        assert_eq!(resources.focused_workspace_id.as_deref(), Some("w2"));
+        assert_eq!(resources.focused_tab_id.as_deref(), Some("w2:t1"));
+        assert_eq!(resources.focused_pane_id.as_deref(), Some("w2:p1"));
+        assert_eq!(
+            resources
+                .workspaces
+                .iter()
+                .filter(|workspace| workspace.focused)
+                .map(|workspace| workspace.workspace_id.as_str())
+                .collect::<Vec<_>>(),
+            ["w2"]
+        );
+        assert_eq!(
+            resources
+                .tabs
+                .iter()
+                .filter(|tab| tab.focused)
+                .map(|tab| tab.tab_id.as_str())
+                .collect::<Vec<_>>(),
+            ["w2:t1"]
+        );
+        assert_eq!(
+            resources
+                .panes
+                .iter()
+                .filter(|pane| pane.focused)
+                .map(|pane| pane.pane_id.as_str())
+                .collect::<Vec<_>>(),
+            ["w2:p1"]
+        );
     }
 
     #[test]

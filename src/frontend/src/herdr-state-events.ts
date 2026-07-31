@@ -24,6 +24,9 @@ export function applyHerdrWorkspaceFocus(
   return {
     state: {
       ...state,
+      focused_workspace_id: workspaceId,
+      focused_tab_id: activeTab?.tab_id,
+      focused_pane_id: activePane?.pane_id,
       workspaces: state.workspaces.map((item) => ({
         ...item,
         focused: item.workspace_id === workspaceId,
@@ -56,6 +59,9 @@ export function applyHerdrTabFocus(
   return {
     state: {
       ...state,
+      focused_workspace_id: tab.workspace_id,
+      focused_tab_id: tab.tab_id,
+      focused_pane_id: focusedPane?.pane_id,
       workspaces: state.workspaces.map((workspace) => ({
         ...workspace,
         focused: workspace.workspace_id === tab.workspace_id,
@@ -90,6 +96,9 @@ export function applyHerdrPaneFocus(
   return {
     state: {
       ...state,
+      focused_workspace_id: pane.workspace_id,
+      focused_tab_id: pane.tab_id,
+      focused_pane_id: pane.pane_id,
       workspaces: state.workspaces.map((workspace) => ({
         ...workspace,
         focused: workspace.workspace_id === pane.workspace_id,

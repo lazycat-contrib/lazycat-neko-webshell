@@ -1,6 +1,6 @@
 import contract from "../../herdr_socket_contract.json" with { type: "json" };
 
-import type { HerdrAgentInfo, HerdrPaneInfo, HerdrWorkspaceInfo, JsonRecord } from "./types";
+import type { HerdrAgentInfo, HerdrPaneInfo, HerdrSocketEnvelope, HerdrWorkspaceInfo, JsonRecord } from "./types";
 
 export const HERDR_SOCKET_PROTOCOL = contract.protocol;
 export const HERDR_SOCKET_SCHEMA_VERSION = contract.schema_version;
@@ -9,6 +9,10 @@ export const HERDR_SOCKET_SOURCE_REVISION = contract.source_revision;
 
 const HERDR_SOCKET_METHODS = new Set(contract.methods);
 const HERDR_SOCKET_SUBSCRIPTIONS = new Set(contract.subscriptions);
+const HERDR_EVENT_NAMES = new Map(contract.subscriptions.flatMap((event) => [
+  [event, event],
+  [event.replace(".", "_"), event],
+]));
 const HERDR_METADATA_EVENT_MIN_VERSION = [0, 7, 4] as const;
 
 const BASE_EVENT_SUBSCRIPTIONS = [
@@ -58,6 +62,13 @@ export function isHerdrSocketMethod(method: string): boolean {
 
 export function isHerdrSocketSubscription(type: string): boolean {
   return HERDR_SOCKET_SUBSCRIPTIONS.has(type);
+}
+
+export function normalizeHerdrSocketEnvelope(
+  envelope: HerdrSocketEnvelope,
+): HerdrSocketEnvelope {
+  const event = envelope.event ? HERDR_EVENT_NAMES.get(envelope.event) : undefined;
+  return event && event !== envelope.event ? { ...envelope, event } : envelope;
 }
 
 export function herdrEventSubscriptions(

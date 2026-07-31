@@ -13,6 +13,9 @@ function stateFixture() {
     supported_protocol: 16,
     socket_schema_version: 1,
     socket_source_revision: "a22454f27ce096585e19d1787dba43f56d1505cf",
+    focused_workspace_id: "w1",
+    focused_tab_id: "w1:t1",
+    focused_pane_id: "w1:p1",
     workspaces: [
       {
         workspace_id: "w1",
@@ -81,6 +84,9 @@ test("applies Herdr focus events immediately across workspaces, tabs, and panes"
     workspace_id: "w2",
   });
   assert.equal(workspaceFocused.applied, true);
+  assert.equal(workspaceFocused.state.focused_workspace_id, "w2");
+  assert.equal(workspaceFocused.state.focused_tab_id, "w2:t2");
+  assert.equal(workspaceFocused.state.focused_pane_id, "w2:p2");
   assert.deepEqual(workspaceFocused.state.workspaces.map((workspace) => workspace.focused), [false, true]);
 
   const tabFocused = applyHerdrResourceEvent(workspaceFocused.state, "tab.focused", {
@@ -88,6 +94,9 @@ test("applies Herdr focus events immediately across workspaces, tabs, and panes"
     tab_id: "w2:t2",
   });
   assert.equal(tabFocused.applied, true);
+  assert.equal(tabFocused.state.focused_workspace_id, "w2");
+  assert.equal(tabFocused.state.focused_tab_id, "w2:t2");
+  assert.equal(tabFocused.state.focused_pane_id, "w2:p2");
   assert.equal(tabFocused.state.workspaces[1].active_tab_id, "w2:t2");
   assert.deepEqual(tabFocused.state.tabs.map((tab) => tab.focused), [false, true]);
 
@@ -96,6 +105,9 @@ test("applies Herdr focus events immediately across workspaces, tabs, and panes"
     pane_id: "w2:p2",
   });
   assert.equal(paneFocused.applied, true);
+  assert.equal(paneFocused.state.focused_workspace_id, "w2");
+  assert.equal(paneFocused.state.focused_tab_id, "w2:t2");
+  assert.equal(paneFocused.state.focused_pane_id, "w2:p2");
   assert.deepEqual(paneFocused.state.workspaces.map((workspace) => workspace.focused), [false, true]);
   assert.deepEqual(paneFocused.state.tabs.map((tab) => tab.focused), [false, true]);
   assert.deepEqual(paneFocused.state.panes.map((pane) => pane.focused), [false, true]);

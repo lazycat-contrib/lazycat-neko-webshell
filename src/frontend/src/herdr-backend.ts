@@ -25,6 +25,12 @@ const SILENT_HERDR_EVENTS = new Set([
   "pane.updated",
 ]);
 
+const HERDR_FOCUS_EVENTS = new Set([
+  "workspace.focused",
+  "tab.focused",
+  "pane.focused",
+]);
+
 export function herdrSplitDirection(placement: SplitPlacement): "right" | "down" | undefined {
   return HERDR_SPLIT_DIRECTIONS[placement];
 }
@@ -116,6 +122,10 @@ export function herdrEventChangesDock(event: string): boolean {
 export function herdrEventChangesAgentList(event: string): boolean {
   return event === "pane.agent_detected"
     || event === "pane.agent_status_changed";
+}
+
+export function herdrEventRequiresStateRefresh(event: string): boolean {
+  return HERDR_FOCUS_EVENTS.has(event);
 }
 
 export function herdrEventShowsStatus(event: string): boolean {
