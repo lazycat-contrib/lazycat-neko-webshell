@@ -33,16 +33,20 @@ export function createHerdrNotificationPolicy() {
 
       const previousStatus = paneStatuses.get(paneId);
       paneStatuses.set(paneId, status);
+      const kind = status === "idle"
+        && (previousStatus === "working" || previousStatus === "blocked")
+        ? "done"
+        : status;
       if (
         previousStatus === undefined
         || previousStatus === status
-        || !NOTIFIABLE_STATUSES.has(status as HerdrNotificationKind)
+        || !NOTIFIABLE_STATUSES.has(kind as HerdrNotificationKind)
       ) {
         return undefined;
       }
 
       return {
-        kind: status as HerdrNotificationKind,
+        kind: kind as HerdrNotificationKind,
         paneId,
         workspaceId: stringField(data, "workspace_id"),
         agent: stringField(data, "agent"),

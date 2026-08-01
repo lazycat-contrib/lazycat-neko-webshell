@@ -43,6 +43,16 @@ test("notifies only on new done and blocked status edges", () => {
   })?.kind, "done");
 });
 
+test("treats a focused agent becoming idle as completed", () => {
+  const policy = createHerdrNotificationPolicy();
+  policy.seed([pane("pane-1", "working")]);
+
+  assert.equal(policy.handle("pane.agent_status_changed", {
+    pane_id: "pane-1",
+    agent_status: "idle",
+  })?.kind, "done");
+});
+
 test("suppresses initial subscription and reconnect snapshots", () => {
   const policy = createHerdrNotificationPolicy();
   policy.seed([pane("pane-1", "done")]);
