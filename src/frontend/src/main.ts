@@ -77,6 +77,7 @@ import {
 } from "./herdr-action-scheduler";
 import { createHerdrInteractionQueue } from "./herdr-interaction-queue";
 import { createHerdrJumpController } from "./herdr-jump-controller";
+import { createHerdrLazycatNotificationController } from "./herdr-notifications/controller";
 import { createHerdrNavigationController } from "./herdr-navigation";
 import { createHerdrEventRefreshLoop } from "./herdr-event-refresh-loop";
 import { createHerdrEventStreamPolicy } from "./herdr-event-stream-policy";
@@ -621,6 +622,15 @@ let herdrEventSocketGeneration = 0;
 let herdrEventReconnectTimer: number | undefined;
 let herdrActionRefreshTimers: number[] = [];
 const herdrEventStreamPolicy = createHerdrEventStreamPolicy();
+const herdrLazycatNotifications = createHerdrLazycatNotificationController({
+  enabled: () => settings.herdrLazycatNotifications,
+  state: () => herdrState,
+  tr,
+  onError: (error) => setGlobalStatus(
+    tr("status.herdrLazycatNotificationFailed", { message: errorMessage(error) }),
+    "error",
+  ),
+});
 const herdrRefreshCoordinator = createHerdrRefreshCoordinator(performHerdrStateRefresh);
 const herdrEventRefreshLoop = createHerdrEventRefreshLoop({
   setTimer: (callback, delay) => window.setTimeout(callback, delay),
@@ -1798,6 +1808,11 @@ function bindSettings() {
     saveSettings();
     terminalControl.refreshPaneEffects();
   });
+  elements.herdrLazycatNotifications.addEventListener("change", () => {
+    settings.herdrLazycatNotifications = elements.herdrLazycatNotifications.checked;
+    saveSettings();
+    herdrLazycatNotifications.seed();
+  });
   elements.terminalBackgroundEnabled.addEventListener("change", () => {
     settings.terminalBackgroundEnabled = elements.terminalBackgroundEnabled.checked;
     saveSettings();
@@ -2815,6 +2830,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.scrollbackLimit.value = String(settings.scrollbackLimit);
   elements.outputBufferLimit.value = String(settings.outputBufferLimit);
   syncTerminalControlSettingsInputs(elements, settings);
+  elements.herdrLazycatNotifications.checked = settings.herdrLazycatNotifications;
   elements.terminalBackgroundEnabled.checked = settings.terminalBackgroundEnabled;
   elements.terminalBackgroundEnabled.disabled = !settings.terminalBackgroundUrl;
   elements.removeTerminalBackground.disabled = !settings.terminalBackgroundUrl;
@@ -2867,6 +2883,7 @@ function updateSessionBackendSettings() {
     && selectable.some((backend) => backend.id === "herdr");
   elements.sessionBackendSettings.hidden = !hasOptionalBackend;
   elements.herdrHighlightSettings.hidden = !hasHerdr;
+  elements.herdrNotificationSettings.hidden = !hasHerdr;
   elements.herdrActiveBackgroundDark.value = normalizeHexColorInput(
     settings.herdrActiveBackgroundDark,
     DEFAULT_SETTINGS.herdrActiveBackgroundDark,
@@ -4502,6 +4519,7 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   socket.addEventListener("open", () => {
     if (herdrEventSocket !== socket || generation !== herdrEventSocketGeneration) return;
     herdrEventStreamPolicy.beginSubscription(paneIds);
+    herdrLazycatNotifications.seed();
     socket.send(JSON.stringify({
       id: "lazycat-webshell:events",
       method: "events.subscribe",
@@ -4544,6 +4562,9 @@ function handleHerdrEventMessage(raw: unknown) {
     return;
   }
   const streamDecision = herdrEventStreamPolicy.handle(envelope);
+  if (envelope.event) {
+    herdrLazycatNotifications.handle(envelope.event, envelope.data ?? {});
+  }
   if (streamDecision.presentEvent && envelope.event) {
     const data = envelope.data ?? {};
     const message = herdrEventMessage(envelope.event, data, tr);
@@ -4617,6 +4638,7 @@ function closeHerdrEventSocket() {
   window.clearTimeout(herdrEventReconnectTimer);
   herdrEventReconnectTimer = undefined;
   herdrEventStreamPolicy.reset();
+  herdrLazycatNotifications.reset();
   herdrEventRefreshLoop.reset();
   const socket = herdrEventSocket;
   herdrEventSocket = undefined;

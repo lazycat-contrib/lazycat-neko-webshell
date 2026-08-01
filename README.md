@@ -2,7 +2,7 @@
 
 [English](./README.en.md)
 
-当前版本：`0.6.6`
+当前版本：`0.6.7`
 
 Neko Webshell 是浏览器里的 WebShell 工作台。它默认面向 LazyCat / LightOS 的应用实例，也可以关闭 LightOS 初始化后作为通用 WebShell 使用，并通过 SSH profile 管理远程终端目标。
 
@@ -111,6 +111,8 @@ AI Chat 也支持连接远程 MCP 服务，让聊天可以使用外部工具。�
 如果目标设备安装了 Herdr，Neko Webshell 会在新建标签和设置里显示 Herdr 入口。你可以在 WebShell 界面里切换 Herdr 空间、查看当前空间下的标签、创建新标签、创建新空间或刷新状态。
 
 Herdr 会话由 Herdr 自己持有。关闭 WebShell 软件再重新打开时，Neko Webshell 会重新连接 Herdr，并尽量恢复最近看到的位置和输出。
+
+终端设置里可以开启 Herdr 懒猫通知。当前页面订阅对应 Herdr 终端期间，Agent 完成任务或等待输入时会通过懒猫通知提醒当前设备。
 
 当设备上的 Herdr protocol 版本和 WebShell 当前适配版本不一致时，界面会用非侵入式提示提醒：设备协议更高时提示可能需要更新 WebShell 适配，设备协议更低时提示可能需要更新设备上的 Herdr。
 

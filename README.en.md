@@ -2,7 +2,7 @@
 
 [中文](./README.md)
 
-Current version: `0.6.6`
+Current version: `0.6.7`
 
 Neko Webshell is a browser WebShell workbench. It defaults to LazyCat / LightOS app instances, but it can also run as a generic WebShell with LightOS initialization disabled and manage remote terminal targets through SSH profiles.
 
@@ -112,6 +112,8 @@ AI Chat can also connect to remote MCP servers so chat can use external tools. S
 If Herdr is installed on the target device, Neko Webshell shows Herdr as an option when creating tabs and in settings. You can switch spaces, view tabs in the current space, create tabs, create spaces, and refresh state from the WebShell interface.
 
 Herdr sessions are owned by Herdr itself. When you close the WebShell app and open it again later, Neko Webshell reconnects to Herdr and tries to restore the recent view position and output.
+
+Herdr LazyCat notifications can be enabled in Terminal settings. While the current page is subscribed to that Herdr terminal, the current device is notified when an Agent finishes or needs input.
 
 When the device Herdr protocol version differs from the version WebShell supports, the interface shows a non-intrusive hint: newer device protocol means WebShell protocol support may need an update, older device protocol means Herdr on the device may need an update.
 

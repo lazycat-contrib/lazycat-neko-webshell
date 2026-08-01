@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::http::header::{CONTENT_SECURITY_POLICY, HeaderName};
@@ -21,6 +21,7 @@ use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
 use crate::herdr::{
     get_herdr_state, herdr_ws, post_herdr_action, post_herdr_output_sequence, post_herdr_socket,
 };
+use crate::herdr_notifications::post_herdr_lazycat_notification;
 use crate::lightos::{self, AdminInfo};
 use crate::lightos_admin;
 use crate::notifications::{get_notifications, post_notification_dismiss, post_notification_read};
@@ -86,6 +87,10 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
         .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
         .route("/api/herdr/socket", post(post_herdr_socket))
+        .route(
+            "/api/herdr/lazycat-notification",
+            post(post_herdr_lazycat_notification).layer(DefaultBodyLimit::max(4 * 1024)),
+        )
         .route("/api/herdr/output-sequence", post(post_herdr_output_sequence))
         .route("/api/notifications", get(get_notifications))
         .route(

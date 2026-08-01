@@ -1,6 +1,7 @@
 import { qs } from "./utils";
 import { renderAboutDialog } from "./about-view";
 import { renderHerdrJumpShell } from "./herdr-jump-shell";
+import { renderHerdrNotificationSettingsView } from "./herdr-notifications/settings-view";
 import { renderMobileKeyboardView } from "./mobile/keyboard-view";
 import { renderMobileSettingsView } from "./mobile/settings-view";
 import { renderTerminalControlSettingsView } from "./terminal-control/settings-view";
@@ -102,6 +103,8 @@ export type ShellElements = {
   terminalControlSettings: HTMLDivElement;
   terminalSingleControllerMode: HTMLInputElement;
   terminalBlurObservers: HTMLInputElement;
+  herdrNotificationSettings: HTMLDivElement;
+  herdrLazycatNotifications: HTMLInputElement;
   terminalBackgroundEnabled: HTMLInputElement;
   terminalBackgroundUpload: HTMLInputElement;
   removeTerminalBackground: HTMLButtonElement;
@@ -411,6 +414,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <input id="outputBufferLimit" type="number" min="128" max="20000" step="128" />
               </label>
               <div id="terminalControlSettings">${renderTerminalControlSettingsView()}</div>
+              ${renderHerdrNotificationSettingsView()}
               <div class="settings-group terminal-background-settings">
                 <div class="settings-group-title" data-i18n="section.terminalBackground">Terminal background</div>
                 <label class="switch">
@@ -648,6 +652,8 @@ export function renderShell(app: HTMLElement): ShellElements {
     terminalControlSettings: qs<HTMLDivElement>("#terminalControlSettings"),
     terminalSingleControllerMode: qs<HTMLInputElement>("#terminalSingleControllerMode"),
     terminalBlurObservers: qs<HTMLInputElement>("#terminalBlurObservers"),
+    herdrNotificationSettings: qs<HTMLDivElement>("#herdrNotificationSettings"),
+    herdrLazycatNotifications: qs<HTMLInputElement>("#herdrLazycatNotifications"),
     terminalBackgroundEnabled: qs<HTMLInputElement>("#terminalBackgroundEnabled"),
     terminalBackgroundUpload: qs<HTMLInputElement>("#terminalBackgroundUpload"),
     removeTerminalBackground: qs<HTMLButtonElement>("#removeTerminalBackground"),

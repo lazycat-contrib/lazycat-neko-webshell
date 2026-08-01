@@ -394,6 +394,7 @@ export type Settings = {
   defaultSessionBackend: SessionBackendId;
   terminalSingleControllerMode: boolean;
   terminalBlurObservers: boolean;
+  herdrLazycatNotifications: boolean;
   herdrActiveBackgroundDark: string;
   herdrActiveBackgroundLight: string;
   autoRestartSessions: boolean;

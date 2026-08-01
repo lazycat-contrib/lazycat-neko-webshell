@@ -174,6 +174,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultSessionBackend: "webshell",
   terminalSingleControllerMode: false,
   terminalBlurObservers: false,
+  herdrLazycatNotifications: false,
   herdrActiveBackgroundDark: "#06193a",
   herdrActiveBackgroundLight: "#f0f7ff",
   autoRestartSessions: false,

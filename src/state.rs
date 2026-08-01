@@ -14,6 +14,7 @@ use crate::database::remove_database_file;
 use crate::database::{
     AppDatabase, KV_KEY_PLUGINS, KV_KEY_SESSIONS, KV_NAMESPACE_STATE, database_path,
 };
+use crate::herdr_notifications::HerdrNotificationSender;
 use crate::notifications::NotificationHub;
 use crate::plugins::file_transfer::FileTransferUploadManager;
 use crate::plugins::lightos_port_forward::LightOsPortForwardManager;
@@ -45,6 +46,7 @@ pub struct AppState {
     pub file_uploads: Arc<FileTransferUploadManager>,
     pub public_tunnels: Arc<TunnelManager>,
     pub notifications: Arc<NotificationHub>,
+    pub herdr_notifications: Arc<HerdrNotificationSender>,
     pub pomodoro: Arc<PomodoroManager>,
     pub remote_programs: Arc<RemoteProgramStore>,
     pub workspaces: Arc<RwLock<HashMap<String, WorkspaceRecord>>>,
@@ -101,6 +103,7 @@ impl AppState {
             file_uploads: Arc::new(FileTransferUploadManager::default()),
             public_tunnels: Arc::new(TunnelManager::default()),
             notifications,
+            herdr_notifications: Arc::new(HerdrNotificationSender::default()),
             pomodoro,
             remote_programs,
             workspaces: Arc::new(RwLock::new(workspaces)),
@@ -163,6 +166,7 @@ impl AppState {
             file_uploads: Arc::new(FileTransferUploadManager::default()),
             public_tunnels: Arc::new(TunnelManager::default()),
             notifications,
+            herdr_notifications: Arc::new(HerdrNotificationSender::default()),
             pomodoro,
             remote_programs,
             workspaces: Arc::new(RwLock::new(HashMap::new())),

@@ -86,6 +86,7 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     defaultSessionBackend: normalizeSessionBackendId(value.defaultSessionBackend),
     terminalSingleControllerMode: value.terminalSingleControllerMode ?? DEFAULT_SETTINGS.terminalSingleControllerMode,
     terminalBlurObservers: value.terminalBlurObservers ?? DEFAULT_SETTINGS.terminalBlurObservers,
+    herdrLazycatNotifications: value.herdrLazycatNotifications ?? DEFAULT_SETTINGS.herdrLazycatNotifications,
     herdrActiveBackgroundDark: normalizeHexColor(
       value.herdrActiveBackgroundDark,
       DEFAULT_SETTINGS.herdrActiveBackgroundDark,

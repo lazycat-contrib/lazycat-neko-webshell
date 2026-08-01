@@ -21,6 +21,7 @@ mod database;
 mod embedded_frontend;
 mod fonts;
 mod herdr;
+mod herdr_notifications;
 mod http_body;
 mod lightos;
 mod lightos_admin;

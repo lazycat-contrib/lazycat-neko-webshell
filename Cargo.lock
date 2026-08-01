@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "lazycat-neko-webshell"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -1733,6 +1733,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tokio-util",
+ "tonic",
  "tower-http 0.7.0",
  "tracing",
  "tracing-subscriber",
