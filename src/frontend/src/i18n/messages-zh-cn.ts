@@ -68,6 +68,7 @@ export const zhCNMessages = {
   "action.newTab": "新建终端标签",
   "action.openNotificationLink": "打开链接",
   "action.pasteClipboard": "粘贴",
+  "action.toggleSystemKeyboard": "打开或关闭系统键盘",
   "action.pluginFileDownload": "下载",
   "action.pluginFileHome": "根目录",
   "action.pluginFileList": "列出",

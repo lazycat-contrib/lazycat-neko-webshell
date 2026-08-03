@@ -333,7 +333,13 @@ import {
   focusPaneImeInput,
   preparePaneImeForKeyboardEvent,
 } from "./terminal-ime";
-import { focusPaneSystemKeyboardInput } from "./mobile/system-keyboard-focus";
+import {
+  dismissPaneSystemKeyboardInput,
+  enablePaneSystemKeyboardInput,
+  focusPaneHardwareKeyboardInput,
+  focusPaneSystemKeyboardInput,
+} from "./mobile/system-keyboard-focus";
+import { createMobileSystemKeyboardController } from "./mobile/system-keyboard-controller";
 import {
   installPaneTouchKeyboardGuard,
   installPaneViewportGuard,
@@ -473,16 +479,25 @@ const initialSelectorExplicit = params.has("name") && Boolean(initialSelector);
 const elements = renderShell(qs<HTMLDivElement>("#app"));
 let herdrJumpController: ReturnType<typeof createHerdrJumpController> | undefined;
 const imageUploadProgress = createUploadProgressController(elements.webshell);
+let mobileSystemKeyboard: ReturnType<typeof createMobileSystemKeyboardController>;
 const mobileKeyboard = createMobileKeyboardController({
   root: elements.mobileShortcuts,
-  focusSystemKeyboard: focusActivePaneSystemKeyboard,
-  focusAfterShortcut: focusAfterMobileShortcut,
+  preserveSystemKeyboardState: () => mobileSystemKeyboard.preserveState(),
+  focusAfterShortcut: () => mobileSystemKeyboard.restoreState(),
   onKeyInput: sendActivePaneKeyInput,
   onPasteShortcut: async () => {
     await pasteIntoPane(activePane(), false);
   },
   onAction: runMobileAction,
   onPhrase: runMobileQuickPhrase,
+});
+mobileSystemKeyboard = createMobileSystemKeyboardController({
+  activePane,
+  dismissPane: dismissPaneSystemKeyboardInput,
+  enableAllPanes: () => allPanes().forEach(enablePaneSystemKeyboardInput),
+  focusHardwarePane: focusPaneHardwareKeyboardInput,
+  focusPane: focusPaneSystemKeyboard,
+  updateToggle: mobileKeyboard.updateSystemKeyboardState,
 });
 const mobileQuickPhraseSettings = createMobileQuickPhraseSettingsController({
   elements,
@@ -496,7 +511,7 @@ const mobileQuickPhraseSettings = createMobileQuickPhraseSettingsController({
   onChanged: renderMobileQuickInput,
 });
 const mobileTerminalGestures = createMobileTerminalGestureController({
-  activateAdjacentTab,
+  activateAdjacentTab: (direction) => activateAdjacentTab(direction, { focus: false }),
 });
 const mobileClock = createMobileClockController({
   elements: {
@@ -2249,6 +2264,10 @@ function updateViewportMetrics() {
 
 function handleViewportChange() {
   updateViewportMetrics();
+  mobileSystemKeyboard.sync(
+    document.body.classList.contains("mobile-keyboard-visible"),
+    document.body.classList.contains("mobile-controls-enabled"),
+  );
   scheduleTerminalSizeRefresh();
 }
 
@@ -2290,22 +2309,22 @@ async function runMobileQuickPhrase(id: string) {
   settings.mobileQuickPhrases = markMobileQuickPhraseUsed(settings.mobileQuickPhrases, id);
   saveSettings();
   renderMobileQuickInput();
-  focusAfterMobileShortcut();
+  mobileSystemKeyboard.restoreState();
 }
 
 async function runMobileAction(action: string) {
   if (action === "previous-tab") {
-    activateAdjacentTab(-1);
+    activateAdjacentTab(-1, { focus: false });
   } else if (action === "next-tab") {
-    activateAdjacentTab(1);
+    activateAdjacentTab(1, { focus: false });
   } else if (action === "new-tab") {
     await createSelectedTab();
   } else if (action === "close-tab") {
     closeActiveTab();
   } else if (action === "previous-pane") {
-    activateAdjacentPane(-1);
+    activateAdjacentPane(-1, { focus: false });
   } else if (action === "next-pane" || action === "swap-pane") {
-    activateAdjacentPane(1);
+    activateAdjacentPane(1, { focus: false });
   } else if (action === "split-right") {
     await splitActivePane("right");
   } else if (action === "split-down") {
@@ -2320,11 +2339,11 @@ async function runMobileAction(action: string) {
     setTerminalFontSize(settings.fontSize - 1);
   } else if (action === "pane-menu") {
     openActivePaneMenu();
+  } else if (action === "toggle-system-keyboard") {
+    mobileSystemKeyboard.toggle();
   }
   mobileKeyboard.clearSticky();
-  if (action !== "pane-menu") {
-    focusAfterMobileShortcut();
-  }
+  if (action !== "toggle-system-keyboard") mobileSystemKeyboard.restoreState();
 }
 
 function transformMobileStickyInput(text: string, source: string): string | undefined {
@@ -4973,6 +4992,7 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
     }
     renderTabs();
     updateActiveDetails();
+    restoreMobileSystemKeyboardFocus();
   }
   for (const [paneId, pane] of existingSelectorPanes) {
     if (!retainedPaneIds.has(paneId)) {
@@ -5245,7 +5265,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
       mobileTerminalGestures.clearGesture();
       if (current && gesture && mobileTerminalGestures.isTapGesture(gesture) && mobileTerminalGestures.isDoubleTap(current.id, event)) {
         event.preventDefault();
-        focusPaneSystemKeyboard(current);
+        mobileSystemKeyboard.show(current);
       }
     },
     onPointerCancel: (event) => {
@@ -5257,7 +5277,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
       event.preventDefault();
       const current = findPaneById(id);
       if (current) {
-        focusPaneSystemKeyboard(current);
+        mobileSystemKeyboard.show(current);
       }
     },
     onContextMenu: (event) => {
@@ -5431,7 +5451,7 @@ async function mountTerminal(pane: TerminalPane) {
   terminalControl.refreshPaneEffects();
   applyTerminalAppearance(pane, currentAppearanceContext(), reportFontLoadError);
   if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
-    focusPaneCanvas(pane);
+    if (!mobileSystemKeyboard.resetMountedPane(pane)) focusPaneCanvas(pane);
   }
 }
 
@@ -5963,7 +5983,7 @@ async function remountTerminalsForTouchMode() {
   }
 }
 
-function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: boolean } = {}) {
+function activateTab(tabId: string, options: { focus?: boolean; sync?: boolean; updateLocation?: boolean } = {}) {
   const tab = tabs.find((item) => item.id === tabId);
   if (!tab) return;
   activeTabId = tabId;
@@ -5977,7 +5997,8 @@ function activateTab(tabId: string, options: { sync?: boolean; updateLocation?: 
   updateActiveDetails();
   renderHerdrDock();
   syncAIChatForActiveTerminal();
-  focusActivePaneCanvas();
+  const mobileFocusHandled = restoreMobileSystemKeyboardFocus();
+  if (options.focus !== false && !mobileFocusHandled) focusActivePaneCanvas();
   if (options.updateLocation !== false) {
     rememberActiveTab();
   }
@@ -6005,12 +6026,12 @@ function followActiveTabSelector(tab: TerminalTab) {
   void refreshHerdrState(normalizedSelector, generation);
 }
 
-function activateAdjacentTab(direction: -1 | 1) {
+function activateAdjacentTab(direction: -1 | 1, options: { focus?: boolean } = {}) {
   if (!tabs.length || !activeTabId) return;
   const index = Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId));
   const next = tabs[(index + direction + tabs.length) % tabs.length];
   if (next) {
-    activateTab(next.id);
+    activateTab(next.id, { focus: options.focus });
   }
 }
 
@@ -6025,7 +6046,8 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   updateActiveDetails();
   renderHerdrDock();
   syncAIChatForActiveTerminal();
-  if (options.focus !== false) {
+  const mobileFocusHandled = restoreMobileSystemKeyboardFocus();
+  if (options.focus !== false && !mobileFocusHandled) {
     focusPaneCanvas(activePane(tab));
   }
   if (options.sync !== false) {
@@ -6033,7 +6055,7 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   }
 }
 
-function activateAdjacentPane(direction: -1 | 1) {
+function activateAdjacentPane(direction: -1 | 1, options: { focus?: boolean } = {}) {
   const tab = activeTab();
   if (!tab) return;
   const panes = visiblePanes(tab);
@@ -6042,7 +6064,7 @@ function activateAdjacentPane(direction: -1 | 1) {
   const index = Math.max(0, panes.findIndex((item) => item.id === pane?.id));
   const next = panes[(index + direction + panes.length) % panes.length];
   if (next) {
-    activatePane(tab.id, next.id);
+    activatePane(tab.id, next.id, { focus: options.focus });
   }
 }
 
@@ -6481,14 +6503,10 @@ function focusActivePaneCanvas() {
   focusPaneCanvas(activePane());
 }
 
-function focusAfterMobileShortcut() {
-  if (isCoarseTouchPointer()) return;
-  focusActivePaneCanvas();
-}
-
-function focusActivePaneSystemKeyboard() {
-  const pane = activePane();
-  if (pane) focusPaneSystemKeyboard(pane);
+function restoreMobileSystemKeyboardFocus(): boolean {
+  if (!document.body.classList.contains("mobile-controls-enabled")) return false;
+  mobileSystemKeyboard.restoreState();
+  return true;
 }
 
 function focusPaneCanvas(pane: TerminalPane | undefined) {
@@ -6504,12 +6522,14 @@ function focusPaneCanvas(pane: TerminalPane | undefined) {
   pane.term?.focus();
 }
 
-function focusPaneSystemKeyboard(pane: TerminalPane) {
+function focusPaneSystemKeyboard(pane: TerminalPane): boolean {
   activatePane(pane.tabId, pane.id, { focus: false });
-  if (!focusPaneSystemKeyboardInput(pane)) {
+  const focused = focusPaneSystemKeyboardInput(pane);
+  if (!focused) {
     pane.term?.focus();
   }
   handleViewportChange();
+  return focused;
 }
 
 function handleTerminalImeFocusCapture(event: KeyboardEvent) {

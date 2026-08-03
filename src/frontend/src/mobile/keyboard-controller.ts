@@ -1,5 +1,5 @@
 import type { MessageKey } from "../i18n";
-import { mobileActionEventPhase } from "./action-event-phase";
+import { mobileActionEventPhase, mobileSyntheticActivation } from "./action-event-phase";
 import {
   clearMobileSticky,
   createMobileStickyState,
@@ -17,6 +17,7 @@ import {
   type MobileSymbolAgent,
 } from "./quick-input";
 import type { MobileQuickPhrase } from "../types";
+import { updateSystemKeyboardToggleState } from "./system-keyboard-state";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -26,7 +27,7 @@ export type MobileShortcutRunOptions = {
 
 export type MobileKeyboardControllerOptions = {
   root: HTMLElement;
-  focusSystemKeyboard: () => void;
+  preserveSystemKeyboardState: () => void;
   focusAfterShortcut: () => void;
   onKeyInput: (data: string) => void;
   onPasteShortcut: () => Promise<void>;
@@ -62,6 +63,13 @@ export function createMobileKeyboardController(options: MobileKeyboardController
   function bind() {
     options.root.addEventListener("pointerdown", (event) => {
       const button = event.target instanceof Element
+        ? event.target.closest<HTMLButtonElement>("button")
+        : null;
+      if (button) options.preserveSystemKeyboardState();
+    }, true);
+
+    options.root.addEventListener("pointerdown", (event) => {
+      const button = event.target instanceof Element
         ? event.target.closest<HTMLButtonElement>("[data-mobile-shortcut]")
         : null;
       if (!button || button.dataset.mobileRepeat === "true") return;
@@ -70,6 +78,9 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     });
 
     options.root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest<HTMLButtonElement>("button")
+        : null;
       const actionButton = event.target instanceof Element
         ? event.target.closest<HTMLButtonElement>("[data-mobile-action]")
         : null;
@@ -83,7 +94,17 @@ export function createMobileKeyboardController(options: MobileKeyboardController
       if (mobileActionEventPhase(action) === "click") {
         clearDeferredAction();
         queueMicrotask(() => void options.onAction(action));
+        return;
       }
+      if (!button) return;
+      const activation = mobileSyntheticActivation(button, event.detail);
+      if (!activation) return;
+      options.preserveSystemKeyboardState();
+      if (activation.kind === "shortcut") void runShortcut(activation.value);
+      else if (activation.kind === "chord") runChord(activation.value);
+      else if (activation.kind === "page") activatePage(activation.value);
+      else if (activation.kind === "phrase") void options.onPhrase(activation.value);
+      else if (activation.kind === "action") void options.onAction(activation.value);
     });
 
     options.root.addEventListener("pointerdown", (event) => {
@@ -203,7 +224,7 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     if (isMobileModifierShortcut(shortcut)) {
       toggleMobileModifier(sticky, shortcut);
       updateShortcutState();
-      options.focusSystemKeyboard();
+      options.focusAfterShortcut();
       return;
     }
 
@@ -260,6 +281,12 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     });
   }
 
+  function updateSystemKeyboardState(enabled: boolean) {
+    const button = options.root.querySelector<HTMLButtonElement>("[data-mobile-action='toggle-system-keyboard']");
+    if (!button) return;
+    updateSystemKeyboardToggleState(button, enabled);
+  }
+
   return {
     bind,
     renderQuickInput,
@@ -268,5 +295,6 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     encodeStickyInput,
     clearSticky,
     updateShortcutState,
+    updateSystemKeyboardState,
   };
 }

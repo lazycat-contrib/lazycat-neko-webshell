@@ -66,6 +66,7 @@ export const enMessages = {
   "action.newTab": "New terminal tab",
   "action.openNotificationLink": "Open link",
   "action.pasteClipboard": "Paste",
+  "action.toggleSystemKeyboard": "Toggle system keyboard",
   "action.pluginFileDownload": "Download",
   "action.pluginFileHome": "Home",
   "action.pluginFileList": "List",
