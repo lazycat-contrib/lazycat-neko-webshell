@@ -1,6 +1,6 @@
 {
   "name": "lazycat-neko-webshell",
-  "version": "0.6.8",
+  "version": "0.6.9",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "@connectrpc/connect-web": "2.1.1",
     "@lobehub/icons-static-svg": "^1.94.0",
     "lucide": "^0.475.0",
-    "restty": "0.2.5",
+    "restty": "0.2.6",
     "trzsz": "^1.1.6",
     "zmodem-ts": "^1.0.8"
   },

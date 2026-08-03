@@ -9,7 +9,7 @@ use wasmi::{
 
 use crate::config::{MAX_COLS, MAX_ROWS};
 
-const RESTTY_WASM: &[u8] = include_bytes!("../vendor/restty/0.2.5/restty.wasm");
+const RESTTY_WASM: &[u8] = include_bytes!("../vendor/restty/0.2.6/restty.wasm");
 const RESTTY_WASM_SHA256: &str = "998cee70f955a7f48390347d9453aa412f2305c85dec1574e046739f10e05ace";
 const MAX_WASM_WRITE_BYTES: usize = 1024 * 1024;
 const MAX_WASM_OUTPUT_BYTES: usize = 1024 * 1024;

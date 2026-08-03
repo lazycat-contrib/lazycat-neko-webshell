@@ -199,6 +199,8 @@ test("covers every automatic reply emitted by the bundled Restty terminal", () =
     "\x1b[6;20;10t",
     "\x1b[8;32;120t",
     "\x1bP>|ghostty 1.0\x1b\\",
+    "\x1b_Gi=31;OK\x1b\\",
+    "\x1b_Gi=32,p=7;EINVAL:invalid image\x1b\\",
     "[12;34R",
     "12;34R",
     ";34R",

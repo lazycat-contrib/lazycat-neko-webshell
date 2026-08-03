@@ -1,7 +1,7 @@
-# Restty WASM 0.2.5
+# Restty WASM 0.2.6
 
 `restty.wasm` is the MIT-licensed terminal core embedded in the npm package
-`restty@0.2.5`. It is used by the Rust provider and lightweight agent to keep
+`restty@0.2.6`. It is used by the Rust provider and lightweight agent to keep
 terminal protocol replies authoritative when no browser is attached and to
 avoid duplicate replies from multiple browser renderers.
 

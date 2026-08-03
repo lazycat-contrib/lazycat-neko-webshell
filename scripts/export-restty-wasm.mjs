@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const RESTTY_VERSION = "0.2.5";
+const RESTTY_VERSION = "0.2.6";
 const EXPECTED_SHA256 = "998cee70f955a7f48390347d9453aa412f2305c85dec1574e046739f10e05ace";
 const REQUIRED_EXPORTS = [
   "memory",

@@ -682,8 +682,8 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 5);
-        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 5);
+        assert_eq!(AGENT_VERSION, 6);
+        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 6);
     }
 
     #[test]

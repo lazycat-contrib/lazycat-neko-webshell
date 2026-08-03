@@ -7,13 +7,14 @@ type RemoteReplayPane = {
 
 export type RemoteReplayInputPolicy = "normal" | "suppress" | "immediate";
 
-// Restty 0.1.35 emits these replies directly through PtyTransport.sendInput.
+// Restty emits these replies directly through PtyTransport.sendInput.
 // Keep this grammar aligned with its cursor/device, window, color, clipboard,
-// and terminal-version response paths so replay observers never answer twice.
+// terminal-version, and Kitty graphics response paths so replay observers never answer twice.
 const generatedTerminalResponsePatterns = [
   /^\x1b\[(?:\d{1,6};\d{1,6}R|\d{1,6}R|0n|\?[\d;]{1,32}c|>[\d;]{1,32}c)/,
   /^\x1b\[(?:4|6|8);\d{1,8};\d{1,8}t/,
   /^\x1bP>\|ghostty [ -~]{1,64}\x1b\\/,
+  /^\x1b_G(?:(?:i|I|p)=\d{1,10})(?:,(?:i|I|p)=\d{1,10})*;[ -~]{1,256}\x1b\\/,
   /^\x1b\](?:10|11|12);rgb:[\da-fA-F]{4}\/[\da-fA-F]{4}\/[\da-fA-F]{4}\x07/,
   /^\x1b\]52;[^;\x07\x1b]*;[A-Za-z\d+/=]*\x07/,
 ] as const;

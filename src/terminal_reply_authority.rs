@@ -19,7 +19,11 @@ struct ReplyAuthorityState {
 #[derive(Default)]
 struct ReplyOnlyInputFilter {
     state: ReplyOnlyFilterState,
+    kitty_graphics: Vec<u8>,
+    kitty_graphics_overflowed: bool,
 }
+
+const MAX_KITTY_QUERY_BYTES: usize = 4096;
 
 #[derive(Default)]
 enum ReplyOnlyFilterState {
@@ -30,6 +34,7 @@ enum ReplyOnlyFilterState {
         c1: bool,
     },
     KittyGraphics {
+        c1: bool,
         escape: bool,
     },
 }
@@ -120,7 +125,14 @@ impl ReplyOnlyInputFilter {
                 }
                 ReplyOnlyFilterState::ApplicationProgramCommand { c1 } => {
                     if byte == b'G' {
-                        self.state = ReplyOnlyFilterState::KittyGraphics { escape: false };
+                        self.kitty_graphics.clear();
+                        self.kitty_graphics_overflowed = false;
+                        if c1 {
+                            self.kitty_graphics.extend_from_slice(&[APC, b'G']);
+                        } else {
+                            self.kitty_graphics.extend_from_slice(b"\x1b_G");
+                        }
+                        self.state = ReplyOnlyFilterState::KittyGraphics { c1, escape: false };
                     } else {
                         if c1 {
                             output.push(APC);
@@ -131,11 +143,31 @@ impl ReplyOnlyInputFilter {
                         continue;
                     }
                 }
-                ReplyOnlyFilterState::KittyGraphics { escape } => {
+                ReplyOnlyFilterState::KittyGraphics { c1, escape } => {
+                    self.capture_kitty_graphics_byte(byte);
                     if byte == ST || (escape && byte == b'\\') {
+                        if !self.kitty_graphics_overflowed
+                            && kitty_graphics_is_query(&self.kitty_graphics)
+                        {
+                            if c1 {
+                                output.extend_from_slice(b"\x1b_G");
+                                let command = &self.kitty_graphics[2..];
+                                let command = command
+                                    .strip_suffix(&[ST])
+                                    .or_else(|| command.strip_suffix(b"\x1b\\"))
+                                    .unwrap_or(command);
+                                output.extend_from_slice(command);
+                                output.extend_from_slice(b"\x1b\\");
+                            } else {
+                                output.extend_from_slice(&self.kitty_graphics);
+                            }
+                        }
+                        self.kitty_graphics.clear();
+                        self.kitty_graphics_overflowed = false;
                         self.state = ReplyOnlyFilterState::Normal;
                     } else {
                         self.state = ReplyOnlyFilterState::KittyGraphics {
+                            c1,
                             escape: byte == ESC,
                         };
                     }
@@ -145,6 +177,54 @@ impl ReplyOnlyInputFilter {
         }
         Cow::Owned(output)
     }
+
+    fn capture_kitty_graphics_byte(&mut self, byte: u8) {
+        if self.kitty_graphics_overflowed {
+            return;
+        }
+        if self.kitty_graphics.len() >= MAX_KITTY_QUERY_BYTES {
+            self.kitty_graphics.clear();
+            self.kitty_graphics_overflowed = true;
+            return;
+        }
+        self.kitty_graphics.push(byte);
+    }
+}
+
+fn kitty_graphics_is_query(sequence: &[u8]) -> bool {
+    const ESC: u8 = 0x1b;
+    const APC: u8 = 0x9f;
+    const ST: u8 = 0x9c;
+
+    let body = if sequence.starts_with(b"\x1b_G") {
+        &sequence[3..]
+    } else if sequence.starts_with(&[APC, b'G']) {
+        &sequence[2..]
+    } else {
+        return false;
+    };
+    let body = if body.ends_with(&[ESC, b'\\']) {
+        &body[..body.len() - 2]
+    } else if body.ends_with(&[ST]) {
+        &body[..body.len() - 1]
+    } else {
+        return false;
+    };
+    let control = body
+        .iter()
+        .position(|byte| *byte == b';')
+        .map_or(body, |separator| &body[..separator]);
+    let mut query_action = false;
+    for field in control.split(|byte| *byte == b',') {
+        if !field.starts_with(b"a=") {
+            continue;
+        }
+        if query_action || field != b"a=q" {
+            return false;
+        }
+        query_action = true;
+    }
+    query_action
 }
 
 #[cfg(test)]
@@ -243,6 +323,79 @@ mod tests {
 
         assert_eq!(replies, vec![b"\x1b[1;5R".to_vec()]);
         assert_eq!(published.into_inner(), vec![first, second]);
+    }
+
+    #[test]
+    fn answers_kitty_graphics_queries_before_publishing_them() {
+        let authority = TerminalReplyAuthority::new(80, 24).expect("create reply authority");
+        let query = b"\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\".to_vec();
+        let events = RefCell::new(Vec::new());
+
+        authority
+            .process_output(
+                query.clone(),
+                |reply| {
+                    events.borrow_mut().push(Event::Reply(reply));
+                    Ok(())
+                },
+                |output| events.borrow_mut().push(Event::Output(output)),
+            )
+            .expect("process Kitty graphics query");
+
+        assert_eq!(
+            events.into_inner(),
+            vec![
+                Event::Reply(b"\x1b_Gi=31;OK\x1b\\".to_vec()),
+                Event::Output(query),
+            ]
+        );
+    }
+
+    #[test]
+    fn answers_split_c1_kitty_graphics_queries_once_complete() {
+        let authority = TerminalReplyAuthority::new(80, 24).expect("create reply authority");
+        let mut replies = Vec::new();
+
+        authority
+            .process_output(
+                b"\x9fGi=32,s=1,v=1,a=q,t=d,f=24;AA".to_vec(),
+                |reply| {
+                    replies.push(reply);
+                    Ok(())
+                },
+                drop,
+            )
+            .expect("process first Kitty query chunk");
+        authority
+            .process_output(
+                b"AA\x9c".to_vec(),
+                |reply| {
+                    replies.push(reply);
+                    Ok(())
+                },
+                drop,
+            )
+            .expect("process second Kitty query chunk");
+
+        assert_eq!(replies, vec![b"\x1b_Gi=32;OK\x1b\\".to_vec()]);
+    }
+
+    #[test]
+    fn strips_oversized_kitty_queries_from_the_headless_parser() {
+        let mut filter = ReplyOnlyInputFilter::default();
+        let mut query = b"\x1b_Gi=33,a=q;".to_vec();
+        query.extend(std::iter::repeat_n(b'A', MAX_KITTY_QUERY_BYTES));
+        query.extend_from_slice(b"\x1b\\");
+
+        assert!(filter.filter(&query).is_empty());
+    }
+
+    #[test]
+    fn strips_kitty_commands_with_conflicting_actions() {
+        let mut filter = ReplyOnlyInputFilter::default();
+        let command = b"\x1b_Gi=34,a=q,a=T,f=32,s=1,v=1;AAAA\x1b\\";
+
+        assert!(filter.filter(command).is_empty());
     }
 
     #[test]
