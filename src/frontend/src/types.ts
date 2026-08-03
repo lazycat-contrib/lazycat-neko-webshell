@@ -380,6 +380,7 @@ export type Settings = {
   copyOnSelect: boolean;
   useResttyClipboard: boolean;
   touchSelectionMode: TouchSelectionMode;
+  preventMobileKeyboardAutoOpen: boolean;
   mobileClockEnabled: boolean;
   mobileClockUse24Hour: boolean;
   mobileClockShowPeriod: boolean;

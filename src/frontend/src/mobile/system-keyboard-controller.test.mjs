@@ -3,6 +3,132 @@ import test from "node:test";
 
 import { createMobileSystemKeyboardController } from "./system-keyboard-controller.ts";
 
+test("keeps historical automatic keyboard focus when prevention is disabled", () => {
+  const pane = { id: "compat" };
+  const events = [];
+  const controller = createMobileSystemKeyboardController({
+    activePane: () => pane,
+    dismissPane: () => events.push("dismiss"),
+    enableAllPanes: () => events.push("enable-all"),
+    focusAutomaticPane: () => {
+      events.push("automatic-focus");
+      return true;
+    },
+    focusHardwarePane: () => events.push("hardware"),
+    focusPane: () => {
+      events.push("explicit-focus");
+      return true;
+    },
+    preventAutoOpen: () => false,
+    updateToggle: (next) => events.push(`update:${next}`),
+  });
+
+  controller.preserveState();
+  controller.restoreState();
+  assert.equal(controller.resetMountedPane(pane), false);
+
+  assert.deepEqual(events, ["automatic-focus", "update:false"]);
+});
+
+test("keeps an already-focused automatic keyboard stable after shortcuts", () => {
+  const pane = { id: "automatic-focused" };
+  const events = [];
+  const controller = createMobileSystemKeyboardController({
+    activePane: () => pane,
+    dismissPane: () => events.push("dismiss"),
+    enableAllPanes: () => {},
+    focusAutomaticPane: () => {
+      events.push("refocus");
+      return true;
+    },
+    focusHardwarePane: () => {},
+    focusPane: () => true,
+    isPaneKeyboardFocused: () => true,
+    preventAutoOpen: () => false,
+    updateToggle: (next) => events.push(`update:${next}`),
+  });
+
+  controller.restoreState();
+
+  assert.deepEqual(events, ["update:false"]);
+});
+
+test("does not activate the toggle when an input opens the keyboard automatically", () => {
+  const pane = { id: "automatic" };
+  const events = [];
+  const controller = createMobileSystemKeyboardController({
+    activePane: () => pane,
+    dismissPane: () => events.push("dismiss"),
+    enableAllPanes: () => {},
+    focusHardwarePane: () => events.push("hardware"),
+    focusPane: () => {
+      events.push("focus");
+      return true;
+    },
+    preventAutoOpen: () => false,
+    updateToggle: (next) => events.push(`update:${next}`),
+  });
+
+  controller.sync(true);
+  controller.toggle();
+
+  assert.deepEqual(events, [
+    "update:false",
+    "dismiss",
+    "hardware",
+    "update:false",
+  ]);
+});
+
+test("closes an automatically focused overlay keyboard with one toggle", () => {
+  const pane = { id: "automatic-overlay" };
+  const events = [];
+  const controller = createMobileSystemKeyboardController({
+    activePane: () => pane,
+    dismissPane: () => events.push("dismiss"),
+    enableAllPanes: () => {},
+    focusHardwarePane: () => events.push("hardware"),
+    focusPane: () => {
+      events.push("focus");
+      return true;
+    },
+    isPaneKeyboardFocused: () => true,
+    preventAutoOpen: () => false,
+    updateToggle: (next) => events.push(`update:${next}`),
+  });
+
+  controller.toggle();
+
+  assert.deepEqual(events, ["dismiss", "hardware", "update:false"]);
+});
+
+test("applies keyboard prevention only after the preference is enabled", () => {
+  const pane = { id: "preference" };
+  let preventAutoOpen = false;
+  const events = [];
+  const controller = createMobileSystemKeyboardController({
+    activePane: () => pane,
+    dismissPane: () => events.push("dismiss"),
+    enableAllPanes: () => events.push("enable-all"),
+    focusHardwarePane: () => events.push("hardware"),
+    focusPane: () => true,
+    preventAutoOpen: () => preventAutoOpen,
+    updateToggle: (next) => events.push(`update:${next}`),
+  });
+
+  controller.applyPreference();
+  preventAutoOpen = true;
+  controller.applyPreference();
+
+  assert.deepEqual(events, [
+    "enable-all",
+    "update:false",
+    "dismiss",
+    "hardware",
+    "update:false",
+  ]);
+});
+
 test("closes the system keyboard mode when the active pane changes", () => {
   const firstPane = { id: "first" };
   const secondPane = { id: "second" };

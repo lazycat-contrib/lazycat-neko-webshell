@@ -14,6 +14,7 @@ const HERDR_EVENT_NAMES = new Map(contract.subscriptions.flatMap((event) => [
   [event.replace(".", "_"), event],
 ]));
 const HERDR_METADATA_EVENT_MIN_VERSION = [0, 7, 4] as const;
+const HERDR_WORKSPACE_REORDER_EVENT_MIN_VERSION = [0, 8, 0] as const;
 
 const BASE_EVENT_SUBSCRIPTIONS = [
   "workspace.created",
@@ -78,6 +79,9 @@ export function herdrEventSubscriptions(
   const subscriptions: JsonRecord[] = BASE_EVENT_SUBSCRIPTIONS.map((type) => ({ type }));
   if (herdrVersionAtLeast(herdrVersion, HERDR_METADATA_EVENT_MIN_VERSION)) {
     subscriptions.push(...METADATA_EVENT_SUBSCRIPTIONS.map((type) => ({ type })));
+  }
+  if (herdrVersionAtLeast(herdrVersion, HERDR_WORKSPACE_REORDER_EVENT_MIN_VERSION)) {
+    subscriptions.push({ type: "workspace.reordered" });
   }
   for (const paneId of uniqueNonEmpty(paneIds)) {
     subscriptions.push({ type: "pane.agent_status_changed", pane_id: paneId });

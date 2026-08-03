@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::future::Future;
 use std::io;
@@ -40,6 +40,8 @@ use crate::workspace::{
 const CLIENT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TICKET_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_WORKSPACE_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+const REMOTE_REPLAY_TAIL_MAX_BYTES: usize = 512 * 1024;
+const REMOTE_REPLAY_TAIL_MAX_FRAMES: usize = 256;
 const REMOTE_HERDR_LAUNCH: &str = "if command -v herdr >/dev/null 2>&1; then exec herdr; elif [ -x \"$HOME/.local/bin/herdr\" ]; then exec \"$HOME/.local/bin/herdr\"; else printf '%s\\n' 'Herdr is not installed on this remote device.'; exit 127; fi\r";
 
 type RemoteWebSocketRequest = tokio_tungstenite::tungstenite::http::Request<()>;
@@ -165,6 +167,152 @@ enum RemoteBootstrapAction {
     None,
     SendHerdr,
     RevertPending,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RemoteReplayControl {
+    Start,
+    Complete,
+    OutputSequence(Option<u64>),
+    Other,
+}
+
+struct BufferedRemoteReplayFrame {
+    output: RemoteMessage,
+    output_sequence: Option<RemoteMessage>,
+    bytes: usize,
+}
+
+struct RemoteReplayTailBuffer {
+    active: bool,
+    frames: VecDeque<BufferedRemoteReplayFrame>,
+    total_bytes: usize,
+    max_bytes: usize,
+    max_frames: usize,
+}
+
+impl RemoteReplayTailBuffer {
+    fn new(max_bytes: usize, max_frames: usize) -> Self {
+        Self {
+            active: false,
+            frames: VecDeque::new(),
+            total_bytes: 0,
+            max_bytes: max_bytes.max(1),
+            max_frames: max_frames.max(1),
+        }
+    }
+
+    fn push(
+        &mut self,
+        message: RemoteMessage,
+        selector: &str,
+        pane_id: &str,
+        replay_after: u64,
+    ) -> Result<Vec<BrowserMessage>, ClientTerminalError> {
+        match remote_replay_control(&message) {
+            Some(RemoteReplayControl::Start) => {
+                self.active = true;
+                self.clear();
+                return remote_message_to_browser(message, selector, pane_id, replay_after)
+                    .map(|message| message.into_iter().collect());
+            }
+            Some(RemoteReplayControl::Complete) if self.active => {
+                self.active = false;
+                let mut messages = Vec::with_capacity(self.frames.len().saturating_mul(2) + 1);
+                for frame in self.frames.drain(..) {
+                    for buffered in [Some(frame.output), frame.output_sequence]
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let Some(buffered) =
+                            remote_message_to_browser(buffered, selector, pane_id, replay_after)?
+                        {
+                            messages.push(buffered);
+                        }
+                    }
+                }
+                self.total_bytes = 0;
+                if let Some(complete) =
+                    remote_message_to_browser(message, selector, pane_id, replay_after)?
+                {
+                    messages.push(complete);
+                }
+                return Ok(messages);
+            }
+            Some(RemoteReplayControl::OutputSequence(sequence)) if self.active => {
+                if let Some(frame) = self.frames.back_mut() {
+                    let canonical = sequence.map_or_else(
+                        || serde_json::json!({ "type": "output-sequence" }),
+                        |sequence| {
+                            serde_json::json!({
+                                "type": "output-sequence",
+                                "sequence": sequence,
+                            })
+                        },
+                    );
+                    let canonical = serde_json::to_string(&canonical)
+                        .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))?;
+                    frame.output_sequence = Some(RemoteMessage::Text(canonical.into()));
+                    return Ok(Vec::new());
+                }
+            }
+            _ => {}
+        }
+
+        if self.active
+            && let RemoteMessage::Binary(mut bytes) = message
+        {
+            if bytes.len() > self.max_bytes {
+                bytes = bytes::Bytes::copy_from_slice(&bytes[bytes.len() - self.max_bytes..]);
+            }
+            let byte_count = bytes.len();
+            self.frames.push_back(BufferedRemoteReplayFrame {
+                output: RemoteMessage::Binary(bytes),
+                output_sequence: None,
+                bytes: byte_count,
+            });
+            self.total_bytes = self.total_bytes.saturating_add(byte_count);
+            while self.frames.len() > 1
+                && (self.frames.len() > self.max_frames || self.total_bytes > self.max_bytes)
+            {
+                if let Some(removed) = self.frames.pop_front() {
+                    self.total_bytes = self.total_bytes.saturating_sub(removed.bytes);
+                }
+            }
+            return Ok(Vec::new());
+        }
+
+        remote_message_to_browser(message, selector, pane_id, replay_after)
+            .map(|message| message.into_iter().collect())
+    }
+
+    fn clear(&mut self) {
+        self.frames.clear();
+        self.total_bytes = 0;
+    }
+}
+
+impl Default for RemoteReplayTailBuffer {
+    fn default() -> Self {
+        Self::new(REMOTE_REPLAY_TAIL_MAX_BYTES, REMOTE_REPLAY_TAIL_MAX_FRAMES)
+    }
+}
+
+fn remote_replay_control(message: &RemoteMessage) -> Option<RemoteReplayControl> {
+    let RemoteMessage::Text(text) = message else {
+        return None;
+    };
+    let value = serde_json::from_str::<serde_json::Value>(text.as_str()).ok()?;
+    Some(
+        match value.get("type").and_then(serde_json::Value::as_str) {
+            Some("history-replay-start") => RemoteReplayControl::Start,
+            Some("history-replay-complete") => RemoteReplayControl::Complete,
+            Some("output-sequence") => RemoteReplayControl::OutputSequence(
+                value.get("sequence").and_then(serde_json::Value::as_u64),
+            ),
+            _ => RemoteReplayControl::Other,
+        },
+    )
 }
 
 struct RemoteHerdrBootstrap {
@@ -643,6 +791,7 @@ pub(crate) async fn relay_terminal_socket(
         Some((RemoteProgramKind::Herdr, RemoteBootstrapState::Pending))
     )
     .then(RemoteHerdrBootstrap::pending);
+    let mut replay_tail = RemoteReplayTailBuffer::default();
 
     let browser_to_remote = async {
         while let Some(message) = browser_stream.next().await {
@@ -662,15 +811,13 @@ pub(crate) async fn relay_terminal_socket(
                     remote_bootstrap_event(&message).map(|event| state.observe(event))
                 })
                 .unwrap_or(RemoteBootstrapAction::None);
-            let Some(message) =
-                remote_message_to_browser(message, &selector, &pane_id, replay_after)?
-            else {
-                break;
-            };
+            let messages = replay_tail.push(message, &selector, &pane_id, replay_after)?;
+            for message in messages {
+                browser_sink.send(message).await?;
+            }
             match bootstrap_action {
                 RemoteBootstrapAction::SendHerdr => {
                     let mut sink = remote_sink.lock().await;
-                    browser_sink.send(message).await?;
                     sink.send(remote_herdr_launch_message()?).await?;
                     if let Some(state) = bootstrap.as_mut() {
                         state.mark_sent();
@@ -685,7 +832,6 @@ pub(crate) async fn relay_terminal_socket(
                     }
                 }
                 RemoteBootstrapAction::RevertPending => {
-                    browser_sink.send(message).await?;
                     if let Err(error) =
                         remote_programs.mark_pending_after_rejection(&selector, &pane_id)
                     {
@@ -697,7 +843,7 @@ pub(crate) async fn relay_terminal_socket(
                         );
                     }
                 }
-                RemoteBootstrapAction::None => browser_sink.send(message).await?,
+                RemoteBootstrapAction::None => {}
             }
         }
         Ok::<(), anyhow::Error>(())
@@ -927,12 +1073,17 @@ fn translate_remote_control(
             "allow_generated_input": allow_generated_input,
         })
     } else {
+        let last_sequence = value
+            .get("last_sequence")
+            .or_else(|| value.get("lastSequence"))
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(replay_after);
         serde_json::json!({
             "type": "replay-complete",
             "session_id": pane_id,
             "selector": selector,
             "pane_id": pane_id,
-            "last_sequence": replay_after,
+            "last_sequence": last_sequence,
         })
     };
     serde_json::to_string(&translated)
@@ -1575,14 +1726,16 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use axum::extract::ws::Message as BrowserMessage;
     use axum::http::StatusCode;
+    use tokio_tungstenite::tungstenite::Message as RemoteMessage;
 
     use super::{
         ClientTerminalTicket, RemoteBootstrapAction, RemoteBootstrapEvent, RemoteHerdrBootstrap,
-        RemoteWorkspaceState, authorize_client_id, await_client_terminal_boundary,
-        classify_remote_websocket_failure, client_terminal_url, convert_remote_workspace,
-        redact_sensitive_text, remote_access_error, remote_herdr_launch_message,
-        remote_herdr_rename_action, remote_session_action_request,
+        RemoteReplayTailBuffer, RemoteWorkspaceState, authorize_client_id,
+        await_client_terminal_boundary, classify_remote_websocket_failure, client_terminal_url,
+        convert_remote_workspace, redact_sensitive_text, remote_access_error,
+        remote_herdr_launch_message, remote_herdr_rename_action, remote_session_action_request,
         remote_websocket_failure_payload, remote_workspace_action, sanitize_client_terminal_url,
         terminal_theme_color, translate_remote_control, validate_ticket, websocket_terminal_url,
         workspace_active_session, workspace_sessions, workspace_tab_id_for_pane,
@@ -1758,7 +1911,7 @@ mod tests {
         assert_eq!(start["allow_generated_input"], true);
 
         let complete = translate_remote_control(
-            r#"{"type":"history-replay-complete","selector":"client:client-a","pane_id":"pane-1"}"#,
+            r#"{"type":"history-replay-complete","selector":"client:client-a","pane_id":"pane-1","last_sequence":19}"#,
             "client:client-a",
             "pane-1",
             12,
@@ -1766,7 +1919,7 @@ mod tests {
         .expect("translated complete");
         let complete: serde_json::Value = serde_json::from_str(&complete).expect("complete JSON");
         assert_eq!(complete["type"], "replay-complete");
-        assert_eq!(complete["last_sequence"], 12);
+        assert_eq!(complete["last_sequence"], 19);
 
         assert_eq!(
             translate_remote_control(
@@ -1796,6 +1949,120 @@ mod tests {
         )
         .expect_err("mismatched selector must be rejected");
         assert!(error.to_string().contains("identity mismatch"));
+    }
+
+    #[test]
+    fn remote_replay_tail_delivers_only_the_latest_bounded_frames() {
+        let mut replay = RemoteReplayTailBuffer::new(6, 1);
+        let selector = "client:client-a";
+        let pane_id = "pane-1";
+
+        let start = replay
+            .push(
+                RemoteMessage::Text(
+                    r#"{"type":"history-replay-start","selector":"client:client-a","pane_id":"pane-1"}"#
+                        .into(),
+                ),
+                selector,
+                pane_id,
+                0,
+            )
+            .expect("replay start");
+        assert_eq!(start.len(), 1);
+
+        for message in [
+            RemoteMessage::Binary(b"old".to_vec().into()),
+            RemoteMessage::Text(r#"{"type":"output-sequence","sequence":1}"#.into()),
+            RemoteMessage::Binary(b"latest".to_vec().into()),
+            RemoteMessage::Text(
+                r#"{"type":"output-sequence","sequence":2,"padding":"untrusted"}"#.into(),
+            ),
+        ] {
+            assert!(
+                replay
+                    .push(message, selector, pane_id, 0)
+                    .expect("buffer replay frame")
+                    .is_empty()
+            );
+        }
+
+        let tail = replay
+            .push(
+                RemoteMessage::Text(
+                    r#"{"type":"history-replay-complete","selector":"client:client-a","pane_id":"pane-1","last_sequence":2}"#
+                        .into(),
+                ),
+                selector,
+                pane_id,
+                0,
+            )
+            .expect("replay complete");
+
+        assert_eq!(tail.len(), 3);
+        assert!(matches!(&tail[0], BrowserMessage::Binary(bytes) if bytes.as_ref() == b"latest"));
+        assert!(matches!(&tail[1], BrowserMessage::Text(text) if text.contains("output-sequence")));
+        let BrowserMessage::Text(complete) = &tail[2] else {
+            panic!("replay complete should be text");
+        };
+        let complete: serde_json::Value =
+            serde_json::from_str(complete.as_str()).expect("complete JSON");
+        assert_eq!(complete["type"], "replay-complete");
+        assert_eq!(complete["last_sequence"], 2);
+    }
+
+    #[test]
+    fn remote_replay_tail_bounds_one_large_frame_and_repeated_sequence_controls() {
+        let mut replay = RemoteReplayTailBuffer::new(6, 1);
+        let selector = "client:client-a";
+        let pane_id = "pane-1";
+
+        replay
+            .push(
+                RemoteMessage::Text(
+                    r#"{"type":"history-replay-start","selector":"client:client-a","pane_id":"pane-1"}"#
+                        .into(),
+                ),
+                selector,
+                pane_id,
+                0,
+            )
+            .expect("replay start");
+        for message in [
+            RemoteMessage::Binary(b"oversized".to_vec().into()),
+            RemoteMessage::Text(r#"{"type":"output-sequence","sequence":1}"#.into()),
+            RemoteMessage::Text(
+                r#"{"type":"output-sequence","sequence":2,"padding":"untrusted"}"#.into(),
+            ),
+        ] {
+            assert!(
+                replay
+                    .push(message, selector, pane_id, 0)
+                    .expect("buffer replay frame")
+                    .is_empty()
+            );
+        }
+
+        let tail = replay
+            .push(
+                RemoteMessage::Text(
+                    r#"{"type":"history-replay-complete","selector":"client:client-a","pane_id":"pane-1","last_sequence":2}"#
+                        .into(),
+                ),
+                selector,
+                pane_id,
+                0,
+            )
+            .expect("replay complete");
+
+        assert_eq!(tail.len(), 3);
+        assert!(matches!(&tail[0], BrowserMessage::Binary(bytes) if bytes.as_ref() == b"rsized"));
+        let BrowserMessage::Text(sequence) = &tail[1] else {
+            panic!("latest output sequence should be text");
+        };
+        let sequence: serde_json::Value =
+            serde_json::from_str(sequence.as_str()).expect("sequence JSON");
+        assert_eq!(sequence["sequence"], 2);
+        assert!(sequence.get("padding").is_none());
     }
 
     #[test]

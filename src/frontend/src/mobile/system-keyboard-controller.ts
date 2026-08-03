@@ -4,8 +4,11 @@ export type MobileSystemKeyboardControllerOptions = {
   activePane: () => TerminalPane | undefined;
   dismissPane: (pane: TerminalPane) => void;
   enableAllPanes: () => void;
+  focusAutomaticPane?: (pane: TerminalPane) => boolean;
   focusHardwarePane: (pane: TerminalPane) => void;
   focusPane: (pane: TerminalPane) => boolean;
+  isPaneKeyboardFocused?: (pane: TerminalPane) => boolean;
+  preventAutoOpen?: () => boolean;
   updateToggle: (enabled: boolean) => void;
 };
 
@@ -16,6 +19,7 @@ export function createMobileSystemKeyboardController(
   let keyboardPane: TerminalPane | undefined;
   let viewportKeyboardVisible = false;
   let mobileControlsEnabled = true;
+  const preventsAutoOpen = () => options.preventAutoOpen?.() ?? true;
 
   const dismiss = (pane: TerminalPane) => {
     options.dismissPane(pane);
@@ -23,7 +27,7 @@ export function createMobileSystemKeyboardController(
   };
 
   const preserveState = () => {
-    if (!mobileControlsEnabled) return;
+    if (!mobileControlsEnabled || !preventsAutoOpen()) return;
     const pane = options.activePane();
     if (!enabled && pane) dismiss(pane);
   };
@@ -31,6 +35,23 @@ export function createMobileSystemKeyboardController(
   const restoreState = () => {
     if (!mobileControlsEnabled) return;
     const pane = options.activePane();
+    if (!preventsAutoOpen()) {
+      const previousKeyboardPane = keyboardPane;
+      enabled = false;
+      keyboardPane = undefined;
+      if (previousKeyboardPane && previousKeyboardPane !== pane) {
+        options.dismissPane(previousKeyboardPane);
+      }
+      const focusAutomaticPane = options.focusAutomaticPane ?? options.focusPane;
+      if (
+        pane
+        && (options.isPaneKeyboardFocused?.(pane) || focusAutomaticPane(pane))
+      ) {
+        keyboardPane = pane;
+      }
+      options.updateToggle(false);
+      return;
+    }
     if (!pane) {
       const previousKeyboardPane = keyboardPane;
       enabled = false;
@@ -67,7 +88,7 @@ export function createMobileSystemKeyboardController(
     if (!mobileControlsEnabled) return;
     const pane = options.activePane();
     if (!pane) return;
-    if (enabled) {
+    if (enabled || viewportKeyboardVisible || options.isPaneKeyboardFocused?.(pane)) {
       enabled = false;
       keyboardPane = undefined;
       dismiss(pane);
@@ -78,7 +99,7 @@ export function createMobileSystemKeyboardController(
   };
 
   const resetMountedPane = (pane: TerminalPane) => {
-    if (!mobileControlsEnabled || pane !== options.activePane()) return false;
+    if (!mobileControlsEnabled || !preventsAutoOpen() || pane !== options.activePane()) return false;
     const previousKeyboardPane = keyboardPane;
     enabled = false;
     keyboardPane = undefined;
@@ -105,8 +126,24 @@ export function createMobileSystemKeyboardController(
       enabled = false;
       keyboardPane = undefined;
       viewportKeyboardVisible = false;
-      const pane = options.activePane();
-      if (pane) dismiss(pane);
+      if (!preventsAutoOpen()) {
+        options.enableAllPanes();
+      } else {
+        const pane = options.activePane();
+        if (pane) dismiss(pane);
+      }
+    }
+    if (!preventsAutoOpen()) {
+      if (visible) {
+        viewportKeyboardVisible = true;
+        keyboardPane = options.activePane();
+      } else if (viewportKeyboardVisible) {
+        viewportKeyboardVisible = false;
+        enabled = false;
+        keyboardPane = undefined;
+      }
+      options.updateToggle(enabled);
+      return;
     }
     if (visible && enabled) {
       viewportKeyboardVisible = true;
@@ -123,5 +160,19 @@ export function createMobileSystemKeyboardController(
     options.updateToggle(enabled);
   };
 
-  return { preserveState, resetMountedPane, restoreState, show, toggle, sync };
+  const applyPreference = () => {
+    enabled = false;
+    keyboardPane = undefined;
+    viewportKeyboardVisible = false;
+    if (!mobileControlsEnabled || !preventsAutoOpen()) {
+      options.enableAllPanes();
+      options.updateToggle(false);
+      return;
+    }
+    const pane = options.activePane();
+    if (pane) dismiss(pane);
+    options.updateToggle(false);
+  };
+
+  return { applyPreference, preserveState, resetMountedPane, restoreState, show, toggle, sync };
 }

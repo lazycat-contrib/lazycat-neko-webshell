@@ -1747,17 +1747,18 @@ mod tests {
     #[test]
     fn herdr_socket_allowlist_covers_documented_methods() {
         assert_eq!(MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
-        assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 17);
+        assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 18);
         assert_eq!(HERDR_SOCKET_CONTRACT.schema_version, 1);
-        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.7.5");
+        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.8.0");
         assert_eq!(
             HERDR_SOCKET_CONTRACT.source_revision,
-            "0f161fac287011b3e216383e2b8482f049fd6a7b"
+            "dc2506ea8cb58fc8cde7ceb357cad03b1aba0da1"
         );
-        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 89);
-        assert_eq!(HERDR_SOCKET_CONTRACT.subscriptions.len(), 26);
+        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 90);
+        assert_eq!(HERDR_SOCKET_CONTRACT.subscriptions.len(), 27);
         for method in [
             "session.snapshot",
+            "workspace.move_block",
             "workspace.report_metadata",
             "pane.graphics.set",
             "pane.graphics.clear",
@@ -1792,7 +1793,8 @@ mod tests {
         assert!(herdr_protocol_is_supported(14));
         assert!(herdr_protocol_is_supported(16));
         assert!(herdr_protocol_is_supported(17));
-        assert!(!herdr_protocol_is_supported(18));
+        assert!(herdr_protocol_is_supported(18));
+        assert!(!herdr_protocol_is_supported(19));
         assert!(!herdr_protocol_supports_session_snapshot(14));
         assert!(herdr_protocol_supports_session_snapshot(16));
         assert!(herdr_protocol_supports_session_snapshot(17));

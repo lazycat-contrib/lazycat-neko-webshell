@@ -338,6 +338,7 @@ import {
   enablePaneSystemKeyboardInput,
   focusPaneHardwareKeyboardInput,
   focusPaneSystemKeyboardInput,
+  isPaneSystemKeyboardInputFocused,
 } from "./mobile/system-keyboard-focus";
 import { createMobileSystemKeyboardController } from "./mobile/system-keyboard-controller";
 import {
@@ -495,8 +496,11 @@ mobileSystemKeyboard = createMobileSystemKeyboardController({
   activePane,
   dismissPane: dismissPaneSystemKeyboardInput,
   enableAllPanes: () => allPanes().forEach(enablePaneSystemKeyboardInput),
+  focusAutomaticPane: focusPaneSystemKeyboardInput,
   focusHardwarePane: focusPaneHardwareKeyboardInput,
   focusPane: focusPaneSystemKeyboard,
+  isPaneKeyboardFocused: isPaneSystemKeyboardInputFocused,
+  preventAutoOpen: () => settings.preventMobileKeyboardAutoOpen,
   updateToggle: mobileKeyboard.updateSystemKeyboardState,
 });
 const mobileQuickPhraseSettings = createMobileQuickPhraseSettingsController({
@@ -1005,6 +1009,8 @@ async function init() {
   bindActions();
   applyRuntimeChrome();
   applySettings();
+  handleViewportChange();
+  mobileSystemKeyboard.applyPreference();
   void sshProfileSettings.load();
   void document.fonts?.ready.then(() => handleViewportChange()).catch(() => {});
   createIcons({ icons });
@@ -1887,6 +1893,11 @@ function bindSettings() {
       : "long-press";
     saveSettings();
     void remountTerminalsForTouchMode();
+  });
+  elements.preventMobileKeyboardAutoOpen.addEventListener("change", () => {
+    settings.preventMobileKeyboardAutoOpen = elements.preventMobileKeyboardAutoOpen.checked;
+    saveSettings();
+    mobileSystemKeyboard.applyPreference();
   });
   elements.mobileClockEnabled.addEventListener("change", () => {
     settings.mobileClockEnabled = elements.mobileClockEnabled.checked;
@@ -2866,6 +2877,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.copyOnSelect.checked = settings.copyOnSelect;
   elements.useResttyClipboard.checked = settings.useResttyClipboard;
   elements.touchSelectionMode.value = settings.touchSelectionMode;
+  elements.preventMobileKeyboardAutoOpen.checked = settings.preventMobileKeyboardAutoOpen;
   mobileClock.updateSettingsState();
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;

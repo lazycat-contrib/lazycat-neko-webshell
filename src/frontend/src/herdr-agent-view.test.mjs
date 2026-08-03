@@ -86,10 +86,11 @@ test("renders local filters and focus targets for Herdr agents", () => {
   assert.doesNotMatch(html, /Codex review/);
 });
 
-test("enables new Agent interactions only for compatible protocol 17 state", () => {
+test("enables new Agent interactions only for the current compatible protocol", () => {
+  assert.equal(herdrAgentInteractionsAvailable({ herdr_protocol: 18, protocol_compatible: true }), true);
+  assert.equal(herdrAgentInteractionsAvailable({ herdr_protocol: 18 }), true);
   assert.equal(herdrAgentInteractionsAvailable({ herdr_protocol: 17, protocol_compatible: true }), true);
-  assert.equal(herdrAgentInteractionsAvailable({ herdr_protocol: 17 }), true);
   assert.equal(herdrAgentInteractionsAvailable({ herdr_protocol: 16, protocol_compatible: true }), false);
-  assert.equal(herdrAgentInteractionsAvailable({ herdr_protocol: 18, protocol_compatible: false }), false);
+  assert.equal(herdrAgentInteractionsAvailable({ herdr_protocol: 19, protocol_compatible: false }), false);
   assert.equal(herdrAgentInteractionsAvailable(undefined), false);
 });

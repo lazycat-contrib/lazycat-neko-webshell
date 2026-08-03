@@ -19,7 +19,7 @@ const tab = {
   label: "Herdr",
 };
 const baseState = {
-  herdr_protocol: 17,
+  herdr_protocol: 18,
   protocol_compatible: true,
   workspaces: [{ workspace_id: "w1", label: "repo", focused: true }],
   tabs: [{ tab_id: "w1:t1", label: "1", focused: true }],
@@ -33,7 +33,7 @@ const baseState = {
   }],
 };
 
-test("attaches the active protocol-17 Herdr Agent to the AI terminal target", () => {
+test("attaches the active protocol-18 Herdr Agent to the AI terminal target", () => {
   const target = buildAIChatTerminalTarget({
     pane,
     tab,

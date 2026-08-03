@@ -1,7 +1,9 @@
 import type { HerdrAgentInfo, HerdrBridgeState } from "./types";
+import { HERDR_SOCKET_PROTOCOL } from "./herdr-socket-api.ts";
 import { escapeAttr, escapeHtml } from "./utils.ts";
 
 export type HerdrAgentFilter = "all" | "working" | "blocked" | "done";
+const HERDR_AGENT_INTERACTIONS_MIN_PROTOCOL = 17;
 
 export function normalizeHerdrAgentFilter(value: string | undefined): HerdrAgentFilter {
   return value === "working" || value === "blocked" || value === "done" ? value : "all";
@@ -20,7 +22,11 @@ export type HerdrAgentMenuLabels = {
 export function herdrAgentInteractionsAvailable(
   state: Pick<HerdrBridgeState, "herdr_protocol" | "protocol_compatible"> | undefined,
 ): boolean {
-  return state?.herdr_protocol === 17 && state.protocol_compatible !== false;
+  const protocol = state?.herdr_protocol;
+  return protocol !== undefined
+    && protocol >= HERDR_AGENT_INTERACTIONS_MIN_PROTOCOL
+    && protocol <= HERDR_SOCKET_PROTOCOL
+    && state?.protocol_compatible !== false;
 }
 
 export function filterHerdrAgents(

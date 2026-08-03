@@ -44,6 +44,17 @@ export function enablePaneSystemKeyboardInput(pane: TerminalPane | undefined): b
   return true;
 }
 
+export function isPaneSystemKeyboardInputFocused(pane: TerminalPane | undefined): boolean {
+  if (!pane) return false;
+  const input = paneTerminalImeInput(pane);
+  return Boolean(
+    input
+    && !input.disabled
+    && !input.readOnly
+    && document.activeElement === input,
+  );
+}
+
 export function focusPaneHardwareKeyboardInput(pane: TerminalPane | undefined): boolean {
   if (!pane) return false;
   const input = paneTerminalImeInput(pane);

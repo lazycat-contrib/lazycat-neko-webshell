@@ -19,7 +19,7 @@ function bridgeState() {
     selector: "alpha@owner",
     available: true,
     supported_herdr_version: "0.7.5",
-    supported_protocol: 17,
+    supported_protocol: 18,
     socket_schema_version: 1,
     socket_source_revision: "test",
     workspaces: [

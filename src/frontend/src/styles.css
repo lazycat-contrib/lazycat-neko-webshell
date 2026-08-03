@@ -3993,6 +3993,10 @@ kbd {
   display: none;
 }
 
+.settings-group.mobile-only-setting {
+  display: none;
+}
+
 .field {
   display: grid;
   gap: 8px;

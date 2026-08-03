@@ -9,7 +9,8 @@ body.mobile-keyboard-visible {
 }
 
 .mobile-shortcuts,
-.field.mobile-only-setting {
+.field.mobile-only-setting,
+.settings-group.mobile-only-setting {
   display: none;
 }
 
@@ -839,6 +840,10 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
 
   .field.mobile-only-setting {
     display: grid;
+  }
+
+  .settings-group.mobile-only-setting {
+    display: block;
   }
 
   .theme-actions {

@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, INTERFACE_STYLE_IDS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "../config";
 import { normalizeMobileQuickPhrases } from "../mobile/quick-input";
+import { normalizePreventMobileKeyboardAutoOpen } from "../mobile/settings/keyboard-preference";
 import {
   normalizeAiVoiceActiveProfileId,
   normalizeAiVoiceProviderProfiles,
@@ -57,6 +58,10 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     copyOnSelect: value.copyOnSelect ?? DEFAULT_SETTINGS.copyOnSelect,
     useResttyClipboard: value.useResttyClipboard ?? DEFAULT_SETTINGS.useResttyClipboard,
     touchSelectionMode: normalizeTouchSelectionMode(value.touchSelectionMode),
+    preventMobileKeyboardAutoOpen: normalizePreventMobileKeyboardAutoOpen(
+      value.preventMobileKeyboardAutoOpen,
+      DEFAULT_SETTINGS.preventMobileKeyboardAutoOpen,
+    ),
     mobileClockEnabled: value.mobileClockEnabled ?? DEFAULT_SETTINGS.mobileClockEnabled,
     mobileClockUse24Hour: value.mobileClockUse24Hour ?? DEFAULT_SETTINGS.mobileClockUse24Hour,
     mobileClockShowPeriod: value.mobileClockShowPeriod ?? DEFAULT_SETTINGS.mobileClockShowPeriod,

@@ -119,6 +119,7 @@ export type ShellElements = {
   copyOnSelect: HTMLInputElement;
   useResttyClipboard: HTMLInputElement;
   touchSelectionMode: HTMLSelectElement;
+  preventMobileKeyboardAutoOpen: HTMLInputElement;
   mobileClockEnabled: HTMLInputElement;
   mobileClockUse24Hour: HTMLInputElement;
   mobileClockShowPeriod: HTMLInputElement;
@@ -668,6 +669,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     copyOnSelect: qs<HTMLInputElement>("#copyOnSelect"),
     useResttyClipboard: qs<HTMLInputElement>("#useResttyClipboard"),
     touchSelectionMode: qs<HTMLSelectElement>("#touchSelectionMode"),
+    preventMobileKeyboardAutoOpen: qs<HTMLInputElement>("#preventMobileKeyboardAutoOpen"),
     mobileClockEnabled: qs<HTMLInputElement>("#mobileClockEnabled"),
     mobileClockUse24Hour: qs<HTMLInputElement>("#mobileClockUse24Hour"),
     mobileClockShowPeriod: qs<HTMLInputElement>("#mobileClockShowPeriod"),

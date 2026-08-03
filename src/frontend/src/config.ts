@@ -160,6 +160,7 @@ export const DEFAULT_SETTINGS: Settings = {
   copyOnSelect: false,
   useResttyClipboard: true,
   touchSelectionMode: "long-press",
+  preventMobileKeyboardAutoOpen: false,
   mobileClockEnabled: true,
   mobileClockUse24Hour: true,
   mobileClockShowPeriod: false,

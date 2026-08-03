@@ -1,7 +1,7 @@
 {
-  "source_version": "0.7.5",
-  "source_revision": "0f161fac287011b3e216383e2b8482f049fd6a7b",
-  "protocol": 17,
+  "source_version": "0.8.0",
+  "source_revision": "dc2506ea8cb58fc8cde7ceb357cad03b1aba0da1",
+  "protocol": 18,
   "schema_version": 1,
   "methods": [
     "ping",
@@ -20,6 +20,7 @@
     "workspace.focus",
     "workspace.rename",
     "workspace.move",
+    "workspace.move_block",
     "workspace.report_metadata",
     "workspace.close",
     "worktree.list",
@@ -100,6 +101,7 @@
     "workspace.metadata_updated",
     "workspace.renamed",
     "workspace.moved",
+    "workspace.reordered",
     "workspace.closed",
     "workspace.focused",
     "worktree.created",
