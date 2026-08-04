@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   canUseActivePaneForShortcut,
+  createTerminalClipboardController,
+  terminalPasteUsesBrowserEvent,
   terminalClipboardShortcut,
 } from "./terminal-clipboard-controller.ts";
 
@@ -52,6 +54,17 @@ test("supports Ctrl+Shift shortcuts on every platform", () => {
   );
 });
 
+test("lets Ctrl+Shift+V use the browser paste event instead of permission-gated reads", () => {
+  assert.equal(
+    terminalPasteUsesBrowserEvent(keyEvent({ ctrlKey: true, shiftKey: true, key: "v", code: "KeyV" })),
+    true,
+  );
+  assert.equal(
+    terminalPasteUsesBrowserEvent(keyEvent({ metaKey: true, key: "v", code: "KeyV" })),
+    false,
+  );
+});
+
 test("ignores repeated, Alt-modified, and plain Ctrl shortcuts", () => {
   assert.equal(
     terminalClipboardShortcut(keyEvent({ ctrlKey: true, shiftKey: true, repeat: true, key: "c" }), false),
@@ -88,4 +101,46 @@ test("does not route global clipboard shortcuts from editable targets or overlay
     settingsOpen: false,
     hasActiveTab: true,
   }), true);
+});
+
+test("reports a keyboard recovery path when menu paste cannot read the clipboard", async () => {
+  const statuses = [];
+  const pane = {
+    sessionBackend: "webshell",
+    term: { restty: { pasteFromClipboard: async () => false } },
+  };
+  const controller = createTerminalClipboardController({
+    settings: () => ({ useResttyClipboard: true }),
+    activePane: () => pane,
+    paneForEventTarget: () => pane,
+    settingsOpen: () => false,
+    hasActiveTab: () => true,
+    canWrite: () => true,
+    pasteIntoHerdrPane: async () => false,
+    pasteTextIntoHerdrPane: async () => false,
+    pasteClipboardImageIntoHerdrPane: async () => false,
+    connectPanePty: () => undefined,
+    focusPaneCanvas: () => undefined,
+    scheduleReconnect: () => undefined,
+    setGlobalStatus: (message, tone) => statuses.push({ message, tone }),
+    tr: (key) => key,
+    errorMessage: (error) => String(error),
+    fallbackCopyText: () => undefined,
+    imageUploadProgress: {
+      start: () => undefined,
+      set: () => undefined,
+      finish: () => undefined,
+      fail: () => undefined,
+    },
+    clipboardImageFile: () => undefined,
+    readClipboardImagePayload: async () => undefined,
+    readClipboardText: async () => "",
+    imageFilePayload: async () => { throw new Error("unused"); },
+    clipboardImagePayloadIsValid: () => true,
+    imageFilePayloadErrorCode: () => undefined,
+    maxClipboardImageBytes: 1024,
+  });
+
+  assert.equal(await controller.pasteIntoPane(pane, true), false);
+  assert.deepEqual(statuses, [{ message: "status.pastePermissionHint", tone: "error" }]);
 });

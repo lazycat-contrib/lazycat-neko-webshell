@@ -36,6 +36,13 @@ export function terminalClipboardShortcut(
   return undefined;
 }
 
+export function terminalPasteUsesBrowserEvent(event: ShortcutEvent): boolean {
+  if (event.altKey || event.metaKey || event.repeat || !event.ctrlKey || !event.shiftKey) {
+    return false;
+  }
+  return event.key.toLowerCase() === "v" || event.code === "KeyV";
+}
+
 export function canUseActivePaneForShortcut(state: {
   targetIsEditable: boolean;
   settingsOpen: boolean;
@@ -68,6 +75,7 @@ export function createTerminalClipboardController(options: {
   imageUploadProgress: UploadProgressController;
   clipboardImageFile: (data: DataTransfer | null | undefined) => File | undefined;
   readClipboardImagePayload: () => Promise<ClipboardImagePayload | undefined>;
+  readClipboardText: () => Promise<string>;
   imageFilePayload: (file: File) => Promise<ClipboardImagePayload>;
   clipboardImagePayloadIsValid: (payload: ClipboardImagePayload) => boolean;
   imageFilePayloadErrorCode: (error: unknown) => ImagePayloadErrorCode | undefined;
@@ -93,6 +101,10 @@ export function createTerminalClipboardController(options: {
     if (!shortcut) return;
     const pane = paneForShortcutTarget(event.target);
     if (!pane) return;
+    if (shortcut === "paste" && terminalPasteUsesBrowserEvent(event)) {
+      options.focusPaneCanvas(pane);
+      return;
+    }
     event.preventDefault();
     event.stopImmediatePropagation();
     if (shortcut === "copy") {
@@ -193,25 +205,22 @@ export function createTerminalClipboardController(options: {
         }
       } catch (error) {
         if (report) {
-          options.setGlobalStatus(
-            options.tr("status.pasteFailed", { message: options.errorMessage(error) }),
-            "error",
-          );
+          options.setGlobalStatus(options.tr("status.pastePermissionHint"), "error");
         }
         return false;
       }
     }
 
     try {
-      const text = await navigator.clipboard?.readText?.() ?? "";
-      if (!text) return false;
+      const text = await options.readClipboardText();
+      if (!text) {
+        if (report) options.setGlobalStatus(options.tr("status.pastePermissionHint"), "error");
+        return false;
+      }
       return pasteTextIntoPane(pane, text);
-    } catch (error) {
+    } catch {
       if (report) {
-        options.setGlobalStatus(
-          options.tr("status.pasteFailed", { message: options.errorMessage(error) }),
-          "error",
-        );
+        options.setGlobalStatus(options.tr("status.pastePermissionHint"), "error");
       }
       return false;
     }

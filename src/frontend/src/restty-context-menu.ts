@@ -26,11 +26,11 @@ export function openResttyPaneContextMenu(
   return event.defaultPrevented;
 }
 
-export function interceptHerdrContextMenuPointer(
-  pane: TerminalPane,
+export function interceptTerminalContextMenuPointer(
+  _pane: TerminalPane,
   event: PointerEvent,
 ): boolean {
-  if (pane.sessionBackend !== "herdr" || event.pointerType !== "mouse" || event.button !== 2) {
+  if (event.pointerType !== "mouse" || event.button !== 2) {
     return false;
   }
   event.stopPropagation();
@@ -43,9 +43,7 @@ export function forwardPaneContextMenuToRestty(
 ): boolean {
   const container = pane.term?.restty?.getActivePane()?.container;
   const ownerWindow = container?.ownerDocument.defaultView;
-  const shouldForward = pane.sessionBackend === "herdr"
-    || Boolean(ownerWindow && usesCoarseTouchPointer(ownerWindow));
-  if (!container || !ownerWindow || event.target === container || !shouldForward) {
+  if (!container || !ownerWindow || event.target === container) {
     return false;
   }
 
@@ -69,8 +67,4 @@ function defaultContextMenuPoint(container: HTMLElement, ownerWindow: Window): R
     clientX: rect.left + rect.width / 2,
     clientY: Math.min(rect.bottom - 12, ownerWindow.innerHeight - 12),
   };
-}
-
-function usesCoarseTouchPointer(ownerWindow: Window): boolean {
-  return ownerWindow.matchMedia("(hover: none) and (pointer: coarse)").matches;
 }

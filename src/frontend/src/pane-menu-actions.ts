@@ -70,12 +70,22 @@ export function nativePaneContextMenuItems(
     for (const action of actions) {
       result.push({
         label: options.translate(ACTION_LABELS[action]),
+        shortcut: paneMenuShortcut(action),
         danger: action === "close-active-session",
         action: () => options.runAction(action),
       });
     }
   }
   return result;
+}
+
+export function paneMenuShortcut(
+  action: PaneMenuAction,
+  applePlatform = /Mac|iPhone|iPad|iPod/i.test(navigator.platform),
+): string | undefined {
+  if (action === "copy-selection") return applePlatform ? "⌘C" : "Ctrl+Shift+C";
+  if (action === "paste-clipboard") return applePlatform ? "⌘V" : "Ctrl+Shift+V";
+  return undefined;
 }
 
 export function paneMenuActionSupported(

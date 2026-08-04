@@ -112,7 +112,7 @@ import { createMobileTerminalGestureController, isCoarseTouchPointer } from "./m
 import {
   forwardPaneContextMenuToRestty,
   hideResttyPaneContextMenus,
-  interceptHerdrContextMenuPointer,
+  interceptTerminalContextMenuPointer,
   openResttyPaneContextMenu,
 } from "./restty-context-menu";
 import {
@@ -135,6 +135,7 @@ import {
   syncOpenSelectorFromWorkspace,
 } from "./open-workspaces";
 import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
+import { legacyCopyText, writeSystemClipboardText } from "./browser-clipboard";
 import {
   allTabPanes,
   findPaneById as findPaneByIdInTabs,
@@ -325,6 +326,7 @@ import { installPaneScrollbackFallback } from "./terminal-scrollback";
 import { observeTerminalTitleChunk } from "./terminal-title";
 import { createTerminalInputActionController } from "./terminal-input-actions";
 import { createTerminalClipboardController } from "./terminal-clipboard-controller";
+import { createTerminalRemoteClipboardBridge } from "./terminal-remote-clipboard";
 import {
   normalizeFontHintTarget,
   renderTerminalFontRenderingSettings,
@@ -983,10 +985,11 @@ const {
   setGlobalStatus,
   tr,
   errorMessage,
-  fallbackCopyText,
+  fallbackCopyText: legacyCopyText,
   imageUploadProgress,
   clipboardImageFile,
   readClipboardImagePayload,
+  readClipboardText: async () => await navigator.clipboard?.readText?.() ?? "",
   imageFilePayload,
   clipboardImagePayloadIsValid,
   imageFilePayloadErrorCode: (error) => error instanceof ImageFilePayloadError ? error.code : undefined,
@@ -2624,10 +2627,13 @@ async function pasteIntoHerdrPane(pane: TerminalPane, report: boolean): Promise<
 
   try {
     const text = await navigator.clipboard?.readText?.() ?? "";
-    if (!text) return false;
+    if (!text) {
+      if (report) setGlobalStatus(tr("status.pastePermissionHint"), "error");
+      return false;
+    }
     return pasteTextIntoHerdrPane(pane, text, report);
-  } catch (error) {
-    if (report) setGlobalStatus(tr("status.pasteFailed", { message: errorMessage(error) }), "error");
+  } catch {
+    if (report) setGlobalStatus(tr("status.pastePermissionHint"), "error");
     return false;
   }
 }
@@ -3611,7 +3617,7 @@ async function copyNetworkUrl(url: string) {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(url);
     } else {
-      fallbackCopyText(url);
+      legacyCopyText(url);
     }
     setPluginStatus(tr("status.urlCopied"), "ok");
   } catch (error) {
@@ -5247,7 +5253,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
   const mount = createTerminalPaneMount(id, `${tab.label} pane`, {
     onPointerDownCapture: (event) => {
       const current = findPaneById(id);
-      if (current && interceptHerdrContextMenuPointer(current, event)) {
+      if (current && interceptTerminalContextMenuPointer(current, event)) {
         activatePane(current.tabId, id, { focus: false });
       }
     },
@@ -5263,7 +5269,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     },
     onPointerUpCapture: (event) => {
       const current = findPaneById(id);
-      if (current) interceptHerdrContextMenuPointer(current, event);
+      if (current) interceptTerminalContextMenuPointer(current, event);
     },
     onPointerUp: (event) => {
       if (event.pointerType !== "touch") return;
@@ -5415,6 +5421,19 @@ async function mountTerminal(pane: TerminalPane) {
   pane.mount.innerHTML = "";
   applyThemeToMount(pane.mount, currentAppearanceContext());
   pane.decoder = new TextDecoder();
+  const remoteClipboard = createTerminalRemoteClipboardBridge({
+    enabled: () => settings.useResttyClipboard
+      && !pane.replaying
+      && document.visibilityState !== "hidden"
+      && activePane()?.id === pane.id,
+    writeText: writeSystemClipboardText,
+    onCopied: () => setPaneStatus(pane, tr("status.remoteClipboardCopied"), "ok"),
+    onError: (error) => setPaneStatus(
+      pane,
+      tr("status.remoteClipboardFailed", { message: errorMessage(error) }),
+      "error",
+    ),
+  });
 
   const term = createPaneTerminal({
     cols: pane.cols || INITIAL_COLS,
@@ -5429,6 +5448,7 @@ async function mountTerminal(pane: TerminalPane) {
     transport,
     forwardTerminalReplies: pane.terminalReplyAuthority !== "server",
     beforeInput: ({ text, source }) => transformMobileStickyInput(text, source),
+    beforeRenderOutput: ({ text }) => remoteClipboard.beforeRenderOutput(text),
     contextMenuItems: () => nativePaneContextMenuItems({
       pane,
       tab: tabForPane(pane),
@@ -6713,18 +6733,6 @@ function findPaneById(id: string): TerminalPane | undefined {
 
 function tabForPane(pane: TerminalPane): TerminalTab | undefined {
   return tabForPaneInTabs(tabs, pane);
-}
-
-function fallbackCopyText(text: string) {
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  textarea.remove();
 }
 
 function tabTone(tab: TerminalTab): Tone {

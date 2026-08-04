@@ -23,6 +23,7 @@ export type PaneTerminalOptions = {
   transport: PaneTerminalTransport | undefined;
   forwardTerminalReplies?: boolean;
   beforeInput: (payload: BeforeInputPayload) => string | undefined;
+  beforeRenderOutput?: (payload: BeforeInputPayload) => string | undefined;
   contextMenuItems: () => Array<NativePaneContextMenuItem | "separator">;
   searchClearButtonText: string;
   searchPlaceholder: string;
@@ -93,6 +94,7 @@ export function createPaneTerminal(options: PaneTerminalOptions): Terminal {
     },
     services: {
       beforeInput: options.beforeInput,
+      beforeRenderOutput: options.beforeRenderOutput,
       ptyTransport: options.transport,
     },
   });

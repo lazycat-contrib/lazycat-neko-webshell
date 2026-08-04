@@ -32,6 +32,11 @@ test("uses translated labels in Restty native context menus", () => {
   assert.ok(labels.includes("translated:action.copySelection"));
   assert.ok(labels.includes("translated:action.closeActiveSession"));
   assert.equal(labels.some((label) => label === "Split up"), false);
+
+  const copy = items.find((item) => item !== "separator" && item.label === "translated:action.copySelection");
+  const paste = items.find((item) => item !== "separator" && item.label === "translated:action.pasteClipboard");
+  assert.equal(copy.shortcut, "Ctrl+Shift+C");
+  assert.equal(paste.shortcut, "Ctrl+Shift+V");
 });
 
 test("keeps Herdr context menu actions within Herdr capabilities", () => {

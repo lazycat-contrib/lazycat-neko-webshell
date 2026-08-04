@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   forwardPaneContextMenuToRestty,
   hideResttyPaneContextMenus,
-  interceptHerdrContextMenuPointer,
+  interceptTerminalContextMenuPointer,
   openResttyPaneContextMenu,
 } from "./restty-context-menu.ts";
 
@@ -68,7 +68,7 @@ test("opens the Restty menu on its active pane", () => {
   assert.equal(target.dispatched().clientY, 688);
 });
 
-test("stops Herdr desktop right-button pointer events before the terminal canvas", () => {
+test("stops desktop right-button pointer events before any terminal canvas", () => {
   const target = fixture({ coarse: false, sessionBackend: "herdr" });
   const pointer = new FakeEvent("pointerdown", {
     cancelable: true,
@@ -76,21 +76,21 @@ test("stops Herdr desktop right-button pointer events before the terminal canvas
     button: 2,
   });
 
-  assert.equal(interceptHerdrContextMenuPointer(target.pane, pointer), true);
+  assert.equal(interceptTerminalContextMenuPointer(target.pane, pointer), true);
   assert.equal(pointer.propagationStopped, true);
   assert.equal(pointer.defaultPrevented, false);
 
   const leftClick = new FakeEvent("pointerdown", { pointerType: "mouse", button: 0 });
-  assert.equal(interceptHerdrContextMenuPointer(target.pane, leftClick), false);
+  assert.equal(interceptTerminalContextMenuPointer(target.pane, leftClick), false);
   assert.equal(leftClick.propagationStopped, false);
 
   const webshell = fixture({ coarse: false, sessionBackend: "webshell" });
   const rightClick = new FakeEvent("pointerdown", { pointerType: "mouse", button: 2 });
-  assert.equal(interceptHerdrContextMenuPointer(webshell.pane, rightClick), false);
-  assert.equal(rightClick.propagationStopped, false);
+  assert.equal(interceptTerminalContextMenuPointer(webshell.pane, rightClick), true);
+  assert.equal(rightClick.propagationStopped, true);
 });
 
-test("forwards touch and desktop Herdr context menus without intercepting other desktop panes", () => {
+test("forwards context menus from every terminal backend into the Restty menu", () => {
   const herdr = fixture({ coarse: false, sessionBackend: "herdr" });
   const herdrEvent = new FakeEvent("contextmenu", {
     cancelable: true,
@@ -120,9 +120,10 @@ test("forwards touch and desktop Herdr context menus without intercepting other 
     clientY: 40,
     target: {},
   });
-  assert.equal(forwardPaneContextMenuToRestty(desktop.pane, desktopEvent), false);
-  assert.equal(desktopEvent.defaultPrevented, false);
-  assert.equal(desktop.dispatched(), undefined);
+  assert.equal(forwardPaneContextMenuToRestty(desktop.pane, desktopEvent), true);
+  assert.equal(desktopEvent.defaultPrevented, true);
+  assert.equal(desktop.dispatched().clientX, 30);
+  assert.equal(desktop.dispatched().clientY, 40);
 });
 
 test("hides menus owned by every Restty terminal", () => {
