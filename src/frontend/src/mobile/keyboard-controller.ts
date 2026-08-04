@@ -134,6 +134,12 @@ export function createMobileKeyboardController(options: MobileKeyboardController
         ? event.target.closest<HTMLButtonElement>("[data-mobile-action]")
         : null;
       const action = actionButton?.dataset.mobileAction ?? "";
+      if (mobileActionEventPhase(action) === "pointerup") {
+        event.preventDefault();
+        clearDeferredAction();
+        void options.onAction(action);
+        return;
+      }
       if (mobileActionEventPhase(action) !== "click") return;
       event.preventDefault();
       scheduleDeferredAction(action);

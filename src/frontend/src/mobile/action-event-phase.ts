@@ -1,5 +1,6 @@
-export function mobileActionEventPhase(action: string): "pointerdown" | "click" {
-  return action === "pane-menu" || action === "toggle-system-keyboard" ? "click" : "pointerdown";
+export function mobileActionEventPhase(action: string): "pointerdown" | "pointerup" | "click" {
+  if (action === "toggle-system-keyboard") return "pointerup";
+  return action === "pane-menu" ? "click" : "pointerdown";
 }
 
 export type MobileSyntheticActivation = {

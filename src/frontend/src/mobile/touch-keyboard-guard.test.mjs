@@ -35,6 +35,30 @@ test("restores the IME input when a touch ends outside the terminal pane", () =>
   assert.equal(input.readOnly, false);
 });
 
+test("keeps the IME readonly through the end of a vertical scroll gesture", async () => {
+  const pane = new EventTarget();
+  const globalTarget = new EventTarget();
+  const visibilityTarget = new EventTarget();
+  const input = { readOnly: false };
+
+  installTouchKeyboardReadOnlyGuard({
+    pane,
+    globalTarget,
+    visibilityTarget,
+    input: () => input,
+    scrollLockThresholdPx: 8,
+    scrollAxisRatio: 0.8,
+  });
+
+  pane.dispatchEvent(new TouchPointerEvent("pointerdown", 11, "touch", 40, 120));
+  pane.dispatchEvent(new TouchPointerEvent("pointermove", 11, "touch", 42, 80));
+  globalTarget.dispatchEvent(new TouchPointerEvent("pointerup", 11, "touch", 42, 80));
+
+  assert.equal(input.readOnly, true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(input.readOnly, false);
+});
+
 test("restores stale readonly state before starting the next touch", () => {
   const pane = new EventTarget();
   const globalTarget = new EventTarget();

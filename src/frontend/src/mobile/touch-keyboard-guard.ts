@@ -27,8 +27,13 @@ export function installTouchKeyboardReadOnlyGuard(
   let suppressInput: ReadOnlyInput | null = null;
   let suppressInputReadOnly = false;
   let scrollLocked = false;
+  let deferredRestore: ReturnType<typeof setTimeout> | undefined;
 
   const restoreInput = () => {
+    if (deferredRestore !== undefined) {
+      clearTimeout(deferredRestore);
+      deferredRestore = undefined;
+    }
     if (suppressInput) {
       suppressInput.readOnly = suppressInputReadOnly;
       suppressInput = null;
@@ -37,9 +42,19 @@ export function installTouchKeyboardReadOnlyGuard(
     scrollLocked = false;
   };
 
+  const restoreInputAfterGesture = () => {
+    touchPointerId = undefined;
+    scrollLocked = false;
+    deferredRestore = setTimeout(restoreInput, 0);
+  };
+
   const stopTouch = (event: Event) => {
     const pointerId = pointerEvent(event).pointerId;
     if (touchPointerId === undefined || pointerId !== touchPointerId) return;
+    if (event.type === "pointerup" && scrollLocked) {
+      restoreInputAfterGesture();
+      return;
+    }
     restoreInput();
   };
 

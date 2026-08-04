@@ -7,9 +7,9 @@ import {
 } from "./action-event-phase.ts";
 import { updateSystemKeyboardToggleState } from "./system-keyboard-state.ts";
 
-test("opens the pane menu after the triggering click has finished", () => {
+test("uses one user-activation event for mobile actions", () => {
   assert.equal(mobileActionEventPhase("pane-menu"), "click");
-  assert.equal(mobileActionEventPhase("toggle-system-keyboard"), "click");
+  assert.equal(mobileActionEventPhase("toggle-system-keyboard"), "pointerup");
   assert.equal(mobileActionEventPhase("split-right"), "pointerdown");
   assert.equal(mobileActionEventPhase("copy-selection"), "pointerdown");
 });
@@ -19,6 +19,15 @@ test("classifies only synthesized Page Up clicks for accessible activation", () 
   assert.deepEqual(mobileSyntheticActivation(button, 0), {
     kind: "shortcut",
     value: "pageUp",
+  });
+  assert.equal(mobileSyntheticActivation(button, 1), undefined);
+});
+
+test("keeps keyboard activation for the system keyboard toggle without replaying a physical click", () => {
+  const button = { dataset: { mobileAction: "toggle-system-keyboard" } };
+  assert.deepEqual(mobileSyntheticActivation(button, 0), {
+    kind: "action",
+    value: "toggle-system-keyboard",
   });
   assert.equal(mobileSyntheticActivation(button, 1), undefined);
 });
