@@ -74,7 +74,7 @@ jobs:
 
   publish-tag:
     if: github.ref_type == 'tag'
-    uses: ca-x/lazycat-github-action/.github/workflows/lazycat.yml@v1.1.22
+    uses: ca-x/lazycat-github-action/.github/workflows/lazycat.yml@v1.2.1
     with:
       operation: auto
       config: .github/lazycat-action.yml
