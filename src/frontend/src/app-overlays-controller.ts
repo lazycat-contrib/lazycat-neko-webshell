@@ -1,5 +1,5 @@
 import type { ShellElements } from "./shell";
-import { blurActiveElement, isMobileOverlayMode, prepareMobileOverlay } from "./mobile/overlay";
+import { isMobileOverlayMode } from "./mobile/overlay";
 
 type AppOverlayElements = Pick<
   ShellElements,
@@ -57,6 +57,7 @@ export function createAppOverlaysController(options: {
   closeNotificationModal: () => void;
   focusActivePaneCanvas: () => void;
   handleViewportChange: () => void;
+  prepareMobileOverlay: () => void;
 }): AppOverlaysController {
   const { elements } = options;
 
@@ -114,7 +115,7 @@ export function createAppOverlaysController(options: {
   }
 
   function openSettings(tabId?: string) {
-    prepareMobileOverlay();
+    options.prepareMobileOverlay();
     elements.settingsPage.hidden = false;
     elements.webshell.classList.add("settings-open");
     setAppBackgroundInert(true);
@@ -132,7 +133,7 @@ export function createAppOverlaysController(options: {
   function toggleSettingsMenu() {
     const open = elements.settingsMenu.hidden;
     if (open) {
-      prepareMobileOverlay();
+      options.prepareMobileOverlay();
     }
     closeShortcutHelp();
     elements.settingsMenu.hidden = !open;
@@ -140,7 +141,7 @@ export function createAppOverlaysController(options: {
   }
 
   function openPluginSidebar() {
-    prepareMobileOverlay();
+    options.prepareMobileOverlay();
     closeSettingsMenu();
     closeShortcutHelp();
     closeInstanceMenu();
@@ -169,7 +170,7 @@ export function createAppOverlaysController(options: {
   function toggleShortcutHelp() {
     const open = elements.shortcutHelp.hidden;
     if (open) {
-      prepareMobileOverlay();
+      options.prepareMobileOverlay();
     }
     closeSettingsMenu();
     closeInstanceMenu();
@@ -183,7 +184,7 @@ export function createAppOverlaysController(options: {
   }
 
   function openAboutDialog() {
-    prepareMobileOverlay();
+    options.prepareMobileOverlay();
     closeShortcutHelp();
     closeInstanceMenu();
     options.closePaneMenu();
@@ -192,7 +193,7 @@ export function createAppOverlaysController(options: {
   }
 
   function closeMobileOverlaysBeforeViewportChange() {
-    blurActiveElement();
+    options.prepareMobileOverlay();
     closeSettingsMenu();
     closeInstanceMenu();
     options.closeNewTabMenu();
@@ -233,7 +234,7 @@ export function createAppOverlaysController(options: {
   function toggleInstanceMenu() {
     const open = elements.instanceMenu.hidden;
     if (open) {
-      prepareMobileOverlay();
+      options.prepareMobileOverlay();
     }
     closeSettingsMenu();
     elements.instanceMenu.hidden = !open;

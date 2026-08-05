@@ -12,8 +12,9 @@ export function blurActiveElement() {
   }
 }
 
-export function prepareMobileOverlay() {
+export function prepareMobileOverlay(onPrepare: () => void) {
   if (isMobileOverlayMode()) {
+    onPrepare();
     blurActiveElement();
   }
 }

@@ -1,3 +1,8 @@
+import {
+  isMobileTerminalTapGesture,
+  type MobileTerminalGesture,
+} from "./terminal-gestures.ts";
+
 export type ReadOnlyInput = {
   readOnly: boolean;
 };
@@ -7,6 +12,7 @@ export type TouchKeyboardReadOnlyGuardOptions = {
   globalTarget: EventTarget;
   visibilityTarget: EventTarget;
   input: () => ReadOnlyInput | null;
+  onGestureEnd?: (event: Event, gesture: MobileTerminalGesture, cancelled: boolean) => void;
   scrollLockThresholdPx: number;
   scrollAxisRatio: number;
 };
@@ -24,6 +30,8 @@ export function installTouchKeyboardReadOnlyGuard(
   let touchPointerId: number | undefined;
   let startX = 0;
   let startY = 0;
+  let startTime = 0;
+  let maxDistance = 0;
   let suppressInput: ReadOnlyInput | null = null;
   let suppressInputReadOnly = false;
   let scrollLocked = false;
@@ -39,23 +47,41 @@ export function installTouchKeyboardReadOnlyGuard(
       suppressInput = null;
     }
     touchPointerId = undefined;
+    maxDistance = 0;
     scrollLocked = false;
   };
 
-  const restoreInputAfterGesture = () => {
+  const gestureForEvent = (event: Event): MobileTerminalGesture => {
+    const pointer = pointerEvent(event);
+    const dx = (pointer.clientX ?? startX) - startX;
+    const dy = (pointer.clientY ?? startY) - startY;
+    maxDistance = Math.max(maxDistance, Math.hypot(dx, dy));
+    return {
+      dx,
+      dy,
+      elapsed: Math.max(0, performance.now() - startTime),
+      maxDistance,
+      scrollLocked,
+    };
+  };
+
+  const restoreInputAfterGesture = (event: Event, gesture: MobileTerminalGesture) => {
     touchPointerId = undefined;
     scrollLocked = false;
+    options.onGestureEnd?.(event, gesture, event.type !== "pointerup");
     deferredRestore = setTimeout(restoreInput, 0);
   };
 
   const stopTouch = (event: Event) => {
     const pointerId = pointerEvent(event).pointerId;
     if (touchPointerId === undefined || pointerId !== touchPointerId) return;
-    if (event.type === "pointerup" && scrollLocked) {
-      restoreInputAfterGesture();
+    const gesture = gestureForEvent(event);
+    if (event.type !== "pointerup" || !isMobileTerminalTapGesture(gesture)) {
+      restoreInputAfterGesture(event, gesture);
       return;
     }
     restoreInput();
+    options.onGestureEnd?.(event, gesture, false);
   };
 
   const onPointerDown = (event: Event) => {
@@ -65,6 +91,8 @@ export function installTouchKeyboardReadOnlyGuard(
     touchPointerId = pointer.pointerId;
     startX = pointer.clientX ?? 0;
     startY = pointer.clientY ?? 0;
+    startTime = performance.now();
+    maxDistance = 0;
     suppressInput = options.input();
     if (suppressInput) {
       suppressInputReadOnly = suppressInput.readOnly;
@@ -74,11 +102,13 @@ export function installTouchKeyboardReadOnlyGuard(
 
   const onPointerMove = (event: Event) => {
     const pointer = pointerEvent(event);
-    if (touchPointerId !== pointer.pointerId || scrollLocked) return;
+    if (touchPointerId !== pointer.pointerId) return;
     const dx = (pointer.clientX ?? startX) - startX;
     const dy = (pointer.clientY ?? startY) - startY;
     const absDx = Math.abs(dx);
     const absDy = Math.abs(dy);
+    maxDistance = Math.max(maxDistance, Math.hypot(dx, dy));
+    if (scrollLocked) return;
     if (Math.hypot(dx, dy) < options.scrollLockThresholdPx) return;
     if (absDy < absDx * options.scrollAxisRatio) return;
     scrollLocked = true;

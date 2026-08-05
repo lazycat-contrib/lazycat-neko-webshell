@@ -9,7 +9,16 @@ export type MobileTerminalGesture = {
   dx: number;
   dy: number;
   elapsed: number;
+  maxDistance: number;
+  scrollLocked: boolean;
 };
+
+export function isMobileTerminalTapGesture(
+  gesture: Pick<MobileTerminalGesture, "maxDistance" | "scrollLocked">,
+): boolean {
+  return !gesture.scrollLocked
+    && gesture.maxDistance <= MOBILE_TERMINAL_TAP_MOVE_THRESHOLD_PX;
+}
 
 type MobileTerminalGestureControllerOptions = {
   activateAdjacentTab: (direction: 1 | -1) => void;
@@ -27,15 +36,8 @@ export function createMobileTerminalGestureController(options: MobileTerminalGes
     x: 0,
     y: 0,
   };
-  const swipe = {
-    paneId: "",
-    x: 0,
-    y: 0,
-    time: 0,
-  };
-
   return {
-    isDoubleTap(paneId: string, event: PointerEvent): boolean {
+    isDoubleTap(paneId: string, event: Pick<PointerEvent, "clientX" | "clientY">): boolean {
       const now = performance.now();
       const dx = event.clientX - lastTap.x;
       const dy = event.clientY - lastTap.y;
@@ -48,27 +50,14 @@ export function createMobileTerminalGestureController(options: MobileTerminalGes
       lastTap.y = event.clientY;
       return samePane && close && fast;
     },
-    trackSwipeStart(paneId: string, event: PointerEvent) {
-      if (event.pointerType !== "touch") return;
-      swipe.paneId = paneId;
-      swipe.x = event.clientX;
-      swipe.y = event.clientY;
-      swipe.time = performance.now();
-    },
-    readGesture(paneId: string, event: PointerEvent): MobileTerminalGesture | undefined {
-      if (event.pointerType !== "touch" || swipe.paneId !== paneId) return undefined;
-      return {
-        dx: event.clientX - swipe.x,
-        dy: event.clientY - swipe.y,
-        elapsed: performance.now() - swipe.time,
-      };
-    },
-    clearGesture() {
-      swipe.paneId = "";
+    clearTap() {
+      lastTap.paneId = "";
+      lastTap.time = 0;
     },
     runSwipe(gesture: MobileTerminalGesture): boolean {
       if (
-        gesture.elapsed > MOBILE_TERMINAL_TAB_SWIPE_MAX_MS
+        gesture.scrollLocked
+        || gesture.elapsed > MOBILE_TERMINAL_TAB_SWIPE_MAX_MS
         || Math.abs(gesture.dx) < MOBILE_TERMINAL_TAB_SWIPE_DISTANCE_PX
         || Math.abs(gesture.dx) < Math.abs(gesture.dy) * MOBILE_TERMINAL_TAB_SWIPE_RATIO
       ) {
@@ -77,8 +66,10 @@ export function createMobileTerminalGestureController(options: MobileTerminalGes
       options.activateAdjacentTab(gesture.dx < 0 ? 1 : -1);
       return true;
     },
-    isTapGesture(gesture: Pick<MobileTerminalGesture, "dx" | "dy">): boolean {
-      return Math.hypot(gesture.dx, gesture.dy) <= MOBILE_TERMINAL_TAP_MOVE_THRESHOLD_PX;
+    isTapGesture(
+      gesture: Pick<MobileTerminalGesture, "maxDistance" | "scrollLocked">,
+    ): boolean {
+      return isMobileTerminalTapGesture(gesture);
     },
   };
 }

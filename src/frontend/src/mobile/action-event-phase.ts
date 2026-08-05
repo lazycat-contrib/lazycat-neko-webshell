@@ -3,6 +3,10 @@ export function mobileActionEventPhase(action: string): "pointerdown" | "pointer
   return action === "pane-menu" ? "click" : "pointerdown";
 }
 
+export function mobileActionRestoresKeyboard(action: string): boolean {
+  return action !== "pane-menu" && action !== "toggle-system-keyboard";
+}
+
 export type MobileSyntheticActivation = {
   kind: "shortcut" | "chord" | "page" | "phrase" | "action";
   value: string;

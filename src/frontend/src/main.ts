@@ -108,7 +108,8 @@ import { createMobileClockController } from "./mobile/clock-controller";
 import { createHerdrJumpMobileAdapter } from "./mobile/herdr-jump-adapter";
 import { isMobileOverlayMode, prepareMobileOverlay } from "./mobile/overlay";
 import { createMobileSymbolAgentController } from "./mobile/symbol-agent-controller";
-import { createMobileTerminalGestureController, isCoarseTouchPointer } from "./mobile/terminal-gestures";
+import { isCoarseTouchPointer } from "./mobile/terminal-gestures";
+import { createMobileTerminalInteractionController } from "./mobile/terminal-interaction-controller";
 import {
   forwardPaneContextMenuToRestty,
   hideResttyPaneContextMenus,
@@ -322,7 +323,10 @@ import {
   tabTone as toneForTab,
 } from "./tab-labels";
 import { applyPaneMouseMode } from "./terminal-mouse-mode";
-import { installPaneScrollbackFallback } from "./terminal-scrollback";
+import {
+  installPaneScrollbackFallback,
+  TOUCH_SCROLL_THRESHOLD_PX,
+} from "./terminal-scrollback";
 import { observeTerminalTitleChunk } from "./terminal-title";
 import { createTerminalInputActionController } from "./terminal-input-actions";
 import { createTerminalClipboardController } from "./terminal-clipboard-controller";
@@ -455,7 +459,6 @@ const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
 const HERDR_ACTION_REFRESH_DELAYS_MS = [120, 450, 900, 1800, 3000] as const;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
-const MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX = 8;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
 const AI_TERMINAL_CONTEXT_LINES = 40;
 const POMODORO_REFRESH_MS = 5000;
@@ -486,7 +489,6 @@ let mobileSystemKeyboard: ReturnType<typeof createMobileSystemKeyboardController
 const mobileKeyboard = createMobileKeyboardController({
   root: elements.mobileShortcuts,
   preserveSystemKeyboardState: () => mobileSystemKeyboard.preserveState(),
-  focusAfterShortcut: () => mobileSystemKeyboard.restoreState(),
   onKeyInput: sendActivePaneKeyInput,
   onPasteShortcut: async () => {
     await pasteIntoPane(activePane(), false);
@@ -505,6 +507,9 @@ mobileSystemKeyboard = createMobileSystemKeyboardController({
   preventAutoOpen: () => settings.preventMobileKeyboardAutoOpen,
   updateToggle: mobileKeyboard.updateSystemKeyboardState,
 });
+const prepareAppMobileOverlay = () => {
+  prepareMobileOverlay(() => mobileSystemKeyboard.dismissForOverlay());
+};
 const mobileQuickPhraseSettings = createMobileQuickPhraseSettingsController({
   elements,
   phrases: () => settings.mobileQuickPhrases,
@@ -516,8 +521,13 @@ const mobileQuickPhraseSettings = createMobileQuickPhraseSettingsController({
   updateIcons,
   onChanged: renderMobileQuickInput,
 });
-const mobileTerminalGestures = createMobileTerminalGestureController({
+const mobileTerminalInteractions = createMobileTerminalInteractionController({
+  activePane,
   activateAdjacentTab: (direction) => activateAdjacentTab(direction, { focus: false }),
+  dismissKeyboardAfterGesture: (pane) => mobileSystemKeyboard.dismissAfterGesture(pane),
+  findPaneById,
+  restoreKeyboard: () => mobileSystemKeyboard.restoreState(),
+  showKeyboard: (pane) => mobileSystemKeyboard.show(pane),
 });
 const mobileClock = createMobileClockController({
   elements: {
@@ -560,6 +570,7 @@ const {
   closeNotificationModal,
   focusActivePaneCanvas,
   handleViewportChange,
+  prepareMobileOverlay: prepareAppMobileOverlay,
 });
 const mobileSymbolAgent = createMobileSymbolAgentController({
   activeHerdrPane: () => {
@@ -585,12 +596,12 @@ const mobileSymbolAgent = createMobileSymbolAgentController({
 });
 const notificationDom = createNotificationDom({
   elements,
-  prepareOverlay: prepareMobileOverlay,
+  prepareOverlay: prepareAppMobileOverlay,
   updateIcons,
 });
 const confirmDialog = createConfirmDialog({
   elements,
-  prepareOverlay: prepareMobileOverlay,
+  prepareOverlay: prepareAppMobileOverlay,
   updateIcons,
   closeNotificationModal: () => notificationDom.closeModal(),
 });
@@ -790,7 +801,7 @@ herdrJumpController = createHerdrJumpController({
     switcher: elements.herdrWorkspaceSwitcher,
     onRequestClose,
   }),
-  prepareMobileOverlay,
+  prepareMobileOverlay: prepareAppMobileOverlay,
   updateIcons,
   refresh: async () => {
     if (selectedSelector) await refreshHerdrState(selectedSelector);
@@ -2323,7 +2334,6 @@ async function runMobileQuickPhrase(id: string) {
   settings.mobileQuickPhrases = markMobileQuickPhraseUsed(settings.mobileQuickPhrases, id);
   saveSettings();
   renderMobileQuickInput();
-  mobileSystemKeyboard.restoreState();
 }
 
 async function runMobileAction(action: string) {
@@ -2356,8 +2366,6 @@ async function runMobileAction(action: string) {
   } else if (action === "toggle-system-keyboard") {
     mobileSystemKeyboard.toggle();
   }
-  mobileKeyboard.clearSticky();
-  if (action !== "toggle-system-keyboard") mobileSystemKeyboard.restoreState();
 }
 
 function transformMobileStickyInput(text: string, source: string): string | undefined {
@@ -2408,7 +2416,7 @@ function startNotificationsPolling() {
 function toggleNotificationsMenu() {
   const open = elements.notificationsMenu.hidden;
   if (open) {
-    prepareMobileOverlay();
+    prepareAppMobileOverlay();
   }
   closeSettingsMenu();
   closeInstanceMenu();
@@ -2479,7 +2487,7 @@ function applyRuntimeChrome() {
 function openActivePaneMenu() {
   const pane = activePane();
   if (!pane) return;
-  prepareMobileOverlay();
+  prepareAppMobileOverlay();
   hidePaneContextMenus();
   openResttyPaneContextMenu(pane);
 }
@@ -4838,7 +4846,7 @@ function renderNewTabMenu() {
 
 function toggleNewTabMenu() {
   if (elements.newTabMenu.hidden) {
-    prepareMobileOverlay();
+    prepareAppMobileOverlay();
     renderNewTabMenu();
     elements.newTabMenu.hidden = false;
     positionNewTabMenu();
@@ -5253,6 +5261,9 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
   const mount = createTerminalPaneMount(id, `${tab.label} pane`, {
     onPointerDownCapture: (event) => {
       const current = findPaneById(id);
+      if (current && event.pointerType === "touch") {
+        mobileSystemKeyboard.preservePaneState(current);
+      }
       if (current && interceptTerminalContextMenuPointer(current, event)) {
         activatePane(current.tabId, id, { focus: false });
       }
@@ -5260,7 +5271,6 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     onPointerDown: (event) => {
       const current = findPaneById(id);
       if (current) {
-        mobileTerminalGestures.trackSwipeStart(current.id, event);
         activatePane(current.tabId, id, { focus: false });
         if (shouldFocusTerminalFromPointer(event)) {
           requestAnimationFrame(() => focusPaneCanvas(current));
@@ -5270,26 +5280,6 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     onPointerUpCapture: (event) => {
       const current = findPaneById(id);
       if (current) interceptTerminalContextMenuPointer(current, event);
-    },
-    onPointerUp: (event) => {
-      if (event.pointerType !== "touch") return;
-      const current = findPaneById(id);
-      const gesture = current ? mobileTerminalGestures.readGesture(current.id, event) : undefined;
-      if (current && gesture && mobileTerminalGestures.runSwipe(gesture)) {
-        mobileTerminalGestures.clearGesture();
-        event.preventDefault();
-        return;
-      }
-      mobileTerminalGestures.clearGesture();
-      if (current && gesture && mobileTerminalGestures.isTapGesture(gesture) && mobileTerminalGestures.isDoubleTap(current.id, event)) {
-        event.preventDefault();
-        mobileSystemKeyboard.show(current);
-      }
-    },
-    onPointerCancel: (event) => {
-      if (event.pointerType === "touch") {
-        mobileTerminalGestures.clearGesture();
-      }
     },
     onDoubleClick: (event) => {
       event.preventDefault();
@@ -5301,7 +5291,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     onContextMenu: (event) => {
       const current = findPaneById(id);
       if (current) {
-        forwardPaneContextMenuToRestty(current, event);
+        forwardPaneContextMenuToRestty(current, event, prepareAppMobileOverlay);
       }
     },
     onMouseUp: () => {
@@ -5473,7 +5463,10 @@ async function mountTerminal(pane: TerminalPane) {
     touchSelectionMode: () => settings.touchSelectionMode,
   });
   installPaneTouchKeyboardGuard(pane, {
-    scrollLockThresholdPx: MOBILE_TERMINAL_SCROLL_LOCK_THRESHOLD_PX,
+    onGestureEnd: (event, gesture, cancelled) => (
+      mobileTerminalInteractions.handleGestureEnd(pane.id, event, gesture, cancelled)
+    ),
+    scrollLockThresholdPx: TOUCH_SCROLL_THRESHOLD_PX,
     scrollAxisRatio: MOBILE_TERMINAL_SCROLL_AXIS_RATIO,
   });
   installPaneViewportGuard(pane, {
@@ -6029,8 +6022,10 @@ function activateTab(tabId: string, options: { focus?: boolean; sync?: boolean; 
   updateActiveDetails();
   renderHerdrDock();
   syncAIChatForActiveTerminal();
-  const mobileFocusHandled = restoreMobileSystemKeyboardFocus();
-  if (options.focus !== false && !mobileFocusHandled) focusActivePaneCanvas();
+  if (options.focus !== false) {
+    const mobileFocusHandled = restoreMobileSystemKeyboardFocus();
+    if (!mobileFocusHandled) focusActivePaneCanvas();
+  }
   if (options.updateLocation !== false) {
     rememberActiveTab();
   }
@@ -6078,9 +6073,9 @@ function activatePane(tabId: string, paneId: string, options: { focus?: boolean;
   updateActiveDetails();
   renderHerdrDock();
   syncAIChatForActiveTerminal();
-  const mobileFocusHandled = restoreMobileSystemKeyboardFocus();
-  if (options.focus !== false && !mobileFocusHandled) {
-    focusPaneCanvas(activePane(tab));
+  if (options.focus !== false) {
+    const mobileFocusHandled = restoreMobileSystemKeyboardFocus();
+    if (!mobileFocusHandled) focusPaneCanvas(activePane(tab));
   }
   if (options.sync !== false) {
     void runWorkspaceAction("activate_pane", { selector: tab.selector, tabId, paneId, apply: false }).catch(() => undefined);

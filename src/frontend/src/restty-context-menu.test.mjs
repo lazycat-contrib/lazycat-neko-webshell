@@ -98,7 +98,7 @@ test("forwards context menus from every terminal backend into the Restty menu", 
     clientY: 126,
     target: {},
   });
-  assert.equal(forwardPaneContextMenuToRestty(herdr.pane, herdrEvent), true);
+  assert.equal(forwardPaneContextMenuToRestty(herdr.pane, herdrEvent, () => {}), true);
   assert.equal(herdrEvent.defaultPrevented, true);
   assert.equal(herdrEvent.propagationStopped, true);
   assert.equal(herdr.dispatched().clientX, 84);
@@ -111,7 +111,7 @@ test("forwards context menus from every terminal backend into the Restty menu", 
     clientY: 40,
     target: {},
   });
-  assert.equal(forwardPaneContextMenuToRestty(touch.pane, touchEvent), true);
+  assert.equal(forwardPaneContextMenuToRestty(touch.pane, touchEvent, () => {}), true);
 
   const desktop = fixture({ coarse: false, sessionBackend: "webshell" });
   const desktopEvent = new FakeEvent("contextmenu", {
@@ -120,10 +120,28 @@ test("forwards context menus from every terminal backend into the Restty menu", 
     clientY: 40,
     target: {},
   });
-  assert.equal(forwardPaneContextMenuToRestty(desktop.pane, desktopEvent), true);
+  assert.equal(forwardPaneContextMenuToRestty(desktop.pane, desktopEvent, () => {}), true);
   assert.equal(desktopEvent.defaultPrevented, true);
   assert.equal(desktop.dispatched().clientX, 30);
   assert.equal(desktop.dispatched().clientY, 40);
+});
+
+test("prepares the app overlay before forwarding a terminal context menu", () => {
+  const target = fixture({ coarse: true, sessionBackend: "webshell" });
+  const event = new FakeEvent("contextmenu", {
+    cancelable: true,
+    clientX: 30,
+    clientY: 40,
+    target: {},
+  });
+  const events = [];
+
+  assert.equal(forwardPaneContextMenuToRestty(
+    target.pane,
+    event,
+    () => events.push("prepare-overlay"),
+  ), true);
+  assert.deepEqual(events, ["prepare-overlay"]);
 });
 
 test("hides menus owned by every Restty terminal", () => {

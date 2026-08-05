@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   mobileActionEventPhase,
+  mobileActionRestoresKeyboard,
   mobileSyntheticActivation,
 } from "./action-event-phase.ts";
 import { updateSystemKeyboardToggleState } from "./system-keyboard-state.ts";
@@ -12,6 +13,12 @@ test("uses one user-activation event for mobile actions", () => {
   assert.equal(mobileActionEventPhase("toggle-system-keyboard"), "pointerup");
   assert.equal(mobileActionEventPhase("split-right"), "pointerdown");
   assert.equal(mobileActionEventPhase("copy-selection"), "pointerdown");
+});
+
+test("keeps overlay and keyboard toggle actions in charge of their own focus", () => {
+  assert.equal(mobileActionRestoresKeyboard("pane-menu"), false);
+  assert.equal(mobileActionRestoresKeyboard("toggle-system-keyboard"), false);
+  assert.equal(mobileActionRestoresKeyboard("split-right"), true);
 });
 
 test("classifies only synthesized Page Up clicks for accessible activation", () => {

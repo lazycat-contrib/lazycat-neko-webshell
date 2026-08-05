@@ -1,7 +1,7 @@
 import type { TerminalPane, TouchSelectionMode } from "./types";
 import { paneRoutesMouseToApplication } from "./terminal-mouse-mode";
 
-const TOUCH_SCROLL_THRESHOLD_PX = 6;
+export const TOUCH_SCROLL_THRESHOLD_PX = 6;
 const WHEEL_PIXEL_SCROLL_MULTIPLIER = 2;
 const WHEEL_LINE_DELTA_PX = 40;
 

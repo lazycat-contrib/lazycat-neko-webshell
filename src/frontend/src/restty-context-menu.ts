@@ -40,12 +40,15 @@ export function interceptTerminalContextMenuPointer(
 export function forwardPaneContextMenuToRestty(
   pane: TerminalPane,
   event: MouseEvent,
+  prepareOverlay: () => void,
 ): boolean {
   const container = pane.term?.restty?.getActivePane()?.container;
   const ownerWindow = container?.ownerDocument.defaultView;
-  if (!container || !ownerWindow || event.target === container) {
+  if (!container || !ownerWindow) {
     return false;
   }
+  prepareOverlay();
+  if (event.target === container) return false;
 
   event.preventDefault();
   event.stopPropagation();

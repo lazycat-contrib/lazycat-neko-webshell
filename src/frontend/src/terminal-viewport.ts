@@ -1,5 +1,6 @@
 import type { TerminalPane } from "./types";
 import { installTouchKeyboardReadOnlyGuard } from "./mobile/touch-keyboard-guard";
+import type { MobileTerminalGesture } from "./mobile/terminal-gestures";
 import { paneTerminalImeInput } from "./terminal-dom";
 
 export type PaneViewportGuardOptions = {
@@ -7,6 +8,7 @@ export type PaneViewportGuardOptions = {
 };
 
 export type PaneTouchKeyboardGuardOptions = {
+  onGestureEnd?: (event: Event, gesture: MobileTerminalGesture, cancelled: boolean) => void;
   scrollLockThresholdPx: number;
   scrollAxisRatio: number;
 };
@@ -41,6 +43,7 @@ export function installPaneTouchKeyboardGuard(
     globalTarget: window,
     visibilityTarget: document,
     input: () => paneImeInput(pane),
+    onGestureEnd: options.onGestureEnd,
     scrollLockThresholdPx: options.scrollLockThresholdPx,
     scrollAxisRatio: options.scrollAxisRatio,
   });
