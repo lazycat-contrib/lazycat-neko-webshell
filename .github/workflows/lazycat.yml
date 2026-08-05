@@ -56,7 +56,7 @@ jobs:
 
       - name: Build and validate LPK
         id: lazycat
-        uses: ca-x/lazycat-github-action@v1.1.22
+        uses: ca-x/lazycat-github-action@v1.2.1
         env:
           LAZYCAT_WORKFLOW_TOOLCHAINS: node,rust
           LAZYCAT_WORKFLOW_NODE_VERSION: 24.x
