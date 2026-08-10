@@ -9,20 +9,20 @@ export function renderMobileKeyboardView(): string {
             <button type="button" data-mobile-page="fn" aria-pressed="false" aria-label="Function keys" title="Function keys" data-i18n-aria="label.mobileFnKeys" data-i18n-title="label.mobileFnKeys"><i data-lucide="hash"></i></button>
             <button type="button" data-mobile-page="sym" aria-pressed="false" aria-label="Symbols" title="Symbols" data-i18n-aria="label.mobileSymbolKeys" data-i18n-title="label.mobileSymbolKeys"><i data-lucide="braces"></i></button>
           </div>
+          <button type="button" class="mobile-system-keyboard-toggle" data-mobile-action="toggle-system-keyboard" aria-pressed="false" aria-label="Toggle system keyboard" title="Toggle system keyboard" data-i18n-aria="action.toggleSystemKeyboard" data-i18n-title="action.toggleSystemKeyboard"><i class="mobile-keyboard-hidden-icon" data-lucide="keyboard-off"></i><i class="mobile-keyboard-visible-icon" data-lucide="keyboard"></i></button>
           <span class="mobile-shortcut-clock" id="mobileShortcutClock" role="timer" aria-label="Current time" data-i18n-aria="label.currentTime"></span>
         </div>
         <div class="mobile-keyboard-controls">
-          <button type="button" class="mobile-system-keyboard-toggle" data-mobile-action="toggle-system-keyboard" aria-pressed="false" aria-label="Toggle system keyboard" title="Toggle system keyboard" data-i18n-aria="action.toggleSystemKeyboard" data-i18n-title="action.toggleSystemKeyboard"><i class="mobile-keyboard-hidden-icon" data-lucide="keyboard-off"></i><i class="mobile-keyboard-visible-icon" data-lucide="keyboard"></i></button>
           <div class="mobile-keyboard-panel" data-mobile-panel="main">
           <button type="button" data-mobile-shortcut="ctrl" data-mobile-modifier="ctrl" aria-label="Control">Ctrl</button>
           <button type="button" data-mobile-shortcut="alt" data-mobile-modifier="alt" aria-label="Alt">Alt</button>
           <button type="button" data-mobile-shortcut="shift" data-mobile-modifier="shift" aria-label="Shift">Shift</button>
-          <button type="button" data-mobile-shortcut="tab" aria-label="Tab">Tab</button>
-          <button type="button" data-mobile-shortcut="enter" data-mobile-repeat="true" aria-label="Return">Return</button>
           <button type="button" data-mobile-shortcut="left" data-mobile-repeat="true" aria-label="Left"><i data-lucide="arrow-left"></i></button>
           <button type="button" data-mobile-shortcut="down" data-mobile-repeat="true" aria-label="Down"><i data-lucide="arrow-down"></i></button>
           <button type="button" data-mobile-shortcut="up" data-mobile-repeat="true" aria-label="Up"><i data-lucide="arrow-up"></i></button>
           <button type="button" data-mobile-shortcut="right" data-mobile-repeat="true" aria-label="Right"><i data-lucide="arrow-right"></i></button>
+          <button type="button" data-mobile-shortcut="tab" aria-label="Tab">Tab</button>
+          <button type="button" data-mobile-shortcut="enter" data-mobile-repeat="true" aria-label="Return">Return</button>
           <button type="button" data-mobile-action="copy-selection" aria-label="Copy selection">Copy</button>
           <button type="button" data-mobile-shortcut="paste" aria-label="Paste"><i data-lucide="clipboard-paste"></i></button>
           <button type="button" data-mobile-action="pane-menu" aria-label="Pane menu">Menu</button>

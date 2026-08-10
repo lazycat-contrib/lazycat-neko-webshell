@@ -1,6 +1,6 @@
 :root {
   --mobile-shortcuts-bg: var(--chrome);
-  --mobile-shortcuts-height: 104px;
+  --mobile-shortcuts-height: 105px;
   --mobile-shortcuts-bottom-offset: var(--lzc-safe-area-inset-bottom);
 }
 
@@ -990,7 +990,7 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
     left: var(--app-viewport-offset-left);
     z-index: 80;
     display: grid;
-    grid-template-rows: 32px minmax(0, auto);
+    grid-template-rows: 44px minmax(0, auto);
     gap: 5px;
     width: var(--app-viewport-width);
     height: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
@@ -1052,7 +1052,7 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   }
 
   .mobile-keyboard-page-tabs button,
-  .mobile-keyboard-controls > button,
+  .mobile-keyboard-pages > .mobile-system-keyboard-toggle,
   .mobile-keyboard-panel button {
     display: inline-flex;
     align-items: center;
@@ -1075,14 +1075,18 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
     -webkit-touch-callout: none;
   }
 
-  .mobile-keyboard-controls > button,
   .mobile-keyboard-panel button {
     height: 44px;
+  }
+
+  .mobile-keyboard-panel[data-mobile-panel="main"] button[data-mobile-modifier] {
+    padding-inline: 6px;
   }
 
   .mobile-system-keyboard-toggle {
     flex: 0 0 44px;
     width: 44px;
+    height: 44px;
     padding: 0;
     transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
   }
@@ -1101,8 +1105,8 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   }
 
   .mobile-keyboard-page-tabs button {
-    min-width: 48px;
-    height: 36px;
+    min-width: 44px;
+    height: 44px;
     border-color: var(--line-soft);
     background: var(--surface-2);
     color: var(--muted);
@@ -1323,7 +1327,7 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
   left: var(--app-viewport-offset-left);
   z-index: 80;
   display: grid;
-  grid-template-rows: 32px minmax(0, auto);
+  grid-template-rows: 44px minmax(0, auto);
   gap: 5px;
   width: var(--app-viewport-width);
   height: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
@@ -1409,7 +1413,7 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 }
 
 .mobile-keyboard-page-tabs button,
-.mobile-keyboard-controls > button,
+.mobile-keyboard-pages > .mobile-system-keyboard-toggle,
 .mobile-keyboard-panel button {
   display: inline-flex;
   align-items: center;
@@ -1432,14 +1436,18 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   -webkit-touch-callout: none;
 }
 
-.mobile-keyboard-controls > button,
 .mobile-keyboard-panel button {
   height: 44px;
+}
+
+.mobile-keyboard-panel[data-mobile-panel="main"] button[data-mobile-modifier] {
+  padding-inline: 6px;
 }
 
 .mobile-system-keyboard-toggle {
   flex: 0 0 44px;
   width: 44px;
+  height: 44px;
   padding: 0;
   transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -1458,8 +1466,8 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 }
 
 .mobile-keyboard-page-tabs button {
-  min-width: 48px;
-  height: 36px;
+  min-width: 44px;
+  height: 44px;
   border-color: var(--line-soft);
   background: var(--surface-2);
   color: var(--muted);
@@ -1743,8 +1751,10 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   }
 
   .herdr-jump-group {
-    gap: 8px;
-    padding: 10px 8px;
+    grid-template-columns: minmax(112px, 0.42fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 6px;
+    padding: 6px 4px;
   }
 
   .herdr-jump-workspace,
@@ -1756,14 +1766,24 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
     padding-inline: 8px;
   }
 
+  .herdr-jump-workspace strong {
+    font-size: 12px;
+  }
+
+  .herdr-current-badge {
+    display: none;
+  }
+
   .herdr-jump-targets {
-    gap: 8px;
+    align-items: center;
+    min-width: 0;
+    gap: 6px;
   }
 
   .herdr-target-chip {
     min-width: 52px;
     max-width: min(210px, 68vw);
-    padding-inline: 12px;
+    padding-inline: 8px;
   }
 
   .herdr-workspace-menu-status {
