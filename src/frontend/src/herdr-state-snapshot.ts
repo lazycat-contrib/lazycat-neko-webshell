@@ -1,5 +1,10 @@
 import type { HerdrBridgeState } from "./types";
 
+export function herdrBridgeStateForUi(state: HerdrBridgeState): HerdrBridgeState {
+  if (herdrSnapshotResourcesComplete(state)) return state;
+  return { ...state, available: false };
+}
+
 export function herdrSnapshotResourcesComplete(
   state: Pick<HerdrBridgeState, "resources_complete">,
 ): boolean {

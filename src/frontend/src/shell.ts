@@ -38,6 +38,9 @@ export type ShellElements = {
   herdrMoreButton: HTMLButtonElement;
   herdrMoreMenu: HTMLDivElement;
   herdrCloseWorkspace: HTMLButtonElement;
+  herdrRuntimeGuard: HTMLDivElement;
+  herdrRuntimeGuardMessage: HTMLParagraphElement;
+  herdrHandoff: HTMLButtonElement;
   terminalStage: HTMLDivElement;
   mobileShortcuts: HTMLDivElement;
   terminalInputActionsSurface: HTMLDivElement;
@@ -588,6 +591,9 @@ export function renderShell(app: HTMLElement): ShellElements {
     herdrMoreButton: qs<HTMLButtonElement>("#herdrMoreButton"),
     herdrMoreMenu: qs<HTMLDivElement>("#herdrMoreMenu"),
     herdrCloseWorkspace: qs<HTMLButtonElement>("#herdrCloseWorkspace"),
+    herdrRuntimeGuard: qs<HTMLDivElement>("#herdrRuntimeGuard"),
+    herdrRuntimeGuardMessage: qs<HTMLParagraphElement>("#herdrRuntimeGuardMessage"),
+    herdrHandoff: qs<HTMLButtonElement>("#herdrHandoff"),
     terminalStage: qs<HTMLDivElement>("#terminalStage"),
     mobileShortcuts: qs<HTMLDivElement>("#mobileShortcuts"),
     terminalInputActionsSurface: qs<HTMLDivElement>("#terminalInputActionsSurface"),

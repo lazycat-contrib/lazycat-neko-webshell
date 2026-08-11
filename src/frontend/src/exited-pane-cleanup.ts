@@ -83,9 +83,18 @@ export function createExitedPaneCleanupController(
 export function normalizeExitedWorkspaceState(
   workspace: WorkspaceState,
   remoteClient: boolean,
+  protectedPaneIds: ReadonlySet<string> = new Set(),
+  removableHerdrPaneIds: ReadonlySet<string> = new Set(),
+  classifiableHerdrPaneIds: ReadonlySet<string> = new Set(),
 ): WorkspaceState {
   const tabs = workspace.tabs
-    .map((tab) => normalizeExitedTab(tab, remoteClient))
+    .map((tab) => normalizeExitedTab(
+      tab,
+      remoteClient,
+      protectedPaneIds,
+      removableHerdrPaneIds,
+      classifiableHerdrPaneIds,
+    ))
     .filter((tab): tab is WorkspaceTabState => Boolean(tab));
   const activeTabId = tabs.some((tab) => tab.id === workspace.active_tab_id)
     ? workspace.active_tab_id
@@ -100,6 +109,9 @@ export function normalizeExitedWorkspaceState(
 function normalizeExitedTab(
   tab: WorkspaceTabState,
   remoteClient: boolean,
+  protectedPaneIds: ReadonlySet<string>,
+  removableHerdrPaneIds: ReadonlySet<string>,
+  classifiableHerdrPaneIds: ReadonlySet<string>,
 ): WorkspaceTabState | undefined {
   const exited = tab.panes.filter((pane) => pane.status === "exited");
   if (!exited.length) return tab;
@@ -107,13 +119,28 @@ function normalizeExitedTab(
   const runningPaneIds = new Set(
     tab.panes.filter((pane) => pane.status !== "exited").map((pane) => pane.id),
   );
+  const keepableExited = exited.filter((pane) => (
+    pane.session_backend !== "herdr"
+    || protectedPaneIds.has(pane.id)
+    || classifiableHerdrPaneIds.has(pane.id)
+  ));
   const keepExitedPaneId = !remoteClient && !runningPaneIds.size
-    ? exited.find((pane) => pane.id === tab.active_pane_id)?.id ?? exited.at(-1)?.id
+    ? keepableExited.find((pane) => pane.id === tab.active_pane_id)?.id
+      ?? keepableExited.at(-1)?.id
     : undefined;
   const removedPaneIds = new Set(
     exited
-      .map((pane) => pane.id)
-      .filter((paneId) => paneId !== keepExitedPaneId),
+      .filter((pane) => (
+        pane.id !== keepExitedPaneId
+        && !protectedPaneIds.has(pane.id)
+        && (
+          remoteClient
+          || pane.session_backend !== "herdr"
+          || removableHerdrPaneIds.has(pane.id)
+          || !classifiableHerdrPaneIds.has(pane.id)
+        )
+      ))
+      .map((pane) => pane.id),
   );
   if (!removedPaneIds.size) return tab;
 

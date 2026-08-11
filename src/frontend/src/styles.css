@@ -2432,6 +2432,31 @@ textarea:focus-visible {
   margin: 5px;
 }
 
+.herdr-runtime-guard {
+  display: grid;
+  gap: 5px;
+  margin: 5px;
+  padding-top: 7px;
+  border-top: 1px solid var(--menu-border);
+}
+
+.herdr-runtime-guard[hidden] {
+  display: none;
+}
+
+.herdr-runtime-guard p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.herdr-more-menu .herdr-runtime-guard button {
+  min-height: 32px;
+  padding: 0 7px;
+  color: var(--accent-strong);
+}
+
 .herdr-status {
   max-width: 200px;
 }

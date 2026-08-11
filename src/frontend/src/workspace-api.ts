@@ -2,6 +2,7 @@ import type { Instance } from "./gen/lazycat/webshell/v1/capability_pb";
 import type {
   HerdrAction,
   HerdrBridgeState,
+  HerdrRuntimeGuardState,
   HerdrSocketEnvelope,
   JsonRecord,
   SessionBackendsState,
@@ -112,6 +113,25 @@ export async function fetchHerdrState(selector: string): Promise<HerdrBridgeStat
   const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
   await throwIfFailed(response);
   return response.json() as Promise<HerdrBridgeState>;
+}
+
+export async function fetchHerdrRuntimeStatus(selector: string): Promise<HerdrRuntimeGuardState> {
+  const url = new URL("./api/herdr/runtime", window.location.href);
+  url.searchParams.set("name", selector);
+  const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
+  await throwIfFailed(response);
+  return response.json() as Promise<HerdrRuntimeGuardState>;
+}
+
+export async function handoffHerdrRuntime(selector: string): Promise<HerdrRuntimeGuardState> {
+  const response = await fetch(new URL("./api/herdr/handoff", window.location.href), {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: selector }),
+  });
+  await throwIfFailed(response);
+  return response.json() as Promise<HerdrRuntimeGuardState>;
 }
 
 export async function runHerdrActionRequest(

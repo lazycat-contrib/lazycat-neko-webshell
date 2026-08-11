@@ -79,12 +79,22 @@ import { createHerdrInteractionQueue } from "./herdr-interaction-queue";
 import { createHerdrJumpController } from "./herdr-jump-controller";
 import { createHerdrLazycatNotificationController } from "./herdr-notifications/controller";
 import { createHerdrNavigationController } from "./herdr-navigation";
+import {
+  createHerdrExitRecovery,
+  herdrHandoffCandidatePanes,
+  herdrWorkspacePaneIds,
+  recoverHerdrPaneStatesAfterHandoff,
+} from "./herdr-pane-recovery";
 import { createHerdrEventRefreshLoop } from "./herdr-event-refresh-loop";
 import { createHerdrEventStreamPolicy } from "./herdr-event-stream-policy";
 import { createHerdrRefreshCoordinator, type HerdrRefreshMode } from "./herdr-refresh-coordinator";
+import { createHerdrRuntimeGuard } from "./herdr-runtime-guard";
 import { herdrEventMessage } from "./herdr-event-presentation";
 import { isHerdrSocketMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
-import { herdrBridgeStatesEqual, herdrSnapshotResourcesComplete } from "./herdr-state-snapshot";
+import {
+  herdrBridgeStateForUi,
+  herdrBridgeStatesEqual,
+} from "./herdr-state-snapshot";
 import {
   createHerdrStateMutationRunner,
   herdrStateMutationChangesVisibleTerminal,
@@ -136,6 +146,10 @@ import {
   syncOpenSelectorFromWorkspace,
 } from "./open-workspaces";
 import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveState } from "./pane-dom";
+import {
+  canConnectPane as paneCanConnect,
+  shouldConnectRestoredPane as paneShouldConnectRestored,
+} from "./pane-reconnect-policy";
 import { legacyCopyText, writeSystemClipboardText } from "./browser-clipboard";
 import {
   allTabPanes,
@@ -419,9 +433,11 @@ import {
 } from "./webshell-backend";
 import {
   fetchHerdrState,
+  fetchHerdrRuntimeStatus,
   fetchInstances,
   fetchSessionBackends,
   fetchWorkspace,
+  handoffHerdrRuntime,
   runHerdrActionRequest,
   runHerdrSocketApiRequest,
   runWorkspaceActionRequest,
@@ -612,6 +628,24 @@ const confirmDialog = createConfirmDialog({
   updateIcons,
   closeNotificationModal: () => notificationDom.closeModal(),
 });
+const herdrRuntimeGuard = createHerdrRuntimeGuard({
+  elements: {
+    root: elements.herdrRuntimeGuard,
+    message: elements.herdrRuntimeGuardMessage,
+    handoff: elements.herdrHandoff,
+  },
+  tr,
+  fetchStatus: fetchHerdrRuntimeStatus,
+  handoff: handoffHerdrRuntime,
+  confirm: (request) => confirmDialog.confirm(request),
+  onHandoffStart: (selector) => {
+    const panes = herdrHandoffCandidatePanes(allPanes(), selector);
+    herdrExitRecovery.beginHandoff(selector, panes);
+  },
+  onHandoffFailed: (selector) => herdrExitRecovery.failHandoff(selector),
+  onRecovered: recoverHerdrPanesAfterHandoff,
+  onError: (message) => setGlobalStatus(tr("status.herdrActionFailed", { message }), "error"),
+});
 const pomodoro = createPomodoroController({
   isEnabled: () => pluginIsEnabled(POMODORO_PLUGIN_ID),
   refreshNotifications: () => refreshNotifications({ showToast: false }),
@@ -692,6 +726,13 @@ const exitedPaneCleanupController = createExitedPaneCleanupController({
     });
     if (!applied) throw new Error("workspace reconciliation was superseded");
   },
+});
+const herdrExitRecovery = createHerdrExitRecovery({
+  fetchStatus: fetchHerdrRuntimeStatus,
+  cleanup: async (target) => {
+    await exitedPaneCleanupController.handle(target);
+  },
+  recover: recoverHerdrPanesAfterHandoff,
 });
 let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
@@ -811,7 +852,11 @@ herdrJumpController = createHerdrJumpController({
   prepareMobileOverlay: prepareAppMobileOverlay,
   updateIcons,
   refresh: async () => {
-    if (selectedSelector) await refreshHerdrState(selectedSelector);
+    if (!selectedSelector) return;
+    await Promise.all([
+      refreshHerdrState(selectedSelector),
+      herdrRuntimeGuard.refresh(),
+    ]);
   },
   focusWorkspace: async (workspaceId) => {
     await restoreHerdrWorkspace(workspaceId);
@@ -4108,6 +4153,9 @@ async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {
         selectRunningInstanceMessage: tr("status.selectRunningInstance"),
       }),
       isRemoteClientSelector(requestSelector),
+      herdrExitRecovery.protectedWorkspacePaneIds(requestSelector),
+      herdrExitRecovery.removableWorkspacePaneIds(requestSelector),
+      herdrWorkspacePaneIds(allPanes(), requestSelector),
     );
     if (!workspaceRequestTracker.isCurrent(requestSelector, requestGeneration)) {
       return false;
@@ -4199,6 +4247,9 @@ async function runWorkspaceAction(
         pinnedOrder: options.pinnedOrder,
       }),
       isRemoteClientSelector(selector),
+      herdrExitRecovery.protectedWorkspacePaneIds(selector),
+      herdrExitRecovery.removableWorkspacePaneIds(selector),
+      herdrWorkspacePaneIds(allPanes(), selector),
     );
   } catch (error) {
     if (
@@ -4316,18 +4367,21 @@ async function performHerdrStateRefresh(
   }
   const requestId = ++herdrStateGeneration;
   try {
-    const state = await fetchHerdrState(requestSelector);
+    const fetchedState = await fetchHerdrState(requestSelector);
     if (requestId !== herdrStateGeneration || !isCurrentSelectorRequest(requestSelector, generation)) {
       return false;
     }
+    const state = herdrBridgeStateForUi(fetchedState);
     if (!state.available) {
       if (mode === "preserve-available" && herdrState?.available) return false;
-      clearHerdrState();
-      return false;
-    }
-    if (!herdrSnapshotResourcesComplete(state)) {
-      if (herdrState?.available) return false;
-      clearHerdrState();
+      const stateChanged = !herdrBridgeStatesEqual(herdrState, state);
+      advanceHerdrStateRevision();
+      herdrState = state;
+      if (stateChanged) {
+        renderTabs();
+        renderHerdrDock();
+        mobileSymbolAgent.invalidate();
+      }
       return false;
     }
     const previousFocusedPaneId = herdrState?.focused_pane_id;
@@ -4703,6 +4757,7 @@ function clearHerdrState() {
   invalidatePendingHerdrStateRefresh();
   herdrRefreshCoordinator.clearQueued();
   herdrState = undefined;
+  herdrRuntimeGuard.clear();
   clearHerdrActionRefreshTimers();
   stopHerdrEventBridge();
   renderTabs();
@@ -4721,8 +4776,7 @@ function renderHerdrDock() {
     stopHerdrEventBridge();
     return;
   }
-  const hasHerdrControls = Boolean(herdrState?.available);
-  const showHerdrControls = hasHerdrControls && Boolean(activeHerdrTerminalPane());
+  const showHerdrControls = Boolean(herdrState) && Boolean(activeHerdrTerminalPane());
   updateSessionBackendSettings();
   if (!showHerdrControls) {
     herdrJumpController?.close();
@@ -4738,6 +4792,7 @@ function renderHerdrDock() {
   elements.webshell.classList.add("has-herdr");
   elements.herdrDock.hidden = false;
   elements.herdrStatus.textContent = herdrState?.message ?? "";
+  herdrRuntimeGuard.sync(normalizeSelector(selectedSelector), herdrState);
   renderHerdrProtocolNotice(herdrState);
   renderHerdrWorkspaceMenu();
   void syncHerdrEventBridge();
@@ -5128,13 +5183,22 @@ function restoreHerdrOutputSequence(pane: TerminalPane, sequence: unknown) {
 }
 
 function shouldConnectRestoredPane(pane: TerminalPane): boolean {
-  if (!pane.sessionId) return false;
-  if (pane.sessionStatus === "closed") return false;
-  if (isHerdrTerminalPane(pane)) return true;
-  if (pane.sessionStatus === "exited") return false;
-  if (pane.sessionStatus === "running" || pane.sessionStatus === "starting") return true;
-  if (pane.sessionStatus === "stopped") return true;
-  return settings.autoRestartSessions;
+  return paneShouldConnectRestored(pane, settings.autoRestartSessions);
+}
+
+async function recoverHerdrPanesAfterHandoff(selector: string) {
+  herdrExitRecovery.noteHandoff(selector);
+  const eligibleIds = new Set(herdrExitRecovery.recoverablePaneIds(selector));
+  recoverHerdrPaneStatesAfterHandoff(
+    allPanes(),
+    selector,
+    eligibleIds,
+    connectPanePty,
+  );
+  if (normalizeSelector(selectedSelector) === selector) {
+    const generation = selectedSelectorGeneration;
+    await refreshHerdrState(selector, generation);
+  }
 }
 
 function isHerdrTerminalPane(pane: TerminalPane): boolean {
@@ -5142,8 +5206,7 @@ function isHerdrTerminalPane(pane: TerminalPane): boolean {
 }
 
 function canConnectPanePty(pane: TerminalPane): boolean {
-  if (pane.closing || !pane.sessionId) return false;
-  return !pane.exited || shouldConnectRestoredPane(pane);
+  return paneCanConnect(pane, settings.autoRestartSessions);
 }
 
 function shouldRestartSessionOnConnect(pane: TerminalPane): boolean {
@@ -5323,6 +5386,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     tone: "neutral",
     mount,
     reconnectDelay: 1000,
+    processExitObserved: false,
     pendingInput: [],
     pendingInputBytes: 0,
     replaying: false,
@@ -5850,6 +5914,10 @@ function handleServerText(pane: TerminalPane, text: string) {
   if (event.type === "ready") {
     pane.sessionStatus = "running";
     pane.exited = false;
+    pane.processExitObserved = false;
+    if (pane.sessionBackend === "herdr") {
+      herdrExitRecovery.notePaneReady(normalizeSelector(pane.selector), pane.id);
+    }
     if (typeof event.cols === "number" && typeof event.rows === "number") {
       terminalControl.noteServerSize(pane, event.cols, event.rows);
     }
@@ -5918,7 +5986,14 @@ function handleServerText(pane: TerminalPane, text: string) {
       pane.socket?.close();
       return;
     }
+    pane.processExitObserved = true;
     pane.exited = true;
+    if (
+      pane.sessionBackend === "herdr"
+      && normalizeSelector(pane.selector) === normalizeSelector(selectedSelector)
+    ) {
+      void herdrRuntimeGuard.refresh();
+    }
     clearPendingInput(pane);
     pane.sessionStatus = "exited";
     pane.transport?.notifyExit(event.exit_code ?? -1);
@@ -5929,10 +6004,20 @@ function handleServerText(pane: TerminalPane, text: string) {
     );
     const tab = tabForPane(pane);
     if (tab) {
-      void exitedPaneCleanupController.handle({
+      const cleanup = () => exitedPaneCleanupController.handle({
         selector: pane.selector,
         paneId: pane.workspacePaneId,
       });
+      if (pane.sessionBackend === "herdr") {
+        void herdrExitRecovery.handle({
+          selector: normalizeSelector(pane.selector),
+          paneId: pane.workspacePaneId,
+          recoveryId: pane.id,
+          exitCode: event.exit_code,
+        });
+      } else {
+        void cleanup();
+      }
     }
   } else if (event.type === "session-stopped") {
     clearReplayInputLock(pane);

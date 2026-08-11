@@ -1,5 +1,4 @@
 import type { HerdrAgentInfo, HerdrBridgeState } from "./types";
-import { HERDR_SOCKET_PROTOCOL } from "./herdr-socket-api.ts";
 import { escapeAttr, escapeHtml } from "./utils.ts";
 
 export type HerdrAgentFilter = "all" | "working" | "blocked" | "done";
@@ -25,7 +24,6 @@ export function herdrAgentInteractionsAvailable(
   const protocol = state?.herdr_protocol;
   return protocol !== undefined
     && protocol >= HERDR_AGENT_INTERACTIONS_MIN_PROTOCOL
-    && protocol <= HERDR_SOCKET_PROTOCOL
     && state?.protocol_compatible !== false;
 }
 

@@ -47,6 +47,10 @@ export function renderHerdrJumpShell(): string {
           <div class="herdr-more-menu" id="herdrMoreMenu" role="menu" hidden>
             <button id="herdrRefresh" type="button" role="menuitem" data-herdr-jump-action="refresh"><i data-lucide="refresh-cw"></i><span data-i18n="action.refreshHerdr">Refresh Herdr</span></button>
             <button class="danger" id="herdrCloseWorkspace" type="button" role="menuitem" data-herdr-jump-action="close-workspace"><i data-lucide="folder-x"></i><span data-i18n="action.closeHerdrSpace">Close Herdr space</span></button>
+            <div class="herdr-runtime-guard" id="herdrRuntimeGuard" hidden>
+              <p id="herdrRuntimeGuardMessage"></p>
+              <button id="herdrHandoff" type="button"><i data-lucide="replace"></i><span data-i18n="action.herdrLiveHandoff">Switch without stopping panes</span></button>
+            </div>
             <span class="herdr-protocol-notice" id="herdrProtocolNotice" role="img" hidden><i data-lucide="arrow-up"></i></span>
           </div>
         </div>

@@ -1,5 +1,7 @@
-use std::sync::LazyLock;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 use axum::Json;
@@ -24,6 +26,10 @@ use crate::tty_init::lightos_features_enabled;
 use crate::validation::validate_selector;
 
 const HERDR_API_TIMEOUT: Duration = Duration::from_secs(6);
+const HERDR_RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(12);
+const HERDR_HANDOFF_TIMEOUT: Duration = Duration::from_secs(95);
+const HERDR_HANDOFF_TRACKING_WINDOW: Duration = Duration::from_mins(2);
+const HERDR_RUNTIME_SCHEMA_VERSION: u32 = 1;
 const HERDR_LONG_REQUEST_TIMEOUT_MAX_MS: u64 = 300_000;
 const HERDR_REQUEST_TIMEOUT_OVERHEAD: Duration = Duration::from_secs(2);
 const MIN_SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 14;
@@ -86,6 +92,176 @@ pub struct HerdrOutputSequenceResponse {
     sequence: u64,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct HerdrHandoffRequest {
+    name: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct HerdrCliRuntimeStatus {
+    schema_version: u32,
+    client: HerdrCliClientStatus,
+    server: HerdrCliServerStatus,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct HerdrCliClientStatus {
+    version: String,
+    protocol: u32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct HerdrCliServerStatus {
+    running: bool,
+    version: Option<String>,
+    protocol: Option<u32>,
+    capabilities: Option<HerdrCliRuntimeCapabilities>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct HerdrCliRuntimeCapabilities {
+    live_handoff: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HerdrRuntimeGuardState {
+    selector: String,
+    state: &'static str,
+    client_version: String,
+    client_protocol: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_protocol: Option<u32>,
+    live_handoff_available: bool,
+    handoff_recent: bool,
+}
+
+#[derive(Debug)]
+struct HerdrHandoffRecord {
+    generation: u64,
+    in_progress: bool,
+    expires_at: Instant,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct HerdrHandoffTracker {
+    next_generation: AtomicU64,
+    records: Mutex<HashMap<String, HerdrHandoffRecord>>,
+}
+
+struct HerdrHandoffLease {
+    tracker: Arc<HerdrHandoffTracker>,
+    selector: String,
+    generation: u64,
+    finished: bool,
+}
+
+impl HerdrHandoffLease {
+    fn commit(mut self) {
+        self.tracker.finish(&self.selector, self.generation, true);
+        self.finished = true;
+    }
+
+    fn settle_uncertain(mut self) {
+        self.tracker.finish(&self.selector, self.generation, true);
+        self.finished = true;
+    }
+}
+
+impl Drop for HerdrHandoffLease {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.tracker
+                .retain_cancelled(&self.selector, self.generation);
+        }
+    }
+}
+
+impl HerdrHandoffTracker {
+    fn begin(self: &Arc<Self>, selector: &str) -> Result<HerdrHandoffLease, HerdrBridgeError> {
+        let now = Instant::now();
+        let mut records = self.records.lock().map_err(|_| HerdrBridgeError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: "Herdr handoff state is unavailable".to_owned(),
+        })?;
+        records.retain(|_, record| record.expires_at > now);
+        if records
+            .get(selector)
+            .is_some_and(|record| record.in_progress)
+        {
+            return Err(HerdrBridgeError {
+                status: StatusCode::CONFLICT,
+                message: "Herdr live handoff is already running for this target".to_owned(),
+            });
+        }
+        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        records.insert(
+            selector.to_owned(),
+            HerdrHandoffRecord {
+                generation,
+                in_progress: true,
+                expires_at: now + HERDR_HANDOFF_TRACKING_WINDOW,
+            },
+        );
+        Ok(HerdrHandoffLease {
+            tracker: Arc::clone(self),
+            selector: selector.to_owned(),
+            generation,
+            finished: false,
+        })
+    }
+
+    fn finish(&self, selector: &str, generation: u64, committed: bool) {
+        let Ok(mut records) = self.records.lock() else {
+            return;
+        };
+        if !committed {
+            if records
+                .get(selector)
+                .is_some_and(|record| record.generation == generation)
+            {
+                records.remove(selector);
+            }
+            return;
+        }
+        let now = Instant::now();
+        if let Some(record) = records
+            .get_mut(selector)
+            .filter(|record| record.generation == generation)
+        {
+            record.in_progress = false;
+            record.expires_at = now + HERDR_HANDOFF_TRACKING_WINDOW;
+        }
+    }
+
+    fn retain_cancelled(&self, selector: &str, generation: u64) {
+        let Ok(mut records) = self.records.lock() else {
+            return;
+        };
+        let now = Instant::now();
+        if let Some(record) = records
+            .get_mut(selector)
+            .filter(|record| record.generation == generation)
+        {
+            // Cancellation is ambiguous: the handoff may have committed after the
+            // caller disconnected but before its response was delivered. Keep the
+            // operation protected until runtime status can reconcile the outcome.
+            record.in_progress = true;
+            record.expires_at = now + HERDR_HANDOFF_TRACKING_WINDOW;
+        }
+    }
+
+    fn is_recent(&self, selector: &str) -> bool {
+        let now = Instant::now();
+        let Ok(mut records) = self.records.lock() else {
+            return false;
+        };
+        records.retain(|_, record| record.expires_at > now);
+        records.contains_key(selector)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum HerdrAction {
@@ -128,7 +304,7 @@ pub struct HerdrBridgeState {
     agents: Vec<HerdrAgentInfo>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct HerdrCapabilitiesInfo {
     live_handoff: bool,
     detached_server_daemon: bool,
@@ -365,6 +541,37 @@ pub(crate) async fn get_herdr_state(
 ) -> Result<Json<HerdrBridgeState>, HerdrBridgeError> {
     let target = authorize_herdr_target(&query.name).await?;
     Ok(Json(snapshot_herdr_state(&target).await))
+}
+
+pub(crate) async fn get_herdr_runtime_status(
+    State(state): State<std::sync::Arc<crate::state::AppState>>,
+    Query(query): Query<HerdrQuery>,
+) -> Result<Json<HerdrRuntimeGuardState>, HerdrBridgeError> {
+    let target = authorize_herdr_target(&query.name).await?;
+    let mut status = run_herdr_runtime_command(&target, "status").await?;
+    status.handoff_recent = state.herdr_handoffs.is_recent(&target.selector);
+    Ok(Json(status))
+}
+
+pub(crate) async fn post_herdr_handoff(
+    State(state): State<std::sync::Arc<crate::state::AppState>>,
+    Json(request): Json<HerdrHandoffRequest>,
+) -> Result<Json<HerdrRuntimeGuardState>, HerdrBridgeError> {
+    let target = authorize_herdr_target(&request.name).await?;
+    let handoff = state.herdr_handoffs.begin(&target.selector)?;
+    match run_herdr_runtime_command(&target, "handoff").await {
+        Ok(mut status) => {
+            handoff.commit();
+            status.handoff_recent = true;
+            Ok(Json(status))
+        }
+        Err(error) => {
+            // An error after dispatch does not prove that Herdr did not commit the
+            // handoff. Preserve a bounded reconciliation marker for other clients.
+            handoff.settle_uncertain();
+            Err(error)
+        }
+    }
 }
 
 pub(crate) async fn post_herdr_action(
@@ -719,6 +926,95 @@ async fn run_herdr_request(
         });
     }
     Ok(response)
+}
+
+async fn run_herdr_runtime_command(
+    target: &AuthorizedHerdrTarget,
+    action: &str,
+) -> Result<HerdrRuntimeGuardState, HerdrBridgeError> {
+    let mut command = target.agent.interactive_command(&[
+        "herdr-runtime",
+        "--login-user",
+        target.login_user.as_str(),
+        "--action",
+        action,
+    ]);
+    command.kill_on_drop(true);
+    let command_timeout = herdr_runtime_command_timeout(action);
+    let output = timeout(command_timeout, command.output())
+        .await
+        .map_err(|_| HerdrBridgeError {
+            status: StatusCode::GATEWAY_TIMEOUT,
+            message: format!("Herdr {action} timed out"),
+        })?
+        .map_err(|err| HerdrBridgeError {
+            status: StatusCode::BAD_GATEWAY,
+            message: format!("failed to inspect Herdr runtime: {err}"),
+        })?;
+    if !output.status.success() {
+        let detail = if output.stderr.is_empty() {
+            &output.stdout
+        } else {
+            &output.stderr
+        };
+        return Err(HerdrBridgeError {
+            status: StatusCode::CONFLICT,
+            message: String::from_utf8_lossy(detail).trim().to_owned(),
+        });
+    }
+    let status =
+        serde_json::from_slice::<HerdrCliRuntimeStatus>(&output.stdout).map_err(|err| {
+            HerdrBridgeError {
+                status: StatusCode::BAD_GATEWAY,
+                message: format!("invalid Herdr runtime status: {err}"),
+            }
+        })?;
+    if status.schema_version != HERDR_RUNTIME_SCHEMA_VERSION {
+        return Err(HerdrBridgeError {
+            status: StatusCode::BAD_GATEWAY,
+            message: format!(
+                "unsupported Herdr runtime status schema {}",
+                status.schema_version
+            ),
+        });
+    }
+    Ok(classify_herdr_runtime(&target.selector, status))
+}
+
+fn herdr_runtime_command_timeout(action: &str) -> Duration {
+    if action == "handoff" {
+        HERDR_HANDOFF_TIMEOUT
+    } else {
+        HERDR_RUNTIME_STATUS_TIMEOUT
+    }
+}
+
+fn classify_herdr_runtime(selector: &str, status: HerdrCliRuntimeStatus) -> HerdrRuntimeGuardState {
+    let server_running = status.server.running;
+    let server_protocol = status.server.protocol.filter(|_| server_running);
+    let state = match (server_running, server_protocol) {
+        (false, _) => "not_running",
+        (true, None) => "unknown",
+        (true, Some(protocol)) if protocol == status.client.protocol => "ready",
+        (true, Some(protocol)) if status.client.protocol < protocol => "client_older",
+        (true, Some(_)) => "server_older",
+    };
+    let live_handoff_available = state == "server_older"
+        && status
+            .server
+            .capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.live_handoff);
+    HerdrRuntimeGuardState {
+        selector: selector.to_owned(),
+        state,
+        client_version: status.client.version,
+        client_protocol: status.client.protocol,
+        server_version: status.server.version.filter(|_| status.server.running),
+        server_protocol,
+        live_handoff_available,
+        handoff_recent: false,
+    }
 }
 
 async fn run_herdr_request_raw(
@@ -1318,7 +1614,7 @@ fn parse_herdr_capabilities(value: &Value) -> Option<HerdrCapabilitiesInfo> {
 }
 
 fn herdr_protocol_is_supported(protocol: u32) -> bool {
-    (MIN_SUPPORTED_HERDR_PROTOCOL_VERSION..=HERDR_SOCKET_CONTRACT.protocol).contains(&protocol)
+    protocol >= MIN_SUPPORTED_HERDR_PROTOCOL_VERSION
 }
 
 fn herdr_protocol_supports_session_snapshot(protocol: u32) -> bool {
@@ -1397,16 +1693,28 @@ impl IntoResponse for HerdrBridgeError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use serde_json::{Value, json};
 
     use super::{
-        HERDR_SOCKET_CONTRACT, HerdrTerminalOperation, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
-        herdr_pane_focus_request, herdr_protocol_is_supported,
-        herdr_protocol_supports_session_snapshot, herdr_request_timeout, is_allowed_herdr_method,
-        normalize_herdr_request_params, parse_agents, parse_herdr_ping,
-        parse_herdr_session_snapshot, parse_panes, parse_tabs, parse_workspaces,
-        terminal_mcp_operation_request, validate_herdr_wire_request,
+        HERDR_RUNTIME_SCHEMA_VERSION, HERDR_SOCKET_CONTRACT, HerdrCliClientStatus,
+        HerdrCliRuntimeCapabilities, HerdrCliRuntimeStatus, HerdrCliServerStatus,
+        HerdrHandoffTracker, HerdrTerminalOperation, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
+        classify_herdr_runtime, herdr_pane_focus_request, herdr_protocol_is_supported,
+        herdr_protocol_supports_session_snapshot, herdr_request_timeout,
+        herdr_runtime_command_timeout, is_allowed_herdr_method, normalize_herdr_request_params,
+        parse_agents, parse_herdr_ping, parse_herdr_session_snapshot, parse_panes, parse_tabs,
+        parse_workspaces, terminal_mcp_operation_request, validate_herdr_wire_request,
     };
+
+    #[test]
+    fn runtime_status_outer_timeout_exceeds_the_agent_command_budget() {
+        assert!(
+            herdr_runtime_command_timeout("status")
+                > crate::agent_daemon::HERDR_STATUS_COMMAND_TIMEOUT
+        );
+    }
 
     #[test]
     fn terminal_mcp_operations_map_only_to_typed_pane_methods() {
@@ -1794,10 +2102,77 @@ mod tests {
         assert!(herdr_protocol_is_supported(16));
         assert!(herdr_protocol_is_supported(17));
         assert!(herdr_protocol_is_supported(18));
-        assert!(!herdr_protocol_is_supported(19));
+        assert!(herdr_protocol_is_supported(19));
+        assert!(herdr_protocol_is_supported(20));
+        assert!(herdr_protocol_is_supported(999));
         assert!(!herdr_protocol_supports_session_snapshot(14));
         assert!(herdr_protocol_supports_session_snapshot(16));
         assert!(herdr_protocol_supports_session_snapshot(17));
+    }
+
+    #[test]
+    fn classifies_herdr_runtime_handoff_direction_without_allowing_downgrades() {
+        let status = |client_protocol, server_protocol, live_handoff| HerdrCliRuntimeStatus {
+            schema_version: HERDR_RUNTIME_SCHEMA_VERSION,
+            client: HerdrCliClientStatus {
+                version: "0.8.0".to_owned(),
+                protocol: client_protocol,
+            },
+            server: HerdrCliServerStatus {
+                running: true,
+                version: Some("0.8.0".to_owned()),
+                protocol: Some(server_protocol),
+                capabilities: Some(HerdrCliRuntimeCapabilities { live_handoff }),
+            },
+        };
+
+        let newer_client = classify_herdr_runtime("demo@owner", status(20, 19, true));
+        assert_eq!(newer_client.state, "server_older");
+        assert!(newer_client.live_handoff_available);
+
+        let older_client = classify_herdr_runtime("demo@owner", status(19, 20, true));
+        assert_eq!(older_client.state, "client_older");
+        assert!(!older_client.live_handoff_available);
+
+        let matching = classify_herdr_runtime("demo@owner", status(20, 20, true));
+        assert_eq!(matching.state, "ready");
+        assert!(!matching.live_handoff_available);
+
+        let unknown = classify_herdr_runtime(
+            "demo@owner",
+            HerdrCliRuntimeStatus {
+                schema_version: HERDR_RUNTIME_SCHEMA_VERSION,
+                client: HerdrCliClientStatus {
+                    version: "0.8.0".to_owned(),
+                    protocol: 20,
+                },
+                server: HerdrCliServerStatus {
+                    running: true,
+                    version: None,
+                    protocol: None,
+                    capabilities: None,
+                },
+            },
+        );
+        assert_eq!(unknown.state, "unknown");
+        assert!(!unknown.live_handoff_available);
+    }
+
+    #[test]
+    fn parses_the_agent_owned_herdr_runtime_status_schema() {
+        let status: HerdrCliRuntimeStatus = serde_json::from_str(
+            r#"{"schema_version":1,"client":{"version":"0.8.0","protocol":20},"server":{"running":true,"version":"0.7.6","protocol":19,"capabilities":{"live_handoff":true}}}"#,
+        )
+        .expect("agent runtime status");
+
+        assert_eq!(status.schema_version, HERDR_RUNTIME_SCHEMA_VERSION);
+        assert_eq!(status.server.protocol, Some(19));
+        assert!(
+            status
+                .server
+                .capabilities
+                .is_some_and(|value| value.live_handoff)
+        );
     }
 
     #[test]
@@ -1977,5 +2352,27 @@ mod tests {
         assert_eq!(agents[0].terminal_id, "term-valid");
         assert!(!agents[0].interactive_ready);
         assert_eq!(agents[0].state_change_seq, 0);
+    }
+
+    #[test]
+    fn handoff_tracker_retains_uncertain_and_committed_operations() {
+        let tracker = Arc::new(HerdrHandoffTracker::default());
+
+        let uncertain = tracker.begin("uncertain@owner").unwrap();
+        assert!(tracker.is_recent("uncertain@owner"));
+        uncertain.settle_uncertain();
+        assert!(tracker.is_recent("uncertain@owner"));
+
+        let cancelled = tracker.begin("cancelled@owner").unwrap();
+        assert!(tracker.is_recent("cancelled@owner"));
+        assert!(tracker.begin("cancelled@owner").is_err());
+        drop(cancelled);
+        assert!(tracker.is_recent("cancelled@owner"));
+        assert!(tracker.begin("cancelled@owner").is_err());
+
+        let committed = tracker.begin("committed@owner").unwrap();
+        assert!(tracker.is_recent("committed@owner"));
+        committed.commit();
+        assert!(tracker.is_recent("committed@owner"));
     }
 }

@@ -211,7 +211,14 @@ fn is_unix_socket(path: &Path) -> bool {
     std::fs::metadata(path).is_ok_and(|metadata| metadata.file_type().is_socket())
 }
 
-fn login_home(login_user: &str) -> Option<PathBuf> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoginIdentity {
+    pub home: PathBuf,
+    pub uid: u32,
+    pub gid: u32,
+}
+
+pub fn login_identity(login_user: &str) -> Option<LoginIdentity> {
     let login_user = login_user.trim();
     if login_user.is_empty() {
         return None;
@@ -225,22 +232,36 @@ fn login_home(login_user: &str) -> Option<PathBuf> {
             .output()
             .ok()
             .filter(|output| output.status.success())
-            .and_then(|output| passwd_home(&String::from_utf8_lossy(&output.stdout), login_user))
+            .and_then(|output| {
+                passwd_identity(&String::from_utf8_lossy(&output.stdout), login_user)
+            })
         {
             return Some(home);
         }
     }
-    passwd_home(&std::fs::read_to_string("/etc/passwd").ok()?, login_user)
+    passwd_identity(&std::fs::read_to_string("/etc/passwd").ok()?, login_user)
 }
 
-fn passwd_home(passwd: &str, login_user: &str) -> Option<PathBuf> {
+pub fn login_home(login_user: &str) -> Option<PathBuf> {
+    login_identity(login_user).map(|identity| identity.home)
+}
+
+fn passwd_identity(passwd: &str, login_user: &str) -> Option<LoginIdentity> {
     passwd
         .lines()
         .filter_map(|line| {
             let mut fields = line.split(':');
             let username = fields.next()?;
-            let home = fields.nth(4)?;
-            (username == login_user && !home.is_empty()).then(|| PathBuf::from(home))
+            let _password = fields.next()?;
+            let uid = fields.next()?.parse().ok()?;
+            let gid = fields.next()?.parse().ok()?;
+            let _gecos = fields.next()?;
+            let home = fields.next()?;
+            (username == login_user && !home.is_empty()).then(|| LoginIdentity {
+                home: PathBuf::from(home),
+                uid,
+                gid,
+            })
         })
         .next()
 }
@@ -254,7 +275,8 @@ mod tests {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        SocketSearch, bridge_with_io, copy_lines_limited, find_herdr_socket, request_with_io,
+        LoginIdentity, SocketSearch, bridge_with_io, copy_lines_limited, find_herdr_socket,
+        passwd_identity, request_with_io,
     };
 
     #[derive(Clone, Default)]
@@ -277,6 +299,25 @@ mod tests {
     struct HeldOpenReader {
         initial: Cursor<Vec<u8>>,
         release: mpsc::Receiver<()>,
+    }
+
+    #[test]
+    fn parses_login_identity_from_passwd() {
+        assert_eq!(
+            passwd_identity(
+                "root:x:0:0:root:/root:/bin/sh\nalice:x:1000:1001:Alice:/home/alice:/bin/bash\n",
+                "alice",
+            ),
+            Some(LoginIdentity {
+                home: "/home/alice".into(),
+                uid: 1000,
+                gid: 1001,
+            })
+        );
+        assert_eq!(
+            passwd_identity("broken:x:not-a-uid:2::/tmp:/bin/sh\n", "broken"),
+            None
+        );
     }
 
     impl Read for HeldOpenReader {

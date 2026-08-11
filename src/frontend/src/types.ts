@@ -162,6 +162,17 @@ export type HerdrBridgeState = {
   agents: HerdrAgentInfo[];
 };
 
+export type HerdrRuntimeGuardState = {
+  selector: string;
+  state: "not_running" | "ready" | "unknown" | "client_older" | "server_older";
+  client_version: string;
+  client_protocol: number;
+  server_version?: string;
+  server_protocol?: number;
+  live_handoff_available: boolean;
+  handoff_recent?: boolean;
+};
+
 export type HerdrAction = "focus_workspace" | "focus_tab" | "focus_pane" | "create_tab" | "close_workspace" | "create_workspace";
 
 export type SessionBackendId = "webshell" | "herdr" | "zellij" | "ssh";
@@ -443,6 +454,7 @@ export type TerminalPane = {
   reconnectTimer?: number;
   replayTimer?: number;
   reconnectDelay: number;
+  processExitObserved?: boolean;
   pendingInput: string[];
   pendingInputBytes: number;
   replaying: boolean;

@@ -28,6 +28,22 @@ When adding new behavior:
 
 If a change must touch `main.ts`, keep the edit to orchestration and move reusable logic out in the same change.
 
+## Keep Herdr Compatibility Directional
+
+Treat `src/herdr_socket_contract.json` as the allowlisted SockAPI surface that
+WebShell understands, not as a maximum Herdr protocol number. Protocols at or
+above WebShell's minimum remain usable through that allowlist; do not expose
+unknown methods merely because a newer server advertises a larger protocol.
+
+- A live handoff is valid only from a newer installed Herdr client to an older
+  running server that advertises `live_handoff`.
+- Never hand off an equal or newer running server to an older client.
+- Keep live handoff behind explicit user confirmation and target/generation
+  checks in the frontend.
+- Commands that execute the target user's Herdr binary must run as that login
+  user's UID/GID with bounded output, a bounded runtime, and a controlled
+  environment.
+
 ## Keep Agent Upgrades Independent
 
 The target-local lightweight agent has its own compatibility lifecycle. Do not

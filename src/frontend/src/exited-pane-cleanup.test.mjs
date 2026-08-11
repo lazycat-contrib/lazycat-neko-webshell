@@ -151,3 +151,97 @@ test("keeps one provider-owned pane when every pane in a tab exited", () => {
   assert.deepEqual(workspace.tabs[0].layout, { type: "pane", paneId: "pane-2" });
   assert.equal(workspace.tabs[0].active_pane_id, "pane-2");
 });
+
+test("preserves an explicitly protected exited pane beside a running pane", () => {
+  const workspace = normalizeExitedWorkspaceState({
+    selector: "app@owner",
+    active_tab_id: "tab-1",
+    tabs: [{
+      id: "tab-1",
+      label: "1",
+      active_pane_id: "pane-recovering",
+      layout: {
+        type: "split",
+        axis: "columns",
+        children: [
+          { type: "pane", paneId: "pane-running" },
+          { type: "pane", paneId: "pane-recovering" },
+        ],
+      },
+      panes: [
+        { id: "pane-running", session_id: "session-1", status: "running", cols: 80, rows: 24 },
+        { id: "pane-recovering", session_id: "session-2", status: "exited", cols: 80, rows: 24 },
+      ],
+    }],
+  }, false, new Set(["pane-recovering"]));
+
+  assert.deepEqual(
+    workspace.tabs[0].panes.map((pane) => pane.id),
+    ["pane-running", "pane-recovering"],
+  );
+});
+
+test("preserves an unclassified local Herdr exit until recovery owns the decision", () => {
+  const state = {
+    selector: "app@owner",
+    active_tab_id: "tab-1",
+    tabs: [{
+      id: "tab-1",
+      label: "1",
+      active_pane_id: "herdr-exit",
+      layout: {
+        type: "split",
+        axis: "columns",
+        children: [
+          { type: "pane", paneId: "running" },
+          { type: "pane", paneId: "herdr-exit" },
+        ],
+      },
+      panes: [
+        { id: "running", session_id: "session-1", status: "running", session_backend: "webshell", cols: 80, rows: 24 },
+        { id: "herdr-exit", session_id: "session-2", status: "exited", session_backend: "herdr", cols: 80, rows: 24 },
+      ],
+    }],
+  };
+
+  const unclassified = normalizeExitedWorkspaceState(
+    state,
+    false,
+    new Set(),
+    new Set(),
+    new Set(["herdr-exit"]),
+  );
+  assert.deepEqual(unclassified.tabs[0].panes.map((pane) => pane.id), ["running", "herdr-exit"]);
+
+  const ordinary = normalizeExitedWorkspaceState(
+    state,
+    false,
+    new Set(),
+    new Set(["herdr-exit"]),
+    new Set(["herdr-exit"]),
+  );
+  assert.deepEqual(ordinary.tabs[0].panes.map((pane) => pane.id), ["running"]);
+
+  const freshLoad = normalizeExitedWorkspaceState(state, false);
+  assert.deepEqual(freshLoad.tabs[0].panes.map((pane) => pane.id), ["running"]);
+
+  const onlyHerdr = normalizeExitedWorkspaceState({
+    selector: "app@owner",
+    active_tab_id: "tab-1",
+    tabs: [{
+      id: "tab-1",
+      label: "1",
+      active_pane_id: "herdr-exit",
+      layout: { type: "pane", paneId: "herdr-exit" },
+      panes: [{
+        id: "herdr-exit",
+        session_id: "session-2",
+        status: "exited",
+        session_backend: "herdr",
+        cols: 80,
+        rows: 24,
+      }],
+    }],
+  }, false);
+  assert.deepEqual(onlyHerdr.tabs, []);
+});

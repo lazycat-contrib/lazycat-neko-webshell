@@ -1,16 +1,20 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
+use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
+use std::os::unix::process::CommandExt as _;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, anyhow, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use buffa::Message;
+use serde::{Deserialize, Serialize};
 
 use crate::agent_protocol::{
     AGENT_PROTOCOL_VERSION, AGENT_VERSION, MAX_AGENT_MESSAGE_BYTES, MIN_SUPPORTED_AGENT_VERSION,
@@ -75,8 +79,311 @@ pub fn run_agent_command(args: &[String]) -> anyhow::Result<()> {
         "request" => run_request_command(&args[1..]),
         "attach" => run_attach_command(&args[1..]),
         "herdr-socket-bridge" => run_herdr_socket_bridge_command(&args[1..]),
+        "herdr-runtime" => run_herdr_runtime_command(&args[1..]),
         _ => bail!("unknown agent command {command:?}"),
     }
+}
+
+const MAX_HERDR_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
+pub(crate) const HERDR_STATUS_COMMAND_TIMEOUT: Duration = Duration::from_secs(8);
+const HERDR_HANDOFF_COMMAND_TIMEOUT: Duration = Duration::from_secs(55);
+const HERDR_RUNTIME_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct HerdrCliStatus {
+    #[serde(default = "herdr_runtime_schema_version")]
+    schema_version: u32,
+    client: HerdrCliClientStatus,
+    server: HerdrCliServerStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct HerdrCliClientStatus {
+    version: String,
+    protocol: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct HerdrCliServerStatus {
+    running: bool,
+    version: Option<String>,
+    protocol: Option<u32>,
+    capabilities: Option<HerdrCliServerCapabilities>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct HerdrCliServerCapabilities {
+    live_handoff: bool,
+}
+
+fn herdr_runtime_schema_version() -> u32 {
+    HERDR_RUNTIME_SCHEMA_VERSION
+}
+
+fn run_herdr_runtime_command(args: &[String]) -> anyhow::Result<()> {
+    let options = parse_options(args)?;
+    let login_user = herdr_login_user(&options);
+    let action = options.get("action").map_or("status", String::as_str);
+    let identity = neko_herdr_socket_bridge::login_identity(&login_user)
+        .context("Herdr login user was not found")?;
+    let executable = find_herdr_executable(&identity)?;
+    match action {
+        "status" => print_herdr_status(&login_user, &identity, &executable),
+        "handoff" => handoff_herdr_runtime(&login_user, &identity, &executable),
+        _ => bail!("unsupported Herdr runtime action {action:?}"),
+    }
+}
+
+fn herdr_login_user(options: &HashMap<String, String>) -> String {
+    options
+        .get("login-user")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("root")
+        .to_owned()
+}
+
+fn print_herdr_status(
+    login_user: &str,
+    identity: &neko_herdr_socket_bridge::LoginIdentity,
+    executable: &Path,
+) -> anyhow::Result<()> {
+    let status = read_herdr_status(login_user, identity, executable)?;
+    serde_json::to_writer(io::stdout().lock(), &status)
+        .context("failed to write Herdr runtime status")
+}
+
+fn handoff_herdr_runtime(
+    login_user: &str,
+    identity: &neko_herdr_socket_bridge::LoginIdentity,
+    executable: &Path,
+) -> anyhow::Result<()> {
+    let status = read_herdr_status(login_user, identity, executable)?;
+    validate_herdr_handoff(&status)?;
+    let confirmed_status = read_herdr_status(login_user, identity, executable)?;
+    if confirmed_status.client != status.client || confirmed_status.server != status.server {
+        bail!(
+            "Herdr runtime changed while preparing live handoff; inspect it again before retrying"
+        );
+    }
+    let executable_arg = executable.to_string_lossy().into_owned();
+    let protocol_arg = confirmed_status.client.protocol.to_string();
+    run_herdr_command(
+        login_user,
+        identity,
+        executable,
+        &[
+            "server",
+            "live-handoff",
+            "--import-exe",
+            &executable_arg,
+            "--expected-protocol",
+            &protocol_arg,
+            "--expected-version",
+            &confirmed_status.client.version,
+        ],
+        HERDR_HANDOFF_COMMAND_TIMEOUT,
+    )?;
+    let next_status = committed_herdr_handoff_status(confirmed_status);
+    serde_json::to_writer(io::stdout().lock(), &next_status)
+        .context("failed to write Herdr runtime status")
+}
+
+fn committed_herdr_handoff_status(mut status: HerdrCliStatus) -> HerdrCliStatus {
+    status.server.running = true;
+    status.server.version = Some(status.client.version.clone());
+    status.server.protocol = Some(status.client.protocol);
+    status
+}
+
+fn validate_herdr_handoff(status: &HerdrCliStatus) -> anyhow::Result<u32> {
+    let server_protocol = status
+        .server
+        .protocol
+        .filter(|_| status.server.running)
+        .context("Herdr server is not running")?;
+    if status.client.protocol <= server_protocol {
+        bail!(
+            "Herdr live handoff requires a newer client: client protocol {}, server protocol {}",
+            status.client.protocol,
+            server_protocol
+        );
+    }
+    if !status
+        .server
+        .capabilities
+        .as_ref()
+        .is_some_and(|capabilities| capabilities.live_handoff)
+    {
+        bail!("running Herdr server does not support live handoff");
+    }
+    Ok(server_protocol)
+}
+
+fn read_herdr_status(
+    login_user: &str,
+    identity: &neko_herdr_socket_bridge::LoginIdentity,
+    executable: &Path,
+) -> anyhow::Result<HerdrCliStatus> {
+    let output = run_herdr_command(
+        login_user,
+        identity,
+        executable,
+        &["status", "--json"],
+        HERDR_STATUS_COMMAND_TIMEOUT,
+    )?;
+    let mut status: HerdrCliStatus =
+        serde_json::from_slice(&output).context("invalid Herdr runtime status")?;
+    status.schema_version = HERDR_RUNTIME_SCHEMA_VERSION;
+    Ok(status)
+}
+
+fn run_herdr_command(
+    login_user: &str,
+    identity: &neko_herdr_socket_bridge::LoginIdentity,
+    executable: &Path,
+    args: &[&str],
+    command_timeout: Duration,
+) -> anyhow::Result<Vec<u8>> {
+    let mut command = Command::new(executable);
+    let command_path = std::env::join_paths([
+        identity.home.join(".local/bin"),
+        identity.home.join("bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+    ])
+    .context("failed to construct Herdr command PATH")?;
+    command
+        .args(args)
+        .env_clear()
+        .env("HOME", &identity.home)
+        .env("USER", login_user)
+        .env("LOGNAME", login_user)
+        .env("XDG_CONFIG_HOME", identity.home.join(".config"))
+        .env("PATH", command_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    configure_command_identity(&mut command, identity.uid, identity.gid);
+    if let Ok(socket) =
+        neko_herdr_socket_bridge::find_herdr_socket(neko_herdr_socket_bridge::SocketSearch {
+            explicit: None,
+            login_user,
+        })
+    {
+        command.env("HERDR_SOCKET_PATH", socket);
+    }
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to run {}", executable.display()))?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("failed to capture Herdr stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("failed to capture Herdr stderr")?;
+    let stdout_thread = thread::spawn(move || read_bounded_output(stdout));
+    let stderr_thread = thread::spawn(move || read_bounded_output(stderr));
+    let deadline = Instant::now() + command_timeout;
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .context("failed to inspect Herdr command")?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            bail!(
+                "Herdr command timed out after {} seconds",
+                command_timeout.as_secs()
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    let (stdout, stdout_truncated) = join_bounded_output(stdout_thread, "stdout")?;
+    let (stderr, stderr_truncated) = join_bounded_output(stderr_thread, "stderr")?;
+    if stdout_truncated || stderr_truncated {
+        bail!("Herdr command output exceeds {MAX_HERDR_COMMAND_OUTPUT_BYTES} bytes");
+    }
+    if !status.success() {
+        let detail = String::from_utf8_lossy(if stderr.is_empty() { &stdout } else { &stderr });
+        bail!("Herdr command failed: {}", detail.trim());
+    }
+    Ok(stdout)
+}
+
+#[allow(unsafe_code)]
+fn configure_command_identity(command: &mut Command, uid: u32, gid: u32) {
+    let same_user = unsafe { libc::geteuid() == uid };
+    let same_group = unsafe { libc::getegid() == gid };
+    if same_user && same_group {
+        return;
+    }
+    // Only async-signal-safe libc identity calls run between fork and exec.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::setgroups(0, std::ptr::null()) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::setresgid(gid, gid, gid) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::setresuid(uid, uid, uid) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+fn read_bounded_output(mut reader: impl Read) -> io::Result<(Vec<u8>, bool)> {
+    let mut output = Vec::new();
+    reader
+        .by_ref()
+        .take((MAX_HERDR_COMMAND_OUTPUT_BYTES + 1) as u64)
+        .read_to_end(&mut output)?;
+    let truncated = output.len() > MAX_HERDR_COMMAND_OUTPUT_BYTES;
+    output.truncate(MAX_HERDR_COMMAND_OUTPUT_BYTES);
+    Ok((output, truncated))
+}
+
+fn join_bounded_output(
+    thread: thread::JoinHandle<io::Result<(Vec<u8>, bool)>>,
+    stream: &str,
+) -> anyhow::Result<(Vec<u8>, bool)> {
+    thread
+        .join()
+        .map_err(|_| anyhow!("Herdr {stream} reader panicked"))?
+        .with_context(|| format!("failed to read Herdr {stream}"))
+}
+
+fn find_herdr_executable(
+    identity: &neko_herdr_socket_bridge::LoginIdentity,
+) -> anyhow::Result<PathBuf> {
+    let mut candidates = vec![
+        identity.home.join(".local/bin/herdr"),
+        identity.home.join("bin/herdr"),
+    ];
+    candidates.extend(
+        ["/usr/local/bin/herdr", "/usr/bin/herdr", "/bin/herdr"]
+            .into_iter()
+            .map(PathBuf::from),
+    );
+    candidates
+        .into_iter()
+        .find(|path| {
+            std::fs::metadata(path).is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        })
+        .context("Herdr executable was not found")
 }
 
 fn run_herdr_socket_bridge_command(args: &[String]) -> anyhow::Result<()> {
@@ -671,6 +978,13 @@ mod tests {
     }
 
     #[test]
+    fn empty_herdr_login_user_uses_the_target_root_identity() {
+        let options = HashMap::from([("login-user".to_owned(), "  ".to_owned())]);
+
+        assert_eq!(herdr_login_user(&options), "root");
+    }
+
+    #[test]
     fn ping_identifies_the_exact_running_agent_payload() {
         let daemon = AgentDaemon {
             selector: "demo@owner".to_owned(),
@@ -697,8 +1011,66 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 7);
-        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 7);
+        assert_eq!(AGENT_VERSION, 8);
+        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 8);
+    }
+
+    #[test]
+    fn herdr_handoff_validation_never_allows_a_downgrade() {
+        let status = |client_protocol, server_protocol, live_handoff| HerdrCliStatus {
+            schema_version: HERDR_RUNTIME_SCHEMA_VERSION,
+            client: HerdrCliClientStatus {
+                version: "0.8.0".to_owned(),
+                protocol: client_protocol,
+            },
+            server: HerdrCliServerStatus {
+                running: true,
+                version: Some("0.7.0".to_owned()),
+                protocol: Some(server_protocol),
+                capabilities: Some(HerdrCliServerCapabilities { live_handoff }),
+            },
+        };
+
+        assert_eq!(validate_herdr_handoff(&status(20, 19, true)).unwrap(), 19);
+        for blocked in [
+            status(19, 20, true),
+            status(20, 20, true),
+            status(20, 19, false),
+        ] {
+            assert!(validate_herdr_handoff(&blocked).is_err());
+        }
+    }
+
+    #[test]
+    fn committed_herdr_handoff_uses_the_confirmed_client_runtime() {
+        let status = HerdrCliStatus {
+            schema_version: HERDR_RUNTIME_SCHEMA_VERSION,
+            client: HerdrCliClientStatus {
+                version: "0.8.0".to_owned(),
+                protocol: 20,
+            },
+            server: HerdrCliServerStatus {
+                running: true,
+                version: Some("0.7.0".to_owned()),
+                protocol: Some(19),
+                capabilities: Some(HerdrCliServerCapabilities { live_handoff: true }),
+            },
+        };
+
+        let committed = committed_herdr_handoff_status(status);
+
+        assert!(committed.server.running);
+        assert_eq!(committed.server.version.as_deref(), Some("0.8.0"));
+        assert_eq!(committed.server.protocol, Some(20));
+    }
+
+    #[test]
+    fn herdr_command_output_capture_is_bounded() {
+        let input = vec![b'x'; MAX_HERDR_COMMAND_OUTPUT_BYTES + 32];
+        let (output, truncated) = read_bounded_output(input.as_slice()).unwrap();
+
+        assert_eq!(output.len(), MAX_HERDR_COMMAND_OUTPUT_BYTES);
+        assert!(truncated);
     }
 
     #[test]

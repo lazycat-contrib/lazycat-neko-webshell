@@ -19,7 +19,8 @@ use crate::config::{
 };
 use crate::fonts::{delete_font, font_file, list_fonts, upload_font};
 use crate::herdr::{
-    get_herdr_state, herdr_ws, post_herdr_action, post_herdr_output_sequence, post_herdr_socket,
+    get_herdr_runtime_status, get_herdr_state, herdr_ws, post_herdr_action, post_herdr_handoff,
+    post_herdr_output_sequence, post_herdr_socket,
 };
 use crate::herdr_notifications::post_herdr_lazycat_notification;
 use crate::lightos::{self, AdminInfo};
@@ -87,6 +88,8 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/session-backends", get(get_session_backends))
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
         .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
+        .route("/api/herdr/runtime", get(get_herdr_runtime_status))
+        .route("/api/herdr/handoff", post(post_herdr_handoff))
         .route("/api/herdr/socket", post(post_herdr_socket))
         .route(
             "/api/herdr/lazycat-notification",

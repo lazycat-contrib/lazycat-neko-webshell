@@ -1,6 +1,6 @@
 [package]
 name = "lazycat-neko-webshell"
-version = "0.7.6"
+version = "0.7.7"
 edition = "2024"
 rust-version = "1.97.1"
 default-run = "lazycat-neko-webshell"
@@ -24,6 +24,7 @@ futures = "0.3.31"
 http = "1.4.0"
 http-body = "1.0.1"
 lzc-sdk = { version = "0.1.1", default-features = false, features = ["gateway"] }
+libc = "0.2.186"
 mime_guess = "2.0.5"
 neko-herdr-socket-bridge = { path = "crates/herdr-socket-bridge" }
 ngrok = "0.19.0"
