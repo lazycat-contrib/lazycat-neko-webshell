@@ -1586,6 +1586,18 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
     z-index: 90;
   }
 
+  .herdr-dock:has(.herdr-workspace-menu:not([hidden])) > .herdr-workspace-switcher {
+    z-index: 1;
+  }
+
+  .herdr-dock:has(.herdr-workspace-menu:not([hidden])) > .herdr-current-targets {
+    pointer-events: none;
+  }
+
+  .herdr-dock:has(.herdr-workspace-menu:not([hidden])) > .herdr-dock-actions {
+    pointer-events: none;
+  }
+
   .herdr-dock {
     display: flex;
     align-items: center;
@@ -1596,7 +1608,9 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   }
 
   .herdr-workspace-switcher {
-    width: auto;
+    flex: 0 0 44px;
+    width: 44px;
+    min-width: 44px;
   }
 
   .herdr-jump-trigger {
@@ -1617,7 +1631,13 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   }
 
   .herdr-current-targets {
-    flex: 1 1 auto;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    touch-action: pan-x;
+    -webkit-overflow-scrolling: touch;
   }
 
   .herdr-current-targets .herdr-target-chip[data-density="compact"] .herdr-target-name,
