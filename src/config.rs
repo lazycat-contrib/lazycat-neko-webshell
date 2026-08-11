@@ -14,6 +14,10 @@ pub const DEFAULT_OUTPUT_FRAME_LIMIT: usize = 4096;
 pub const MIN_OUTPUT_FRAME_LIMIT: usize = 128;
 pub const MAX_OUTPUT_FRAME_LIMIT: usize = 20000;
 pub const MAX_OUTPUT_BUFFER_BYTES: usize = 16 * 1024 * 1024;
+// Initial attach favors a recent, bounded terminal tail so weak links do not
+// block live output behind the entire retained history.
+pub const INITIAL_REPLAY_TAIL_MAX_BYTES: usize = 512 * 1024;
+pub const INITIAL_REPLAY_TAIL_MAX_FRAMES: usize = 256;
 pub const PTY_INPUT_CHANNEL_CAPACITY: usize = 256;
 pub const PTY_INPUT_MESSAGE_BYTES: usize = 16 * 1024;
 pub const PTY_INPUT_BATCH_BYTES: usize = 64 * 1024;

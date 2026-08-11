@@ -110,6 +110,49 @@ impl AgentHistory {
         }
     }
 
+    pub fn snapshot_tail_after_bounded(
+        &self,
+        sequence: u64,
+        max_bytes: usize,
+        max_frames: usize,
+    ) -> AgentHistorySnapshot {
+        let oldest_sequence = self.frames.front().map(|frame| frame.sequence);
+        let replay_start = first_frame_after(&self.frames, sequence);
+        let byte_limit = max_bytes.max(1);
+        let frame_limit = max_frames.max(1);
+        let mut selected_start = self.frames.len();
+        let mut total_bytes = 0usize;
+        let mut selected_frames = 0usize;
+
+        while selected_start > replay_start && selected_frames < frame_limit {
+            let candidate_index = selected_start - 1;
+            let frame = self
+                .frames
+                .get(candidate_index)
+                .expect("agent history tail index should remain in range");
+            let next_bytes = total_bytes.saturating_add(frame.data.len());
+            if selected_frames > 0 && next_bytes > byte_limit {
+                break;
+            }
+            selected_start = candidate_index;
+            selected_frames += 1;
+            total_bytes = next_bytes;
+            if total_bytes >= byte_limit {
+                break;
+            }
+        }
+
+        let truncated = selected_start > replay_start;
+        AgentHistorySnapshot {
+            frames: self.frames.range(selected_start..).cloned().collect(),
+            oldest_sequence,
+            last_sequence: self.next_sequence,
+            truncated,
+            replay_gap: truncated
+                || oldest_sequence.is_some_and(|oldest| sequence.saturating_add(1) < oldest),
+        }
+    }
+
     fn prune(&mut self) {
         while self.frames.len() > self.max_lines
             || self.total_lines > self.max_lines
@@ -312,5 +355,44 @@ mod tests {
 
         assert_eq!(snapshot.oldest_sequence, Some(3));
         assert!(snapshot.replay_gap);
+    }
+
+    #[test]
+    fn bounded_tail_snapshot_keeps_the_latest_frames_in_sequence_order() {
+        let mut history = AgentHistory::new(128);
+        for data in [b"a".as_slice(), b"bb", b"ccc", b"dddd", b"eeeee", b"ffffff"] {
+            history.push(data.to_vec());
+        }
+
+        let snapshot = history.snapshot_tail_after_bounded(1, 11, 3);
+
+        assert_eq!(
+            snapshot
+                .frames
+                .iter()
+                .map(|frame| frame.sequence)
+                .collect::<Vec<_>>(),
+            vec![5, 6]
+        );
+        assert_eq!(snapshot.oldest_sequence, Some(1));
+        assert_eq!(snapshot.last_sequence, 6);
+        assert!(snapshot.truncated);
+        assert!(snapshot.replay_gap);
+    }
+
+    #[test]
+    fn bounded_tail_snapshot_honors_the_replay_cursor() {
+        let mut history = AgentHistory::new(128);
+        for data in [b"one".as_slice(), b"two", b"three"] {
+            history.push(data.to_vec());
+        }
+
+        let snapshot = history.snapshot_tail_after_bounded(2, 1024, 8);
+
+        assert_eq!(snapshot.frames.len(), 1);
+        assert_eq!(snapshot.frames[0].sequence, 3);
+        assert_eq!(snapshot.frames[0].data.as_ref(), b"three");
+        assert!(!snapshot.truncated);
+        assert!(!snapshot.replay_gap);
     }
 }

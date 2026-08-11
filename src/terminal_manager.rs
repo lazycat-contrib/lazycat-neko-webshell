@@ -497,6 +497,9 @@ impl OutputBuffer {
         self.compact_history();
     }
 
+    // Keep the tuple API for focused history tests and callers that do not
+    // need replay-gap metadata.
+    #[allow(dead_code)]
     pub fn snapshot_after(&self, sequence: u64) -> (Vec<OutputFrame>, u64) {
         let snapshot = self.snapshot_after_bounded(sequence, usize::MAX, usize::MAX);
         (snapshot.frames, snapshot.last_sequence)
@@ -538,6 +541,50 @@ impl OutputBuffer {
             last_sequence: inner.next_sequence,
             truncated: index < inner.frames.len(),
             replay_gap: oldest_sequence.is_some_and(|oldest| sequence.saturating_add(1) < oldest),
+        }
+    }
+
+    pub fn snapshot_tail_after_bounded(
+        &self,
+        sequence: u64,
+        max_bytes: usize,
+        max_frames: usize,
+    ) -> OutputSnapshot {
+        let inner = self.inner.lock().expect("terminal output buffer poisoned");
+        let oldest_sequence = inner.frames.front().map(|frame| frame.sequence);
+        let replay_start = first_output_frame_after(&inner.frames, sequence);
+        let byte_limit = max_bytes.max(1);
+        let frame_limit = max_frames.max(1);
+        let mut selected_start = inner.frames.len();
+        let mut total_bytes = 0usize;
+        let mut selected_frames = 0usize;
+
+        while selected_start > replay_start && selected_frames < frame_limit {
+            let candidate_index = selected_start - 1;
+            let frame = inner
+                .frames
+                .get(candidate_index)
+                .expect("terminal output tail index should remain in range");
+            let next_bytes = total_bytes.saturating_add(frame.data.len());
+            if selected_frames > 0 && next_bytes > byte_limit {
+                break;
+            }
+            selected_start = candidate_index;
+            selected_frames += 1;
+            total_bytes = next_bytes;
+            if total_bytes >= byte_limit {
+                break;
+            }
+        }
+
+        let truncated = selected_start > replay_start;
+        OutputSnapshot {
+            frames: inner.frames.range(selected_start..).cloned().collect(),
+            oldest_sequence,
+            last_sequence: inner.next_sequence,
+            truncated,
+            replay_gap: truncated
+                || oldest_sequence.is_some_and(|oldest| sequence.saturating_add(1) < oldest),
         }
     }
 
@@ -859,6 +906,28 @@ mod tests {
         let snapshot = output.snapshot_after_bounded(0, 1024, 8);
 
         assert_eq!(snapshot.oldest_sequence, Some(3));
+        assert!(snapshot.replay_gap);
+    }
+
+    #[test]
+    fn bounded_tail_snapshot_keeps_the_latest_frames_in_sequence_order() {
+        let output = OutputBuffer::new(128);
+        for data in [b"a".as_slice(), b"bb", b"ccc", b"dddd", b"eeeee", b"ffffff"] {
+            output.push(data.to_vec());
+        }
+
+        let snapshot = output.snapshot_tail_after_bounded(0, 11, 3);
+
+        assert_eq!(
+            snapshot
+                .frames
+                .iter()
+                .map(|frame| frame.sequence)
+                .collect::<Vec<_>>(),
+            vec![5, 6]
+        );
+        assert_eq!(snapshot.last_sequence, 6);
+        assert!(snapshot.truncated);
         assert!(snapshot.replay_gap);
     }
 

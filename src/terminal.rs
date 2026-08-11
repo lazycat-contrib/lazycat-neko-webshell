@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +16,7 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -26,7 +27,10 @@ use crate::agent_protocol::{
     write_agent_frame_async,
 };
 use crate::client_terminal;
-use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
+use crate::config::{
+    DEFAULT_COLS, DEFAULT_ROWS, INITIAL_REPLAY_TAIL_MAX_BYTES, INITIAL_REPLAY_TAIL_MAX_FRAMES,
+    LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES,
+};
 use crate::lightos;
 use crate::lightos_admin;
 use crate::proto::lazycat::webshell::v1::{
@@ -160,12 +164,19 @@ enum ClientReplyAuthority {
     Server,
 }
 
+#[derive(Clone, Copy)]
+enum InitialReplayPolicy {
+    Complete,
+    BoundedTail,
+}
+
 struct ManagedTerminalAttachTarget {
     spec: TerminalSpec,
     allow_spawn: bool,
     resize_existing: bool,
     replay: bool,
     replay_after: u64,
+    initial_replay_policy: InitialReplayPolicy,
     pane_id: Option<String>,
     output: Arc<OutputBuffer>,
     control: TerminalControlGuard,
@@ -274,8 +285,22 @@ struct TerminalReplayContext<'a> {
     rows: u16,
     replay: bool,
     replay_after: u64,
+    initial_replay_policy: InitialReplayPolicy,
     pane_id: Option<&'a str>,
     output: &'a OutputBuffer,
+}
+
+struct ReplayInputCapture {
+    receiver: TerminalReceiver,
+    deferred: VecDeque<Message>,
+}
+
+enum ReplayInputDisposition {
+    Handled,
+    Deferred {
+        message: Message,
+        blocks_input: bool,
+    },
 }
 
 pub async fn terminal_ws(
@@ -442,6 +467,7 @@ async fn handle_terminal_socket(
     let ready_rows = target.spec.rows;
     let replay_after = target.replay_after;
     let replay = target.replay;
+    let initial_replay_policy = target.initial_replay_policy;
     let replay_output = Arc::clone(&target.output);
     let pane_id = target.pane_id.clone();
     let allow_spawn = target.allow_spawn;
@@ -456,6 +482,7 @@ async fn handle_terminal_socket(
         rows: ready_rows,
         replay,
         replay_after,
+        initial_replay_policy,
         pane_id: pane_id.as_deref(),
         output: replay_output.as_ref(),
     };
@@ -507,22 +534,50 @@ async fn serve_open_terminal(
     send_terminal_control_state(&mut sender, &state, &control).await?;
 
     let mut last_sent_sequence = replay_context.replay_after;
+    let mut pending_clipboard_image = None;
     if replay_context.replay {
-        let Some(sequence) = send_replay_snapshot(
+        let (replay_done_tx, replay_done_rx) = oneshot::channel();
+        let replay_input_task = tokio::spawn(capture_input_during_replay(
+            receiver,
+            Arc::clone(&state),
+            Arc::clone(&terminal),
+            control.clone(),
+            replay_done_rx,
+        ));
+        let replay_result = send_replay_snapshot(
             &mut sender,
             &terminal,
             replay_context.pane_id,
             replay_context.output,
             replay_context.replay_after,
+            replay_context.initial_replay_policy,
         )
-        .await?
-        else {
+        .await;
+        let _ = replay_done_tx.send(());
+        let captured = replay_input_task
+            .await
+            .context("failed to capture terminal input during replay")??;
+        receiver = captured.receiver;
+        let Some(sequence) = replay_result? else {
             return Ok(());
         };
         last_sent_sequence = sequence;
+        for message in captured.deferred {
+            if !handle_terminal_client_message(
+                &mut sender,
+                &state,
+                &terminal,
+                &control,
+                &mut pending_clipboard_image,
+                message,
+            )
+            .await?
+            {
+                return Ok(());
+            }
+        }
     }
 
-    let mut pending_clipboard_image = None;
     loop {
         tokio::select! {
             event = event_rx.recv() => {
@@ -561,6 +616,133 @@ async fn serve_open_terminal(
     }
 
     Ok(())
+}
+
+async fn capture_input_during_replay(
+    mut receiver: TerminalReceiver,
+    state: Arc<AppState>,
+    terminal: Arc<ManagedTerminal>,
+    control: TerminalControlGuard,
+    mut replay_done: oneshot::Receiver<()>,
+) -> anyhow::Result<ReplayInputCapture> {
+    let mut deferred = VecDeque::new();
+    let mut input_blocked = false;
+    loop {
+        tokio::select! {
+            _ = &mut replay_done => break,
+            message = receiver.next() => {
+                let Some(message) = message else {
+                    break;
+                };
+                let message = message?;
+                if input_blocked {
+                    deferred.push_back(message);
+                    continue;
+                }
+                match handle_input_during_replay(&state, &terminal, &control, message)? {
+                    ReplayInputDisposition::Handled => {}
+                    ReplayInputDisposition::Deferred { message, blocks_input } => {
+                        input_blocked = blocks_input;
+                        deferred.push_back(message);
+                    }
+                }
+            }
+        }
+    }
+    Ok(ReplayInputCapture { receiver, deferred })
+}
+
+fn handle_input_during_replay(
+    state: &AppState,
+    terminal: &ManagedTerminal,
+    control: &TerminalControlGuard,
+    message: Message,
+) -> anyhow::Result<ReplayInputDisposition> {
+    match message {
+        Message::Binary(data) if control.allows_write(state) => {
+            terminal.write_input(data.to_vec())?;
+            Ok(ReplayInputDisposition::Handled)
+        }
+        Message::Text(text) if text.starts_with("input:") && control.allows_write(state) => {
+            let data = text.strip_prefix("input:").unwrap_or_default();
+            terminal.write_input(data.as_bytes().to_vec())?;
+            Ok(ReplayInputDisposition::Handled)
+        }
+        Message::Text(text) if text.starts_with("resize:") && control.allows_write(state) => {
+            let size = text.strip_prefix("resize:").unwrap_or_default();
+            let (cols, rows) = parse_resize_payload(size)?;
+            terminal.resize(cols, rows)?;
+            state
+                .sessions
+                .persist_resize(terminal.session_id(), cols, rows)?;
+            Ok(ReplayInputDisposition::Handled)
+        }
+        Message::Text(text) => {
+            let Ok(control_message) = serde_json::from_str::<TerminalClientMessage>(&text) else {
+                return Ok(ReplayInputDisposition::Deferred {
+                    message: Message::Text(text),
+                    blocks_input: false,
+                });
+            };
+            let handled = match control_message {
+                TerminalClientMessage::Input { data } if control.allows_write(state) => {
+                    terminal.write_input(data.into_bytes())?;
+                    true
+                }
+                TerminalClientMessage::Resize { cols, rows } if control.allows_write(state) => {
+                    terminal.resize(cols, rows)?;
+                    state
+                        .sessions
+                        .persist_resize(terminal.session_id(), cols, rows)?;
+                    true
+                }
+                TerminalClientMessage::RestartPolicy { enabled } => {
+                    state
+                        .sessions
+                        .set_restartable(terminal.session_id(), enabled)?;
+                    true
+                }
+                TerminalClientMessage::OutputBuffer { limit } => {
+                    let limit = state
+                        .sessions
+                        .set_output_frame_limit(terminal.session_id(), limit)?;
+                    terminal.set_output_frame_limit(limit);
+                    true
+                }
+                TerminalClientMessage::HistoryRecording { enabled } => {
+                    terminal.set_history_recording(enabled);
+                    true
+                }
+                TerminalClientMessage::Input { .. } | TerminalClientMessage::Resize { .. } => false,
+                TerminalClientMessage::ClipboardImage { .. }
+                | TerminalClientMessage::TakeControl { .. }
+                | TerminalClientMessage::ReleaseControl { .. }
+                | TerminalClientMessage::Close => {
+                    return Ok(ReplayInputDisposition::Deferred {
+                        message: Message::Text(text),
+                        blocks_input: true,
+                    });
+                }
+            };
+            if handled {
+                Ok(ReplayInputDisposition::Handled)
+            } else {
+                Ok(ReplayInputDisposition::Deferred {
+                    message: Message::Text(text),
+                    blocks_input: false,
+                })
+            }
+        }
+        Message::Pong(_) => Ok(ReplayInputDisposition::Handled),
+        message @ Message::Close(_) => Ok(ReplayInputDisposition::Deferred {
+            message,
+            blocks_input: true,
+        }),
+        message @ (Message::Ping(_) | Message::Binary(_)) => Ok(ReplayInputDisposition::Deferred {
+            message,
+            blocks_input: false,
+        }),
+    }
 }
 
 #[allow(clippy::too_many_lines)] // Connection lifecycle stays linear so cleanup ordering remains explicit.
@@ -1096,6 +1278,7 @@ async fn replay_stopped_terminal(
         replay_context.pane_id,
         replay_context.output,
         replay_context.replay_after,
+        replay_context.initial_replay_policy,
     )
     .await?;
     send_control(
@@ -1218,6 +1401,7 @@ async fn send_replay_snapshot(
     pane_id: Option<&str>,
     output: &OutputBuffer,
     replay_after: u64,
+    initial_replay_policy: InitialReplayPolicy,
 ) -> anyhow::Result<Option<u64>> {
     send_control(
         sender,
@@ -1230,7 +1414,9 @@ async fn send_replay_snapshot(
     )
     .await?;
 
-    let (frames, last_sequence) = output.snapshot_after(replay_after);
+    let snapshot = output_replay_snapshot(output, replay_after, initial_replay_policy);
+    let frames = snapshot.frames;
+    let last_sequence = snapshot.last_sequence;
     info!(
         session_id = terminal.session_id(),
         selector = terminal.selector(),
@@ -1238,6 +1424,8 @@ async fn send_replay_snapshot(
         replay_after,
         last_sequence,
         frame_count = frames.len(),
+        truncated = snapshot.truncated,
+        replay_gap = snapshot.replay_gap,
         "replaying terminal output history"
     );
     let mut last_sent_sequence = last_sequence;
@@ -1268,6 +1456,7 @@ async fn send_replay_snapshot_for_target(
     pane_id: Option<&str>,
     output: &OutputBuffer,
     replay_after: u64,
+    initial_replay_policy: InitialReplayPolicy,
 ) -> anyhow::Result<Option<u64>> {
     send_control(
         sender,
@@ -1280,7 +1469,9 @@ async fn send_replay_snapshot_for_target(
     )
     .await?;
 
-    let (frames, last_sequence) = output.snapshot_after(replay_after);
+    let snapshot = output_replay_snapshot(output, replay_after, initial_replay_policy);
+    let frames = snapshot.frames;
+    let last_sequence = snapshot.last_sequence;
     info!(
         session_id = session_id,
         selector = selector,
@@ -1288,6 +1479,8 @@ async fn send_replay_snapshot_for_target(
         replay_after,
         last_sequence,
         frame_count = frames.len(),
+        truncated = snapshot.truncated,
+        replay_gap = snapshot.replay_gap,
         "replaying stopped terminal output history"
     );
     let mut last_sent_sequence = last_sequence;
@@ -1309,6 +1502,22 @@ async fn send_replay_snapshot_for_target(
     )
     .await?;
     Ok(Some(last_sent_sequence))
+}
+
+fn output_replay_snapshot(
+    output: &OutputBuffer,
+    replay_after: u64,
+    initial_replay_policy: InitialReplayPolicy,
+) -> crate::terminal_manager::OutputSnapshot {
+    if matches!(initial_replay_policy, InitialReplayPolicy::BoundedTail) && replay_after == 0 {
+        output.snapshot_tail_after_bounded(
+            replay_after,
+            INITIAL_REPLAY_TAIL_MAX_BYTES,
+            INITIAL_REPLAY_TAIL_MAX_FRAMES,
+        )
+    } else {
+        output.snapshot_after_bounded(replay_after, usize::MAX, usize::MAX)
+    }
 }
 
 #[allow(clippy::too_many_lines)] // Centralizes validation and replies for the provider control protocol.
@@ -1823,6 +2032,7 @@ async fn resolve_terminal_target(
                 resize_existing: control.allows_attach_resize(),
                 replay,
                 replay_after,
+                initial_replay_policy: InitialReplayPolicy::Complete,
                 pane_id,
                 output,
                 control,
@@ -1855,6 +2065,11 @@ async fn resolve_terminal_target(
             resize_existing: control.allows_attach_resize(),
             replay,
             replay_after,
+            initial_replay_policy: if backend == "herdr" {
+                InitialReplayPolicy::BoundedTail
+            } else {
+                InitialReplayPolicy::Complete
+            },
             pane_id,
             output,
             control,

@@ -54,6 +54,7 @@ type RemoteKeepaliveClock = {
 
 const REMOTE_CLIENT_KEEPALIVE_INTERVAL_MS = 10_000;
 const REMOTE_CLIENT_AGENT_PREPARE_TIMEOUT_MS = 45_000;
+const REMOTE_CLIENT_HISTORY_REPLAY_TIMEOUT_MS = 180_000;
 
 export function isRemoteClientSelector(value: unknown): boolean {
   const selector = String(value ?? "").trim();
@@ -125,9 +126,10 @@ export function remoteClientReplayLockTimeout(
   eventType: string,
   defaultTimeoutMs: number,
 ): number {
-  return isRemoteClientSelector(selector) && eventType === "agent-preparing"
-    ? REMOTE_CLIENT_AGENT_PREPARE_TIMEOUT_MS
-    : defaultTimeoutMs;
+  if (!isRemoteClientSelector(selector)) return defaultTimeoutMs;
+  if (eventType === "agent-preparing") return REMOTE_CLIENT_AGENT_PREPARE_TIMEOUT_MS;
+  if (eventType === "replay-start") return REMOTE_CLIENT_HISTORY_REPLAY_TIMEOUT_MS;
+  return defaultTimeoutMs;
 }
 
 export function remoteClientReplayInputPolicy(

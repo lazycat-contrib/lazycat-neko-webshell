@@ -150,6 +150,7 @@ import { createPaneTransport } from "./pane-transport";
 import {
   clearPanePendingInput,
   flushPanePendingInput,
+  paneInputDelivery,
   paneReplayAfter,
   queuePanePendingInput,
 } from "./pane-input-buffer";
@@ -370,6 +371,12 @@ import {
   terminalAppearanceContext,
 } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
+import {
+  beginTerminalReplayBuffer,
+  bufferTerminalReplayBytes,
+  discardTerminalReplayBuffer,
+  drainTerminalReplayBuffer,
+} from "./terminal-replay-buffer";
 import { normalizeTerminalReplyAuthority } from "./terminal-reply-authority";
 import { terminalThemeSocketColors } from "./terminal-theme-wire";
 import { createUploadProgressController } from "./upload-progress";
@@ -452,7 +459,7 @@ import {
 } from "./zellij-backend";
 
 const terminalEncoder = new TextEncoder();
-const REPLAY_INPUT_LOCK_TIMEOUT_MS = 5000;
+const REPLAY_INPUT_LOCK_TIMEOUT_MS = 30_000;
 const HERDR_REPLAY_TAIL_FRAMES = 80;
 const HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS = 500;
 const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
@@ -5610,6 +5617,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     pane.remoteKeepaliveStop = installRemoteClientKeepalive(pane.selector, socket);
     pane.reconnectDelay = 1000;
     beginReplayInputLock(pane, socket);
+    flushPendingInput(pane);
     pane.transport?.notifyConnect();
     sendRestartPolicy(pane);
     sendOutputBufferLimit(pane);
@@ -5655,6 +5663,7 @@ function beginReplayInputLock(
   window.clearTimeout(pane.replayTimer);
   herdrWheelInputBatcher.clear(pane);
   pane.replaying = true;
+  beginTerminalReplayBuffer(pane);
   pane.replayTimer = window.setTimeout(() => {
     if (pane.socket !== socket || pane.closing || !pane.replaying) return;
     finishReplayInputLock(pane);
@@ -5666,9 +5675,12 @@ function clearReplayInputLock(pane: TerminalPane) {
   pane.replayTimer = undefined;
   pane.replaying = false;
   pane.allowGeneratedInputDuringReplay = false;
+  discardTerminalReplayBuffer(pane);
 }
 
 function finishReplayInputLock(pane: TerminalPane) {
+  const replay = drainTerminalReplayBuffer(pane);
+  if (replay) writeTerminalBytes(pane, replay);
   clearReplayInputLock(pane);
   applyCursorAppearance(pane, settings);
   flushPendingInput(pane);
@@ -5824,6 +5836,7 @@ function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {
 }
 
 function handleTerminalBytes(pane: TerminalPane, bytes: Uint8Array) {
+  if (bufferTerminalReplayBytes(pane, bytes)) return;
   if (terminalTransfer.consumePaneOutput(pane, bytes)) return;
   writeTerminalBytes(pane, bytes);
 }
@@ -5870,7 +5883,20 @@ function handleServerText(pane: TerminalPane, text: string) {
     }
     resetRemoteClientTerminalForReplay(pane);
     pane.allowGeneratedInputDuringReplay = event.allow_generated_input === true;
-    pane.replaying = true;
+    if (pane.socket) {
+      beginReplayInputLock(
+        pane,
+        pane.socket,
+        remoteClientReplayLockTimeout(
+          pane.selector,
+          event.type,
+          REPLAY_INPUT_LOCK_TIMEOUT_MS,
+        ),
+      );
+    } else {
+      beginTerminalReplayBuffer(pane);
+      pane.replaying = true;
+    }
   } else if (event.type === "error") {
     clearReplayInputLock(pane);
     if (event.message === "terminal control is held by another client") {
@@ -6641,7 +6667,7 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
 
 function sendHerdrWheelInputNow(pane: TerminalPane, data: string): boolean {
   if (!canConnectPanePty(pane) || !terminalControl.canWrite(pane, { report: false })) return false;
-  if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying || pane.closing) return false;
+  if (pane.socket?.readyState !== WebSocket.OPEN || pane.closing) return false;
   return sendPaneInputDirect(pane, data);
 }
 
@@ -6660,12 +6686,12 @@ function sendPaneInputDirect(pane: TerminalPane, data: string): boolean {
   }
   if (isInterruptInput(data) && pane.socket?.readyState === WebSocket.OPEN) {
     clearPendingInput(pane);
-    clearReplayInputLock(pane);
     pane.socket.send(terminalEncoder.encode(data));
     return true;
   }
-  if (pane.socket?.readyState === WebSocket.OPEN && !pane.replaying) {
-    pane.socket.send(terminalEncoder.encode(data));
+  const socket = pane.socket;
+  if (socket && paneInputDelivery(socket.readyState === WebSocket.OPEN, pane.replaying) === "send") {
+    socket.send(terminalEncoder.encode(data));
     return true;
   }
   if (!queuePaneInput(pane, data)) {
@@ -6683,7 +6709,7 @@ function isInterruptInput(data: string): boolean {
 }
 
 function flushPendingInput(pane: TerminalPane) {
-  if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying) return;
+  if (pane.socket?.readyState !== WebSocket.OPEN) return;
   const flushed = flushPanePendingInput(pane, (data) => {
     pane.socket?.send(terminalEncoder.encode(data));
     return pane.socket?.readyState === WebSocket.OPEN;

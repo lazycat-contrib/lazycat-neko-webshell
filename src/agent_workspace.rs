@@ -138,6 +138,18 @@ impl AgentPane {
             .snapshot_after_bounded(sequence, max_bytes, max_frames)
     }
 
+    pub fn snapshot_tail_after_bounded(
+        &self,
+        sequence: u64,
+        max_bytes: usize,
+        max_frames: usize,
+    ) -> AgentHistorySnapshot {
+        self.history
+            .lock()
+            .expect("agent pane history lock poisoned")
+            .snapshot_tail_after_bounded(sequence, max_bytes, max_frames)
+    }
+
     pub fn subscribe(&self) -> mpsc::Receiver<AgentPaneEvent> {
         let (tx, rx) = mpsc::sync_channel(PTY_SUBSCRIBER_CHANNEL_CAPACITY);
         self.subscribers

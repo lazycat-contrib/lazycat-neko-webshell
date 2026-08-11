@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   clearPanePendingInput,
   flushPanePendingInput,
+  paneInputDelivery,
   paneReplayAfter,
   queuePanePendingInput,
 } from "./pane-input-buffer.ts";
@@ -43,6 +44,12 @@ test("calculates a Herdr replay tail without affecting other backends", () => {
   assert.equal(paneReplayAfter(target, 80), 20);
   target.sessionBackend = "webshell";
   assert.equal(paneReplayAfter(target, 80), 100);
+});
+
+test("delivers input immediately on an open socket even while history is replaying", () => {
+  assert.equal(paneInputDelivery(true, true), "send");
+  assert.equal(paneInputDelivery(true, false), "send");
+  assert.equal(paneInputDelivery(false, true), "queue");
 });
 
 test("clears buffered input state", () => {

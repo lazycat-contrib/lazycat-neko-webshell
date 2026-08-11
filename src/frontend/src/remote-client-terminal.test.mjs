@@ -129,7 +129,7 @@ test("keeps the Go remote attach socket alive before its 30 second timeout", () 
   assert.equal(scheduled.length, 1);
 });
 
-test("allows the Go agent preparation window before releasing queued input", () => {
+test("uses extended windows for remote agent preparation and history replay", () => {
   assert.equal(
     remoteClientReplayLockTimeout("client:client-a", "agent-preparing", 5_000),
     45_000,
@@ -140,7 +140,7 @@ test("allows the Go agent preparation window before releasing queued input", () 
   );
   assert.equal(
     remoteClientReplayLockTimeout("client:client-a", "replay-start", 5_000),
-    5_000,
+    180_000,
   );
 });
 

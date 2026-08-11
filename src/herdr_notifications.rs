@@ -20,7 +20,7 @@ use tracing::warn;
 use crate::state::AppState;
 
 const NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(10);
-const NOTIFICATION_RATE_WINDOW: Duration = Duration::from_secs(60);
+const NOTIFICATION_RATE_WINDOW: Duration = Duration::from_mins(1);
 const NOTIFICATION_DUPLICATE_WINDOW: Duration = Duration::from_secs(3);
 const MAX_NOTIFICATIONS_PER_WINDOW: usize = 30;
 const MAX_CONCURRENT_NOTIFICATIONS: usize = 4;

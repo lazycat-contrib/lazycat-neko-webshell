@@ -1366,9 +1366,12 @@ mod tests {
     #[test]
     fn agent_ready_cache_has_a_short_burst_window() {
         let verified_at = Instant::now();
+        let just_before_expiration = (verified_at + AGENT_READY_CACHE_TTL)
+            .checked_sub(Duration::from_millis(1))
+            .expect("ready-cache TTL should exceed one millisecond");
         assert!(agent_ready_cache_entry_is_fresh(
             verified_at,
-            verified_at + AGENT_READY_CACHE_TTL - Duration::from_millis(1)
+            just_before_expiration,
         ));
         assert!(!agent_ready_cache_entry_is_fresh(
             verified_at,

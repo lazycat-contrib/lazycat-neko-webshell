@@ -49,6 +49,7 @@ use crate::tty_init::{TtyInitMode, lightos_features_enabled, tty_init_mode};
 use crate::voice_input::{post_voice_speech, post_voice_transcription};
 use crate::workspace::{get_workspace, put_workspace_action};
 
+#[allow(clippy::too_many_lines)] // Keep the complete HTTP route table in one auditable place.
 pub fn build_app(state: Arc<AppState>) -> Router {
     let service = Arc::new(CapabilityServiceImpl::new(Arc::clone(&state)));
     let connect = service.register(ConnectRouter::new()).into_axum_router();

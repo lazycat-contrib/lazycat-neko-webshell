@@ -20,7 +20,10 @@ use crate::agent_protocol::{
     write_agent_response,
 };
 use crate::agent_workspace::{AgentPane, AgentPaneEvent, AgentWorkspace};
-use crate::config::{DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, MAX_COLS, MAX_ROWS};
+use crate::config::{
+    DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, INITIAL_REPLAY_TAIL_MAX_BYTES,
+    INITIAL_REPLAY_TAIL_MAX_FRAMES, MAX_COLS, MAX_ROWS,
+};
 use crate::proto::lazycat::webshell::v1::{
     AgentControlType, AgentFrame, AgentFrameType, AgentRequest, AgentRequestType,
 };
@@ -382,9 +385,31 @@ fn serve_attach_stream(
     replay_after: u64,
 ) -> anyhow::Result<()> {
     let event_rx = pane.subscribe();
-    let snapshot = pane.snapshot_after_bounded(replay_after, usize::MAX, usize::MAX);
+    let snapshot = if replay_after == 0 {
+        pane.snapshot_tail_after_bounded(
+            replay_after,
+            INITIAL_REPLAY_TAIL_MAX_BYTES,
+            INITIAL_REPLAY_TAIL_MAX_FRAMES,
+        )
+    } else {
+        pane.snapshot_after_bounded(replay_after, usize::MAX, usize::MAX)
+    };
     let frames = snapshot.frames;
     let mut last_sequence = snapshot.last_sequence;
+
+    // Start reading browser input before writing replay output. The replay and
+    // live output remain ordered on this stream, while commands can reach the
+    // running PTY without waiting for a slow history transfer to finish.
+    let (detach_tx, detach_rx) = mpsc::sync_channel::<()>(1);
+    let mut reader = stream
+        .try_clone()
+        .context("failed to clone attach stream")?;
+    let input_pane = Arc::clone(pane);
+    thread::spawn(move || {
+        read_attach_input_loop(&mut reader, &input_pane);
+        let _ = detach_tx.send(());
+    });
+
     write_agent_frame(
         &mut *stream,
         &replay_start_frame(pane.session_id(), pane.selector(), pane.id(), replay_after),
@@ -400,16 +425,6 @@ fn serve_attach_stream(
         &replay_complete_frame(pane.session_id(), pane.selector(), pane.id(), last_sequence),
     )?;
     stream.flush()?;
-
-    let (detach_tx, detach_rx) = mpsc::sync_channel::<()>(1);
-    let mut reader = stream
-        .try_clone()
-        .context("failed to clone attach stream")?;
-    let input_pane = Arc::clone(pane);
-    thread::spawn(move || {
-        read_attach_input_loop(&mut reader, &input_pane);
-        let _ = detach_tx.send(());
-    });
 
     loop {
         if detach_rx.try_recv().is_ok() {
@@ -682,8 +697,8 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 6);
-        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 6);
+        assert_eq!(AGENT_VERSION, 7);
+        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 7);
     }
 
     #[test]

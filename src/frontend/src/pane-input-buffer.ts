@@ -10,6 +10,12 @@ type PaneReplayCursor = {
 
 type ByteLength = (data: string) => number;
 
+export type PaneInputDelivery = "send" | "queue";
+
+export function paneInputDelivery(socketOpen: boolean, _replaying: boolean): PaneInputDelivery {
+  return socketOpen ? "send" : "queue";
+}
+
 export function queuePanePendingInput(
   pane: PaneInputBuffer,
   data: string,
