@@ -5685,7 +5685,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     pane.transport?.notifyConnect();
     sendRestartPolicy(pane);
     sendOutputBufferLimit(pane);
-    setPaneStatus(pane, tr("status.connected"), "ok");
+    setPaneStatus(pane, tr("status.loadingGhostty"));
     if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
       focusPaneCanvas(pane);
     }
@@ -5921,7 +5921,11 @@ function handleServerText(pane: TerminalPane, text: string) {
     if (typeof event.cols === "number" && typeof event.rows === "number") {
       terminalControl.noteServerSize(pane, event.cols, event.rows);
     }
-    setPaneStatus(pane, tr("status.shellReady"), "ok");
+    setPaneStatus(
+      pane,
+      pane.replaying ? tr("status.loadingGhostty") : tr("status.shellReady"),
+      pane.replaying ? "neutral" : "ok",
+    );
   } else if (event.type === "control-state") {
     terminalControl.noteControlState(pane, event);
   } else if (event.type === "agent-preparing") {
@@ -6035,6 +6039,9 @@ function handleServerText(pane: TerminalPane, text: string) {
     }
     updatePaneOutputSequence(pane, event.last_sequence, { allowReset: true });
     finishReplayInputLock(pane);
+    if (pane.sessionStatus === "running") {
+      setPaneStatus(pane, tr("status.shellReady"), "ok");
+    }
   }
 }
 

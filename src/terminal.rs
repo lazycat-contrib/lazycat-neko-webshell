@@ -1509,15 +1509,14 @@ fn output_replay_snapshot(
     replay_after: u64,
     initial_replay_policy: InitialReplayPolicy,
 ) -> crate::terminal_manager::OutputSnapshot {
-    if matches!(initial_replay_policy, InitialReplayPolicy::BoundedTail) && replay_after == 0 {
-        output.snapshot_tail_after_bounded(
+    if matches!(initial_replay_policy, InitialReplayPolicy::BoundedTail) {
+        return output.snapshot_tail_after_cursor_bounded(
             replay_after,
             INITIAL_REPLAY_TAIL_MAX_BYTES,
             INITIAL_REPLAY_TAIL_MAX_FRAMES,
-        )
-    } else {
-        output.snapshot_after_bounded(replay_after, usize::MAX, usize::MAX)
+        );
     }
+    output.snapshot_after_bounded(replay_after, usize::MAX, usize::MAX)
 }
 
 #[allow(clippy::too_many_lines)] // Centralizes validation and replies for the provider control protocol.

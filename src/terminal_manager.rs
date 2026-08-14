@@ -588,6 +588,22 @@ impl OutputBuffer {
         }
     }
 
+    pub fn snapshot_tail_after_cursor_bounded(
+        &self,
+        sequence: u64,
+        max_bytes: usize,
+        max_frames: usize,
+    ) -> OutputSnapshot {
+        if sequence == 0 {
+            return self.snapshot_tail_after_bounded(sequence, max_bytes, max_frames);
+        }
+        let snapshot = self.snapshot_after_bounded(sequence, usize::MAX, usize::MAX);
+        if sequence > snapshot.last_sequence {
+            return self.snapshot_tail_after_bounded(0, max_bytes, max_frames);
+        }
+        snapshot
+    }
+
     fn append_history(&self, frame: &OutputFrame, first_retained_sequence: u64) {
         if self.history_closed.load(Ordering::Relaxed) {
             return;
@@ -709,6 +725,7 @@ impl OutputHistoryStore {
             .load_output_history_protocol_version(&self.session_id)?;
         if version.as_deref() != Some(AGENT_PROTOCOL_VERSION) {
             let _ = self.database.delete_output_history(&self.session_id);
+            let _ = self.database.delete_herdr_output_sequence(&self.session_id);
             return Ok(LoadedHistory::default());
         }
         let frames = self.database.load_output_history(&self.session_id)?;
@@ -807,6 +824,18 @@ mod tests {
 
         assert!(frames.is_empty());
         assert_eq!(last_sequence, 1);
+    }
+
+    #[test]
+    fn stale_replay_cursor_falls_back_to_current_history_tail() {
+        let output = OutputBuffer::default();
+        output.push(b"current screen".to_vec());
+
+        let snapshot = output.snapshot_tail_after_cursor_bounded(99, 1024, 80);
+
+        assert_eq!(snapshot.last_sequence, 1);
+        assert_eq!(snapshot.frames.len(), 1);
+        assert_eq!(snapshot.frames[0].data.as_ref(), b"current screen");
     }
 
     #[test]
@@ -997,6 +1026,9 @@ mod tests {
     fn persistent_output_drops_history_from_old_protocol() {
         let database = temp_database();
         database
+            .store_herdr_output_sequence("session-one", 99)
+            .unwrap();
+        database
             .append_output_frame(
                 "session-one",
                 &crate::terminal_manager::OutputFrame {
@@ -1018,6 +1050,10 @@ mod tests {
                 .load_output_history("session-one")
                 .unwrap()
                 .is_empty()
+        );
+        assert_eq!(
+            database.load_herdr_output_sequence("session-one").unwrap(),
+            None
         );
     }
 
