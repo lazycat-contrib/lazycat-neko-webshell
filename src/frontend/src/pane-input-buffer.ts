@@ -66,3 +66,7 @@ export function paneReplayAfter(pane: PaneReplayCursor, herdrTailFrames: number)
   if (pane.sessionBackend !== "herdr" || sequence <= 0) return sequence;
   return Math.max(0, sequence - herdrTailFrames);
 }
+
+export function resetPaneReplayCursorForNewRenderer(pane: PaneReplayCursor) {
+  if (pane.sessionBackend === "herdr") pane.lastOutputSequence = 0;
+}

@@ -7,6 +7,7 @@ import {
   paneInputDelivery,
   paneReplayAfter,
   queuePanePendingInput,
+  resetPaneReplayCursorForNewRenderer,
 } from "./pane-input-buffer.ts";
 
 function pane() {
@@ -39,11 +40,22 @@ test("restores unsent input when flushing fails", () => {
   assert.equal(target.pendingInputBytes, 5);
 });
 
-test("calculates a Herdr replay tail without affecting other backends", () => {
+test("keeps the bounded Herdr delta replay for weak-network reconnects", () => {
   const target = pane();
   assert.equal(paneReplayAfter(target, 80), 20);
   target.sessionBackend = "webshell";
   assert.equal(paneReplayAfter(target, 80), 100);
+});
+
+test("starts a new Herdr renderer from the bounded server tail", () => {
+  const target = pane();
+  resetPaneReplayCursorForNewRenderer(target);
+  assert.equal(paneReplayAfter(target, 80), 0);
+
+  target.lastOutputSequence = 100;
+  target.sessionBackend = "webshell";
+  resetPaneReplayCursorForNewRenderer(target);
+  assert.equal(target.lastOutputSequence, 100);
 });
 
 test("delivers input immediately on an open socket even while history is replaying", () => {

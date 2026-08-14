@@ -167,6 +167,7 @@ import {
   paneInputDelivery,
   paneReplayAfter,
   queuePanePendingInput,
+  resetPaneReplayCursorForNewRenderer,
 } from "./pane-input-buffer";
 import {
   destroyPaneTransport,
@@ -5135,7 +5136,6 @@ async function restoreWorkspacePane(
   pane.sessionBackend = nextBackend;
   pane.terminalReplyAuthority = nextReplyAuthority;
   pane.programKind = paneState.program_kind;
-  restoreHerdrOutputSequence(pane, paneState.herdr_output_sequence);
   pane.serverCols = paneState.cols || INITIAL_COLS;
   pane.serverRows = paneState.rows || INITIAL_ROWS;
   pane.cols = pane.localCols || pane.serverCols;
@@ -5171,15 +5171,6 @@ function preparePaneForFullReplay(pane: TerminalPane) {
   pane.lastOutputSequence = 0;
   pane.titleBuffer = "";
   clearPendingInput(pane);
-}
-
-function restoreHerdrOutputSequence(pane: TerminalPane, sequence: unknown) {
-  if (pane.sessionBackend !== "herdr" || !pane.sessionId) return;
-  if (typeof sequence !== "number" || !Number.isFinite(sequence)) return;
-  const remembered = Math.max(0, Math.trunc(sequence));
-  if (remembered > pane.lastOutputSequence) {
-    pane.lastOutputSequence = remembered;
-  }
 }
 
 function shouldConnectRestoredPane(pane: TerminalPane): boolean {
@@ -5478,6 +5469,7 @@ function updatePaneActiveState(tab: TerminalTab) {
 
 async function mountTerminal(pane: TerminalPane) {
   disposePaneTerminalRuntime(pane);
+  resetPaneReplayCursorForNewRenderer(pane);
   const transport = replacePaneTransport(pane, createPaneRuntimeTransport);
   pane.mount.innerHTML = "";
   applyThemeToMount(pane.mount, currentAppearanceContext());

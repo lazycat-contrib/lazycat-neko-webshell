@@ -1,5 +1,5 @@
 import type { TerminalPane, TouchSelectionMode } from "./types";
-import { paneRoutesMouseToApplication } from "./terminal-mouse-mode";
+import { paneRoutesMouseToApplication } from "./terminal-mouse-mode.ts";
 
 export const TOUCH_SCROLL_THRESHOLD_PX = 6;
 const WHEEL_PIXEL_SCROLL_MULTIPLIER = 2;
@@ -57,11 +57,10 @@ export function installPaneScrollbackFallback(
     if (!touchScrollActive && Math.abs(deltaPx) < TOUCH_SCROLL_THRESHOLD_PX) return;
     touchScrollActive = true;
     lastTouchY = event.clientY;
-    const handled = paneRoutesMouseToApplication(pane, event)
-      ? dispatchHerdrTouchWheel(pane, event, deltaPx, (remainder) => {
+    const handled = scrollPaneByPixels(pane, host, deltaPx)
+      || dispatchTouchWheel(pane, event, deltaPx, (remainder) => {
         touchWheelRemainderPx = remainder;
-      }, touchWheelRemainderPx)
-      : scrollPaneByPixels(pane, host, deltaPx);
+      }, touchWheelRemainderPx);
     if (handled) {
       event.preventDefault();
       event.stopPropagation();
@@ -102,14 +101,14 @@ function rerouteHerdrWheelToCanvas(pane: TerminalPane, event: WheelEvent): boole
   return true;
 }
 
-function dispatchHerdrTouchWheel(
+function dispatchTouchWheel(
   pane: TerminalPane,
   sourceEvent: PointerEvent,
   deltaPx: number,
   setRemainder: (value: number) => void,
   currentRemainder: number,
 ): boolean {
-  if (!paneIsHerdr(pane) || !Number.isFinite(deltaPx) || !deltaPx) return false;
+  if (!pane.term?.restty || !Number.isFinite(deltaPx) || !deltaPx) return false;
   const canvas = paneCanvas(pane);
   if (!canvas) return false;
   const thresholdPx = Math.max(1, terminalLineHeightPx(pane.mount));
@@ -190,7 +189,7 @@ function paneScrollbackHost(pane: TerminalPane): HTMLElement | null {
 }
 
 function paneHasScrollableFallback(pane: TerminalPane, host: HTMLElement | null): boolean {
-  return Boolean(host && hostCanScroll(host)) || (paneIsHerdr(pane) && Boolean(pane.term?.restty));
+  return Boolean(host && hostCanScroll(host)) || Boolean(pane.term?.restty);
 }
 
 function paneTouchScrollbackFallbackEnabled(
