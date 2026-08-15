@@ -24,6 +24,10 @@ function samePaneIds(left: readonly string[], right: readonly string[]): boolean
 
 const REFRESH_RETRY_DELAYS_MS = [300, 900, 1800, 5000] as const;
 
+export function herdrEventBridgeShouldSubscribe(selector: string, available: boolean): boolean {
+  return Boolean(selector && available);
+}
+
 export function createHerdrEventStreamPolicy() {
   let active = false;
   let token = 0;

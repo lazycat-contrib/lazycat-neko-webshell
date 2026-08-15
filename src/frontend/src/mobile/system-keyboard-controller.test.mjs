@@ -6,19 +6,23 @@ import { createMobileSystemKeyboardController } from "./system-keyboard-controll
 test("keeps historical automatic keyboard focus when prevention is disabled", () => {
   const pane = { id: "compat" };
   const events = [];
+  let focused = false;
   const controller = createMobileSystemKeyboardController({
     activePane: () => pane,
     dismissPane: () => events.push("dismiss"),
     enableAllPanes: () => events.push("enable-all"),
     focusAutomaticPane: () => {
+      focused = true;
       events.push("automatic-focus");
       return true;
     },
     focusHardwarePane: () => events.push("hardware"),
     focusPane: () => {
+      focused = true;
       events.push("explicit-focus");
       return true;
     },
+    isPaneKeyboardFocused: () => focused,
     preventAutoOpen: () => false,
     updateToggle: (next) => events.push(`update:${next}`),
   });
@@ -26,7 +30,7 @@ test("keeps historical automatic keyboard focus when prevention is disabled", ()
   controller.restoreState();
   assert.equal(controller.resetMountedPane(pane), false);
 
-  assert.deepEqual(events, ["automatic-focus", "update:false"]);
+  assert.deepEqual(events, ["automatic-focus", "update:true"]);
 });
 
 test("keeps an already-focused automatic keyboard stable after shortcuts", () => {
@@ -49,7 +53,7 @@ test("keeps an already-focused automatic keyboard stable after shortcuts", () =>
 
   controller.preserveState()();
 
-  assert.deepEqual(events, ["update:false"]);
+  assert.deepEqual(events, ["update:true"]);
 });
 
 test("keeps a closed system keyboard unfocused after a bottom keyboard shortcut", () => {
@@ -167,7 +171,7 @@ test("keeps the next bottom key closed after toggling the system keyboard off", 
   assert.deepEqual(events, ["dismiss", "hardware", "dismiss", "hardware", "update:false"]);
 });
 
-test("does not activate the toggle when an input opens the keyboard automatically", () => {
+test("reflects an automatically opened keyboard in the toggle", () => {
   const pane = { id: "automatic" };
   const events = [];
   const controller = createMobileSystemKeyboardController({
@@ -187,7 +191,7 @@ test("does not activate the toggle when an input opens the keyboard automaticall
   controller.toggle();
 
   assert.deepEqual(events, [
-    "update:false",
+    "update:true",
     "dismiss",
     "hardware",
     "update:false",

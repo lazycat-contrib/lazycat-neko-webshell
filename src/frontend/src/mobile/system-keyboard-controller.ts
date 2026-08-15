@@ -39,6 +39,11 @@ export function createMobileSystemKeyboardController(
     )),
   );
 
+  const updateToggleFromState = () => {
+    const pane = options.activePane();
+    options.updateToggle(Boolean(mobileControlsEnabled && pane && paneKeyboardOpen(pane)));
+  };
+
   const preservePaneState = (pane: TerminalPane) => {
     invalidateShortcuts();
     if (!mobileControlsEnabled || paneKeyboardOpen(pane)) return;
@@ -86,14 +91,14 @@ export function createMobileSystemKeyboardController(
       if (keyboardExplicit) {
         enabled = options.isPaneKeyboardFocused?.(active) || options.focusPane(active);
         keyboardPane = enabled ? active : undefined;
-        options.updateToggle(enabled);
+        updateToggleFromState();
         return;
       }
       enabled = false;
       const focusAutomaticPane = options.focusAutomaticPane ?? options.focusPane;
       const focused = options.isPaneKeyboardFocused?.(active) || focusAutomaticPane(active);
       keyboardPane = focused ? active : undefined;
-      options.updateToggle(false);
+      updateToggleFromState();
     };
   };
 
@@ -115,7 +120,7 @@ export function createMobileSystemKeyboardController(
       ) {
         keyboardPane = pane;
       }
-      options.updateToggle(false);
+      updateToggleFromState();
       return;
     }
     if (!pane) {
@@ -142,20 +147,20 @@ export function createMobileSystemKeyboardController(
       viewportDismissPending = viewportKeyboardVisible;
       dismiss(pane);
     }
-    options.updateToggle(enabled);
+    updateToggleFromState();
   };
 
   const showPane = (pane = options.activePane()) => {
     if (!mobileControlsEnabled) return;
     if (!pane) return;
     if (viewportKeyboardVisible && !enabled) {
-      options.updateToggle(false);
+      updateToggleFromState();
       return;
     }
     viewportDismissPending = false;
     enabled = options.focusPane(pane);
     keyboardPane = enabled ? pane : undefined;
-    options.updateToggle(enabled);
+    updateToggleFromState();
   };
 
   const show = (pane = options.activePane()) => {
@@ -258,7 +263,7 @@ export function createMobileSystemKeyboardController(
         enabled = false;
         keyboardPane = undefined;
       }
-      options.updateToggle(enabled);
+      updateToggleFromState();
       return;
     }
     if (visible && enabled) {
@@ -275,7 +280,7 @@ export function createMobileSystemKeyboardController(
         if (pane) dismiss(pane);
       }
     }
-    options.updateToggle(enabled);
+    updateToggleFromState();
   };
 
   const applyPreference = () => {

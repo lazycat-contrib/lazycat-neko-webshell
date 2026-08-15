@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createHerdrEventStreamPolicy } from "./herdr-event-stream-policy.ts";
+import {
+  createHerdrEventStreamPolicy,
+  herdrEventBridgeShouldSubscribe,
+} from "./herdr-event-stream-policy.ts";
+
+test("subscribes to an available external Herdr runtime without a WebShell Herdr pane", () => {
+  assert.equal(herdrEventBridgeShouldSubscribe("demo@owner", true), true);
+  assert.equal(herdrEventBridgeShouldSubscribe("", true), false);
+  assert.equal(herdrEventBridgeShouldSubscribe("demo@owner", false), false);
+});
 
 test("keeps delayed Herdr history on the authoritative reconciliation path", () => {
   const policy = createHerdrEventStreamPolicy();

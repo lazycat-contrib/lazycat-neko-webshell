@@ -86,7 +86,10 @@ import {
   recoverHerdrPaneStatesAfterHandoff,
 } from "./herdr-pane-recovery";
 import { createHerdrEventRefreshLoop } from "./herdr-event-refresh-loop";
-import { createHerdrEventStreamPolicy } from "./herdr-event-stream-policy";
+import {
+  createHerdrEventStreamPolicy,
+  herdrEventBridgeShouldSubscribe,
+} from "./herdr-event-stream-policy";
 import { createHerdrRefreshCoordinator, type HerdrRefreshMode } from "./herdr-refresh-coordinator";
 import { createHerdrRuntimeGuard } from "./herdr-runtime-guard";
 import { herdrEventMessage } from "./herdr-event-presentation";
@@ -4582,7 +4585,7 @@ async function fetchHerdrPaneIds(selector: string): Promise<string[]> {
 
 async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   const selector = normalizeSelector(selectedSelector);
-  const shouldSubscribe = Boolean(selector && herdrState?.available && activeHerdrTerminalPane());
+  const shouldSubscribe = herdrEventBridgeShouldSubscribe(selector, Boolean(herdrState?.available));
   if (!shouldSubscribe) {
     stopHerdrEventBridge();
     return;
