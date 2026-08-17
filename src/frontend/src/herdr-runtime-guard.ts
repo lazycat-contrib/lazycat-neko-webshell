@@ -37,6 +37,11 @@ export type HerdrRuntimeGuardPresentation = {
   handoffVisible: boolean;
 };
 
+export type HerdrTerminalPreparation = {
+  ready: boolean;
+  retry: boolean;
+};
+
 export function herdrRuntimeGuardPresentation(
   state: HerdrRuntimeGuardState | undefined,
   tr: Translate,
@@ -86,6 +91,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
   let runtimeState: HerdrRuntimeGuardState | undefined;
   let busy = false;
   let confirming = false;
+  const terminalPreparations = new Map<string, Promise<HerdrTerminalPreparation>>();
   const uncertainHandoffs = new Set<string>();
   const wait = options.wait
     ?? ((delayMs: number) => new Promise((resolve) => globalThis.setTimeout(resolve, delayMs)));
@@ -146,14 +152,14 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
     }
   }
 
-  async function performHandoff() {
+  async function performHandoff(): Promise<boolean> {
     if (
       busy
       || confirming
       || uncertainHandoffs.has(selector)
       || !selector
       || !runtimeState?.live_handoff_available
-    ) return;
+    ) return false;
     const requestSelector = selector;
     const requestState = runtimeState;
     const statusGeneration = requestGeneration;
@@ -175,7 +181,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
         || requestSelector !== selector
         || requestState !== runtimeState
         || statusGeneration !== requestGeneration
-      ) return;
+      ) return false;
       confirming = false;
       busy = true;
       requestGeneration += 1;
@@ -192,6 +198,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
         render();
       }
       await options.onRecovered(requestSelector);
+      return true;
     } catch (error) {
       if (handoffStarted && !handoffCommitted) {
         try {
@@ -206,7 +213,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
               render();
             }
             await options.onRecovered(requestSelector);
-            return;
+            return true;
           }
           uncertainHandoffs.add(requestSelector);
           void reconcileUncertainHandoff(requestSelector);
@@ -216,6 +223,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
         }
       }
       options.onError(error instanceof Error ? error.message : String(error));
+      return false;
     } finally {
       if (operation === operationGeneration) {
         busy = false;
@@ -223,6 +231,141 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
         render();
       }
     }
+  }
+
+  function publishTerminalRuntimeState(
+    requestSelector: string,
+    state: HerdrRuntimeGuardState,
+  ) {
+    if (requestSelector !== selector) return;
+    requestGeneration += 1;
+    runtimeState = state;
+    requestKey = "";
+    render();
+  }
+
+  async function prepareTerminalOnce(
+    requestSelector: string,
+  ): Promise<HerdrTerminalPreparation> {
+    let state: HerdrRuntimeGuardState;
+    try {
+      state = await options.fetchStatus(requestSelector);
+      publishTerminalRuntimeState(requestSelector, state);
+    } catch (error) {
+      options.onError(error instanceof Error ? error.message : String(error));
+      return { ready: false, retry: true };
+    }
+    if (state.state === "ready" || state.state === "not_running") {
+      return { ready: true, retry: false };
+    }
+    if (
+      state.handoff_recent
+      || busy
+      || confirming
+      || uncertainHandoffs.has(requestSelector)
+    ) {
+      return { ready: false, retry: true };
+    }
+    if (state.state !== "server_older" || !state.live_handoff_available) {
+      const presentation = herdrRuntimeGuardPresentation(state, options.tr);
+      if (presentation.message) options.onError(presentation.message);
+      return { ready: false, retry: false };
+    }
+    if (requestSelector !== selector) return { ready: false, retry: true };
+
+    let handoffStarted = false;
+    const operation = ++operationGeneration;
+    confirming = true;
+    render();
+    try {
+      const confirmed = await options.confirm({
+        title: options.tr("status.herdrHandoffTitle"),
+        message: options.tr("status.herdrHandoffConfirm"),
+        confirmLabel: options.tr("action.herdrLiveHandoff"),
+        cancelLabel: options.tr("action.cancel"),
+      });
+      if (operation !== operationGeneration || requestSelector !== selector) {
+        return { ready: false, retry: true };
+      }
+      if (!confirmed) return { ready: false, retry: false };
+
+      const validated = await options.fetchStatus(requestSelector);
+      publishTerminalRuntimeState(requestSelector, validated);
+      if (operation !== operationGeneration || requestSelector !== selector) {
+        return { ready: false, retry: true };
+      }
+      if (validated.state === "ready" || validated.state === "not_running") {
+        return { ready: true, retry: false };
+      }
+      if (validated.handoff_recent) return { ready: false, retry: true };
+      if (
+        validated.state !== "server_older"
+        || !validated.live_handoff_available
+        || validated.client_protocol !== state.client_protocol
+        || validated.server_protocol !== state.server_protocol
+      ) {
+        return { ready: false, retry: false };
+      }
+      confirming = false;
+      busy = true;
+      handoffStarted = true;
+      render();
+      options.onHandoffStart?.(requestSelector);
+      const nextState = await options.handoff(requestSelector);
+      publishTerminalRuntimeState(requestSelector, nextState);
+      if (nextState.state !== "ready") {
+        options.onHandoffFailed?.(requestSelector);
+        return { ready: false, retry: true };
+      }
+      await options.onRecovered(requestSelector);
+      return { ready: true, retry: false };
+    } catch (error) {
+      if (handoffStarted) {
+        try {
+          const reconciled = await options.fetchStatus(requestSelector);
+          publishTerminalRuntimeState(requestSelector, reconciled);
+          if (reconciled.state === "ready") {
+            await options.onRecovered(requestSelector);
+            return { ready: true, retry: false };
+          }
+        } catch {
+          // The pane retry path will inspect the runtime again.
+        }
+        uncertainHandoffs.add(requestSelector);
+        void reconcileUncertainHandoff(requestSelector);
+      }
+      options.onError(error instanceof Error ? error.message : String(error));
+      return { ready: false, retry: true };
+    } finally {
+      if (operation === operationGeneration) {
+        confirming = false;
+        if (handoffStarted) busy = false;
+        render();
+      }
+    }
+  }
+
+  function prepareTerminal(
+    nextSelector: string,
+    activeTarget = false,
+  ): Promise<HerdrTerminalPreparation> {
+    const normalized = nextSelector.trim();
+    if (!normalized) return Promise.resolve({ ready: false, retry: false });
+    if (activeTarget && normalized !== selector) {
+      operationGeneration += 1;
+      busy = false;
+      confirming = false;
+      runtimeState = undefined;
+      requestKey = "";
+      selector = normalized;
+      render();
+    }
+    const existing = terminalPreparations.get(normalized);
+    if (existing) return existing;
+    const preparation = prepareTerminalOnce(normalized)
+      .finally(() => terminalPreparations.delete(normalized));
+    terminalPreparations.set(normalized, preparation);
+    return preparation;
   }
 
   async function reconcileUncertainHandoff(requestSelector: string) {
@@ -296,6 +439,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
   return {
     sync,
     refresh,
+    prepareTerminal,
     clear,
   };
 }

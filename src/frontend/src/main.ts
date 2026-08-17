@@ -5641,6 +5641,20 @@ async function openSocketPrepared(pane: TerminalPane) {
   pendingPaneSocketOpens.add(pane.id);
   let attach: Awaited<ReturnType<typeof terminalControl.prepareAttach>>;
   try {
+    if (
+      pane.sessionBackend === "herdr"
+      && !isRemoteClientSelector(pane.selector)
+    ) {
+      const preparation = await herdrRuntimeGuard.prepareTerminal(
+        pane.selector,
+        normalizeSelector(pane.selector) === normalizeSelector(selectedSelector),
+      );
+      if (!preparation.ready) {
+        setPaneStatus(pane, tr("status.herdrUnavailable"), "error");
+        if (preparation.retry) scheduleReconnect(pane);
+        return;
+      }
+    }
     attach = await terminalControl.prepareAttach(pane);
   } finally {
     pendingPaneSocketOpens.delete(pane.id);

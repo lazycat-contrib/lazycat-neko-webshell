@@ -53,6 +53,282 @@ test("hides the guard for matching and stopped runtimes", () => {
   }
 });
 
+test("prepares a Herdr terminal by confirming handoff before attach", async () => {
+  const events = [];
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: async (selector) => {
+      events.push(`status:${selector}`);
+      return { ...status, selector };
+    },
+    handoff: async (selector) => {
+      events.push(`handoff:${selector}`);
+      return { ...status, selector, state: "ready", live_handoff_available: false };
+    },
+    confirm: async () => {
+      events.push("confirm");
+      return true;
+    },
+    onHandoffStart: (selector) => events.push(`start:${selector}`),
+    onRecovered: (selector) => events.push(`recovered:${selector}`),
+    onError: (message) => assert.fail(message),
+  });
+
+  const preparation = await guard.prepareTerminal("demo@owner", true);
+
+  assert.deepEqual(preparation, { ready: true, retry: false });
+  assert.deepEqual(events, [
+    "status:demo@owner",
+    "confirm",
+    "status:demo@owner",
+    "start:demo@owner",
+    "handoff:demo@owner",
+    "recovered:demo@owner",
+  ]);
+});
+
+test("does not attach a Herdr terminal when handoff is declined", async () => {
+  let handoffs = 0;
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: async (selector) => ({ ...status, selector }),
+    handoff: async () => {
+      handoffs += 1;
+      return { ...status, state: "ready" };
+    },
+    confirm: async () => false,
+    onRecovered: () => assert.fail("declined handoff must not recover"),
+    onError: (message) => assert.fail(message),
+  });
+
+  assert.deepEqual(await guard.prepareTerminal("demo@owner", true), { ready: false, retry: false });
+  assert.equal(handoffs, 0);
+});
+
+test("coalesces concurrent terminal preparations for the same selector", async () => {
+  let fetches = 0;
+  let resolveStatus;
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: () => {
+      fetches += 1;
+      return new Promise((resolve) => { resolveStatus = resolve; });
+    },
+    handoff: async () => assert.fail("matching protocols must not hand off"),
+    confirm: async () => assert.fail("matching protocols must not prompt"),
+    onRecovered: () => {},
+    onError: (message) => assert.fail(message),
+  });
+
+  const first = guard.prepareTerminal("demo@owner");
+  const second = guard.prepareTerminal("demo@owner");
+  resolveStatus({ ...status, state: "ready", selector: "demo@owner" });
+
+  assert.deepEqual(await Promise.all([first, second]), [
+    { ready: true, retry: false },
+    { ready: true, retry: false },
+  ]);
+  assert.equal(fetches, 1);
+});
+
+test("marks transient runtime inspection failures for pane reconnect", async () => {
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: async () => { throw new Error("temporary status failure"); },
+    handoff: async () => assert.fail("failed inspection must not hand off"),
+    confirm: async () => assert.fail("failed inspection must not prompt"),
+    onRecovered: () => {},
+    onError: () => {},
+  });
+
+  assert.deepEqual(await guard.prepareTerminal("demo@owner"), { ready: false, retry: true });
+});
+
+test("serializes confirmation across selectors without cancelling the first prompt", async () => {
+  let confirms = 0;
+  let resolveConfirm;
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: async (selector) => ({ ...status, selector }),
+    handoff: async () => assert.fail("declined and deferred handoffs must not run"),
+    confirm: () => {
+      confirms += 1;
+      return new Promise((resolve) => { resolveConfirm = resolve; });
+    },
+    onRecovered: () => {},
+    onError: (message) => assert.fail(message),
+  });
+
+  const first = guard.prepareTerminal("first@owner", true);
+  await Promise.resolve();
+  const second = await guard.prepareTerminal("second@owner");
+  resolveConfirm(false);
+
+  assert.deepEqual(second, { ready: false, retry: true });
+  assert.deepEqual(await first, { ready: false, retry: false });
+  assert.equal(confirms, 1);
+});
+
+test("waits without prompting while another provider handoff is recent", async () => {
+  let confirms = 0;
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: async (selector) => ({ ...status, selector, handoff_recent: true }),
+    handoff: async () => assert.fail("recent handoff must not be duplicated"),
+    confirm: async () => {
+      confirms += 1;
+      return true;
+    },
+    onRecovered: () => {},
+    onError: (message) => assert.fail(message),
+  });
+
+  assert.deepEqual(await guard.prepareTerminal("demo@owner", true), { ready: false, retry: true });
+  assert.equal(confirms, 0);
+});
+
+test("revalidates a newly recent handoff after confirmation without posting", async () => {
+  let fetches = 0;
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: async (selector) => ({
+      ...status,
+      selector,
+      handoff_recent: ++fetches > 1,
+    }),
+    handoff: async () => assert.fail("revalidated recent handoff must not be duplicated"),
+    confirm: async () => true,
+    onRecovered: () => {},
+    onError: (message) => assert.fail(message),
+  });
+
+  assert.deepEqual(await guard.prepareTerminal("demo@owner", true), { ready: false, retry: true });
+});
+
+test("does not hand off a stale terminal target after navigation during confirmation", async () => {
+  let resolveConfirm;
+  const handoffs = [];
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: async (selector) => ({ ...status, selector }),
+    handoff: async (selector) => {
+      handoffs.push(selector);
+      return { ...status, selector, state: "ready" };
+    },
+    confirm: () => new Promise((resolve) => { resolveConfirm = resolve; }),
+    onRecovered: () => assert.fail("stale target must not recover"),
+    onError: (message) => assert.fail(message),
+  });
+
+  const preparation = guard.prepareTerminal("first@owner", true);
+  await Promise.resolve();
+  guard.sync("second@owner", { available: true, herdr_protocol: 19 });
+  resolveConfirm(true);
+
+  assert.deepEqual(await preparation, { ready: false, retry: true });
+  assert.deepEqual(handoffs, []);
+});
+
+test("retries a stale terminal target when navigation dismisses its confirmation", async () => {
+  let resolveConfirm;
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: async (selector) => ({ ...status, selector }),
+    handoff: async () => assert.fail("dismissed stale target must not hand off"),
+    confirm: () => new Promise((resolve) => { resolveConfirm = resolve; }),
+    onRecovered: () => assert.fail("dismissed stale target must not recover"),
+    onError: (message) => assert.fail(message),
+  });
+
+  const preparation = guard.prepareTerminal("first@owner", true);
+  await Promise.resolve();
+  guard.sync("second@owner", { available: true, herdr_protocol: 19 });
+  resolveConfirm(false);
+
+  assert.deepEqual(await preparation, { ready: false, retry: true });
+});
+
+test("keeps preparation recovery protected while a lost handoff response settles", async () => {
+  let fetches = 0;
+  const recovered = [];
+  const failed = [];
+  const guard = createHerdrRuntimeGuard({
+    elements: {
+      root: { hidden: true },
+      message: { textContent: "" },
+      handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+    },
+    tr,
+    fetchStatus: async (selector) => {
+      fetches += 1;
+      return fetches < 4
+        ? { ...status, selector }
+        : { ...status, selector, state: "ready", live_handoff_available: false };
+    },
+    handoff: async () => { throw new Error("response lost"); },
+    confirm: async () => true,
+    onHandoffFailed: (selector) => failed.push(selector),
+    onRecovered: (selector) => recovered.push(selector),
+    onError: () => {},
+    wait: async () => {},
+    uncertainReconcileAttempts: 2,
+  });
+
+  assert.deepEqual(
+    await guard.prepareTerminal("demo@owner", true),
+    { ready: false, retry: true },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(recovered, ["demo@owner"]);
+  assert.deepEqual(failed, []);
+});
+
 test("reports a running server whose protocol is unknown without offering handoff", () => {
   assert.deepEqual(herdrRuntimeGuardPresentation({
     ...status,
