@@ -43,6 +43,38 @@ test("never offers handoff when the client is older than the server", () => {
   });
 });
 
+test("does not trust a server_older label unless the client protocol is strictly newer", async () => {
+  for (const candidate of [
+    { client_protocol: 19, server_protocol: 19 },
+    { client_protocol: 18, server_protocol: 19 },
+    { client_protocol: 20, server_protocol: undefined },
+  ]) {
+    let prompts = 0;
+    const guard = createHerdrRuntimeGuard({
+      elements: {
+        root: { hidden: true },
+        message: { textContent: "" },
+        handoff: { hidden: false, disabled: false, addEventListener: () => {} },
+      },
+      tr,
+      fetchStatus: async (selector) => ({ ...status, ...candidate, selector }),
+      handoff: async () => assert.fail("invalid protocol direction must not hand off"),
+      confirm: async () => {
+        prompts += 1;
+        return true;
+      },
+      onRecovered: () => assert.fail("invalid protocol direction must not recover"),
+      onError: () => {},
+    });
+
+    assert.deepEqual(
+      await guard.prepareTerminal("demo@owner", true),
+      { ready: false, retry: false },
+    );
+    assert.equal(prompts, 0);
+  }
+});
+
 test("hides the guard for matching and stopped runtimes", () => {
   for (const state of ["ready", "not_running"]) {
     assert.deepEqual(herdrRuntimeGuardPresentation({ ...status, state }, tr), {

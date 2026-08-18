@@ -152,6 +152,7 @@ import { createTerminalPaneMount, renderPaneSplitNode, updatePaneMountActiveStat
 import {
   canConnectPane as paneCanConnect,
   shouldConnectRestoredPane as paneShouldConnectRestored,
+  terminalErrorBlocksReconnect,
 } from "./pane-reconnect-policy";
 import { legacyCopyText, writeSystemClipboardText } from "./browser-clipboard";
 import {
@@ -445,7 +446,6 @@ import {
   runHerdrActionRequest,
   runHerdrSocketApiRequest,
   runWorkspaceActionRequest,
-  saveHerdrOutputSequence,
 } from "./workspace-api";
 import { resolveWorkspaceActionTarget } from "./workspace-action-target";
 import {
@@ -480,8 +480,6 @@ import {
 
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 30_000;
-const HERDR_REPLAY_TAIL_FRAMES = 80;
-const HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS = 500;
 const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
 const HERDR_ACTION_REFRESH_DELAYS_MS = [120, 450, 900, 1800, 3000] as const;
 const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
@@ -718,8 +716,6 @@ const herdrEventRefreshLoop = createHerdrEventRefreshLoop({
 let sessionBackendsState: SessionBackendsState | undefined;
 let sessionBackendsGeneration = 0;
 const herdrAutoRestoredSelectors = new Set<string>();
-const pendingHerdrOutputSequences = new Map<string, { selector: string; sequence: number }>();
-const herdrOutputSequenceTimers = new Map<string, number>();
 const pendingPaneSocketOpens = new Set<string>();
 const workspaceRequestTracker = createSelectorRequestTracker();
 const exitedPaneCleanupController = createExitedPaneCleanupController({
@@ -2284,9 +2280,6 @@ function bindActions() {
 }
 
 function bindLifecycleEvents() {
-  window.addEventListener("pagehide", () => {
-    flushHerdrOutputSequences();
-  });
   window.addEventListener("online", () => {
     void connectRestoredPanes();
     void refreshSessionBackends(selectedSelector);
@@ -5381,6 +5374,7 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     mount,
     reconnectDelay: 1000,
     processExitObserved: false,
+    fatalErrorObserved: false,
     pendingInput: [],
     pendingInputBytes: 0,
     replaying: false,
@@ -5661,7 +5655,7 @@ async function openSocketPrepared(pane: TerminalPane) {
   }
   if (pane.closing || !pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
-  const replayAfter = paneReplayAfter(pane, HERDR_REPLAY_TAIL_FRAMES);
+  const replayAfter = paneReplayAfter(pane);
   pane.lastReplayAfter = replayAfter;
   const url = webshellTerminalSocketUrl({
     selector: pane.selector,
@@ -5688,7 +5682,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     if (pane.socket !== socket) return;
     pane.remoteKeepaliveStop?.();
     pane.remoteKeepaliveStop = installRemoteClientKeepalive(pane.selector, socket);
-    pane.reconnectDelay = 1000;
+    if (pane.sessionBackend !== "herdr") pane.reconnectDelay = 1000;
     beginReplayInputLock(pane, socket);
     flushPendingInput(pane);
     pane.transport?.notifyConnect();
@@ -5816,81 +5810,6 @@ function updatePaneOutputSequence(
   } else {
     pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, next);
   }
-  scheduleRememberHerdrOutputSequence(pane);
-}
-
-function scheduleRememberHerdrOutputSequence(pane: TerminalPane) {
-  if (pane.sessionBackend !== "herdr" || !pane.sessionId || !pane.selector) return;
-  const sequence = Number.isFinite(pane.lastOutputSequence) ? Math.max(0, Math.trunc(pane.lastOutputSequence)) : 0;
-  const sessionId = pane.sessionId;
-  pendingHerdrOutputSequences.set(sessionId, { selector: pane.selector, sequence });
-  if (herdrOutputSequenceTimers.has(sessionId)) return;
-  const timer = window.setTimeout(() => {
-    herdrOutputSequenceTimers.delete(sessionId);
-    const pending = pendingHerdrOutputSequences.get(sessionId);
-    pendingHerdrOutputSequences.delete(sessionId);
-    if (pending !== undefined) {
-      void persistHerdrOutputSequence(pending.selector, sessionId, pending.sequence);
-    }
-  }, HERDR_OUTPUT_SEQUENCE_FLUSH_DELAY_MS);
-  herdrOutputSequenceTimers.set(sessionId, timer);
-}
-
-function flushHerdrOutputSequences() {
-  for (const timer of herdrOutputSequenceTimers.values()) {
-    window.clearTimeout(timer);
-  }
-  herdrOutputSequenceTimers.clear();
-  for (const pane of allPanes()) {
-    if (pane.sessionBackend === "herdr" && pane.sessionId && pane.selector) {
-      const sequence = Number.isFinite(pane.lastOutputSequence) ? Math.max(0, Math.trunc(pane.lastOutputSequence)) : 0;
-      pendingHerdrOutputSequences.set(pane.sessionId, { selector: pane.selector, sequence });
-    }
-  }
-  for (const [sessionId, pending] of pendingHerdrOutputSequences) {
-    void persistHerdrOutputSequence(pending.selector, sessionId, pending.sequence, { keepalive: true });
-  }
-  pendingHerdrOutputSequences.clear();
-}
-
-async function persistHerdrOutputSequence(
-  selector: string,
-  sessionId: string,
-  sequence: number,
-  options: { keepalive?: boolean } = {},
-) {
-  const normalizedSelector = normalizeSelector(selector);
-  const normalizedSessionId = normalizeSelector(sessionId);
-  if (!normalizedSelector || !normalizedSessionId || !Number.isFinite(sequence) || sequence < 0) return;
-  const normalizedSequence = Math.max(0, Math.trunc(sequence));
-  if (options.keepalive && navigator.sendBeacon) {
-    const payload = JSON.stringify({
-      name: normalizedSelector,
-      session_id: normalizedSessionId,
-      sequence: normalizedSequence,
-    });
-    const blob = new Blob([payload], { type: "application/json" });
-    if (navigator.sendBeacon(new URL("./api/herdr/output-sequence", window.location.href), blob)) {
-      return;
-    }
-  }
-  try {
-    const stored = await saveHerdrOutputSequence(
-      normalizedSelector,
-      normalizedSessionId,
-      normalizedSequence,
-      { keepalive: options.keepalive },
-    );
-    for (const pane of allPanes()) {
-      if (pane.sessionId === normalizedSessionId && pane.sessionBackend === "herdr") {
-        pane.lastOutputSequence = monotonicSequence(pane.lastOutputSequence, stored);
-      }
-    }
-  } catch (error) {
-    if (settings.debugMode) {
-      console.debug("failed to persist Herdr output sequence", error);
-    }
-  }
 }
 
 function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {
@@ -5986,6 +5905,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     pane.transport?.notifyError(event.message ?? tr("status.terminalError"));
     setPaneStatus(pane, event.message ?? tr("status.terminalError"), "error");
     if (event.fatal) {
+      if (terminalErrorBlocksReconnect(event)) pane.fatalErrorObserved = true;
       pane.exited = true;
       pane.sessionStatus = "stopped";
       clearPendingInput(pane);
@@ -6047,6 +5967,7 @@ function handleServerText(pane: TerminalPane, text: string) {
       return;
     }
     updatePaneOutputSequence(pane, event.last_sequence, { allowReset: true });
+    pane.reconnectDelay = 1000;
     finishReplayInputLock(pane);
     if (pane.sessionStatus === "running") {
       setPaneStatus(pane, tr("status.shellReady"), "ok");

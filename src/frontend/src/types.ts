@@ -455,6 +455,7 @@ export type TerminalPane = {
   replayTimer?: number;
   reconnectDelay: number;
   processExitObserved?: boolean;
+  fatalErrorObserved?: boolean;
   pendingInput: string[];
   pendingInputBytes: number;
   replaying: boolean;

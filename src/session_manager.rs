@@ -95,6 +95,48 @@ impl SessionManager {
             .open(spec, allow_spawn, output, resize_existing)
     }
 
+    pub fn open_connection_terminal(
+        &self,
+        spec: TerminalSpec,
+    ) -> anyhow::Result<(String, Arc<ManagedTerminal>)> {
+        let records = self
+            .records
+            .read()
+            .map_err(|_| anyhow!("session store lock poisoned"))?;
+        let session = records
+            .get(&spec.session_id)
+            .ok_or_else(|| anyhow!("unknown session id"))?;
+        let backend = session
+            .metadata
+            .get(METADATA_SESSION_BACKEND)
+            .map_or("webshell", String::as_str);
+        if backend != "herdr"
+            || session.selector != spec.selector
+            || session.command != spec.command
+            || session.args != spec.args
+        {
+            return Err(anyhow!("connection terminal session changed before attach"));
+        }
+        self.terminals.open_connection(spec)
+    }
+
+    pub fn mark_connection_terminal_running(&self, session_id: &str, connection_id: &str) {
+        if self
+            .terminals
+            .contains_connection(session_id, connection_id)
+        {
+            self.mark_status(session_id, "running");
+        }
+    }
+
+    pub fn release_connection_terminal(
+        &self,
+        session_id: &str,
+        connection_id: &str,
+    ) -> Option<Arc<ManagedTerminal>> {
+        self.terminals.release_connection(session_id, connection_id)
+    }
+
     pub fn terminal(&self, session_id: &str) -> anyhow::Result<Option<Arc<ManagedTerminal>>> {
         self.terminals.existing(session_id)
     }
@@ -344,6 +386,69 @@ mod tests {
         let buffer = manager.output_buffer("session-one", 128);
 
         assert!(buffer.snapshot_after(0).0.is_empty());
+    }
+
+    #[test]
+    fn connection_terminal_attach_rejects_deleted_or_changed_sessions() {
+        let mut session = test_session("session-one", "running");
+        session
+            .metadata
+            .insert("sessionBackend".to_owned(), "herdr".to_owned());
+        let spec = TerminalSpec {
+            session_id: session.id.clone(),
+            host: session.host.clone(),
+            selector: session.selector.clone(),
+            command: session.command.clone(),
+            args: session.args.clone(),
+            cols: session.cols,
+            rows: session.rows,
+            output_frame_limit: 128,
+        };
+        let (manager, _) =
+            test_manager(HashMap::from([("session-one".to_owned(), session.clone())]));
+        manager.write().unwrap().remove("session-one");
+
+        assert!(manager.open_connection_terminal(spec.clone()).is_err());
+
+        let (manager, _) = test_manager(HashMap::from([("session-one".to_owned(), session)]));
+        manager
+            .write()
+            .unwrap()
+            .get_mut("session-one")
+            .unwrap()
+            .command = "/bin/false".to_owned();
+
+        assert!(manager.open_connection_terminal(spec).is_err());
+    }
+
+    #[test]
+    fn closing_a_herdr_client_keeps_the_logical_session_running() {
+        let mut session = test_session("session-one", "running");
+        session
+            .metadata
+            .insert("sessionBackend".to_owned(), "herdr".to_owned());
+        session.command = "/bin/sh".to_owned();
+        session.args = vec!["-lc".to_owned(), "exec sleep 30".to_owned()];
+        let spec = TerminalSpec {
+            session_id: session.id.clone(),
+            host: session.host.clone(),
+            selector: session.selector.clone(),
+            command: session.command.clone(),
+            args: session.args.clone(),
+            cols: session.cols,
+            rows: session.rows,
+            output_frame_limit: 128,
+        };
+        let (manager, _) = test_manager(HashMap::from([("session-one".to_owned(), session)]));
+
+        let (connection_id, terminal) = manager.open_connection_terminal(spec).unwrap();
+        terminal.close_connection(std::time::Duration::from_secs(1));
+        manager.release_connection_terminal("session-one", &connection_id);
+
+        assert_eq!(
+            manager.read().unwrap().get("session-one").unwrap().status,
+            "running"
+        );
     }
 
     fn test_manager(records: HashMap<String, SessionRecord>) -> (SessionManager, Arc<AppDatabase>) {

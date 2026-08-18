@@ -40,17 +40,17 @@ test("restores unsent input when flushing fails", () => {
   assert.equal(target.pendingInputBytes, 5);
 });
 
-test("keeps the bounded Herdr delta replay for weak-network reconnects", () => {
+test("always requests a complete baseline for a new Herdr client", () => {
   const target = pane();
-  assert.equal(paneReplayAfter(target, 80), 20);
+  assert.equal(paneReplayAfter(target), 0);
   target.sessionBackend = "webshell";
-  assert.equal(paneReplayAfter(target, 80), 100);
+  assert.equal(paneReplayAfter(target), 100);
 });
 
-test("starts a new Herdr renderer from the bounded server tail", () => {
+test("keeps a new Herdr renderer on the complete baseline", () => {
   const target = pane();
   resetPaneReplayCursorForNewRenderer(target);
-  assert.equal(paneReplayAfter(target, 80), 0);
+  assert.equal(paneReplayAfter(target), 0);
 
   target.lastOutputSequence = 100;
   target.sessionBackend = "webshell";

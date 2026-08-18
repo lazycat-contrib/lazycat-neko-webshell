@@ -5,9 +5,16 @@ export type PaneReconnectState = {
   sessionStatus?: string;
   sessionBackend: SessionBackendId;
   processExitObserved?: boolean;
+  fatalErrorObserved?: boolean;
   exited?: boolean;
   closing?: boolean;
 };
+
+export function terminalErrorBlocksReconnect(
+  event: { fatal?: boolean; retryable?: boolean },
+): boolean {
+  return event.fatal === true && event.retryable === false;
+}
 
 export function shouldConnectRestoredPane(
   pane: PaneReconnectState,
@@ -32,7 +39,7 @@ export function canConnectPane(
   pane: PaneReconnectState,
   autoRestart: boolean,
 ): boolean {
-  if (pane.closing || !pane.sessionId) return false;
+  if (pane.closing || pane.fatalErrorObserved === true || !pane.sessionId) return false;
   if (pane.sessionBackend === "herdr" && pane.processExitObserved === true) {
     return false;
   }

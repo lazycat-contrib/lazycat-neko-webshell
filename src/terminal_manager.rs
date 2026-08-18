@@ -3,15 +3,20 @@ use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as AnyhowContext, anyhow};
 use bytes::Bytes;
 use portable_pty::{CommandBuilder, MasterPty, NativePtySystem, PtySize, PtySystem};
 use tokio::sync::broadcast;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 use crate::agent_protocol::AGENT_PROTOCOL_VERSION;
-use crate::config::{DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES, PTY_OUTPUT_BATCH_BYTES};
+use crate::config::{
+    DEFAULT_OUTPUT_FRAME_LIMIT, MAX_OUTPUT_BUFFER_BYTES, PTY_INPUT_CHANNEL_CAPACITY,
+    PTY_OUTPUT_BATCH_BYTES,
+};
 use crate::database::AppDatabase;
 use crate::pty_io::{ChildWait, PtyOutputEvent, PtyWriter, spawn_batched_output_reader};
 use crate::terminal_reply_authority::TerminalReplyAuthority;
@@ -20,6 +25,25 @@ use crate::validation::{normalize_output_frame_limit, validate_size};
 // One terminal's live broadcast backlog must not retain more payload than its
 // replay history. PTY frames are capped by `PTY_OUTPUT_BATCH_BYTES`.
 const EVENT_CAPACITY: usize = MAX_OUTPUT_BUFFER_BYTES / PTY_OUTPUT_BATCH_BYTES;
+const MAX_CONNECTION_TERMINAL_BUFFER_BYTES: usize = 2 * 1024 * 1024;
+const CONNECTION_EVENT_CAPACITY: usize =
+    MAX_CONNECTION_TERMINAL_BUFFER_BYTES / PTY_OUTPUT_BATCH_BYTES;
+const CONNECTION_PTY_INPUT_CHANNEL_CAPACITY: usize = 32;
+pub(crate) const CONNECTION_TERMINAL_CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_CONNECTION_TERMINALS: usize = 64;
+const MAX_CONNECTION_TERMINALS_PER_SESSION: usize = 8;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RetryableConnectionTerminalError {
+    #[error("connection terminal capacity reached ({MAX_CONNECTION_TERMINALS})")]
+    GlobalCapacity,
+    #[error(
+        "session connection terminal capacity reached ({MAX_CONNECTION_TERMINALS_PER_SESSION})"
+    )]
+    SessionCapacity,
+    #[error("failed to start connection terminal: {0:#}")]
+    Spawn(#[source] anyhow::Error),
+}
 
 #[derive(Clone, Debug)]
 pub struct TerminalSpec {
@@ -63,12 +87,25 @@ pub enum TerminalEvent {
 
 pub struct TerminalRegistry {
     sessions: RwLock<HashMap<String, Arc<ManagedTerminal>>>,
+    connections: RwLock<ConnectionTerminalRegistry>,
+}
+
+#[derive(Default)]
+struct ConnectionTerminalRegistry {
+    sessions: HashMap<String, ConnectionTerminalSession>,
+}
+
+#[derive(Default)]
+struct ConnectionTerminalSession {
+    terminals: HashMap<String, Arc<ManagedTerminal>>,
+    retire_when_empty: bool,
 }
 
 impl TerminalRegistry {
     pub fn new() -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
+            connections: RwLock::new(ConnectionTerminalRegistry::default()),
         }
     }
 
@@ -112,7 +149,69 @@ impl TerminalRegistry {
         Ok(terminal)
     }
 
-    pub fn close(&self, session_id: &str) {
+    pub fn open_connection(
+        &self,
+        spec: TerminalSpec,
+    ) -> anyhow::Result<(String, Arc<ManagedTerminal>)> {
+        let mut connections = self
+            .connections
+            .write()
+            .map_err(|_| anyhow!("connection terminal registry lock poisoned"))?;
+        let total = connections
+            .sessions
+            .values()
+            .map(|session| session.terminals.len())
+            .sum::<usize>();
+        let session_count = connections
+            .sessions
+            .get(&spec.session_id)
+            .map_or(0, |session| session.terminals.len());
+        validate_connection_terminal_capacity(total, session_count)?;
+        if connections
+            .sessions
+            .get(&spec.session_id)
+            .is_some_and(|session| session.retire_when_empty)
+        {
+            return Err(anyhow!("connection terminal session is closing"));
+        }
+
+        let session_id = spec.session_id.clone();
+        let terminal = ManagedTerminal::spawn_connection_scoped(spec)
+            .map_err(RetryableConnectionTerminalError::Spawn)?;
+        let connection_id = Uuid::new_v4().to_string();
+        let session = connections.sessions.entry(session_id).or_default();
+        session
+            .terminals
+            .insert(connection_id.clone(), Arc::clone(&terminal));
+        Ok((connection_id, terminal))
+    }
+
+    pub fn release_connection(
+        &self,
+        session_id: &str,
+        connection_id: &str,
+    ) -> Option<Arc<ManagedTerminal>> {
+        let Ok(mut connections) = self.connections.write() else {
+            return None;
+        };
+        let session_connections = connections.sessions.get_mut(session_id)?;
+        let terminal = session_connections.terminals.remove(connection_id);
+        if terminal.is_some() && session_connections.terminals.is_empty() {
+            connections.sessions.remove(session_id);
+        }
+        terminal
+    }
+
+    pub fn contains_connection(&self, session_id: &str, connection_id: &str) -> bool {
+        self.connections.read().is_ok_and(|connections| {
+            connections
+                .sessions
+                .get(session_id)
+                .is_some_and(|session| session.terminals.contains_key(connection_id))
+        })
+    }
+
+    pub fn close(self: &Arc<Self>, session_id: &str) {
         let terminal = self
             .sessions
             .write()
@@ -120,6 +219,25 @@ impl TerminalRegistry {
             .and_then(|mut sessions| sessions.remove(session_id));
         if let Some(terminal) = terminal {
             terminal.close();
+        }
+        let connection_terminals = self
+            .connections
+            .write()
+            .ok()
+            .map_or_else(Vec::new, |mut connections| {
+                begin_connection_terminal_close(&mut connections, session_id)
+            });
+        for (_, terminal) in &connection_terminals {
+            terminal.signal_connection_close();
+        }
+        for (connection_id, terminal) in connection_terminals {
+            let registry = Arc::clone(self);
+            let close_session_id = session_id.to_owned();
+            thread::spawn(move || {
+                terminal.close_connection(CONNECTION_TERMINAL_CLOSE_TIMEOUT);
+                let released = registry.release_connection(&close_session_id, &connection_id);
+                drop(released);
+            });
         }
     }
 
@@ -147,6 +265,41 @@ impl TerminalRegistry {
     }
 }
 
+fn begin_connection_terminal_close(
+    connections: &mut ConnectionTerminalRegistry,
+    session_id: &str,
+) -> Vec<(String, Arc<ManagedTerminal>)> {
+    let Some(session) = connections.sessions.get_mut(session_id) else {
+        return Vec::new();
+    };
+    if session.retire_when_empty {
+        return Vec::new();
+    }
+    session.retire_when_empty = true;
+    let terminals = session
+        .terminals
+        .iter()
+        .map(|(connection_id, terminal)| (connection_id.clone(), Arc::clone(terminal)))
+        .collect::<Vec<_>>();
+    if terminals.is_empty() {
+        connections.sessions.remove(session_id);
+    }
+    terminals
+}
+
+fn validate_connection_terminal_capacity(
+    total: usize,
+    session_count: usize,
+) -> Result<(), RetryableConnectionTerminalError> {
+    if total >= MAX_CONNECTION_TERMINALS {
+        return Err(RetryableConnectionTerminalError::GlobalCapacity);
+    }
+    if session_count >= MAX_CONNECTION_TERMINALS_PER_SESSION {
+        return Err(RetryableConnectionTerminalError::SessionCapacity);
+    }
+    Ok(())
+}
+
 pub struct ManagedTerminal {
     session_id: String,
     selector: String,
@@ -161,10 +314,33 @@ pub struct ManagedTerminal {
     shell_pid: Option<u32>,
     output: Arc<OutputBuffer>,
     exit: Arc<Mutex<Option<ExitInfo>>>,
+    connection_close_lock: Mutex<()>,
 }
 
 impl ManagedTerminal {
+    pub(crate) fn spawn_connection_scoped(spec: TerminalSpec) -> anyhow::Result<Arc<Self>> {
+        let output = Arc::new(OutputBuffer::new_with_byte_limit(
+            spec.output_frame_limit,
+            MAX_CONNECTION_TERMINAL_BUFFER_BYTES,
+        ));
+        Ok(Arc::new(Self::spawn_with_capacities(
+            spec,
+            output,
+            CONNECTION_EVENT_CAPACITY,
+            CONNECTION_PTY_INPUT_CHANNEL_CAPACITY,
+        )?))
+    }
+
     fn spawn(spec: TerminalSpec, output: Arc<OutputBuffer>) -> anyhow::Result<Self> {
+        Self::spawn_with_capacities(spec, output, EVENT_CAPACITY, PTY_INPUT_CHANNEL_CAPACITY)
+    }
+
+    fn spawn_with_capacities(
+        spec: TerminalSpec,
+        output: Arc<OutputBuffer>,
+        event_capacity: usize,
+        input_capacity: usize,
+    ) -> anyhow::Result<Self> {
         validate_size(spec.cols, spec.rows)?;
         if spec.command.trim().is_empty() {
             return Err(anyhow!("terminal command must not be empty"));
@@ -186,7 +362,10 @@ impl ManagedTerminal {
             pixel_height: 0,
         })?;
         let reader = pair.master.try_clone_reader()?;
-        let writer = Arc::new(PtyWriter::spawn(pair.master.take_writer()?));
+        let writer = Arc::new(PtyWriter::spawn_with_capacity(
+            pair.master.take_writer()?,
+            input_capacity,
+        ));
 
         let mut command = CommandBuilder::new(&spec.command);
         for arg in &spec.args {
@@ -204,7 +383,7 @@ impl ManagedTerminal {
         let mut output_failure_killer = child.clone_killer();
         drop(pair.slave);
 
-        let (event_tx, _) = broadcast::channel::<TerminalEvent>(EVENT_CAPACITY);
+        let (event_tx, _) = broadcast::channel::<TerminalEvent>(event_capacity);
         let exit = Arc::new(Mutex::new(None));
         let child_wait = ChildWait::default();
 
@@ -260,6 +439,7 @@ impl ManagedTerminal {
             shell_pid,
             output,
             exit,
+            connection_close_lock: Mutex::new(()),
         })
     }
 
@@ -281,6 +461,10 @@ impl ManagedTerminal {
 
     pub fn subscribe(&self) -> broadcast::Receiver<TerminalEvent> {
         self.event_tx.subscribe()
+    }
+
+    pub fn output_buffer(&self) -> Arc<OutputBuffer> {
+        Arc::clone(&self.output)
     }
 
     pub fn exit_info(&self) -> Option<ExitInfo> {
@@ -322,7 +506,7 @@ impl ManagedTerminal {
         has_foreground_process(master.as_ref(), self.shell_pid)
     }
 
-    fn close(&self) {
+    pub(crate) fn close(&self) {
         self.writer.signal_close();
         let Some(mut child_killer) = self.killer.lock().ok().and_then(|mut killer| killer.take())
         else {
@@ -333,6 +517,45 @@ impl ManagedTerminal {
         }
         self.child_wait.wait();
         self.writer.wait();
+    }
+
+    pub(crate) fn close_connection(&self, timeout: Duration) -> bool {
+        let _close_guard = self
+            .connection_close_lock
+            .lock()
+            .expect("connection terminal close lock poisoned");
+        self.signal_connection_close();
+        let closed_within_deadline = self.wait_for_connection_close(timeout);
+        if !closed_within_deadline {
+            self.child_wait.wait();
+            self.writer.wait();
+        }
+        closed_within_deadline
+    }
+
+    pub(crate) fn signal_connection_close(&self) {
+        self.writer.signal_close();
+        if let Some(mut child_killer) = self.killer.lock().ok().and_then(|mut killer| killer.take())
+            && let Err(err) = child_killer.kill()
+        {
+            warn!(error = %err, "connection terminal child was already closed");
+        }
+    }
+
+    fn wait_for_connection_close(&self, timeout: Duration) -> bool {
+        let started = Instant::now();
+        let child_closed = self.child_wait.wait_timeout(timeout);
+        let remaining = timeout.saturating_sub(started.elapsed());
+        let writer_closed = self.writer.wait_timeout(remaining);
+        if !child_closed || !writer_closed {
+            warn!(
+                session_id = %self.session_id,
+                child_closed,
+                writer_closed,
+                "connection terminal cleanup reached its deadline"
+            );
+        }
+        child_closed && writer_closed
     }
 }
 
@@ -395,10 +618,15 @@ struct OutputBufferInner {
     total_lines: usize,
     next_sequence: u64,
     max_lines: usize,
+    max_bytes: usize,
 }
 
 impl OutputBuffer {
     pub fn new(max_frames: usize) -> Self {
+        Self::new_with_byte_limit(max_frames, MAX_OUTPUT_BUFFER_BYTES)
+    }
+
+    fn new_with_byte_limit(max_frames: usize, max_bytes: usize) -> Self {
         Self {
             inner: Mutex::new(OutputBufferInner {
                 frames: VecDeque::new(),
@@ -406,6 +634,7 @@ impl OutputBuffer {
                 total_lines: 0,
                 next_sequence: 0,
                 max_lines: normalize_output_frame_limit(Some(max_frames)),
+                max_bytes: max_bytes.max(PTY_OUTPUT_BATCH_BYTES),
             }),
             history_lock: Mutex::new(()),
             store: None,
@@ -434,6 +663,7 @@ impl OutputBuffer {
             total_lines: loaded.total_lines,
             next_sequence: loaded.next_sequence,
             max_lines: max_frames,
+            max_bytes: MAX_OUTPUT_BUFFER_BYTES,
         };
         prune_output_buffer(&mut inner);
         let output = Self {
@@ -489,6 +719,21 @@ impl OutputBuffer {
         self.recording.store(enabled, Ordering::Relaxed);
     }
 
+    pub fn disable_transient_history(&self) {
+        if self.store.is_some() {
+            return;
+        }
+        self.recording.store(false, Ordering::Relaxed);
+        let _history_guard = self
+            .history_lock
+            .lock()
+            .expect("terminal output history lock poisoned");
+        let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
+        inner.frames.clear();
+        inner.total_bytes = 0;
+        inner.total_lines = 0;
+    }
+
     pub fn set_limit(&self, max_frames: usize) {
         let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
         inner.max_lines = normalize_output_frame_limit(Some(max_frames));
@@ -542,66 +787,6 @@ impl OutputBuffer {
             truncated: index < inner.frames.len(),
             replay_gap: oldest_sequence.is_some_and(|oldest| sequence.saturating_add(1) < oldest),
         }
-    }
-
-    pub fn snapshot_tail_after_bounded(
-        &self,
-        sequence: u64,
-        max_bytes: usize,
-        max_frames: usize,
-    ) -> OutputSnapshot {
-        let inner = self.inner.lock().expect("terminal output buffer poisoned");
-        let oldest_sequence = inner.frames.front().map(|frame| frame.sequence);
-        let replay_start = first_output_frame_after(&inner.frames, sequence);
-        let byte_limit = max_bytes.max(1);
-        let frame_limit = max_frames.max(1);
-        let mut selected_start = inner.frames.len();
-        let mut total_bytes = 0usize;
-        let mut selected_frames = 0usize;
-
-        while selected_start > replay_start && selected_frames < frame_limit {
-            let candidate_index = selected_start - 1;
-            let frame = inner
-                .frames
-                .get(candidate_index)
-                .expect("terminal output tail index should remain in range");
-            let next_bytes = total_bytes.saturating_add(frame.data.len());
-            if selected_frames > 0 && next_bytes > byte_limit {
-                break;
-            }
-            selected_start = candidate_index;
-            selected_frames += 1;
-            total_bytes = next_bytes;
-            if total_bytes >= byte_limit {
-                break;
-            }
-        }
-
-        let truncated = selected_start > replay_start;
-        OutputSnapshot {
-            frames: inner.frames.range(selected_start..).cloned().collect(),
-            oldest_sequence,
-            last_sequence: inner.next_sequence,
-            truncated,
-            replay_gap: truncated
-                || oldest_sequence.is_some_and(|oldest| sequence.saturating_add(1) < oldest),
-        }
-    }
-
-    pub fn snapshot_tail_after_cursor_bounded(
-        &self,
-        sequence: u64,
-        max_bytes: usize,
-        max_frames: usize,
-    ) -> OutputSnapshot {
-        if sequence == 0 {
-            return self.snapshot_tail_after_bounded(sequence, max_bytes, max_frames);
-        }
-        let snapshot = self.snapshot_after_bounded(sequence, usize::MAX, usize::MAX);
-        if sequence > snapshot.last_sequence {
-            return self.snapshot_tail_after_bounded(0, max_bytes, max_frames);
-        }
-        snapshot
     }
 
     fn append_history(&self, frame: &OutputFrame, first_retained_sequence: u64) {
@@ -688,7 +873,7 @@ impl Default for OutputBuffer {
 fn prune_output_buffer(inner: &mut OutputBufferInner) {
     while inner.frames.len() > inner.max_lines
         || inner.total_lines > inner.max_lines
-        || inner.total_bytes > MAX_OUTPUT_BUFFER_BYTES
+        || inner.total_bytes > inner.max_bytes
     {
         let Some(removed) = inner.frames.pop_front() else {
             break;
@@ -762,10 +947,21 @@ impl OutputHistoryStore {
 
 #[cfg(test)]
 mod tests {
-    use super::{EVENT_CAPACITY, ManagedTerminal, OutputBuffer, TerminalSpec};
-    use crate::config::{MAX_OUTPUT_BUFFER_BYTES, MAX_OUTPUT_FRAME_LIMIT, PTY_OUTPUT_BATCH_BYTES};
+    use super::{
+        CONNECTION_EVENT_CAPACITY, CONNECTION_PTY_INPUT_CHANNEL_CAPACITY, EVENT_CAPACITY,
+        MAX_CONNECTION_TERMINAL_BUFFER_BYTES, MAX_CONNECTION_TERMINALS,
+        MAX_CONNECTION_TERMINALS_PER_SESSION, ManagedTerminal, OutputBuffer,
+        RetryableConnectionTerminalError, TerminalRegistry, TerminalSpec,
+        begin_connection_terminal_close, validate_connection_terminal_capacity,
+    };
+    use crate::config::{
+        MAX_OUTPUT_BUFFER_BYTES, MAX_OUTPUT_FRAME_LIMIT, PTY_INPUT_MESSAGE_BYTES,
+        PTY_OUTPUT_BATCH_BYTES,
+    };
     use crate::database::AppDatabase;
     use std::sync::Arc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn snapshots_output_after_sequence() {
@@ -816,6 +1012,30 @@ mod tests {
     }
 
     #[test]
+    fn connection_terminal_history_and_backlog_use_a_smaller_budget() {
+        assert_eq!(
+            CONNECTION_EVENT_CAPACITY * PTY_OUTPUT_BATCH_BYTES,
+            MAX_CONNECTION_TERMINAL_BUFFER_BYTES
+        );
+
+        let output = OutputBuffer::new_with_byte_limit(
+            MAX_OUTPUT_FRAME_LIMIT,
+            MAX_CONNECTION_TERMINAL_BUFFER_BYTES,
+        );
+        for _ in 0..3 {
+            output.push(vec![b'x'; MAX_CONNECTION_TERMINAL_BUFFER_BYTES / 2]);
+        }
+        let inner = output.inner.lock().expect("terminal output buffer");
+
+        assert_eq!(inner.total_bytes, MAX_CONNECTION_TERMINAL_BUFFER_BYTES);
+        assert_eq!(inner.frames.len(), 2);
+        assert_eq!(
+            CONNECTION_PTY_INPUT_CHANNEL_CAPACITY * PTY_INPUT_MESSAGE_BYTES,
+            512 * 1024
+        );
+    }
+
+    #[test]
     fn snapshot_reports_real_last_sequence_when_after_is_stale() {
         let output = OutputBuffer::default();
         output.push(b"one".to_vec());
@@ -824,18 +1044,6 @@ mod tests {
 
         assert!(frames.is_empty());
         assert_eq!(last_sequence, 1);
-    }
-
-    #[test]
-    fn stale_replay_cursor_falls_back_to_current_history_tail() {
-        let output = OutputBuffer::default();
-        output.push(b"current screen".to_vec());
-
-        let snapshot = output.snapshot_tail_after_cursor_bounded(99, 1024, 80);
-
-        assert_eq!(snapshot.last_sequence, 1);
-        assert_eq!(snapshot.frames.len(), 1);
-        assert_eq!(snapshot.frames[0].data.as_ref(), b"current screen");
     }
 
     #[test]
@@ -939,28 +1147,6 @@ mod tests {
     }
 
     #[test]
-    fn bounded_tail_snapshot_keeps_the_latest_frames_in_sequence_order() {
-        let output = OutputBuffer::new(128);
-        for data in [b"a".as_slice(), b"bb", b"ccc", b"dddd", b"eeeee", b"ffffff"] {
-            output.push(data.to_vec());
-        }
-
-        let snapshot = output.snapshot_tail_after_bounded(0, 11, 3);
-
-        assert_eq!(
-            snapshot
-                .frames
-                .iter()
-                .map(|frame| frame.sequence)
-                .collect::<Vec<_>>(),
-            vec![5, 6]
-        );
-        assert_eq!(snapshot.last_sequence, 6);
-        assert!(snapshot.truncated);
-        assert!(snapshot.replay_gap);
-    }
-
-    #[test]
     fn managed_terminal_close_kills_waits_and_is_idempotent() {
         let terminal = ManagedTerminal::spawn(
             TerminalSpec {
@@ -981,6 +1167,232 @@ mod tests {
         terminal.close();
 
         assert!(terminal.exit_info().is_some());
+    }
+
+    #[test]
+    fn transient_terminals_never_reuse_output_history() {
+        let spec = TerminalSpec {
+            session_id: "transient-test".to_owned(),
+            host: "localhost".to_owned(),
+            selector: "local@test".to_owned(),
+            command: "/bin/sh".to_owned(),
+            args: vec!["-lc".to_owned(), "exec sleep 30".to_owned()],
+            cols: 80,
+            rows: 24,
+            output_frame_limit: 128,
+        };
+
+        let first = ManagedTerminal::spawn_connection_scoped(spec.clone()).unwrap();
+        first
+            .output_buffer()
+            .push(b"old incremental frame".to_vec());
+        let second = ManagedTerminal::spawn_connection_scoped(spec).unwrap();
+
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert!(second.output_buffer().snapshot_after(0).0.is_empty());
+        first.close();
+        second.close();
+    }
+
+    #[test]
+    fn connection_terminals_are_tracked_and_released_independently() {
+        let registry = TerminalRegistry::new();
+        let spec = TerminalSpec {
+            session_id: "connection-test".to_owned(),
+            host: "localhost".to_owned(),
+            selector: "local@test".to_owned(),
+            command: "/bin/sh".to_owned(),
+            args: vec!["-lc".to_owned(), "exec sleep 30".to_owned()],
+            cols: 80,
+            rows: 24,
+            output_frame_limit: 128,
+        };
+
+        let (first_id, first) = registry.open_connection(spec.clone()).unwrap();
+        let (second_id, second) = registry.open_connection(spec).unwrap();
+        first.output_buffer().push(b"first".to_vec());
+
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert!(second.output_buffer().snapshot_after(0).0.is_empty());
+
+        let first_release = registry.release_connection("connection-test", &first_id);
+        first_release.unwrap().close();
+        assert!(
+            registry
+                .connections
+                .read()
+                .unwrap()
+                .sessions
+                .contains_key("connection-test")
+        );
+        let second_release = registry.release_connection("connection-test", &second_id);
+        second_release.unwrap().close();
+        assert!(
+            !registry
+                .connections
+                .read()
+                .unwrap()
+                .sessions
+                .contains_key("connection-test")
+        );
+    }
+
+    #[test]
+    fn repeated_session_close_starts_only_one_cleanup_batch() {
+        let registry = TerminalRegistry::new();
+        let spec = TerminalSpec {
+            session_id: "idempotent-close-test".to_owned(),
+            host: "localhost".to_owned(),
+            selector: "local@test".to_owned(),
+            command: "/bin/sh".to_owned(),
+            args: vec!["-lc".to_owned(), "exec sleep 30".to_owned()],
+            cols: 80,
+            rows: 24,
+            output_frame_limit: 128,
+        };
+        registry.open_connection(spec).unwrap();
+
+        let first_batch = {
+            let mut connections = registry.connections.write().unwrap();
+            let first = begin_connection_terminal_close(&mut connections, "idempotent-close-test");
+            let second = begin_connection_terminal_close(&mut connections, "idempotent-close-test");
+            assert_eq!(first.len(), 1);
+            assert!(second.is_empty());
+            first
+        };
+
+        for (connection_id, terminal) in first_batch {
+            terminal.close_connection(Duration::from_secs(1));
+            registry.release_connection("idempotent-close-test", &connection_id);
+        }
+    }
+
+    #[test]
+    fn releasing_the_last_connection_removes_its_empty_bucket() {
+        let registry = TerminalRegistry::new();
+        let spec = TerminalSpec {
+            session_id: "generation-test".to_owned(),
+            host: "localhost".to_owned(),
+            selector: "local@test".to_owned(),
+            command: "/bin/sh".to_owned(),
+            args: vec!["-lc".to_owned(), "exec sleep 30".to_owned()],
+            cols: 80,
+            rows: 24,
+            output_frame_limit: 128,
+        };
+
+        let (first_id, first) = registry.open_connection(spec.clone()).unwrap();
+        let released = registry.release_connection("generation-test", &first_id);
+        assert!(
+            !registry
+                .connections
+                .read()
+                .unwrap()
+                .sessions
+                .contains_key("generation-test")
+        );
+        let (second_id, second) = registry.open_connection(spec).unwrap();
+
+        released.unwrap().close();
+        let second_release = registry.release_connection("generation-test", &second_id);
+        assert!(
+            !registry
+                .connections
+                .read()
+                .unwrap()
+                .sessions
+                .contains_key("generation-test")
+        );
+        second_release.unwrap().close();
+        drop(first);
+        drop(second);
+    }
+
+    #[test]
+    fn closing_a_session_signals_connection_terminals_without_serial_waits() {
+        let registry = Arc::new(TerminalRegistry::new());
+        let spec = TerminalSpec {
+            session_id: "close-connections-test".to_owned(),
+            host: "localhost".to_owned(),
+            selector: "local@test".to_owned(),
+            command: "/bin/sh".to_owned(),
+            args: vec!["-lc".to_owned(), "exec sleep 30".to_owned()],
+            cols: 80,
+            rows: 24,
+            output_frame_limit: 128,
+        };
+        let terminals = (0..MAX_CONNECTION_TERMINALS_PER_SESSION)
+            .map(|_| registry.open_connection(spec.clone()).unwrap().1)
+            .collect::<Vec<_>>();
+
+        let started = Instant::now();
+        registry.close("close-connections-test");
+
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while (terminals
+            .iter()
+            .any(|terminal| terminal.exit_info().is_none())
+            || registry
+                .connections
+                .read()
+                .unwrap()
+                .sessions
+                .contains_key("close-connections-test"))
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            terminals
+                .iter()
+                .all(|terminal| terminal.exit_info().is_some())
+        );
+        assert!(
+            !registry
+                .connections
+                .read()
+                .unwrap()
+                .sessions
+                .contains_key("close-connections-test")
+        );
+    }
+
+    #[test]
+    fn connection_terminal_capacity_is_bounded() {
+        assert!(validate_connection_terminal_capacity(0, 0).is_ok());
+        assert!(matches!(
+            validate_connection_terminal_capacity(MAX_CONNECTION_TERMINALS, 0),
+            Err(RetryableConnectionTerminalError::GlobalCapacity)
+        ));
+        assert!(matches!(
+            validate_connection_terminal_capacity(0, MAX_CONNECTION_TERMINALS_PER_SESSION),
+            Err(RetryableConnectionTerminalError::SessionCapacity)
+        ));
+    }
+
+    #[test]
+    fn connection_terminal_spawn_failures_remain_retryable() {
+        let registry = TerminalRegistry::new();
+        let result = registry.open_connection(TerminalSpec {
+            session_id: "retryable-spawn-test".to_owned(),
+            host: "localhost".to_owned(),
+            selector: "local@test".to_owned(),
+            command: String::new(),
+            args: Vec::new(),
+            cols: 80,
+            rows: 24,
+            output_frame_limit: 128,
+        });
+        let Err(error) = result else {
+            panic!("empty terminal command should fail");
+        };
+
+        assert!(
+            error
+                .downcast_ref::<RetryableConnectionTerminalError>()
+                .is_some()
+        );
     }
 
     #[test]

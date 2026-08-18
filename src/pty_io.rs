@@ -33,7 +33,11 @@ pub struct PtyWriter {
 
 impl PtyWriter {
     pub fn spawn(writer: Box<dyn Write + Send>) -> Self {
-        let (sender, receiver) = mpsc::sync_channel(PTY_INPUT_CHANNEL_CAPACITY);
+        Self::spawn_with_capacity(writer, PTY_INPUT_CHANNEL_CAPACITY)
+    }
+
+    pub fn spawn_with_capacity(writer: Box<dyn Write + Send>, capacity: usize) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(capacity.max(1));
         let worker = thread::spawn(move || run_writer(writer, &receiver));
         Self {
             sender: Mutex::new(Some(sender)),
@@ -91,6 +95,26 @@ impl PtyWriter {
         if let Some(worker) = worker {
             let _ = worker.join();
         }
+    }
+
+    pub fn wait_timeout(&self, timeout: Duration) -> bool {
+        let Ok(mut worker_slot) = self.worker.lock() else {
+            return false;
+        };
+        let worker = worker_slot.take();
+        let Some(worker) = worker else {
+            return true;
+        };
+        let deadline = Instant::now() + timeout;
+        while !worker.is_finished() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                *worker_slot = Some(worker);
+                return false;
+            }
+            thread::sleep(remaining.min(Duration::from_millis(10)));
+        }
+        worker.join().is_ok()
     }
 }
 
@@ -281,14 +305,25 @@ impl ChildWait {
             completed = next;
         }
     }
+
+    pub fn wait_timeout(&self, timeout: Duration) -> bool {
+        let (lock, condition) = &*self.inner;
+        let Ok(completed) = lock.lock() else {
+            return false;
+        };
+        condition
+            .wait_timeout_while(completed, timeout, |completed| !*completed)
+            .is_ok_and(|(completed, _)| *completed)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::io::{Cursor, Write};
     use std::sync::{Arc, Condvar, Mutex, mpsc};
+    use std::time::Duration;
 
-    use super::{PtyInputError, PtyOutputEvent, PtyWriter, spawn_batched_output_reader};
+    use super::{ChildWait, PtyInputError, PtyOutputEvent, PtyWriter, spawn_batched_output_reader};
     use crate::config::{
         PTY_INPUT_CHANNEL_CAPACITY, PTY_INPUT_MESSAGE_BYTES, PTY_OUTPUT_BATCH_BYTES,
     };
@@ -381,6 +416,42 @@ mod tests {
         *release_lock.lock().unwrap() = true;
         release_condition.notify_all();
         writer.close();
+    }
+
+    #[test]
+    fn writer_wait_timeout_preserves_a_stalled_worker_for_later_cleanup() {
+        let started = Arc::new((Mutex::new(false), Condvar::new()));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let writer = PtyWriter::spawn_with_capacity(
+            Box::new(BlockingWriter {
+                started: Arc::clone(&started),
+                release: Arc::clone(&release),
+            }),
+            1,
+        );
+        writer.send(vec![b'x']).unwrap();
+        let (started_lock, started_condition) = &*started;
+        let mut did_start = started_lock.lock().unwrap();
+        while !*did_start {
+            did_start = started_condition.wait(did_start).unwrap();
+        }
+        drop(did_start);
+
+        writer.signal_close();
+        assert!(!writer.wait_timeout(Duration::ZERO));
+
+        let (release_lock, release_condition) = &*release;
+        *release_lock.lock().unwrap() = true;
+        release_condition.notify_all();
+    }
+
+    #[test]
+    fn child_wait_timeout_reports_completion() {
+        let child_wait = ChildWait::default();
+
+        assert!(!child_wait.wait_timeout(Duration::ZERO));
+        child_wait.complete();
+        assert!(child_wait.wait_timeout(Duration::ZERO));
     }
 
     #[test]

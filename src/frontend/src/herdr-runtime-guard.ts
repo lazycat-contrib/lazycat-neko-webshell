@@ -42,6 +42,15 @@ export type HerdrTerminalPreparation = {
   retry: boolean;
 };
 
+function canLiveHandoff(state: HerdrRuntimeGuardState | undefined): state is HerdrRuntimeGuardState {
+  return state?.state === "server_older"
+    && state.live_handoff_available
+    && Number.isSafeInteger(state.client_protocol)
+    && Number.isSafeInteger(state.server_protocol)
+    && state.server_protocol !== undefined
+    && state.client_protocol > state.server_protocol;
+}
+
 export function herdrRuntimeGuardPresentation(
   state: HerdrRuntimeGuardState | undefined,
   tr: Translate,
@@ -74,12 +83,13 @@ export function herdrRuntimeGuardPresentation(
       handoffVisible: false,
     };
   }
+  const handoffAvailable = canLiveHandoff(state);
   return {
     hidden: false,
-    message: state.live_handoff_available
+    message: handoffAvailable
       ? tr("status.herdrServerOlder", values)
       : tr("status.herdrHandoffUnavailable", values),
-    handoffVisible: state.live_handoff_available,
+    handoffVisible: handoffAvailable,
   };
 }
 
@@ -158,7 +168,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
       || confirming
       || uncertainHandoffs.has(selector)
       || !selector
-      || !runtimeState?.live_handoff_available
+      || !canLiveHandoff(runtimeState)
     ) return false;
     const requestSelector = selector;
     const requestState = runtimeState;
@@ -266,7 +276,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
     ) {
       return { ready: false, retry: true };
     }
-    if (state.state !== "server_older" || !state.live_handoff_available) {
+    if (!canLiveHandoff(state)) {
       const presentation = herdrRuntimeGuardPresentation(state, options.tr);
       if (presentation.message) options.onError(presentation.message);
       return { ready: false, retry: false };
@@ -299,8 +309,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
       }
       if (validated.handoff_recent) return { ready: false, retry: true };
       if (
-        validated.state !== "server_older"
-        || !validated.live_handoff_available
+        !canLiveHandoff(validated)
         || validated.client_protocol !== state.client_protocol
         || validated.server_protocol !== state.server_protocol
       ) {

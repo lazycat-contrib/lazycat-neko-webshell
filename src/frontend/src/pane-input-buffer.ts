@@ -59,12 +59,11 @@ export function clearPanePendingInput(pane: PaneInputBuffer) {
   pane.pendingInputBytes = 0;
 }
 
-export function paneReplayAfter(pane: PaneReplayCursor, herdrTailFrames: number): number {
+export function paneReplayAfter(pane: PaneReplayCursor): number {
   const sequence = Number.isFinite(pane.lastOutputSequence)
     ? Math.max(0, Math.trunc(pane.lastOutputSequence))
     : 0;
-  if (pane.sessionBackend !== "herdr" || sequence <= 0) return sequence;
-  return Math.max(0, sequence - herdrTailFrames);
+  return pane.sessionBackend === "herdr" ? 0 : sequence;
 }
 
 export function resetPaneReplayCursorForNewRenderer(pane: PaneReplayCursor) {
