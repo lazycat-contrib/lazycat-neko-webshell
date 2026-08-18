@@ -150,6 +150,47 @@ pub(crate) struct HerdrHandoffTracker {
     records: Mutex<HashMap<String, HerdrHandoffRecord>>,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct HerdrResourceCache {
+    resources: Mutex<HashMap<String, CachedHerdrResources>>,
+}
+
+#[derive(Debug, Default)]
+struct CachedHerdrResources {
+    tabs: Option<Vec<HerdrTabInfo>>,
+    panes: Option<Vec<HerdrPaneInfo>>,
+}
+
+impl HerdrResourceCache {
+    fn tabs(&self, selector: &str, fresh: Option<Vec<HerdrTabInfo>>) -> Vec<HerdrTabInfo> {
+        let Ok(mut resources) = self.resources.lock() else {
+            return fresh.unwrap_or_default();
+        };
+        if let Some(tabs) = fresh {
+            resources.entry(selector.to_owned()).or_default().tabs = Some(tabs.clone());
+            return tabs;
+        }
+        resources
+            .get(selector)
+            .and_then(|entry| entry.tabs.clone())
+            .unwrap_or_default()
+    }
+
+    fn panes(&self, selector: &str, fresh: Option<Vec<HerdrPaneInfo>>) -> Vec<HerdrPaneInfo> {
+        let Ok(mut resources) = self.resources.lock() else {
+            return fresh.unwrap_or_default();
+        };
+        if let Some(panes) = fresh {
+            resources.entry(selector.to_owned()).or_default().panes = Some(panes.clone());
+            return panes;
+        }
+        resources
+            .get(selector)
+            .and_then(|entry| entry.panes.clone())
+            .unwrap_or_default()
+    }
+}
+
 struct HerdrHandoffLease {
     tracker: Arc<HerdrHandoffTracker>,
     selector: String,
@@ -322,7 +363,7 @@ pub struct HerdrWorkspaceInfo {
     tokens: Map<String, Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct HerdrTabInfo {
     tab_id: String,
     workspace_id: String,
@@ -332,7 +373,7 @@ pub struct HerdrTabInfo {
     pane_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct HerdrPaneInfo {
     pane_id: String,
     workspace_id: String,
@@ -537,10 +578,13 @@ fn terminal_mcp_operation_request(
 }
 
 pub(crate) async fn get_herdr_state(
+    State(state): State<std::sync::Arc<crate::state::AppState>>,
     Query(query): Query<HerdrQuery>,
 ) -> Result<Json<HerdrBridgeState>, HerdrBridgeError> {
     let target = authorize_herdr_target(&query.name).await?;
-    Ok(Json(snapshot_herdr_state(&target).await))
+    Ok(Json(
+        snapshot_herdr_state(&target, &state.herdr_resources).await,
+    ))
 }
 
 pub(crate) async fn get_herdr_runtime_status(
@@ -575,7 +619,7 @@ pub(crate) async fn post_herdr_handoff(
 }
 
 pub(crate) async fn post_herdr_action(
-    State(_state): State<std::sync::Arc<crate::state::AppState>>,
+    State(state): State<std::sync::Arc<crate::state::AppState>>,
     Json(request): Json<HerdrActionRequest>,
 ) -> Result<Json<HerdrBridgeState>, HerdrBridgeError> {
     let target = authorize_herdr_target(&request.name).await?;
@@ -631,7 +675,9 @@ pub(crate) async fn post_herdr_action(
             .await?;
         }
     }
-    Ok(Json(snapshot_herdr_state(&target).await))
+    Ok(Json(
+        snapshot_herdr_state(&target, &state.herdr_resources).await,
+    ))
 }
 
 pub(crate) async fn post_herdr_socket(
@@ -747,7 +793,10 @@ async fn authorize_lightos_target(
     })
 }
 
-async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeState {
+async fn snapshot_herdr_state(
+    target: &AuthorizedHerdrTarget,
+    resource_cache: &HerdrResourceCache,
+) -> HerdrBridgeState {
     let ping_info = match run_herdr_request(target, "ping", json!({})).await {
         Ok(response) => parse_herdr_ping(&response),
         Err(err) => {
@@ -768,14 +817,10 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
     {
         match run_herdr_request(target, "session.snapshot", json!({})).await {
             Ok(response) => {
-                return build_herdr_state(
-                    target,
-                    true,
-                    true,
-                    None,
-                    ping_info,
-                    parse_herdr_session_snapshot(&response),
-                );
+                let resources = parse_herdr_session_snapshot(&response);
+                resource_cache.tabs(&target.selector, Some(resources.tabs.clone()));
+                resource_cache.panes(&target.selector, Some(resources.panes.clone()));
+                return build_herdr_state(target, true, true, None, ping_info, resources);
             }
             Err(err) => {
                 warn!(
@@ -800,36 +845,33 @@ async fn snapshot_herdr_state(target: &AuthorizedHerdrTarget) -> HerdrBridgeStat
             );
         }
     };
-    let mut resources_complete = true;
     let tabs = match run_herdr_request(target, "tab.list", json!({})).await {
-        Ok(response) => parse_tabs(&response),
+        Ok(response) => resource_cache.tabs(&target.selector, Some(parse_tabs(&response))),
         Err(err) => {
-            resources_complete = false;
             warn!(
                 error = %err.message,
                 selector = %target.selector,
                 "failed to list Herdr tabs"
             );
-            Vec::new()
+            resource_cache.tabs(&target.selector, None)
         }
     };
     let panes = match run_herdr_request(target, "pane.list", json!({})).await {
-        Ok(response) => parse_panes(&response),
+        Ok(response) => resource_cache.panes(&target.selector, Some(parse_panes(&response))),
         Err(err) => {
-            resources_complete = false;
             warn!(
                 error = %err.message,
                 selector = %target.selector,
                 "failed to list Herdr panes"
             );
-            Vec::new()
+            resource_cache.panes(&target.selector, None)
         }
     };
 
     build_herdr_state(
         target,
         true,
-        resources_complete,
+        true,
         None,
         ping_info,
         HerdrBridgeResources {
@@ -1700,12 +1742,13 @@ mod tests {
     use super::{
         HERDR_RUNTIME_SCHEMA_VERSION, HERDR_SOCKET_CONTRACT, HerdrCliClientStatus,
         HerdrCliRuntimeCapabilities, HerdrCliRuntimeStatus, HerdrCliServerStatus,
-        HerdrHandoffTracker, HerdrTerminalOperation, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
-        classify_herdr_runtime, herdr_pane_focus_request, herdr_protocol_is_supported,
-        herdr_protocol_supports_session_snapshot, herdr_request_timeout,
-        herdr_runtime_command_timeout, is_allowed_herdr_method, normalize_herdr_request_params,
-        parse_agents, parse_herdr_ping, parse_herdr_session_snapshot, parse_panes, parse_tabs,
-        parse_workspaces, terminal_mcp_operation_request, validate_herdr_wire_request,
+        HerdrHandoffTracker, HerdrResourceCache, HerdrTerminalOperation,
+        MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, classify_herdr_runtime, herdr_pane_focus_request,
+        herdr_protocol_is_supported, herdr_protocol_supports_session_snapshot,
+        herdr_request_timeout, herdr_runtime_command_timeout, is_allowed_herdr_method,
+        normalize_herdr_request_params, parse_agents, parse_herdr_ping,
+        parse_herdr_session_snapshot, parse_panes, parse_tabs, parse_workspaces,
+        terminal_mcp_operation_request, validate_herdr_wire_request,
     };
 
     #[test]
@@ -1797,6 +1840,46 @@ mod tests {
         assert_eq!(tabs.len(), 1);
         assert_eq!(tabs[0].tab_id, "w1:t2");
         assert!(tabs[0].focused);
+    }
+
+    #[test]
+    fn resource_cache_reuses_successful_lists_only_for_the_same_target() {
+        let cache = HerdrResourceCache::default();
+        let tabs = parse_tabs(&json!({
+            "result": {
+                "tabs": [{
+                    "tab_id": "w1:t1",
+                    "workspace_id": "w1",
+                    "number": 1,
+                    "label": "main",
+                    "focused": true,
+                    "pane_count": 1
+                }]
+            }
+        }));
+        let panes = parse_panes(&json!({
+            "result": {
+                "panes": [{
+                    "pane_id": "w1:p1",
+                    "workspace_id": "w1",
+                    "tab_id": "w1:t1",
+                    "focused": true,
+                    "agent_status": "idle"
+                }]
+            }
+        }));
+
+        assert_eq!(cache.tabs("alpha", Some(tabs))[0].tab_id, "w1:t1");
+        assert_eq!(cache.panes("alpha", Some(panes))[0].pane_id, "w1:p1");
+        assert_eq!(cache.tabs("alpha", None)[0].tab_id, "w1:t1");
+        assert_eq!(cache.panes("alpha", None)[0].pane_id, "w1:p1");
+        assert!(cache.tabs("beta", None).is_empty());
+        assert!(cache.panes("beta", None).is_empty());
+
+        assert!(cache.tabs("alpha", Some(Vec::new())).is_empty());
+        assert!(cache.panes("alpha", Some(Vec::new())).is_empty());
+        assert!(cache.tabs("alpha", None).is_empty());
+        assert!(cache.panes("alpha", None).is_empty());
     }
 
     #[test]
