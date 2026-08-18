@@ -599,11 +599,14 @@ pub fn sync_session_login_user(session: &mut SessionRecord, login_user: &str) ->
 }
 
 fn herdr_launch_script() -> &'static str {
-    r#"if command -v herdr >/dev/null 2>&1; then
-  exec herdr
-fi
-if [ -n "${HOME:-}" ] && [ -x "$HOME/.local/bin/herdr" ]; then
+    r#"if [ -n "${HOME:-}" ] && [ -x "$HOME/.local/bin/herdr" ]; then
   exec "$HOME/.local/bin/herdr"
+fi
+if [ -n "${HOME:-}" ] && [ -x "$HOME/bin/herdr" ]; then
+  exec "$HOME/bin/herdr"
+fi
+if command -v herdr >/dev/null 2>&1; then
+  exec herdr
 fi
   echo "Herdr is not installed in this instance."
   exit 127
@@ -1129,6 +1132,17 @@ mod tests {
 
         assert!(script.contains("exec herdr"));
         assert!(!script.contains("exec \"$__webshell_shell\""));
+    }
+
+    #[test]
+    fn herdr_session_prefers_the_same_user_binary_as_runtime_inspection() {
+        let (_, args) = session_command_for_backend_id("demo@owner", "", "herdr");
+        let script = args.last().expect("bootstrap script argument");
+
+        let local = script.find("$HOME/.local/bin/herdr").unwrap();
+        let user_bin = script.find("$HOME/bin/herdr").unwrap();
+        let path = script.find("command -v herdr").unwrap();
+        assert!(local < user_bin && user_bin < path);
     }
 
     #[test]

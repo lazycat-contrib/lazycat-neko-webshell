@@ -80,13 +80,60 @@ test("resets and reconnects only eligible exited Herdr panes", () => {
   assert.equal(panes[1].exited, true);
 });
 
-test("retains exited panes only while runtime compatibility is unresolved", () => {
+test("retains exited panes while the runtime may accept a replacement client", () => {
   const runtime = { state: "ready" };
-  assert.equal(herdrExitShouldRemainRecoverable(runtime), false);
+  assert.equal(herdrExitShouldRemainRecoverable(runtime), true);
   assert.equal(herdrExitShouldRemainRecoverable({ ...runtime, state: "not_running" }), false);
   for (const state of ["client_older", "server_older", "unknown"]) {
     assert.equal(herdrExitShouldRemainRecoverable({ ...runtime, state }), true);
   }
+});
+
+test("retries a Herdr client attach exit even when the runtime reports ready", async () => {
+  const cleaned = [];
+  const retried = [];
+  const recovery = createHerdrExitRecovery({
+    fetchStatus: async (selector) => ({ selector, state: "ready" }),
+    cleanup: (target) => { cleaned.push(target.paneId); },
+    recover: () => assert.fail("a transient client attach exit must not use handoff recovery"),
+    retry: (target) => { retried.push(target.paneId); },
+    wait: async () => {},
+    handoffStatusAttempts: 1,
+  });
+
+  await recovery.handle({
+    selector: "demo@owner",
+    paneId: "workspace-pane",
+    recoveryId: "ui-pane",
+    exitCode: 1,
+  });
+
+  assert.deepEqual(retried, ["workspace-pane"]);
+  assert.deepEqual(cleaned, []);
+  assert.deepEqual(recovery.recoverablePaneIds("demo@owner"), ["ui-pane"]);
+});
+
+test("bounds retries for a repeatedly failing Herdr client pane", async () => {
+  let retries = 0;
+  const recovery = createHerdrExitRecovery({
+    fetchStatus: async (selector) => ({ selector, state: "ready" }),
+    cleanup: () => assert.fail("bounded transient failures stay protected until expiry"),
+    recover: () => assert.fail("a ready runtime does not require handoff recovery"),
+    retry: () => { retries += 1; },
+    wait: async () => {},
+    handoffStatusAttempts: 1,
+  });
+  const target = {
+    selector: "demo@owner",
+    paneId: "workspace-pane",
+    recoveryId: "ui-pane",
+    exitCode: 1,
+  };
+
+  await recovery.handle(target);
+  await recovery.handle(target);
+
+  assert.equal(retries, 1);
 });
 
 test("classifies Herdr exits from trusted runtime state and exit status", async () => {
@@ -128,16 +175,16 @@ test("classifies Herdr exits from trusted runtime state and exit status", async 
   });
   await recovery.handle({ selector: "demo@owner", paneId: "later-exit", recoveryId: "later-exit", exitCode: 0 });
 
-  assert.deepEqual(cleaned, ["ordinary", "ordinary-failure", "later-exit"]);
+  assert.deepEqual(cleaned, ["ordinary", "later-exit"]);
   assert.deepEqual(recovered, ["demo@owner"]);
-  assert.deepEqual(retried, ["mismatch"]);
+  assert.deepEqual(retried, ["mismatch", "ordinary-failure"]);
   assert.deepEqual(
     recovery.recoverablePaneIds("demo@owner"),
-    ["mismatch", "unknown", "handoff-shutdown"],
+    ["mismatch", "unknown", "ordinary-failure", "handoff-shutdown"],
   );
   assert.deepEqual(
     [...recovery.removableWorkspacePaneIds("demo@owner")],
-    ["ordinary", "ordinary-failure", "later-exit"],
+    ["ordinary", "later-exit"],
   );
 });
 
@@ -254,8 +301,11 @@ test("recovers an exact local handoff candidate after the provider loses its mar
   });
 
   assert.deepEqual(recovered, ["demo@owner"]);
-  assert.deepEqual(cleaned, ["other-workspace-pane"]);
-  assert.deepEqual(recovery.recoverablePaneIds("demo@owner"), ["pane-ui"]);
+  assert.deepEqual(cleaned, []);
+  assert.deepEqual(
+    recovery.recoverablePaneIds("demo@owner"),
+    ["pane-ui", "other-ui-pane"],
+  );
 });
 
 test("protects a local handoff candidate during marker-less server replacement", async () => {
@@ -281,13 +331,15 @@ test("protects a local handoff candidate during marker-less server replacement",
   assert.deepEqual([...recovery.protectedWorkspacePaneIds("demo@owner")], ["pane-workspace"]);
 });
 
-test("does not recover an expired local handoff candidate without a provider marker", async () => {
+test("retries an expired local handoff candidate as an ordinary client attach exit", async () => {
   let now = 10_000;
   const cleaned = [];
+  const retried = [];
   const recovery = createHerdrExitRecovery({
     fetchStatus: async (selector) => ({ selector, state: "ready", handoff_recent: false }),
     cleanup: (target) => { cleaned.push(target.paneId); },
     recover: () => assert.fail("expired handoff candidate must not recover"),
+    retry: (target) => { retried.push(target.paneId); },
     now: () => now,
     pendingHandoffMs: 100,
   });
@@ -301,7 +353,8 @@ test("does not recover an expired local handoff candidate without a provider mar
     exitCode: 1,
   });
 
-  assert.deepEqual(cleaned, ["pane-workspace"]);
+  assert.deepEqual(cleaned, []);
+  assert.deepEqual(retried, ["pane-workspace"]);
 });
 
 test("expires recovery protection when a reconnect never becomes ready", async () => {

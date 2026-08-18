@@ -101,7 +101,11 @@ export function recoverHerdrPaneStatesAfterHandoff<T extends HerdrRecoverablePan
 }
 
 export function herdrExitShouldRemainRecoverable(state: HerdrRuntimeGuardState): boolean {
-  return state.state === "client_older"
+  // The runtime probe describes the durable server, while this exit belongs to
+  // a disposable browser-scoped TUI client. A ready server can still reject
+  // that client during attach (for example when an old binary was selected).
+  return state.state === "ready"
+    || state.state === "client_older"
     || state.state === "server_older"
     || state.state === "unknown";
 }

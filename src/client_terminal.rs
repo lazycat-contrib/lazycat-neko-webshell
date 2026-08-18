@@ -42,7 +42,7 @@ const MAX_TICKET_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_WORKSPACE_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 const REMOTE_REPLAY_TAIL_MAX_BYTES: usize = 512 * 1024;
 const REMOTE_REPLAY_TAIL_MAX_FRAMES: usize = 256;
-const REMOTE_HERDR_LAUNCH: &str = "if command -v herdr >/dev/null 2>&1; then exec herdr; elif [ -x \"$HOME/.local/bin/herdr\" ]; then exec \"$HOME/.local/bin/herdr\"; else printf '%s\\n' 'Herdr is not installed on this remote device.'; exit 127; fi\r";
+const REMOTE_HERDR_LAUNCH: &str = "if [ -x \"$HOME/.local/bin/herdr\" ]; then exec \"$HOME/.local/bin/herdr\"; elif [ -x \"$HOME/bin/herdr\" ]; then exec \"$HOME/bin/herdr\"; elif command -v herdr >/dev/null 2>&1; then exec herdr; else printf '%s\\n' 'Herdr is not installed on this remote device.'; exit 127; fi\r";
 
 type RemoteWebSocketRequest = tokio_tungstenite::tungstenite::http::Request<()>;
 
@@ -2290,7 +2290,7 @@ mod tests {
         assert_eq!(value["type"], "input");
         assert_eq!(
             value["data"],
-            "if command -v herdr >/dev/null 2>&1; then exec herdr; elif [ -x \"$HOME/.local/bin/herdr\" ]; then exec \"$HOME/.local/bin/herdr\"; else printf '%s\\n' 'Herdr is not installed on this remote device.'; exit 127; fi\r"
+            "if [ -x \"$HOME/.local/bin/herdr\" ]; then exec \"$HOME/.local/bin/herdr\"; elif [ -x \"$HOME/bin/herdr\" ]; then exec \"$HOME/bin/herdr\"; elif command -v herdr >/dev/null 2>&1; then exec herdr; else printf '%s\\n' 'Herdr is not installed on this remote device.'; exit 127; fi\r"
         );
     }
 
