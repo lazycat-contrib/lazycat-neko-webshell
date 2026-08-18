@@ -17,15 +17,15 @@ test("does not restart a Herdr process that explicitly exited", () => {
   assert.equal(shouldConnectRestoredPane(herdrPane, false), false);
 });
 
+test("does not let auto-restart bypass an observed Herdr process exit", () => {
+  assert.equal(shouldConnectRestoredPane(herdrPane, true), false);
+});
+
 test("still restores an exited persistent Herdr pane after a fresh page load", () => {
   assert.equal(shouldConnectRestoredPane({
     ...herdrPane,
     processExitObserved: false,
   }, false), true);
-});
-
-test("does not let auto-restart bypass an observed Herdr process exit", () => {
-  assert.equal(shouldConnectRestoredPane(herdrPane, true), false);
 });
 
 test("does not reconnect a pane after a fatal transport error", () => {

@@ -92,6 +92,7 @@ test("retains exited panes only while runtime compatibility is unresolved", () =
 test("classifies Herdr exits from trusted runtime state and exit status", async () => {
   const cleaned = [];
   const recovered = [];
+  const retried = [];
   let state = "ready";
   let handoffRecent = false;
   const recovery = createHerdrExitRecovery({
@@ -101,6 +102,7 @@ test("classifies Herdr exits from trusted runtime state and exit status", async 
     },
     cleanup: (target) => { cleaned.push(target.paneId); },
     recover: (selector) => { recovered.push(selector); },
+    retry: (target) => { retried.push(target.paneId); },
     wait: async () => {},
     handoffStatusAttempts: 1,
   });
@@ -128,6 +130,7 @@ test("classifies Herdr exits from trusted runtime state and exit status", async 
 
   assert.deepEqual(cleaned, ["ordinary", "ordinary-failure", "later-exit"]);
   assert.deepEqual(recovered, ["demo@owner"]);
+  assert.deepEqual(retried, ["mismatch"]);
   assert.deepEqual(
     recovery.recoverablePaneIds("demo@owner"),
     ["mismatch", "unknown", "handoff-shutdown"],

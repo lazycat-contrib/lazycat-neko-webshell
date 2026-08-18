@@ -119,6 +119,7 @@ export function createHerdrExitRecovery(options: {
   fetchStatus: (selector: string) => Promise<HerdrRuntimeGuardState>;
   cleanup: (target: HerdrExitedPaneTarget) => void | Promise<void>;
   recover: (selector: string) => void | Promise<void>;
+  retry?: (target: HerdrExitedPaneTarget) => void;
   now?: () => number;
   handoffSettlementMs?: number;
   recoveryProtectionMs?: number;
@@ -325,7 +326,9 @@ export function createHerdrExitRecovery(options: {
           }
           return;
         } else if (herdrExitShouldRemainRecoverable(lastState)) {
+          const firstRecovery = !recoverablePanes.get(target.selector.trim())?.has(target.recoveryId);
           markRecoverable(target);
+          if (firstRecovery) options.retry?.(target);
           return;
         } else {
           await cleanupOrdinary(target);

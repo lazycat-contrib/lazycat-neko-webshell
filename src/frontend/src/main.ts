@@ -733,6 +733,7 @@ const herdrExitRecovery = createHerdrExitRecovery({
     await exitedPaneCleanupController.handle(target);
   },
   recover: recoverHerdrPanesAfterHandoff,
+  retry: retryHerdrPaneAfterRecoverableExit,
 });
 let plugins: PluginDescriptor[] = [];
 let pluginsLoaded = false;
@@ -5186,6 +5187,17 @@ async function recoverHerdrPanesAfterHandoff(selector: string) {
     const generation = selectedSelectorGeneration;
     await refreshHerdrState(selector, generation);
   }
+}
+
+function retryHerdrPaneAfterRecoverableExit(target: { recoveryId: string }) {
+  const pane = allPanes().find((candidate) => candidate.id === target.recoveryId);
+  if (!pane || pane.closing) return;
+  pane.socket?.close();
+  pane.socket = undefined;
+  pane.processExitObserved = false;
+  pane.exited = false;
+  pane.sessionStatus = "stopped";
+  connectPanePty(pane);
 }
 
 function isHerdrTerminalPane(pane: TerminalPane): boolean {
