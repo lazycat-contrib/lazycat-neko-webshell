@@ -599,7 +599,8 @@ pub fn sync_session_login_user(session: &mut SessionRecord, login_user: &str) ->
 }
 
 fn herdr_launch_script() -> &'static str {
-    r#"if [ -n "${HOME:-}" ] && [ -x "$HOME/.local/bin/herdr" ]; then
+    r#"unset HERDR_ENV
+if [ -n "${HOME:-}" ] && [ -x "$HOME/.local/bin/herdr" ]; then
   exec "$HOME/.local/bin/herdr"
 fi
 if [ -n "${HOME:-}" ] && [ -x "$HOME/bin/herdr" ]; then
@@ -1143,6 +1144,15 @@ mod tests {
         let user_bin = script.find("$HOME/bin/herdr").unwrap();
         let path = script.find("command -v herdr").unwrap();
         assert!(local < user_bin && user_bin < path);
+    }
+
+    #[test]
+    fn herdr_session_leaves_the_managed_pane_before_attaching_to_the_server() {
+        let (_, args) = session_command_for_backend_id("demo@owner", "", "herdr");
+        let script = args.last().expect("bootstrap script argument");
+
+        assert!(script.contains("unset HERDR_ENV"));
+        assert!(!script.contains("unset HERDR_SOCKET_PATH"));
     }
 
     #[test]
