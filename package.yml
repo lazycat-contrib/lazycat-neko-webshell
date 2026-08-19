@@ -11,3 +11,6 @@ locales:
   zh:
     name: 小橘WebShell
     description: 基于 Rust、Restty 终端数据面和 Connect 控制面的 LightOS WebShell provider
+  en:
+    name: Neko Webshell
+    description: LightOS WebShell provider backed by Rust, Restty terminal I/O, and Connect control APIs
