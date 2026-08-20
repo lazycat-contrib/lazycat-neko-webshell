@@ -2796,6 +2796,96 @@ textarea:focus-visible {
   box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
+.remote-clipboard-retry {
+  position: absolute;
+  right: max(14px, var(--lzc-safe-area-inset-right));
+  bottom: max(14px, var(--lzc-safe-area-inset-bottom));
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(440px, calc(100% - 28px));
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-md);
+  background: var(--menu-bg);
+  box-shadow: var(--shadow-popover);
+  color: var(--menu-muted);
+  font: 500 12px/1.4 var(--font-sans);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--motion-popover-in) var(--ease-out),
+    transform var(--motion-popover-in) var(--ease-out);
+}
+
+@starting-style {
+  .remote-clipboard-retry {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.remote-clipboard-retry[hidden] {
+  display: none;
+}
+
+.remote-clipboard-retry button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--primary-fg);
+  font: 650 12px/1 var(--font-sans);
+  cursor: pointer;
+  transition: transform var(--motion-press) var(--ease-out);
+}
+
+.remote-clipboard-retry button[aria-busy="true"]::after {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  content: "";
+  animation: terminal-control-spin 0.9s linear infinite;
+}
+
+.remote-clipboard-retry button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.remote-clipboard-retry button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.remote-clipboard-retry button:disabled {
+  cursor: progress;
+  opacity: 0.62;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-clipboard-retry {
+    transform: none;
+    transition: opacity var(--motion-popover-in) var(--ease-out);
+  }
+
+  .remote-clipboard-retry button {
+    transition: none;
+  }
+
+  .remote-clipboard-retry button[aria-busy="true"]::after {
+    animation: none;
+  }
+}
+
 .terminal-mount.restty-pane-root,
 .terminal-mount .restty-pane-root {
   background: var(--term-bg, #050a12);

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
@@ -14,12 +14,14 @@ use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::timeout;
 use tracing::warn;
 
-use crate::agent_client::{AgentClient, ensure_agent};
+use crate::agent_client::{AgentClient, ensure_agent_at_least};
+use crate::agent_protocol::MIN_SUPPORTED_AGENT_VERSION;
 use crate::lightos;
 use crate::ssh_backend;
 use crate::tty_init::lightos_features_enabled;
@@ -32,7 +34,16 @@ const HERDR_HANDOFF_TRACKING_WINDOW: Duration = Duration::from_mins(2);
 const HERDR_RUNTIME_SCHEMA_VERSION: u32 = 1;
 const HERDR_LONG_REQUEST_TIMEOUT_MAX_MS: u64 = 300_000;
 const HERDR_REQUEST_TIMEOUT_OVERHEAD: Duration = Duration::from_secs(2);
+const HERDR_STREAM_INPUT_TIMEOUT: Duration = Duration::from_secs(10);
+const HERDR_STREAM_SEND_TIMEOUT: Duration = Duration::from_secs(10);
+const HERDR_STREAM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const HERDR_STREAM_IDLE_TIMEOUT: Duration = Duration::from_mins(5);
+const MAX_HERDR_STREAM_CONNECTIONS: usize = 64;
+const MAX_HERDR_STREAM_CONNECTIONS_PER_TARGET: usize = 8;
 const MIN_SUPPORTED_HERDR_PROTOCOL_VERSION: u32 = 14;
+// Herdr's binary stream bridge requires the agent behavior introduced in v9.
+// Keep this feature floor independent from future embedded agent revisions.
+const MIN_SUPPORTED_HERDR_AGENT_VERSION: u64 = 9;
 const HERDR_SOCKET_CONTRACT_JSON: &str = include_str!("herdr_socket_contract.json");
 static HERDR_SOCKET_CONTRACT: LazyLock<HerdrSocketContract> = LazyLock::new(|| {
     let contract: HerdrSocketContract = serde_json::from_str(HERDR_SOCKET_CONTRACT_JSON)
@@ -41,10 +52,34 @@ static HERDR_SOCKET_CONTRACT: LazyLock<HerdrSocketContract> = LazyLock::new(|| {
         !contract.methods.is_empty() && !contract.subscriptions.is_empty(),
         "embedded Herdr socket contract must list methods and subscriptions"
     );
+    assert!(
+        contract
+            .stream_methods
+            .iter()
+            .all(|method| contract.methods.contains(method)),
+        "embedded Herdr stream methods must be part of the method allowlist"
+    );
     contract
 });
+static HERDR_STREAM_CONNECTIONS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MAX_HERDR_STREAM_CONNECTIONS)));
+static HERDR_TARGET_STREAM_CONNECTIONS: LazyLock<Mutex<HashMap<String, Weak<Semaphore>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 type HerdrSocketSender = SplitSink<WebSocket, Message>;
+
+#[derive(Debug, Default)]
+struct HerdrSocketStreamState {
+    application_request_sent: bool,
+    graphics_pending_id: Option<String>,
+    graphics_started: bool,
+    graphics_expected_bytes: Option<usize>,
+}
+
+struct HerdrStreamPermits {
+    _global: OwnedSemaphorePermit,
+    _target: OwnedSemaphorePermit,
+}
 
 #[derive(Debug, Deserialize)]
 struct HerdrSocketContract {
@@ -53,6 +88,7 @@ struct HerdrSocketContract {
     protocol: u32,
     schema_version: u32,
     methods: Vec<String>,
+    stream_methods: Vec<String>,
     subscriptions: Vec<String>,
 }
 
@@ -684,7 +720,7 @@ pub(crate) async fn post_herdr_socket(
     Json(request): Json<HerdrSocketRequest>,
 ) -> Result<Json<Value>, HerdrBridgeError> {
     let target = authorize_herdr_target(&request.name).await?;
-    validate_herdr_method(&request.method)?;
+    validate_herdr_request_method(&request.method)?;
     let request_id = request
         .id
         .unwrap_or_else(|| format!("lazycat-webshell:{}", request.method));
@@ -730,21 +766,67 @@ pub(crate) async fn herdr_ws(
     if !origin_allowed(&headers) {
         return (StatusCode::FORBIDDEN, "invalid websocket origin").into_response();
     }
+    let Some(global_permit) = try_acquire_herdr_stream_permit(&HERDR_STREAM_CONNECTIONS) else {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many active Herdr socket connections",
+        )
+            .into_response();
+    };
     let target = match authorize_herdr_target(&query.name).await {
         Ok(target) => target,
         Err(err) => return err.into_response(),
     };
+    let target_connections = herdr_target_stream_connections(&target.selector);
+    let Some(target_permit) = try_acquire_herdr_stream_permit(&target_connections) else {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many active Herdr socket connections for this target",
+        )
+            .into_response();
+    };
+    let permits = HerdrStreamPermits {
+        _global: global_permit,
+        _target: target_permit,
+    };
 
-    ws.on_upgrade(move |socket| async move {
-        if let Err(err) = handle_herdr_socket(socket, target).await {
-            warn!(error = %err, "Herdr socket bridge ended with error");
-        }
-    })
+    ws.max_message_size(neko_herdr_socket_bridge::MAX_RESPONSE_BYTES)
+        .max_frame_size(neko_herdr_socket_bridge::MAX_RESPONSE_BYTES)
+        .on_upgrade(move |socket| async move {
+            let _permits = permits;
+            if let Err(err) = handle_herdr_socket(socket, target).await {
+                warn!(error = %err, "Herdr socket bridge ended with error");
+            }
+        })
+}
+
+fn try_acquire_herdr_stream_permit(semaphore: &Arc<Semaphore>) -> Option<OwnedSemaphorePermit> {
+    Arc::clone(semaphore).try_acquire_owned().ok()
+}
+
+fn herdr_target_stream_connections(selector: &str) -> Arc<Semaphore> {
+    let mut connections = HERDR_TARGET_STREAM_CONNECTIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    connections.retain(|_, semaphore| semaphore.strong_count() > 0);
+    if let Some(semaphore) = connections.get(selector).and_then(Weak::upgrade) {
+        return semaphore;
+    }
+    let semaphore = Arc::new(Semaphore::new(MAX_HERDR_STREAM_CONNECTIONS_PER_TARGET));
+    connections.insert(selector.to_owned(), Arc::downgrade(&semaphore));
+    semaphore
 }
 
 async fn authorize_herdr_target(selector: &str) -> Result<AuthorizedHerdrTarget, HerdrBridgeError> {
+    authorize_herdr_target_at_least(selector, herdr_agent_minimum_for_method(None)).await
+}
+
+async fn authorize_herdr_target_at_least(
+    selector: &str,
+    minimum_agent_version: u64,
+) -> Result<AuthorizedHerdrTarget, HerdrBridgeError> {
     let target = authorize_lightos_target(selector).await?;
-    let agent = ensure_agent(&target.selector, &target.login_user)
+    let agent = ensure_agent_at_least(&target.selector, &target.login_user, minimum_agent_version)
         .await
         .map_err(|err| HerdrBridgeError {
             status: StatusCode::BAD_GATEWAY,
@@ -755,6 +837,14 @@ async fn authorize_herdr_target(selector: &str) -> Result<AuthorizedHerdrTarget,
         login_user: target.login_user,
         agent,
     })
+}
+
+fn herdr_agent_minimum_for_method(method: Option<&str>) -> u64 {
+    if method.is_some_and(|method| method.trim() == "pane.graphics.stream") {
+        MIN_SUPPORTED_HERDR_AGENT_VERSION
+    } else {
+        MIN_SUPPORTED_AGENT_VERSION
+    }
 }
 
 async fn authorize_lightos_target(
@@ -1129,8 +1219,49 @@ async fn run_herdr_request_raw(
 
 async fn handle_herdr_socket(
     socket: WebSocket,
-    target: AuthorizedHerdrTarget,
+    mut target: AuthorizedHerdrTarget,
 ) -> anyhow::Result<()> {
+    let (mut sender, mut receiver) = socket.split();
+    let mut stream_state = HerdrSocketStreamState::default();
+    let Some((first_request, method)) = timeout(
+        HERDR_STREAM_HANDSHAKE_TIMEOUT,
+        receive_herdr_socket_request(
+            &mut sender,
+            &mut receiver,
+            &target.selector,
+            &mut stream_state,
+        ),
+    )
+    .await
+    .map_err(|_| anyhow!("Herdr socket handshake timed out"))??
+    else {
+        return Ok(());
+    };
+    let minimum_agent_version = herdr_agent_minimum_for_method(Some(&method));
+    if minimum_agent_version > MIN_SUPPORTED_AGENT_VERSION {
+        match ensure_agent_at_least(&target.selector, &target.login_user, minimum_agent_version)
+            .await
+        {
+            Ok(agent) => target.agent = agent,
+            Err(err) => {
+                let request_id = herdr_wire_request_id(&first_request);
+                send_herdr_socket_message(
+                    &mut sender,
+                    Message::Text(
+                        herdr_wire_error(
+                            request_id.as_deref(),
+                            "agent_upgrade_failed",
+                            &format!("failed to prepare target webshell agent: {err}"),
+                        )
+                        .into(),
+                    ),
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+    }
+
     let mut command = herdr_bridge_command(&target, HerdrBridgeMode::Stream);
     let mut child = command.spawn()?;
     let mut child_stdin = child
@@ -1146,15 +1277,27 @@ async fn handle_herdr_socket(
         .take()
         .ok_or_else(|| anyhow!("Herdr bridge stderr is unavailable"))?;
 
-    let (mut sender, mut receiver) = socket.split();
     let mut stdout_lines = BufReader::new(child_stdout).lines();
     let mut stderr_lines = BufReader::new(child_stderr).lines();
+    write_herdr_stream_input(
+        &mut child_stdin,
+        first_request.as_bytes(),
+        !first_request.ends_with('\n'),
+        HERDR_STREAM_INPUT_TIMEOUT,
+    )
+    .await?;
 
     loop {
         tokio::select! {
             line = stdout_lines.next_line() => {
                 match line? {
-                    Some(line) => sender.send(Message::Text(line.into())).await?,
+                    Some(line) => {
+                        if let Some(request_id) = stream_state.graphics_pending_id.take() {
+                            stream_state.graphics_started =
+                                herdr_stream_response_opens(&line, &request_id);
+                        }
+                        send_herdr_socket_message(&mut sender, Message::Text(line.into())).await?
+                    }
                     None => break,
                 }
             }
@@ -1172,9 +1315,14 @@ async fn handle_herdr_socket(
                     &mut child_stdin,
                     &target.selector,
                     message,
+                    &mut stream_state,
                 ).await? {
                     break;
                 }
+            }
+            _ = tokio::time::sleep(HERDR_STREAM_IDLE_TIMEOUT) => {
+                warn!(selector = %target.selector, "Herdr socket bridge closed after idle timeout");
+                break;
             }
             else => break,
         }
@@ -1183,6 +1331,68 @@ async fn handle_herdr_socket(
     let _ = child.start_kill();
     let _ = timeout(Duration::from_secs(1), child.wait()).await;
     Ok(())
+}
+
+async fn receive_herdr_socket_request(
+    sender: &mut HerdrSocketSender,
+    receiver: &mut futures::stream::SplitStream<WebSocket>,
+    selector: &str,
+    stream_state: &mut HerdrSocketStreamState,
+) -> anyhow::Result<Option<(String, String)>> {
+    loop {
+        let Some(message) = receiver.next().await else {
+            return Ok(None);
+        };
+        match message? {
+            Message::Text(text) => {
+                let text = text.to_string();
+                if text.len() > neko_herdr_socket_bridge::MAX_REQUEST_BYTES {
+                    send_herdr_socket_message(
+                        sender,
+                        Message::Text(
+                            herdr_wire_error(
+                                None,
+                                "request_too_large",
+                                "Herdr socket request is too large",
+                            )
+                            .into(),
+                        ),
+                    )
+                    .await?;
+                    continue;
+                }
+                if let Err(error) = prepare_herdr_socket_request(&text, stream_state) {
+                    send_herdr_socket_message(sender, Message::Text(error.into())).await?;
+                    continue;
+                }
+                let method = herdr_wire_method(&text)
+                    .expect("validated Herdr socket request must contain a method");
+                return Ok(Some((text, method)));
+            }
+            Message::Binary(_) => {
+                send_herdr_socket_message(
+                    sender,
+                    Message::Text(
+                        herdr_wire_error(
+                            None,
+                            "invalid_request",
+                            "Herdr socket bridge accepts JSON text only",
+                        )
+                        .into(),
+                    ),
+                )
+                .await?;
+            }
+            Message::Ping(payload) => {
+                send_herdr_socket_message(sender, Message::Pong(payload)).await?
+            }
+            Message::Pong(_) => {}
+            Message::Close(_) => {
+                warn!(selector = %selector, "Herdr socket bridge closed by client");
+                return Ok(None);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1211,7 +1421,8 @@ fn herdr_bridge_command(target: &AuthorizedHerdrTarget, mode: HerdrBridgeMode) -
     command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
     command
 }
 
@@ -1220,6 +1431,7 @@ async fn handle_herdr_socket_client_message(
     child_stdin: &mut tokio::process::ChildStdin,
     selector: &str,
     message: Option<Result<Message, axum::Error>>,
+    stream_state: &mut HerdrSocketStreamState,
 ) -> anyhow::Result<bool> {
     let Some(message) = message else {
         return Ok(false);
@@ -1227,48 +1439,115 @@ async fn handle_herdr_socket_client_message(
     match message? {
         Message::Text(text) => {
             let text = text.to_string();
+            if stream_state.graphics_pending_id.is_some() {
+                send_herdr_socket_message(
+                    sender,
+                    Message::Text(
+                        herdr_wire_error(
+                            None,
+                            "stream_handshake_pending",
+                            "wait for the pane.graphics.stream handshake response",
+                        )
+                        .into(),
+                    ),
+                )
+                .await?;
+                return Ok(true);
+            }
             if text.len() > neko_herdr_socket_bridge::MAX_REQUEST_BYTES {
-                sender
-                    .send(Message::Text(
+                send_herdr_socket_message(
+                    sender,
+                    Message::Text(
                         herdr_wire_error(
                             None,
                             "request_too_large",
                             "Herdr socket request is too large",
                         )
                         .into(),
-                    ))
-                    .await?;
+                    ),
+                )
+                .await?;
                 return Ok(true);
             }
-            match validate_herdr_wire_request(&text) {
-                Ok(()) => {
-                    child_stdin.write_all(text.as_bytes()).await?;
-                    if !text.ends_with('\n') {
-                        child_stdin.write_all(b"\n").await?;
-                    }
-                    child_stdin.flush().await?;
+            if stream_state.graphics_started {
+                if stream_state.graphics_expected_bytes.is_some() {
+                    send_herdr_socket_message(
+                        sender,
+                        Message::Text(
+                            herdr_wire_error(
+                                None,
+                                "stream_frame_incomplete",
+                                "send the declared binary frame body before another header",
+                            )
+                            .into(),
+                        ),
+                    )
+                    .await?;
+                    return Ok(true);
                 }
-                Err(error) => {
-                    sender.send(Message::Text(error.into())).await?;
+                match herdr_graphics_stream_frame_bytes(&text) {
+                    Ok(expected_bytes) => stream_state.graphics_expected_bytes = expected_bytes,
+                    Err(error) => {
+                        send_herdr_socket_message(sender, Message::Text(error.into())).await?;
+                        return Ok(true);
+                    }
+                }
+            } else {
+                if let Err(error) = prepare_herdr_socket_request(&text, stream_state) {
+                    send_herdr_socket_message(sender, Message::Text(error.into())).await?;
+                    return Ok(true);
                 }
             }
+            write_herdr_stream_input(
+                child_stdin,
+                text.as_bytes(),
+                !text.ends_with('\n'),
+                HERDR_STREAM_INPUT_TIMEOUT,
+            )
+            .await?;
+            Ok(true)
+        }
+        Message::Binary(payload)
+            if stream_state.graphics_started
+                && stream_state.graphics_expected_bytes == Some(payload.len()) =>
+        {
+            write_herdr_stream_input(child_stdin, &payload, false, HERDR_STREAM_INPUT_TIMEOUT)
+                .await?;
+            stream_state.graphics_expected_bytes = None;
+            Ok(true)
+        }
+        Message::Binary(payload) if stream_state.graphics_started => {
+            let message = match stream_state.graphics_expected_bytes {
+                Some(expected) => format!(
+                    "graphics frame body has {} bytes, expected {expected}",
+                    payload.len()
+                ),
+                None => "send a graphics frame header before its binary body".to_owned(),
+            };
+            send_herdr_socket_message(
+                sender,
+                Message::Text(herdr_wire_error(None, "invalid_stream_frame", &message).into()),
+            )
+            .await?;
             Ok(true)
         }
         Message::Binary(_) => {
-            sender
-                .send(Message::Text(
+            send_herdr_socket_message(
+                sender,
+                Message::Text(
                     herdr_wire_error(
                         None,
                         "invalid_request",
                         "Herdr socket bridge accepts JSON text only",
                     )
                     .into(),
-                ))
-                .await?;
+                ),
+            )
+            .await?;
             Ok(true)
         }
         Message::Ping(payload) => {
-            sender.send(Message::Pong(payload)).await?;
+            send_herdr_socket_message(sender, Message::Pong(payload)).await?;
             Ok(true)
         }
         Message::Pong(_) => Ok(true),
@@ -1277,6 +1556,132 @@ async fn handle_herdr_socket_client_message(
             Ok(false)
         }
     }
+}
+
+async fn send_herdr_socket_message(
+    sender: &mut HerdrSocketSender,
+    message: Message,
+) -> anyhow::Result<()> {
+    timeout(HERDR_STREAM_SEND_TIMEOUT, sender.send(message))
+        .await
+        .map_err(|_| anyhow!("Herdr websocket send timed out"))??;
+    Ok(())
+}
+
+async fn write_herdr_stream_input<W>(
+    writer: &mut W,
+    payload: &[u8],
+    append_newline: bool,
+    deadline: Duration,
+) -> anyhow::Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    let result = timeout(deadline, async {
+        writer.write_all(payload).await?;
+        if append_newline {
+            writer.write_all(b"\n").await?;
+        }
+        writer.flush().await
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(err)) => Err(anyhow!("failed to write Herdr stream input: {err}")),
+        Err(_) => Err(anyhow!(
+            "timed out writing Herdr stream input after {} ms",
+            deadline.as_millis()
+        )),
+    }
+}
+
+fn herdr_stream_response_opens(response: &str, request_id: &str) -> bool {
+    serde_json::from_str::<Value>(response)
+        .ok()
+        .is_some_and(|value| {
+            value.get("id").and_then(Value::as_str) == Some(request_id)
+                && value.get("error").is_none()
+                && value
+                    .get("result")
+                    .and_then(|result| result.get("type"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| kind == "ok")
+        })
+}
+
+fn prepare_herdr_socket_request(
+    text: &str,
+    stream_state: &mut HerdrSocketStreamState,
+) -> Result<(), String> {
+    if stream_state.application_request_sent {
+        return Err(herdr_wire_error(
+            herdr_wire_request_id(text).as_deref(),
+            "socket_request_already_sent",
+            "open a dedicated WebSocket for each Herdr application request",
+        ));
+    }
+    validate_herdr_wire_request(text)?;
+    if herdr_wire_method(text).as_deref() == Some("pane.graphics.stream") {
+        let request_id = herdr_wire_request_id(text).ok_or_else(|| {
+            herdr_wire_error(
+                None,
+                "invalid_request_id",
+                "pane.graphics.stream requires a non-empty string id",
+            )
+        })?;
+        stream_state.graphics_pending_id = Some(request_id);
+    }
+    stream_state.application_request_sent = true;
+    Ok(())
+}
+
+fn herdr_graphics_stream_frame_bytes(header: &str) -> Result<Option<usize>, String> {
+    if header.len() > neko_herdr_socket_bridge::MAX_GRAPHICS_STREAM_HEADER_BYTES {
+        return Err(herdr_wire_error(
+            None,
+            "invalid_stream_frame",
+            "graphics stream frame header is too large",
+        ));
+    }
+    let value = serde_json::from_str::<Value>(header).map_err(|err| {
+        herdr_wire_error(
+            None,
+            "invalid_stream_frame",
+            &format!("invalid graphics stream frame header: {err}"),
+        )
+    })?;
+    let Some(frame) = value.as_object() else {
+        return Err(herdr_wire_error(
+            None,
+            "invalid_stream_frame",
+            "graphics stream frame header must be an object",
+        ));
+    };
+    if frame.get("file").is_some_and(Value::is_object) {
+        return Ok(None);
+    }
+    let Some(data_length) = frame.get("data_length").and_then(Value::as_u64) else {
+        return Err(herdr_wire_error(
+            None,
+            "invalid_stream_frame",
+            "graphics stream frame requires data_length or file",
+        ));
+    };
+    let Ok(data_length) = usize::try_from(data_length) else {
+        return Err(herdr_wire_error(
+            None,
+            "invalid_stream_frame",
+            "graphics stream frame data_length is too large",
+        ));
+    };
+    if data_length == 0 || data_length > neko_herdr_socket_bridge::MAX_GRAPHICS_STREAM_FRAME_BYTES {
+        return Err(herdr_wire_error(
+            None,
+            "invalid_stream_frame",
+            "graphics stream frame data_length is outside the supported range",
+        ));
+    }
+    Ok(Some(data_length))
 }
 
 fn validate_herdr_wire_request(text: &str) -> Result<(), String> {
@@ -1294,12 +1699,26 @@ fn validate_herdr_wire_request(text: &str) -> Result<(), String> {
         .map_err(|err| herdr_wire_error(id.as_deref(), "method_not_allowed", &err.message))
 }
 
+fn herdr_wire_method(text: &str) -> Option<String> {
+    serde_json::from_str::<Value>(text).ok().and_then(|value| {
+        value
+            .get("method")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    })
+}
+
+fn herdr_wire_request_id(text: &str) -> Option<String> {
+    serde_json::from_str::<Value>(text)
+        .ok()
+        .and_then(|value| herdr_request_id(&value))
+}
+
 fn herdr_request_id(value: &Value) -> Option<String> {
     value
         .get("id")
         .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
 }
 
@@ -1325,10 +1744,31 @@ fn validate_herdr_method(method: &str) -> Result<(), HerdrBridgeError> {
     })
 }
 
+fn validate_herdr_request_method(method: &str) -> Result<(), HerdrBridgeError> {
+    validate_herdr_method(method)?;
+    if !is_allowed_herdr_stream_method(method) {
+        return Ok(());
+    }
+    Err(HerdrBridgeError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!(
+            "Herdr socket method requires the streaming WebSocket transport: {method}"
+        ),
+    })
+}
+
 fn is_allowed_herdr_method(method: &str) -> bool {
     let method = method.trim();
     HERDR_SOCKET_CONTRACT
         .methods
+        .iter()
+        .any(|allowed| allowed == method)
+}
+
+fn is_allowed_herdr_stream_method(method: &str) -> bool {
+    let method = method.trim();
+    HERDR_SOCKET_CONTRACT
+        .stream_methods
         .iter()
         .any(|allowed| allowed == method)
 }
@@ -1736,19 +2176,26 @@ impl IntoResponse for HerdrBridgeError {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Duration;
 
     use serde_json::{Value, json};
 
     use super::{
-        HERDR_RUNTIME_SCHEMA_VERSION, HERDR_SOCKET_CONTRACT, HerdrCliClientStatus,
+        HERDR_RUNTIME_SCHEMA_VERSION, HERDR_SOCKET_CONTRACT, HERDR_STREAM_HANDSHAKE_TIMEOUT,
+        HERDR_STREAM_IDLE_TIMEOUT, HERDR_STREAM_SEND_TIMEOUT, HerdrCliClientStatus,
         HerdrCliRuntimeCapabilities, HerdrCliRuntimeStatus, HerdrCliServerStatus,
-        HerdrHandoffTracker, HerdrResourceCache, HerdrTerminalOperation,
-        MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, classify_herdr_runtime, herdr_pane_focus_request,
-        herdr_protocol_is_supported, herdr_protocol_supports_session_snapshot,
-        herdr_request_timeout, herdr_runtime_command_timeout, is_allowed_herdr_method,
-        normalize_herdr_request_params, parse_agents, parse_herdr_ping,
-        parse_herdr_session_snapshot, parse_panes, parse_tabs, parse_workspaces,
-        terminal_mcp_operation_request, validate_herdr_wire_request,
+        HerdrHandoffTracker, HerdrResourceCache, HerdrSocketStreamState, HerdrTerminalOperation,
+        MAX_HERDR_STREAM_CONNECTIONS, MAX_HERDR_STREAM_CONNECTIONS_PER_TARGET,
+        MIN_SUPPORTED_HERDR_AGENT_VERSION, MIN_SUPPORTED_HERDR_PROTOCOL_VERSION,
+        classify_herdr_runtime, herdr_agent_minimum_for_method, herdr_graphics_stream_frame_bytes,
+        herdr_pane_focus_request, herdr_protocol_is_supported,
+        herdr_protocol_supports_session_snapshot, herdr_request_timeout,
+        herdr_runtime_command_timeout, herdr_stream_response_opens, herdr_wire_method,
+        is_allowed_herdr_method, is_allowed_herdr_stream_method, normalize_herdr_request_params,
+        parse_agents, parse_herdr_ping, parse_herdr_session_snapshot, parse_panes, parse_tabs,
+        parse_workspaces, prepare_herdr_socket_request, terminal_mcp_operation_request,
+        try_acquire_herdr_stream_permit, validate_herdr_request_method,
+        validate_herdr_wire_request, write_herdr_stream_input,
     };
 
     #[test]
@@ -1757,6 +2204,20 @@ mod tests {
             herdr_runtime_command_timeout("status")
                 > crate::agent_daemon::HERDR_STATUS_COMMAND_TIMEOUT
         );
+    }
+
+    #[test]
+    fn herdr_stream_resource_limits_are_bounded_and_recoverable() {
+        assert!(MAX_HERDR_STREAM_CONNECTIONS > MAX_HERDR_STREAM_CONNECTIONS_PER_TARGET);
+        assert!(MAX_HERDR_STREAM_CONNECTIONS_PER_TARGET > 0);
+        assert!(HERDR_STREAM_HANDSHAKE_TIMEOUT <= HERDR_STREAM_SEND_TIMEOUT);
+        assert!(HERDR_STREAM_IDLE_TIMEOUT > HERDR_STREAM_SEND_TIMEOUT);
+
+        let connections = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = try_acquire_herdr_stream_permit(&connections).expect("first connection");
+        assert!(try_acquire_herdr_stream_permit(&connections).is_none());
+        drop(permit);
+        assert!(try_acquire_herdr_stream_permit(&connections).is_some());
     }
 
     #[test]
@@ -2137,15 +2598,21 @@ mod tests {
 
     #[test]
     fn herdr_socket_allowlist_covers_documented_methods() {
+        assert_eq!(MIN_SUPPORTED_HERDR_AGENT_VERSION, 9);
+        assert!(MIN_SUPPORTED_HERDR_AGENT_VERSION <= crate::agent_protocol::AGENT_VERSION);
         assert_eq!(MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
-        assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 18);
+        assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 20);
         assert_eq!(HERDR_SOCKET_CONTRACT.schema_version, 1);
-        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.8.0");
+        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.8.2");
         assert_eq!(
             HERDR_SOCKET_CONTRACT.source_revision,
-            "dc2506ea8cb58fc8cde7ceb357cad03b1aba0da1"
+            "9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c"
         );
-        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 90);
+        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 92);
+        assert_eq!(
+            HERDR_SOCKET_CONTRACT.stream_methods,
+            ["events.subscribe", "pane.graphics.stream"]
+        );
         assert_eq!(HERDR_SOCKET_CONTRACT.subscriptions.len(), 27);
         for method in [
             "session.snapshot",
@@ -2154,6 +2621,8 @@ mod tests {
             "pane.graphics.set",
             "pane.graphics.clear",
             "pane.graphics.info",
+            "pane.graphics.stream",
+            "pane.input.set",
             "popup.close",
             "agent.send_keys",
             "agent.prompt",
@@ -2173,7 +2642,11 @@ mod tests {
             );
         }
         assert!(!is_allowed_herdr_method("agent.send"));
-        assert!(!is_allowed_herdr_method("pane.graphics.stream"));
+        assert!(is_allowed_herdr_method("pane.graphics.stream"));
+        assert!(is_allowed_herdr_stream_method("pane.graphics.stream"));
+        assert!(validate_herdr_request_method("pane.graphics.info").is_ok());
+        assert!(validate_herdr_request_method("pane.graphics.stream").is_err());
+        assert!(validate_herdr_request_method("events.subscribe").is_err());
         assert!(!is_allowed_herdr_method("workspace.delete"));
         assert!(!is_allowed_herdr_method("../../../bin/sh"));
     }
@@ -2311,6 +2784,131 @@ mod tests {
                 .expect_err("unknown method should be rejected");
         assert!(error.contains("method_not_allowed"));
         assert!(error.contains("req_2"));
+    }
+
+    #[test]
+    fn recognizes_only_successful_graphics_stream_handshakes() {
+        assert_eq!(
+            herdr_wire_method(
+                r#"{"id":"stream","method":"pane.graphics.stream","params":{"pane_id":"w1:p1"}}"#,
+            )
+            .as_deref(),
+            Some("pane.graphics.stream")
+        );
+        assert!(herdr_stream_response_opens(
+            r#"{"id":"stream","result":{"type":"ok"}}"#,
+            "stream",
+        ));
+        assert!(!herdr_stream_response_opens(
+            r#"{"id":"stream","error":{"code":"stream_conflict","message":"busy"}}"#,
+            "stream",
+        ));
+        assert!(!herdr_stream_response_opens(
+            r#"{"id":"other","result":{"type":"ok"}}"#,
+            "stream",
+        ));
+        assert!(!herdr_stream_response_opens("not-json", "stream"));
+    }
+
+    #[test]
+    fn only_graphics_stream_requires_the_v9_agent_floor() {
+        assert_eq!(
+            herdr_agent_minimum_for_method(None),
+            crate::agent_protocol::MIN_SUPPORTED_AGENT_VERSION,
+        );
+        assert_eq!(
+            herdr_agent_minimum_for_method(Some("events.subscribe")),
+            crate::agent_protocol::MIN_SUPPORTED_AGENT_VERSION,
+        );
+        assert_eq!(
+            herdr_agent_minimum_for_method(Some("pane.graphics.stream")),
+            MIN_SUPPORTED_HERDR_AGENT_VERSION,
+        );
+    }
+
+    #[test]
+    fn graphics_stream_requires_a_dedicated_websocket() {
+        let mut subscribed = HerdrSocketStreamState::default();
+        prepare_herdr_socket_request(
+            r#"{"id":"events","method":"events.subscribe","params":{"subscriptions":[]}}"#,
+            &mut subscribed,
+        )
+        .unwrap();
+        let error = prepare_herdr_socket_request(
+            r#"{"id":"stream","method":"pane.graphics.stream","params":{"pane_id":"w1:p1"}}"#,
+            &mut subscribed,
+        )
+        .unwrap_err();
+        assert!(error.contains("socket_request_already_sent"));
+
+        let mut stream = HerdrSocketStreamState::default();
+        prepare_herdr_socket_request(
+            r#"{"id":"stream","method":"pane.graphics.stream","params":{"pane_id":"w1:p1"}}"#,
+            &mut stream,
+        )
+        .unwrap();
+        assert_eq!(stream.graphics_pending_id.as_deref(), Some("stream"));
+
+        let mut spaced_id = HerdrSocketStreamState::default();
+        prepare_herdr_socket_request(
+            r#"{"id":" stream ","method":"pane.graphics.stream","params":{"pane_id":"w1:p1"}}"#,
+            &mut spaced_id,
+        )
+        .unwrap();
+        assert_eq!(spaced_id.graphics_pending_id.as_deref(), Some(" stream "));
+        assert!(herdr_stream_response_opens(
+            r#"{"id":" stream ","result":{"type":"ok"}}"#,
+            " stream ",
+        ));
+
+        let mut missing_id = HerdrSocketStreamState::default();
+        let error = prepare_herdr_socket_request(
+            r#"{"method":"pane.graphics.stream","params":{"pane_id":"w1:p1"}}"#,
+            &mut missing_id,
+        )
+        .unwrap_err();
+        assert!(error.contains("invalid_request_id"));
+    }
+
+    #[test]
+    fn validates_graphics_stream_frame_boundaries() {
+        assert_eq!(
+            herdr_graphics_stream_frame_bytes(
+                r#"{"format":"png","image_width":2,"image_height":1,"data_length":4}"#,
+            )
+            .unwrap(),
+            Some(4)
+        );
+        assert_eq!(
+            herdr_graphics_stream_frame_bytes(
+                r#"{"format":"rgba","image_width":2,"image_height":1,"file":{"path":"/tmp/frame"}}"#,
+            )
+            .unwrap(),
+            None
+        );
+        assert!(herdr_graphics_stream_frame_bytes(r#"{"data_length":0}"#).is_err());
+        assert!(
+            herdr_graphics_stream_frame_bytes(&format!(
+                r#"{{"data_length":{}}}"#,
+                neko_herdr_socket_bridge::MAX_GRAPHICS_STREAM_FRAME_BYTES + 1
+            ))
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn bounds_graphics_stream_input_backpressure() {
+        let (mut writer, _reader) = tokio::io::duplex(1);
+        let error =
+            write_herdr_stream_input(&mut writer, b"blocked", false, Duration::from_millis(10))
+                .await
+                .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("timed out writing Herdr stream input")
+        );
     }
 
     #[test]

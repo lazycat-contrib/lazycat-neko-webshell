@@ -12,6 +12,7 @@ import type {
   WorkspaceAction,
   WorkspaceState,
 } from "./types";
+import { isHerdrSocketRequestMethod } from "./herdr-socket-api";
 
 export type WorkspaceRequestOptions = {
   cols: number;
@@ -165,6 +166,9 @@ export async function runHerdrSocketApiRequest(
   params: JsonRecord = {},
   options: { id?: string } = {},
 ): Promise<HerdrSocketEnvelope> {
+  if (!isHerdrSocketRequestMethod(method)) {
+    throw new Error(`Unsupported one-shot Herdr socket method: ${method}`);
+  }
   const response = await fetch(new URL("./api/herdr/socket", window.location.href), {
     method: "POST",
     credentials: "same-origin",

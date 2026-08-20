@@ -21,8 +21,12 @@ npm run build
 protoc_version="31.1"
 protoc_sha256="96553041f1a91ea0efee963cb16f462f5985b4d65365f3907414c360044d8065"
 protoc_root="${PWD}/.lazycat-build/tools/protoc-${protoc_version}"
-protoc_bin="${protoc_root}/bin/protoc"
-if [[ ! -x "${protoc_bin}" ]]; then
+protoc_bin="${PROTOC:-${protoc_root}/bin/protoc}"
+if [[ -n "${PROTOC:-}" && ! -x "${protoc_bin}" ]]; then
+  echo "PROTOC is not executable: ${protoc_bin}" >&2
+  exit 1
+fi
+if [[ -z "${PROTOC:-}" && ! -x "${protoc_bin}" ]]; then
   archive="${protoc_root}/protoc.zip"
   mkdir -p "${protoc_root}"
   curl --fail --location --retry 3 \

@@ -34,10 +34,27 @@ const AGENT_READY_MARKER: &str = "lazycat-neko-webshell-agent-ready";
 const AGENT_LOCK_READY_MARKER: &str = "lazycat-neko-webshell-agent-lock-ready";
 const AGENT_LOG_TAIL_LINES: usize = 80;
 const AGENT_READY_CACHE_TTL: Duration = Duration::from_secs(5);
+const AGENT_ENSURE_FAILURE_TTL: Duration = Duration::from_secs(15);
 
 static AGENT_ENSURE_LOCKS: OnceLock<StdMutex<HashMap<String, Weak<AsyncMutex<()>>>>> =
     OnceLock::new();
-static AGENT_READY_CACHE: OnceLock<StdMutex<HashMap<String, Instant>>> = OnceLock::new();
+static AGENT_READY_CACHE: OnceLock<StdMutex<HashMap<String, AgentReadyCacheEntry>>> =
+    OnceLock::new();
+static AGENT_ENSURE_FAILURES: OnceLock<StdMutex<HashMap<String, AgentEnsureFailureEntry>>> =
+    OnceLock::new();
+
+#[derive(Clone, Copy, Debug)]
+struct AgentReadyCacheEntry {
+    verified_at: Instant,
+    minimum_version: u64,
+}
+
+#[derive(Clone, Debug)]
+struct AgentEnsureFailureEntry {
+    failed_at: Instant,
+    minimum_version: u64,
+    message: String,
+}
 
 #[cfg(not(debug_assertions))]
 include!(concat!(env!("OUT_DIR"), "/embedded_agent.rs"));
@@ -67,6 +84,14 @@ enum AgentProtocolCompatibility {
     Current,
     Stale,
     Newer,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AgentRollbackAction {
+    PreserveRunning,
+    ReactivateRollback,
+    RestoreRollback,
+    RejectNewer,
 }
 
 struct RemoteAgentLock {
@@ -150,21 +175,91 @@ fn selector_ensure_lock(selector: &str) -> Arc<AsyncMutex<()>> {
     lock
 }
 
-fn agent_was_recently_ensured(selector: &str, now: Instant) -> bool {
+fn agent_was_recently_ensured(selector: &str, minimum_version: u64, now: Instant) -> bool {
     let ready = AGENT_READY_CACHE.get_or_init(|| StdMutex::new(HashMap::new()));
     let mut ready = ready
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    ready.retain(|_, verified_at| agent_ready_cache_entry_is_fresh(*verified_at, now));
-    ready.contains_key(selector)
+    ready.retain(|_, entry| agent_ready_cache_entry_is_fresh(entry.verified_at, now));
+    ready
+        .get(selector)
+        .is_some_and(|entry| entry.minimum_version >= minimum_version)
 }
 
-fn mark_agent_ensured(selector: &str) {
+fn mark_agent_ensured(selector: &str, minimum_version: u64) {
+    let ready = AGENT_READY_CACHE.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut ready = ready
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = Instant::now();
+    ready.retain(|_, entry| agent_ready_cache_entry_is_fresh(entry.verified_at, now));
+    let minimum_version = ready.get(selector).map_or(minimum_version, |entry| {
+        entry.minimum_version.max(minimum_version)
+    });
+    ready.insert(
+        selector.to_owned(),
+        AgentReadyCacheEntry {
+            verified_at: now,
+            minimum_version,
+        },
+    );
+}
+
+fn invalidate_agent_ensured(selector: &str) {
     let ready = AGENT_READY_CACHE.get_or_init(|| StdMutex::new(HashMap::new()));
     ready
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(selector.to_owned(), Instant::now());
+        .remove(selector);
+}
+
+fn recent_agent_ensure_failure(
+    selector: &str,
+    minimum_version: u64,
+    now: Instant,
+) -> Option<String> {
+    let failures = AGENT_ENSURE_FAILURES.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut failures = failures
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    failures.retain(|_, entry| {
+        now.saturating_duration_since(entry.failed_at) < AGENT_ENSURE_FAILURE_TTL
+    });
+    failures
+        .get(selector)
+        .filter(|entry| minimum_version >= entry.minimum_version)
+        .map(|entry| entry.message.clone())
+}
+
+fn mark_agent_ensure_failure(selector: &str, minimum_version: u64, message: String) {
+    let failures = AGENT_ENSURE_FAILURES.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut failures = failures
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let minimum_version = failures.get(selector).map_or(minimum_version, |entry| {
+        entry.minimum_version.min(minimum_version)
+    });
+    failures.insert(
+        selector.to_owned(),
+        AgentEnsureFailureEntry {
+            failed_at: Instant::now(),
+            minimum_version,
+            message,
+        },
+    );
+}
+
+fn clear_agent_ensure_failure(selector: &str, satisfied_version: u64) {
+    let failures = AGENT_ENSURE_FAILURES.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut failures = failures
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if failures
+        .get(selector)
+        .is_some_and(|entry| entry.minimum_version <= satisfied_version)
+    {
+        failures.remove(selector);
+    }
 }
 
 fn agent_ready_cache_entry_is_fresh(verified_at: Instant, now: Instant) -> bool {
@@ -307,6 +402,19 @@ impl AgentClient {
 }
 
 pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<AgentClient> {
+    ensure_agent_at_least(selector, username, MIN_SUPPORTED_AGENT_VERSION).await
+}
+
+pub(crate) async fn ensure_agent_at_least(
+    selector: &str,
+    username: &str,
+    minimum_version: u64,
+) -> anyhow::Result<AgentClient> {
+    if minimum_version > AGENT_VERSION {
+        bail!(
+            "requested agent version {minimum_version} exceeds embedded agent version {AGENT_VERSION}"
+        );
+    }
     let selector = selector.trim();
     validate_selector(selector).map_err(|err| {
         anyhow!(
@@ -321,41 +429,164 @@ pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<Agen
         username,
         socket_path: scoped_socket_path(selector),
     };
-    if agent_was_recently_ensured(selector, Instant::now()) {
+    if let Some(message) = recent_agent_ensure_failure(selector, minimum_version, Instant::now()) {
+        bail!("webshell agent preparation is cooling down after a recent failure: {message}");
+    }
+    if agent_was_recently_ensured(selector, minimum_version, Instant::now()) {
         return Ok(client);
     }
     let ensure_lock = selector_ensure_lock(selector);
     let _ensure_guard = ensure_lock.lock().await;
-    if agent_was_recently_ensured(selector, Instant::now()) {
+    if agent_was_recently_ensured(selector, minimum_version, Instant::now()) {
         return Ok(client);
+    }
+    if let Some(message) = recent_agent_ensure_failure(selector, minimum_version, Instant::now()) {
+        bail!("webshell agent preparation is cooling down after a recent failure: {message}");
     }
     let expected = agent_payload_identity().await?;
 
-    if let Ok(response) = ping_agent(&client).await {
-        if running_agent_is_acceptable(&response) {
-            mark_agent_ensured(selector);
-            return Ok(client);
+    let running_rollback_payload = match ping_agent(&client).await {
+        Ok(response) => {
+            if running_agent_is_acceptable_at_least(&response, minimum_version) {
+                mark_agent_ensured(selector, minimum_version);
+                return Ok(client);
+            }
+            reject_unsupported_newer_agent(&response)?;
+            reusable_running_agent_rollback_payload(&response, &expected)
         }
-        reject_unsupported_newer_agent(&response)?;
-    }
+        Err(_) => None,
+    };
 
-    let remote_lock = RemoteAgentLock::acquire(selector).await?;
-    let result = ensure_agent_locked(&client, &expected).await;
+    // A stronger feature requirement is about to mutate the shared target
+    // agent. Prevent weaker callers from trusting a pre-upgrade cache entry.
+    invalidate_agent_ensured(selector);
+    let remote_lock = RemoteAgentLock::acquire(selector).await.map_err(|err| {
+        mark_agent_ensure_failure(selector, minimum_version, err.to_string());
+        err
+    })?;
+    let rollback_payload = match probe_installed_agent_payload(selector).await {
+        Ok(installed) => {
+            reusable_agent_rollback_payload(installed, &expected).or(running_rollback_payload)
+        }
+        Err(err) => {
+            warn!(selector = %selector, error = %err, "failed to capture webshell agent rollback payload");
+            running_rollback_payload
+        }
+    };
+    let mut result = ensure_agent_locked(&client, &expected, minimum_version).await;
+    if result.is_err()
+        && let Some(rollback_payload) = rollback_payload
+    {
+        match restore_agent_after_failed_upgrade(&client, &rollback_payload).await {
+            Ok(()) => warn!(
+                selector = %selector,
+                restored_agent_version = rollback_payload.agent_version,
+                restored_manifest = %rollback_payload.manifest,
+                "restored compatible webshell agent after failed upgrade"
+            ),
+            Err(rollback_error) => {
+                let upgrade_error = result.expect_err("failed agent ensure must contain an error");
+                result = Err(upgrade_error.context(format!(
+                    "failed to restore previous compatible webshell agent: {rollback_error}"
+                )));
+            }
+        }
+    }
     if let Err(err) = remote_lock.release().await {
         warn!(selector = %selector, error = %err, "failed to release webshell agent upgrade lock");
     }
     if result.is_ok() {
-        mark_agent_ensured(selector);
+        mark_agent_ensured(selector, minimum_version);
+        clear_agent_ensure_failure(selector, minimum_version);
+    } else if let Err(err) = &result {
+        mark_agent_ensure_failure(selector, minimum_version, err.to_string());
     }
     result
+}
+
+fn reusable_agent_rollback_payload(
+    installed: Option<InstalledAgentIdentity>,
+    expected: &AgentPayloadIdentity,
+) -> Option<AgentPayloadIdentity> {
+    let installed = installed?;
+    if agent_protocol_compatibility(Some(&installed.protocol_version))
+        != AgentProtocolCompatibility::Current
+    {
+        return None;
+    }
+    installed.payload.filter(|payload| {
+        payload.agent_version >= MIN_SUPPORTED_AGENT_VERSION
+            && payload.install_path != expected.install_path
+    })
+}
+
+fn reusable_running_agent_rollback_payload(
+    response: &AgentResponse,
+    expected: &AgentPayloadIdentity,
+) -> Option<AgentPayloadIdentity> {
+    if agent_protocol_compatibility(response.version.as_deref())
+        != AgentProtocolCompatibility::Current
+    {
+        return None;
+    }
+    let agent_version = running_agent_version(response)?;
+    if agent_version < MIN_SUPPORTED_AGENT_VERSION {
+        return None;
+    }
+    let manifest = response.payload_manifest.as_deref()?;
+    let install_path = agent_payload_install_path(manifest).ok()?;
+    (install_path != expected.install_path).then(|| AgentPayloadIdentity {
+        manifest: manifest.to_owned(),
+        install_path,
+        agent_version,
+    })
+}
+
+async fn restore_agent_after_failed_upgrade(
+    client: &AgentClient,
+    rollback_payload: &AgentPayloadIdentity,
+) -> anyhow::Result<()> {
+    if let Ok(response) = ping_agent(client).await {
+        match agent_rollback_action(&response, &rollback_payload.manifest) {
+            AgentRollbackAction::PreserveRunning => return Ok(()),
+            AgentRollbackAction::ReactivateRollback => {
+                activate_agent_payload(&client.selector, &rollback_payload.install_path).await?;
+                return Ok(());
+            }
+            AgentRollbackAction::RejectNewer => {
+                return reject_unsupported_newer_agent(&response);
+            }
+            AgentRollbackAction::RestoreRollback => {}
+        }
+    }
+    activate_agent_payload(&client.selector, &rollback_payload.install_path).await?;
+    restart_agent(client, rollback_payload).await?;
+    wait_for_agent(client, rollback_payload, MIN_SUPPORTED_AGENT_VERSION).await
+}
+
+fn agent_rollback_action(response: &AgentResponse, rollback_manifest: &str) -> AgentRollbackAction {
+    if agent_protocol_compatibility(response.version.as_deref())
+        == AgentProtocolCompatibility::Newer
+    {
+        AgentRollbackAction::RejectNewer
+    } else if running_agent_is_acceptable_at_least(response, MIN_SUPPORTED_AGENT_VERSION) {
+        if response.payload_manifest.as_deref() == Some(rollback_manifest) {
+            AgentRollbackAction::ReactivateRollback
+        } else {
+            AgentRollbackAction::PreserveRunning
+        }
+    } else {
+        AgentRollbackAction::RestoreRollback
+    }
 }
 
 async fn ensure_agent_locked(
     client: &AgentClient,
     expected: &AgentPayloadIdentity,
+    minimum_version: u64,
 ) -> anyhow::Result<AgentClient> {
     match ping_agent(client).await {
-        Ok(response) if running_agent_is_acceptable(&response) => {
+        Ok(response) if running_agent_is_acceptable_at_least(&response, minimum_version) => {
             return Ok(client.clone());
         }
         Ok(response)
@@ -376,7 +607,7 @@ async fn ensure_agent_locked(
             );
             ensure_agent_binary_installed(&client.selector, expected).await?;
             restart_agent(client, expected).await?;
-            wait_for_agent(client, expected).await?;
+            wait_for_agent(client, expected, minimum_version).await?;
             prune_stale_agent_payloads(&client.selector, expected).await;
             return Ok(client.clone());
         }
@@ -387,23 +618,23 @@ async fn ensure_agent_locked(
                 running_agent_version = running_agent_version(&response).unwrap_or_default(),
                 expected_manifest = %expected.manifest,
                 embedded_agent_version = expected.agent_version,
-                minimum_supported_agent_version = MIN_SUPPORTED_AGENT_VERSION,
+                minimum_supported_agent_version = minimum_version,
                 "webshell agent version is below the compatibility floor; restarting agent"
             );
             ensure_agent_binary_installed(&client.selector, expected).await?;
             restart_agent(client, expected).await?;
-            wait_for_agent(client, expected).await?;
+            wait_for_agent(client, expected, minimum_version).await?;
             prune_stale_agent_payloads(&client.selector, expected).await;
             return Ok(client.clone());
         }
         Err(_) => {}
     }
-    if try_recover_installed_agent(client, expected).await? {
+    if try_recover_installed_agent(client, expected, minimum_version).await? {
         return Ok(client.clone());
     }
     ensure_agent_binary_installed(&client.selector, expected).await?;
     match ping_agent(client).await {
-        Ok(response) if running_agent_is_acceptable(&response) => {
+        Ok(response) if running_agent_is_acceptable_at_least(&response, minimum_version) => {
             return Ok(client.clone());
         }
         Ok(response)
@@ -411,7 +642,7 @@ async fn ensure_agent_locked(
                 != AgentProtocolCompatibility::Newer =>
         {
             restart_agent(client, expected).await?;
-            wait_for_agent(client, expected).await?;
+            wait_for_agent(client, expected, minimum_version).await?;
             prune_stale_agent_payloads(&client.selector, expected).await;
             return Ok(client.clone());
         }
@@ -421,7 +652,7 @@ async fn ensure_agent_locked(
         Err(_) => {}
     }
     start_agent(client, expected).await?;
-    wait_for_agent(client, expected).await?;
+    wait_for_agent(client, expected, minimum_version).await?;
     prune_stale_agent_payloads(&client.selector, expected).await;
     Ok(client.clone())
 }
@@ -429,6 +660,7 @@ async fn ensure_agent_locked(
 async fn try_recover_installed_agent(
     client: &AgentClient,
     expected: &AgentPayloadIdentity,
+    minimum_version: u64,
 ) -> anyhow::Result<bool> {
     let installed = probe_installed_agent_payload(&client.selector).await?;
     let reusable_installed = if let Some(installed) = installed {
@@ -438,9 +670,10 @@ async fn try_recover_installed_agent(
                     .map(|()| false);
             }
             AgentProtocolCompatibility::Current
-                if installed.payload.as_ref().is_some_and(|payload| {
-                    payload.agent_version >= MIN_SUPPORTED_AGENT_VERSION
-                }) =>
+                if installed
+                    .payload
+                    .as_ref()
+                    .is_some_and(|payload| payload.agent_version >= minimum_version) =>
             {
                 installed.payload
             }
@@ -469,7 +702,9 @@ async fn try_recover_installed_agent(
         return Ok(false);
     }
     match wait_for_agent_response(client).await {
-        Ok(response) if running_agent_is_acceptable(&response) => Ok(true),
+        Ok(response) if running_agent_is_acceptable_at_least(&response, minimum_version) => {
+            Ok(true)
+        }
         Ok(response)
             if agent_protocol_compatibility(response.version.as_deref())
                 == AgentProtocolCompatibility::Current =>
@@ -478,7 +713,7 @@ async fn try_recover_installed_agent(
                 selector = %client.selector,
                 running_manifest = response.payload_manifest.as_deref().unwrap_or(""),
                 running_agent_version = running_agent_version(&response).unwrap_or_default(),
-                minimum_supported_agent_version = MIN_SUPPORTED_AGENT_VERSION,
+                minimum_supported_agent_version = minimum_version,
                 expected_manifest = %expected.manifest,
                 "installed webshell agent version is below the compatibility floor; upgrading agent"
             );
@@ -526,11 +761,12 @@ async fn ping_agent(client: &AgentClient) -> anyhow::Result<AgentResponse> {
 async fn wait_for_agent(
     client: &AgentClient,
     expected: &AgentPayloadIdentity,
+    minimum_version: u64,
 ) -> anyhow::Result<()> {
     let mut last_error = None;
     for _ in 0..25 {
         match ping_agent(client).await {
-            Ok(response) if running_agent_is_acceptable(&response) => {
+            Ok(response) if running_agent_is_acceptable_at_least(&response, minimum_version) => {
                 return Ok(());
             }
             Ok(response)
@@ -541,7 +777,7 @@ async fn wait_for_agent(
                     "agent version mismatch: running {} version {}, expected minimum version {} from embedded version {} ({})",
                     response.payload_manifest.as_deref().unwrap_or_default(),
                     running_agent_version(&response).unwrap_or_default(),
-                    MIN_SUPPORTED_AGENT_VERSION,
+                    minimum_version,
                     expected.agent_version,
                     expected.manifest,
                 ));
@@ -1124,7 +1360,12 @@ fn agent_protocol_version_is_current(version: Option<&str>) -> bool {
     agent_protocol_compatibility(version) == AgentProtocolCompatibility::Current
 }
 
+#[cfg(test)]
 fn running_agent_is_acceptable(response: &AgentResponse) -> bool {
+    running_agent_is_acceptable_at_least(response, MIN_SUPPORTED_AGENT_VERSION)
+}
+
+fn running_agent_is_acceptable_at_least(response: &AgentResponse, minimum_version: u64) -> bool {
     if !agent_protocol_version_is_current(response.version.as_deref()) {
         return false;
     }
@@ -1135,7 +1376,7 @@ fn running_agent_is_acceptable(response: &AgentResponse) -> bool {
     else {
         return false;
     };
-    running_agent_version(response).is_some_and(|version| version >= MIN_SUPPORTED_AGENT_VERSION)
+    running_agent_version(response).is_some_and(|version| version >= minimum_version)
 }
 
 fn running_agent_version(response: &AgentResponse) -> Option<u64> {
@@ -1380,6 +1621,115 @@ mod tests {
     }
 
     #[test]
+    fn agent_ready_cache_preserves_feature_version_requirements() {
+        let selector = format!("cache-test-{}", std::process::id());
+        mark_agent_ensured(&selector, MIN_SUPPORTED_AGENT_VERSION);
+        assert!(agent_was_recently_ensured(
+            &selector,
+            MIN_SUPPORTED_AGENT_VERSION,
+            Instant::now(),
+        ));
+        assert!(!agent_was_recently_ensured(
+            &selector,
+            AGENT_VERSION,
+            Instant::now(),
+        ));
+
+        mark_agent_ensured(&selector, AGENT_VERSION);
+        assert!(agent_was_recently_ensured(
+            &selector,
+            AGENT_VERSION,
+            Instant::now(),
+        ));
+
+        invalidate_agent_ensured(&selector);
+        assert!(!agent_was_recently_ensured(
+            &selector,
+            MIN_SUPPORTED_AGENT_VERSION,
+            Instant::now(),
+        ));
+    }
+
+    #[test]
+    fn stronger_agent_failure_cooldown_does_not_block_weaker_features() {
+        let selector = format!("failure-cache-test-{}", std::process::id());
+        mark_agent_ensure_failure(&selector, AGENT_VERSION, "v9 failed".to_owned());
+
+        assert!(
+            recent_agent_ensure_failure(&selector, MIN_SUPPORTED_AGENT_VERSION, Instant::now())
+                .is_none()
+        );
+        assert_eq!(
+            recent_agent_ensure_failure(&selector, AGENT_VERSION, Instant::now()).as_deref(),
+            Some("v9 failed")
+        );
+
+        clear_agent_ensure_failure(&selector, MIN_SUPPORTED_AGENT_VERSION);
+        assert!(recent_agent_ensure_failure(&selector, AGENT_VERSION, Instant::now()).is_some());
+        clear_agent_ensure_failure(&selector, AGENT_VERSION);
+        assert!(recent_agent_ensure_failure(&selector, AGENT_VERSION, Instant::now()).is_none());
+    }
+
+    #[test]
+    fn failed_upgrade_can_restore_only_an_older_compatible_payload() {
+        let expected = AgentPayloadIdentity {
+            manifest: "sha256:expected".to_owned(),
+            install_path: "/agents/expected".to_owned(),
+            agent_version: AGENT_VERSION,
+        };
+        let previous = AgentPayloadIdentity {
+            manifest: "sha256:previous".to_owned(),
+            install_path: "/agents/previous".to_owned(),
+            agent_version: MIN_SUPPORTED_AGENT_VERSION,
+        };
+        let installed = InstalledAgentIdentity {
+            protocol_version: AGENT_PROTOCOL_VERSION.to_owned(),
+            payload: Some(previous.clone()),
+        };
+
+        let rollback = reusable_agent_rollback_payload(Some(installed), &expected)
+            .expect("compatible previous payload");
+        assert_eq!(rollback.install_path, previous.install_path);
+
+        let stale = InstalledAgentIdentity {
+            protocol_version: "lazycat-neko-webshell-agent-v3".to_owned(),
+            payload: Some(previous),
+        };
+        assert!(reusable_agent_rollback_payload(Some(stale), &expected).is_none());
+    }
+
+    #[test]
+    fn failed_upgrade_can_restore_the_observed_running_payload_when_probe_fails() {
+        let expected = AgentPayloadIdentity {
+            manifest: "sha256:49ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a"
+                .to_owned(),
+            install_path: agent_payload_install_path(
+                "sha256:49ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a",
+            )
+            .unwrap(),
+            agent_version: AGENT_VERSION,
+        };
+        let running_manifest =
+            "sha256:39ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
+        let running = AgentResponse {
+            ok: Some(true),
+            version: Some(AGENT_PROTOCOL_VERSION.to_owned()),
+            payload_manifest: Some(running_manifest.to_owned()),
+            agent_version: Some(MIN_SUPPORTED_AGENT_VERSION),
+            ..Default::default()
+        };
+
+        let rollback = reusable_running_agent_rollback_payload(&running, &expected)
+            .expect("running compatible payload should remain recoverable");
+        assert_eq!(rollback.manifest, running_manifest);
+        assert_eq!(
+            rollback.install_path,
+            agent_payload_install_path(running_manifest).unwrap(),
+        );
+        assert_eq!(rollback.agent_version, MIN_SUPPORTED_AGENT_VERSION);
+    }
+
+    #[test]
     fn installed_agent_identity_reuses_the_stable_symlink_target() {
         let digest = "29ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a";
         let path = format!("{AGENT_PAYLOAD_ROOT}/sha256-{digest}/lazycat-neko-webshell-agent");
@@ -1607,5 +1957,27 @@ mod tests {
         };
 
         assert!(!running_agent_is_acceptable(&stale_protocol));
+    }
+
+    #[test]
+    fn failed_upgrade_rollback_rejects_a_newer_running_protocol() {
+        let newer_protocol = AgentResponse {
+            ok: Some(true),
+            version: Some("lazycat-neko-webshell-agent-v999".to_owned()),
+            payload_manifest: Some(
+                "sha256:49ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a"
+                    .to_owned(),
+            ),
+            agent_version: Some(u64::MAX),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            agent_rollback_action(
+                &newer_protocol,
+                "sha256:39ec22b637a9085a01ec8948a61ab19070e683928fb8e24ff70270896c76374a",
+            ),
+            AgentRollbackAction::RejectNewer,
+        );
     }
 }

@@ -21,6 +21,9 @@ export function destroyPaneTransport(pane: TerminalPane) {
 }
 
 export function disposePaneTerminalRuntime(pane: TerminalPane) {
+  pane.remoteClipboardRetryDispose?.();
+  pane.remoteClipboardRetryDispose = undefined;
+  pane.remoteClipboardRetryClear = undefined;
   pane.touchKeyboardGuardDispose?.();
   pane.touchKeyboardGuardDispose = undefined;
   pane.touchKeyboardGuardInstalled = false;

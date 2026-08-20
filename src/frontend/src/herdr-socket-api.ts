@@ -8,6 +8,7 @@ export const HERDR_SOCKET_SOURCE_VERSION = contract.source_version;
 export const HERDR_SOCKET_SOURCE_REVISION = contract.source_revision;
 
 const HERDR_SOCKET_METHODS = new Set(contract.methods);
+const HERDR_SOCKET_STREAM_METHODS = new Set(contract.stream_methods);
 const HERDR_SOCKET_SUBSCRIPTIONS = new Set(contract.subscriptions);
 const HERDR_EVENT_NAMES = new Map(contract.subscriptions.flatMap((event) => [
   [event, event],
@@ -59,6 +60,14 @@ export type HerdrPaneSocketInfo = {
 
 export function isHerdrSocketMethod(method: string): boolean {
   return HERDR_SOCKET_METHODS.has(method);
+}
+
+export function isHerdrSocketStreamMethod(method: string): boolean {
+  return HERDR_SOCKET_STREAM_METHODS.has(method);
+}
+
+export function isHerdrSocketRequestMethod(method: string): boolean {
+  return isHerdrSocketMethod(method) && !isHerdrSocketStreamMethod(method);
 }
 
 export function isHerdrSocketSubscription(type: string): boolean {

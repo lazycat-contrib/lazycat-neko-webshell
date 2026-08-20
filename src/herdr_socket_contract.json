@@ -1,7 +1,7 @@
 {
-  "source_version": "0.8.0",
-  "source_revision": "dc2506ea8cb58fc8cde7ceb357cad03b1aba0da1",
-  "protocol": 18,
+  "source_version": "0.8.2",
+  "source_revision": "9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c",
+  "protocol": 20,
   "schema_version": 1,
   "methods": [
     "ping",
@@ -63,6 +63,7 @@
     "pane.current",
     "pane.get",
     "pane.focus",
+    "pane.input.set",
     "pane.rename",
     "pane.send_text",
     "pane.send_keys",
@@ -71,6 +72,7 @@
     "pane.graphics.set",
     "pane.graphics.clear",
     "pane.graphics.info",
+    "pane.graphics.stream",
     "pane.report_agent",
     "pane.report_agent_session",
     "pane.report_metadata",
@@ -94,6 +96,10 @@
     "plugin.pane.open",
     "plugin.pane.focus",
     "plugin.pane.close"
+  ],
+  "stream_methods": [
+    "events.subscribe",
+    "pane.graphics.stream"
   ],
   "subscriptions": [
     "workspace.created",

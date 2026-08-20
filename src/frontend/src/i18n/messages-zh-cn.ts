@@ -742,6 +742,8 @@ export const zhCNMessages = {
   "status.reconnecting": "连接已断开，{seconds}s 后重连...",
   "status.remoteClipboardCopied": "远端内容已复制到系统剪贴板",
   "status.remoteClipboardFailed": "远端复制被浏览器拦截（{message}）。请允许此站点访问剪贴板后重试。",
+  "status.remoteClipboardRetryReady": "远端内容已准备好复制。",
+  "action.copyRemoteClipboard": "复制到剪贴板",
   "status.selectRunningInstance": "请先选择运行中的实例。",
   "status.selectionCopied": "选区已复制",
   "status.shellReady": "Shell 已就绪",

@@ -974,6 +974,17 @@ body.mobile-controls-enabled .terminal-input-actions-surface {
       max(8px, var(--lzc-safe-area-inset-left));
   }
 
+  .remote-clipboard-retry {
+    right: max(8px, var(--lzc-safe-area-inset-right));
+    bottom: max(8px, var(--lzc-safe-area-inset-bottom));
+    left: max(8px, var(--lzc-safe-area-inset-left));
+    max-width: none;
+  }
+
+  .remote-clipboard-retry button {
+    min-height: 44px;
+  }
+
   .tab-mount {
     bottom: calc(var(--mobile-shortcuts-height) + var(--lzc-safe-area-inset-bottom));
   }

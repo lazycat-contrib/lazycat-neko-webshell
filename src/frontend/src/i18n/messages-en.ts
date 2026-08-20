@@ -740,6 +740,8 @@ export const enMessages = {
   "status.reconnecting": "Disconnected. Reconnecting in {seconds}s...",
   "status.remoteClipboardCopied": "Remote text copied to the system clipboard",
   "status.remoteClipboardFailed": "Remote copy was blocked ({message}). Allow clipboard access for this site, then try again.",
+  "status.remoteClipboardRetryReady": "Remote content is ready to copy.",
+  "action.copyRemoteClipboard": "Copy to clipboard",
   "status.selectRunningInstance": "Select a running instance first.",
   "status.selectionCopied": "Selection copied",
   "status.shellReady": "Shell ready",

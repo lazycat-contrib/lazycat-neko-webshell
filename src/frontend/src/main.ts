@@ -93,7 +93,7 @@ import {
 import { createHerdrRefreshCoordinator, type HerdrRefreshMode } from "./herdr-refresh-coordinator";
 import { createHerdrRuntimeGuard } from "./herdr-runtime-guard";
 import { herdrEventMessage } from "./herdr-event-presentation";
-import { isHerdrSocketMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
+import { isHerdrSocketRequestMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
 import {
   herdrBridgeStateForUi,
   herdrBridgeStatesEqual,
@@ -350,7 +350,16 @@ import {
 import { observeTerminalTitleChunk } from "./terminal-title";
 import { createTerminalInputActionController } from "./terminal-input-actions";
 import { createTerminalClipboardController } from "./terminal-clipboard-controller";
-import { createTerminalRemoteClipboardBridge } from "./terminal-remote-clipboard";
+import {
+  createSerializedTerminalRemoteClipboardWriter,
+  createTerminalRemoteClipboardBridge,
+  createTerminalRemoteClipboardSourceWriter,
+} from "./terminal-remote-clipboard";
+import {
+  createTerminalRemoteClipboardRetry,
+  discardAllRemoteClipboardRetries,
+  discardInactiveRemoteClipboardRetries,
+} from "./terminal-remote-clipboard-retry";
 import {
   normalizeFontHintTarget,
   renderTerminalFontRenderingSettings,
@@ -502,6 +511,9 @@ const capabilityClient = createClient(
 );
 const actionClient = new TerminalActionWSClient();
 const invokePluginJson = createPluginJsonInvoker(capabilityClient);
+const writeRemoteClipboardText = createSerializedTerminalRemoteClipboardWriter(
+  (text, isCurrent) => writeSystemClipboardText(text, { isCurrent }),
+);
 
 const params = new URLSearchParams(window.location.search);
 const initialSelector = normalizeSelector(params.get("name") ?? "");
@@ -1952,6 +1964,7 @@ function bindSettings() {
   });
   elements.useResttyClipboard.addEventListener("change", () => {
     settings.useResttyClipboard = elements.useResttyClipboard.checked;
+    if (!settings.useResttyClipboard) discardAllRemoteClipboardRetries(allPanes());
     saveSettings();
   });
   elements.touchSelectionMode.addEventListener("change", () => {
@@ -2322,6 +2335,7 @@ function bindLifecycleEvents() {
   window.visualViewport?.addEventListener("scroll", handleViewportChange);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+      discardAllRemoteClipboardRetries(allPanes());
       return;
     }
     handleViewportChange();
@@ -4546,7 +4560,7 @@ async function runHerdrSocketRequest(
 ): Promise<HerdrSocketEnvelope> {
   const selector = normalizeSelector(options.selector ?? selectedSelector);
   if (!selector) throw new Error(tr("status.selectRunningInstance"));
-  if (!isHerdrSocketMethod(method)) throw new Error(`Unsupported Herdr socket method: ${method}`);
+  if (!isHerdrSocketRequestMethod(method)) throw new Error(`Unsupported Herdr socket method: ${method}`);
   const envelope = await runHerdrSocketApiRequest(selector, method, params, { id: options.id });
   if (method === "notification.show" && options.mirrorNotification !== false) {
     mirrorHerdrNotification(params, envelope);
@@ -5483,19 +5497,56 @@ async function mountTerminal(pane: TerminalPane) {
   pane.mount.innerHTML = "";
   applyThemeToMount(pane.mount, currentAppearanceContext());
   pane.decoder = new TextDecoder();
-  const remoteClipboard = createTerminalRemoteClipboardBridge({
-    enabled: () => settings.useResttyClipboard
-      && !pane.replaying
-      && document.visibilityState !== "hidden"
-      && activePane()?.id === pane.id,
-    writeText: writeSystemClipboardText,
+  let clipboardRuntimeActive = true;
+  const clipboardEnabled = () => clipboardRuntimeActive
+    && settings.useResttyClipboard
+    && !pane.replaying
+    && document.visibilityState !== "hidden"
+    && activePane()?.id === pane.id;
+  const clipboardSourceWriter = createTerminalRemoteClipboardSourceWriter(
+    writeRemoteClipboardText,
+    clipboardEnabled,
+  );
+  const clipboardRetry = createTerminalRemoteClipboardRetry({
+    mount: pane.mount,
+    enabled: clipboardEnabled,
+    writeText: clipboardSourceWriter.writeText,
+    message: tr("status.remoteClipboardRetryReady"),
+    actionLabel: tr("action.copyRemoteClipboard"),
     onCopied: () => setPaneStatus(pane, tr("status.remoteClipboardCopied"), "ok"),
+    onBlocked: (error) => setPaneStatus(
+      pane,
+      tr("status.remoteClipboardFailed", { message: errorMessage(error) }),
+      "error",
+    ),
+  });
+  const remoteClipboard = createTerminalRemoteClipboardBridge({
+    enabled: clipboardEnabled,
+    writeText: clipboardSourceWriter.writeText,
+    prepareWrite: clipboardSourceWriter.prepareWrite,
+    onWriteStart: clipboardRetry.handleWriteStart,
+    onCopied: (text) => {
+      clipboardRetry.handleWriteSuccess(text);
+      setPaneStatus(pane, tr("status.remoteClipboardCopied"), "ok");
+    },
+    onWriteError: clipboardRetry.handleWriteError,
     onError: (error) => setPaneStatus(
       pane,
       tr("status.remoteClipboardFailed", { message: errorMessage(error) }),
       "error",
     ),
   });
+  pane.remoteClipboardRetryClear = () => {
+    clipboardSourceWriter.invalidate();
+    remoteClipboard.reset();
+    clipboardRetry.clear();
+  };
+  pane.remoteClipboardRetryDispose = () => {
+    clipboardRuntimeActive = false;
+    clipboardSourceWriter.invalidate();
+    remoteClipboard.reset();
+    clipboardRetry.dispose();
+  };
 
   const term = createPaneTerminal({
     cols: pane.cols || INITIAL_COLS,
@@ -5529,6 +5580,7 @@ async function mountTerminal(pane: TerminalPane) {
   if (pane.closing) return;
   pane.term = term;
   term.open(pane.mount);
+  clipboardRetry.attach();
   applyPaneMouseMode(pane);
   void installPaneResttyPlugins(pane);
   installPaneScrollbackFallback(pane, {
@@ -5685,6 +5737,7 @@ async function openSocketPrepared(pane: TerminalPane) {
   });
 
   pane.exited = false;
+  pane.remoteClipboardRetryClear?.();
   pane.replaying = true;
   pane.decoder = new TextDecoder();
   const socket = new WebSocket(url);
@@ -5741,6 +5794,7 @@ function beginReplayInputLock(
 ) {
   window.clearTimeout(pane.replayTimer);
   herdrWheelInputBatcher.clear(pane);
+  pane.remoteClipboardRetryClear?.();
   pane.replaying = true;
   beginTerminalReplayBuffer(pane);
   pane.replayTimer = window.setTimeout(() => {
@@ -5907,6 +5961,7 @@ function handleServerText(pane: TerminalPane, text: string) {
       );
     } else {
       beginTerminalReplayBuffer(pane);
+      pane.remoteClipboardRetryClear?.();
       pane.replaying = true;
     }
   } else if (event.type === "error") {
@@ -6528,6 +6583,7 @@ function updatePaneTitle(pane: TerminalPane, title: string) {
 function updateActiveDetails() {
   const tab = activeTab();
   const pane = activePane(tab);
+  discardInactiveRemoteClipboardRetries(allPanes(), pane?.id);
   if (!tab || !pane) {
     elements.emptyState.hidden = false;
     elements.targetLabel.textContent = selectedSelector ? selectorLabel(selectedSelector) : tr("status.instance");

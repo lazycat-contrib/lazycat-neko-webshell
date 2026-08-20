@@ -7,6 +7,8 @@ use std::thread;
 
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_GRAPHICS_STREAM_HEADER_BYTES: usize = 64 * 1024;
+pub const MAX_GRAPHICS_STREAM_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
 pub struct SocketSearch<'a> {
     pub explicit: Option<&'a Path>,
@@ -84,7 +86,8 @@ where
     let socket_reader = stream.try_clone()?;
     let input_thread = thread::spawn(move || {
         let result = io::copy(&mut input, &mut stream).map(|_| ());
-        stream.shutdown(Shutdown::Both).ok();
+        // Keep the read half alive for Herdr's final frame acknowledgement.
+        stream.shutdown(Shutdown::Write).ok();
         result
     });
 
@@ -378,6 +381,46 @@ mod tests {
         assert_eq!(
             *captured.lock().expect("lock captured output"),
             b"{\"event\":\"first\"}\n{\"event\":\"second\"}\n"
+        );
+    }
+
+    #[test]
+    fn stream_bridge_forwards_graphics_frame_bytes_verbatim() {
+        let (client, mut server) = UnixStream::pair().expect("create socket pair");
+        let header = br#"{"format":"png","image_width":2,"image_height":1,"data_length":4}"#;
+        let body = [0_u8, 0xff, b'\n', 0x80];
+        let mut input = Vec::from(header.as_slice());
+        input.push(b'\n');
+        input.extend_from_slice(&body);
+        let output = SharedWriter::default();
+        let captured = Arc::clone(&output.0);
+
+        let server = thread::spawn(move || {
+            let mut reader = BufReader::new(server.try_clone().expect("clone fake Herdr socket"));
+            let mut received_header = String::new();
+            reader
+                .read_line(&mut received_header)
+                .expect("read graphics frame header");
+            let mut received_body = [0_u8; 4];
+            reader
+                .read_exact(&mut received_body)
+                .expect("read graphics frame body");
+            writeln!(server, r#"{{"result":{{"type":"ok"}}}}"#)
+                .expect("write frame acknowledgement");
+            (received_header, received_body)
+        });
+
+        bridge_with_io(client, Cursor::new(input), output).expect("bridge graphics frame");
+        let (received_header, received_body) = server.join().expect("join fake Herdr server");
+
+        assert_eq!(
+            received_header.as_bytes(),
+            [header.as_slice(), b"\n"].concat()
+        );
+        assert_eq!(received_body, body);
+        assert_eq!(
+            *captured.lock().expect("lock captured output"),
+            b"{\"result\":{\"type\":\"ok\"}}\n"
         );
     }
 

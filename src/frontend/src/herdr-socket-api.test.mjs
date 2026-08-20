@@ -15,10 +15,12 @@ import {
   herdrScrollInfoFromEvent,
   herdrWorkspaceInfoFromEvent,
   isHerdrSocketMethod,
+  isHerdrSocketRequestMethod,
+  isHerdrSocketStreamMethod,
   isHerdrSocketSubscription,
 } from "./herdr-socket-api.ts";
 
-test("normalizes Herdr 0.8.0 wire event names to the subscribed dot notation", () => {
+test("normalizes Herdr 0.8.2 wire event names to the subscribed dot notation", () => {
   assert.deepEqual(normalizeHerdrSocketEnvelope({
     event: "workspace_focused",
     data: {
@@ -42,15 +44,21 @@ test("normalizes Herdr 0.8.0 wire event names to the subscribed dot notation", (
   );
 });
 
-test("tracks the current Herdr 0.8.0 socket schema", () => {
-  assert.equal(HERDR_SOCKET_PROTOCOL, 18);
+test("tracks the current Herdr 0.8.2 socket schema", () => {
+  assert.equal(HERDR_SOCKET_PROTOCOL, 20);
   assert.equal(HERDR_SOCKET_SCHEMA_VERSION, 1);
-  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.8.0");
-  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "dc2506ea8cb58fc8cde7ceb357cad03b1aba0da1");
+  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.8.2");
+  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c");
   assert.equal(isHerdrSocketMethod("workspace.move_block"), true);
   assert.equal(isHerdrSocketMethod("workspace.report_metadata"), true);
   assert.equal(isHerdrSocketMethod("pane.graphics.set"), true);
-  assert.equal(isHerdrSocketMethod("pane.graphics.stream"), false);
+  assert.equal(isHerdrSocketMethod("pane.graphics.stream"), true);
+  assert.equal(isHerdrSocketStreamMethod("pane.graphics.stream"), true);
+  assert.equal(isHerdrSocketRequestMethod("pane.graphics.stream"), false);
+  assert.equal(isHerdrSocketRequestMethod("pane.graphics.set"), true);
+  assert.equal(isHerdrSocketStreamMethod("events.subscribe"), true);
+  assert.equal(isHerdrSocketRequestMethod("events.subscribe"), false);
+  assert.equal(isHerdrSocketMethod("pane.input.set"), true);
   assert.equal(isHerdrSocketMethod("popup.close"), true);
   assert.equal(isHerdrSocketMethod("agent.send_keys"), true);
   assert.equal(isHerdrSocketMethod("agent.prompt"), true);
@@ -102,7 +110,7 @@ test("keeps Herdr 0.7.3 on the legacy event subscription set", () => {
   }
 });
 
-test("keeps protocol-18 workspace reorder events away from Herdr 0.7.5", () => {
+test("keeps workspace reorder events away from Herdr 0.7.5", () => {
   const subscriptions = herdrEventSubscriptions([], "0.7.5");
   assert.equal(subscriptions.some((item) => item.type === "workspace.reordered"), false);
 });
