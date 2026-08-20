@@ -4527,6 +4527,12 @@ textarea {
   box-shadow: var(--input-shadow);
 }
 
+select option,
+select optgroup {
+  background-color: var(--bg);
+  color: var(--text);
+}
+
 select:hover,
 input[type="number"]:hover,
 input[type="text"]:hover,
