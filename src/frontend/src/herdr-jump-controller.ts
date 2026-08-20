@@ -2,6 +2,7 @@ import type { MessageKey } from "./i18n.ts";
 import { buildHerdrJumpModel, normalizeHerdrJumpDensity, type HerdrJumpDensity, type HerdrJumpDevice, type HerdrJumpModel } from "./herdr-jump-model.ts";
 import type { HerdrJumpPlatform, HerdrJumpPlatformFactory } from "./herdr-jump-platform.ts";
 import { renderHerdrCurrentTargets, renderHerdrJumpGroups, type HerdrJumpLabels } from "./herdr-jump-view.ts";
+import type { HerdrConsoleAction } from "./herdr-console-actions.ts";
 import type { HerdrBridgeState } from "./types.ts";
 
 type HerdrJumpElements = {
@@ -29,6 +30,7 @@ type HerdrJumpControllerDeps = {
   createTab: () => Promise<void> | void;
   createWorkspace: () => Promise<void> | void;
   closeWorkspace: () => Promise<void> | void;
+  runConsoleAction: (action: HerdrConsoleAction) => Promise<void> | void;
 };
 
 type FocusedJumpControl = {
@@ -83,6 +85,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     elements.status.textContent = state?.message ?? "";
     elements.trigger.setAttribute("aria-label", viewLabels.jumpTo);
     elements.trigger.title = viewLabels.jumpTo;
+    syncMoreActions();
     syncTargetTooltips(mode);
     deps.updateIcons();
     restoreJumpControlFocus(focusedControl);
@@ -150,16 +153,30 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
       closeMore();
       return;
     }
-    if (event.key !== "ArrowDown") return;
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     if (elements.moreMenu.hidden) toggleMore();
-    elements.moreMenu.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus({ preventScroll: true });
+    const items = moreMenuItems();
+    items[event.key === "ArrowUp" ? items.length - 1 : 0]?.focus({ preventScroll: true });
   };
   const handleMoreMenuKeydown = (event: KeyboardEvent) => {
-    if (event.key !== "Escape") return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeMore();
+      elements.moreButton.focus({ preventScroll: true });
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = moreMenuItems();
+    if (!items.length) return;
     event.preventDefault();
-    closeMore();
-    elements.moreButton.focus({ preventScroll: true });
+    const current = items.findIndex((item) => item === document.activeElement);
+    const next = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    items[next]?.focus({ preventScroll: true });
   };
   const handleDockClickEvent = (event: MouseEvent) => void handleDockClick(event);
 
@@ -217,6 +234,25 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     if (action === "create-workspace") await deps.createWorkspace();
     if (action === "refresh") await deps.refresh();
     if (action === "close-workspace") await deps.closeWorkspace();
+    if (
+      action === "search"
+      || action === "new-agent"
+      || action === "rename-workspace"
+      || action === "close-agent"
+    ) await deps.runConsoleAction(action);
+  }
+
+  function syncMoreActions() {
+    const focusedWorkspace = state?.workspaces.some((workspace) => (
+      workspace.workspace_id === state?.focused_workspace_id || workspace.focused
+    )) ?? false;
+    const focusedAgent = state?.agents.some((agent) => (
+      agent.pane_id === state?.focused_pane_id || agent.focused
+    )) ?? false;
+    const rename = elements.moreMenu.querySelector<HTMLButtonElement>("[data-herdr-jump-action=rename-workspace]");
+    const closeAgent = elements.moreMenu.querySelector<HTMLButtonElement>("[data-herdr-jump-action=close-agent]");
+    if (rename) rename.hidden = !focusedWorkspace;
+    if (closeAgent) closeAgent.hidden = !focusedAgent;
   }
 
   function handleMenuKeydown(event: KeyboardEvent) {
@@ -277,6 +313,11 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
 
   function jumpControls(): HTMLButtonElement[] {
     return Array.from(elements.menu.querySelectorAll<HTMLButtonElement>("[data-herdr-jump-workspace], [data-herdr-jump-tab], [data-herdr-jump-pane]"));
+  }
+
+  function moreMenuItems(): HTMLButtonElement[] {
+    return Array.from(elements.moreMenu.querySelectorAll<HTMLButtonElement>("[role=menuitem]"))
+      .filter((item) => !item.closest("[hidden]"));
   }
   function firstJumpControl(): HTMLButtonElement | undefined {
     return jumpControls()[0] ?? elements.menu.querySelector<HTMLButtonElement>("[data-herdr-density]") ?? undefined;

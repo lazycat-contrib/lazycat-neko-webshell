@@ -67,6 +67,7 @@ import {
   herdrPaneIdsFromListResult,
   herdrResizeDirectionForPaneAction,
   herdrSplitDirection,
+  selectActiveHerdrTerminalPane,
   selectHerdrTerminalPane,
 } from "./herdr-backend";
 import type { HerdrPaneResizeDirection } from "./herdr-backend";
@@ -93,7 +94,8 @@ import {
 import { createHerdrRefreshCoordinator, type HerdrRefreshMode } from "./herdr-refresh-coordinator";
 import { createHerdrRuntimeGuard } from "./herdr-runtime-guard";
 import { herdrEventMessage } from "./herdr-event-presentation";
-import { isHerdrSocketRequestMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
+import { createHerdrConsoleController } from "./herdr-console-actions";
+import { HerdrSocketRequestError, isHerdrSocketRequestMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
 import {
   herdrBridgeStateForUi,
   herdrBridgeStatesEqual,
@@ -521,6 +523,7 @@ const initialSelectorExplicit = params.has("name") && Boolean(initialSelector);
 
 const elements = renderShell(qs<HTMLDivElement>("#app"));
 let herdrJumpController: ReturnType<typeof createHerdrJumpController> | undefined;
+let herdrConsole: ReturnType<typeof createHerdrConsoleController> | undefined;
 const imageUploadProgress = createUploadProgressController(elements.webshell);
 let mobileSystemKeyboard: ReturnType<typeof createMobileSystemKeyboardController>;
 const mobileKeyboard = createMobileKeyboardController({
@@ -810,6 +813,7 @@ const runHerdrStateMutationRequest = createHerdrStateMutationRunner({
   isCurrent: isCurrentSelectorRequest,
   canMutate: (selector) => canMutateHerdrState(selector, false),
   blockedError: () => new Error(tr("status.terminalControlObserver")),
+  staleError: () => new Error(tr("status.herdrTargetChanged")),
   invalidate: invalidatePendingHerdrStateRefresh,
   reconcile: (method, selector) => {
     if (herdrStateMutationChangesVisibleTerminal(method)) {
@@ -824,6 +828,17 @@ const herdrNavigation = createHerdrNavigationController({
   selectedGeneration: () => selectedSelectorGeneration,
   currentState: () => herdrState,
   isCurrent: isCurrentSelectorRequest,
+  canNavigate: (selector, context) => {
+    const pane = activeHerdrTerminalPane();
+    if (
+      context?.paneId
+      && (
+        pane?.id !== context.paneId
+        || (pane.sessionId?.trim() ?? "") !== (context.sessionId ?? "")
+      )
+    ) return false;
+    return canMutateHerdrState(selector);
+  },
   request: runHerdrActionRequest,
   runSerial: (task) => herdrInteractionQueue.run(task),
   applyState: (state) => {
@@ -843,6 +858,55 @@ const herdrNavigation = createHerdrNavigationController({
     tr("status.herdrActionFailed", { message: errorMessage(error) }),
     "error",
   ),
+});
+herdrConsole = createHerdrConsoleController({
+  tr,
+  state: () => herdrState,
+  target: () => {
+    const selector = normalizeSelector(selectedSelector);
+    const pane = activeHerdrTerminalPane();
+    if (
+      !selector
+      || !pane
+      || normalizeSelector(pane.selector) !== selector
+      || normalizeSelector(herdrState?.selector ?? "") !== selector
+    ) return undefined;
+    return {
+      selector,
+      generation: selectedSelectorGeneration,
+      paneId: pane.id,
+      sessionId: pane.sessionId?.trim() ?? "",
+    };
+  },
+  isCurrent: ({ selector, generation, paneId, sessionId }) => {
+    const pane = activeHerdrTerminalPane();
+    return isCurrentSelectorRequest(selector, generation)
+      && normalizeSelector(herdrState?.selector ?? "") === normalizeSelector(selector)
+      && pane?.id === paneId
+      && (pane.sessionId?.trim() ?? "") === sessionId;
+  },
+  runReadRequest: (method, params, target) => runHerdrSocketRequest(method, params, {
+    selector: target.selector,
+    mirrorNotification: false,
+  }),
+  runMutationRequest: (method, params, target) => runHerdrStateMutationRequest(method, params, {
+    selector: target.selector,
+    generation: target.generation,
+    mirrorNotification: false,
+  }),
+  refresh: async (target) => {
+    await refreshHerdrState(target.selector, target.generation);
+  },
+  focusWorkspace: async (workspaceId, target) => {
+    await herdrNavigation.focusWorkspace(workspaceId, target);
+  },
+  focusPane: async (paneId, target) => {
+    await herdrNavigation.focusPane(paneId, target);
+  },
+  confirm: (options) => confirmDialog.confirm(options),
+  onStatus: setGlobalStatus,
+  updateIcons,
+  returnFocus: () => elements.herdrMoreButton,
 });
 herdrJumpController = createHerdrJumpController({
   elements: {
@@ -889,6 +953,7 @@ herdrJumpController = createHerdrJumpController({
   closeWorkspace: async () => {
     await runHerdrAction("close_workspace", () => ({ workspaceId: focusedHerdrWorkspace()?.workspace_id }));
   },
+  runConsoleAction: (action) => herdrConsole?.open(action),
 });
 const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
   pane: activeAIChatTerminalPane,
@@ -1212,6 +1277,7 @@ function setSelectedSelector(
 ): number {
   const normalized = normalizeSelector(selector);
   if (normalized !== selectedSelector) {
+    herdrConsole?.dismiss();
     selectedSelector = normalized;
     selectedSelectorGeneration += 1;
   }
@@ -4351,7 +4417,12 @@ function invalidatePendingHerdrStateRefresh() {
 }
 
 function canMutateHerdrState(selector: string, report = true): boolean {
-  const match = findPaneBySessionBackend(selector, "herdr");
+  const normalized = normalizeSelector(selector);
+  const active = activeHerdrTerminalPane();
+  if (active && normalizeSelector(active.selector) === normalized) {
+    return terminalControl.canWrite(active, { report });
+  }
+  const match = findPaneBySessionBackend(normalized, "herdr");
   return !match || terminalControl.canWrite(match.pane, { report });
 }
 
@@ -4566,7 +4637,7 @@ async function runHerdrSocketRequest(
     mirrorHerdrNotification(params, envelope);
   }
   if (envelope.error) {
-    throw new Error(envelope.error.message || envelope.error.code || "Herdr socket request failed");
+    throw new HerdrSocketRequestError(envelope.error);
   }
   return envelope;
 }
@@ -4778,6 +4849,7 @@ function clearHerdrState() {
 
 function renderHerdrDock() {
   if (!runtimeInfo.lightosFeaturesEnabled) {
+    herdrConsole?.dismiss();
     herdrJumpController?.close();
     elements.webshell.classList.remove("has-herdr");
     elements.herdrDock.hidden = true;
@@ -4791,6 +4863,7 @@ function renderHerdrDock() {
   const showHerdrControls = Boolean(herdrState) && Boolean(activeHerdrTerminalPane());
   updateSessionBackendSettings();
   if (!showHerdrControls) {
+    herdrConsole?.dismiss();
     herdrJumpController?.close();
     elements.webshell.classList.remove("has-herdr");
     elements.herdrDock.hidden = true;
@@ -4857,7 +4930,7 @@ function findPaneBySessionBackend(
 
 function activeHerdrTerminalPane(): TerminalPane | undefined {
   const tab = activeTab();
-  return selectHerdrTerminalPane(tab, activePane(tab));
+  return selectActiveHerdrTerminalPane(tab, activePane(tab));
 }
 
 function aiChatTerminalTargetsForTab(tab: TerminalTab): AIChatTerminalTarget[] {

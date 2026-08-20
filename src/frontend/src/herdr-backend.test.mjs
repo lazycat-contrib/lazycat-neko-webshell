@@ -8,7 +8,33 @@ import {
   herdrEventNeedsStateRefresh,
   herdrEventShowsStatus,
   herdrEventTone,
+  selectActiveHerdrTerminalPane,
 } from "./herdr-backend.ts";
+
+test("shows Herdr-only controls only for the active pane in a mixed-backend tab", () => {
+  const herdrPane = {
+    id: "herdr",
+    tabId: "tab-1",
+    selector: "alpha@owner",
+    sessionBackend: "herdr",
+    closing: false,
+  };
+  const webshellPane = {
+    id: "webshell",
+    tabId: "tab-1",
+    selector: "alpha@owner",
+    sessionBackend: "webshell",
+    closing: false,
+  };
+  const tab = {
+    id: "tab-1",
+    selector: "alpha@owner",
+    panes: [herdrPane, webshellPane],
+  };
+
+  assert.equal(selectActiveHerdrTerminalPane(tab, herdrPane), herdrPane);
+  assert.equal(selectActiveHerdrTerminalPane(tab, webshellPane), undefined);
+});
 
 test("treats Herdr metadata snapshots as silent dock changes", () => {
   assert.equal(herdrEventChangesDock("workspace.metadata_updated"), true);

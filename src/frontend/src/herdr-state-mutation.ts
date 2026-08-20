@@ -7,12 +7,28 @@ export type HerdrSocketRequestOptions = {
   mirrorNotification?: boolean;
 };
 
-export type HerdrStateMutationMethod = "pane.split" | "pane.resize" | "pane.close" | "workspace.rename";
+export type HerdrMutationTarget = {
+  selector: string;
+  generation: number;
+};
+
+export type HerdrStateMutationRequestOptions = HerdrSocketRequestOptions & {
+  generation?: number;
+};
+
+export type HerdrStateMutationMethod =
+  | "agent.start"
+  | "pane.split"
+  | "pane.resize"
+  | "pane.close"
+  | "tab.create"
+  | "workspace.rename";
 
 export function herdrStateMutationChangesVisibleTerminal(method: HerdrStateMutationMethod): boolean {
   return method === "pane.split"
     || method === "pane.resize"
-    || method === "pane.close";
+    || method === "pane.close"
+    || method === "tab.create";
 }
 
 type HerdrStateMutationRunnerDeps = {
@@ -26,6 +42,7 @@ type HerdrStateMutationRunnerDeps = {
   isCurrent: (selector: string, generation: number) => boolean;
   canMutate: (selector: string) => boolean;
   blockedError: () => Error;
+  staleError: () => Error;
   invalidate: () => void;
   reconcile: (method: HerdrStateMutationMethod, selector: string) => void;
 };
@@ -34,14 +51,16 @@ export function createHerdrStateMutationRunner(deps: HerdrStateMutationRunnerDep
   return async function runHerdrStateMutation(
     method: HerdrStateMutationMethod,
     params: JsonRecord = {},
-    options: HerdrSocketRequestOptions = {},
+    options: HerdrStateMutationRequestOptions = {},
   ): Promise<HerdrSocketEnvelope> {
     const selector = normalizeSelector(options.selector ?? deps.selectedSelector());
-    const generation = deps.selectedGeneration();
+    const generation = options.generation ?? deps.selectedGeneration();
+    if (!selector || !deps.isCurrent(selector, generation)) throw deps.staleError();
     if (selector && !deps.canMutate(selector)) throw deps.blockedError();
+    const { generation: _generation, ...requestOptions } = options;
     let envelope: HerdrSocketEnvelope;
     try {
-      envelope = await deps.request(method, params, { ...options, selector });
+      envelope = await deps.request(method, params, { ...requestOptions, selector });
     } catch (error) {
       if (deps.isCurrent(selector, generation)) {
         deps.invalidate();

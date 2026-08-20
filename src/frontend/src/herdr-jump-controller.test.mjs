@@ -18,6 +18,8 @@ class FakeElement {
 
   appendTo(parent) {
     this.parentElement = parent;
+    parent.children ??= [];
+    parent.children.push(this);
     return this;
   }
 
@@ -29,9 +31,15 @@ class FakeElement {
 
   removeEventListener() {}
 
-  dispatch(type, target = this) {
+  dispatch(type, target = this, init = {}) {
+    const event = {
+      target,
+      preventDefault() {},
+      stopPropagation() {},
+      ...init,
+    };
     for (const listener of this.listeners.get(type) ?? []) {
-      listener({ target });
+      listener(event);
     }
   }
 
@@ -65,10 +73,13 @@ class FakeElement {
     delete this[name];
   }
 
-  focus() {}
+  focus() {
+    document.activeElement = this;
+  }
 }
 
 function matchesSelector(element, selector) {
+  if (selector === "[hidden]") return element.hidden;
   const match = /^(button)?\[data-([a-z-]+)\]$/.exec(selector);
   if (!match || (match[1] && element.tagName !== "BUTTON")) return false;
   const key = match[2].replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
@@ -119,7 +130,11 @@ function controllerHarness() {
   const menu = new FakeElement().appendTo(switcher);
   menu.hidden = true;
   const currentTargets = new FakeElement().appendTo(dock);
+  const moreButton = new FakeElement("button").appendTo(dock);
+  const moreMenu = new FakeElement().appendTo(dock);
+  moreMenu.hidden = true;
   const focusedTabs = [];
+  const consoleActions = [];
   createHerdrJumpController({
     elements: {
       dock,
@@ -129,8 +144,8 @@ function controllerHarness() {
       list: new FakeElement().appendTo(menu),
       status: new FakeElement().appendTo(menu),
       currentTargets,
-      moreButton: new FakeElement("button").appendTo(dock),
-      moreMenu: new FakeElement().appendTo(dock),
+      moreButton,
+      moreMenu,
     },
     tr: (key) => key,
     createPlatform: () => ({
@@ -150,8 +165,9 @@ function controllerHarness() {
     createTab() {},
     createWorkspace() {},
     closeWorkspace() {},
+    runConsoleAction: async (action) => consoleActions.push(action),
   });
-  return { dock, currentTargets, focusedTabs };
+  return { dock, currentTargets, focusedTabs, consoleActions, moreButton, moreMenu };
 }
 
 test("top Herdr tab clicks navigate even when the dock stores its display density", async (t) => {
@@ -163,4 +179,39 @@ test("top Herdr tab clicks navigate even when the dock stores its display densit
   await Promise.resolve();
 
   assert.deepEqual(focusedTabs, ["w1:t2"]);
+});
+
+test("routes HerdrM reference actions from the Herdr-only more menu", async (t) => {
+  installFakeDom(t);
+  const { dock, consoleActions } = controllerHarness();
+
+  for (const action of ["new-agent", "search", "rename-workspace", "close-agent"]) {
+    const button = new FakeElement("button", { herdrJumpAction: action }).appendTo(dock);
+    dock.dispatch("click", button);
+    await Promise.resolve();
+  }
+
+  assert.deepEqual(consoleActions, ["new-agent", "search", "rename-workspace", "close-agent"]);
+});
+
+test("cycles visible more-menu items with Arrow, Home, and End keys", (t) => {
+  installFakeDom(t);
+  const { moreButton, moreMenu } = controllerHarness();
+  const first = new FakeElement("button").appendTo(moreMenu);
+  const hidden = new FakeElement("button").appendTo(moreMenu);
+  hidden.hidden = true;
+  const last = new FakeElement("button").appendTo(moreMenu);
+  moreMenu.querySelectorAll = () => [first, hidden, last];
+
+  moreButton.dispatch("keydown", moreButton, { key: "ArrowDown" });
+  assert.equal(document.activeElement, first);
+
+  moreMenu.dispatch("keydown", first, { key: "ArrowUp" });
+  assert.equal(document.activeElement, last);
+
+  moreMenu.dispatch("keydown", last, { key: "Home" });
+  assert.equal(document.activeElement, first);
+
+  moreMenu.dispatch("keydown", first, { key: "End" });
+  assert.equal(document.activeElement, last);
 });

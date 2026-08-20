@@ -1850,6 +1850,48 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   }
 }
 
+@media (max-width: 600px) {
+  .herdr-more-menu button {
+    min-height: 44px;
+  }
+
+  .herdr-console-overlay {
+    align-items: end;
+    padding: 0;
+  }
+
+  .herdr-console-dialog,
+  .herdr-console-dialog.is-search {
+    width: 100%;
+    max-height: min(78dvh, calc(var(--app-viewport-height) - var(--lzc-safe-area-inset-top) - 10px));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: var(--lzc-safe-area-inset-bottom);
+    transform-origin: 50% 100%;
+    animation: herdr-console-sheet-in var(--motion-drawer-in) var(--ease-drawer, cubic-bezier(0.32, 0.72, 0, 1));
+  }
+
+  .herdr-console-dialog button,
+  .herdr-console-form input:not([type="checkbox"]),
+  .herdr-console-form select,
+  .herdr-console-search-field input {
+    min-height: 44px;
+  }
+
+  .herdr-console-results button {
+    min-height: 52px;
+  }
+}
+
+@keyframes herdr-console-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mobile-system-keyboard-toggle {
     transition: none;
@@ -1861,7 +1903,9 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 
   .herdr-jump-scrim,
   .herdr-workspace-menu,
-  .herdr-workspace-menu[hidden] {
+  .herdr-workspace-menu[hidden],
+  .herdr-console-dialog {
+    animation: none;
     transition-duration: 0ms;
     transform: none;
   }

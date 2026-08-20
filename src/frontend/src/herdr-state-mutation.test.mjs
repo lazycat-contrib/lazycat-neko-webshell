@@ -20,6 +20,7 @@ function mutationRunner(overrides = {}) {
     isCurrent: (selector, generation) => selector === "alpha@owner" && generation === 7,
     canMutate: () => true,
     blockedError: () => new Error("observer"),
+    staleError: () => new Error("target changed"),
     invalidate: () => invalidations.push("invalidate"),
     reconcile: (method, selector) => reconciliations.push([method, selector]),
     ...overrides,
@@ -41,17 +42,36 @@ test("invalidates pending state only after a current Herdr mutation succeeds", a
 });
 
 test("does not invalidate the selected state when a completed mutation became stale", async () => {
-  const { run, invalidations } = mutationRunner({ isCurrent: () => false });
+  let current = true;
+  const { run, invalidations } = mutationRunner({
+    isCurrent: () => current,
+    request: async () => {
+      current = false;
+      return { result: { ok: true } };
+    },
+  });
 
   await run("pane.close", { pane_id: "p1" });
 
   assert.deepEqual(invalidations, []);
 });
 
+test("rejects a stale pinned target before sending a mutation", async () => {
+  const { run, requests } = mutationRunner({
+    isCurrent: (_selector, generation) => generation === 7,
+  });
+
+  await assert.rejects(
+    run("tab.create", {}, { selector: "alpha@owner", generation: 6 }),
+    /target changed/,
+  );
+  assert.deepEqual(requests, []);
+});
+
 test("blocks observers before sending a Herdr state mutation", async () => {
   const { run, requests, invalidations } = mutationRunner({ canMutate: () => false });
 
-  await assert.rejects(run("pane.split", { target_pane_id: "p1" }), /observer/);
+  await assert.rejects(run("tab.create", { workspace_id: "w1" }), /observer/);
   assert.deepEqual(requests, []);
   assert.deepEqual(invalidations, []);
 });
@@ -70,5 +90,7 @@ test("reconciles current state when a Herdr mutation has an ambiguous failure", 
 
 test("replays only mutations that can change the visible terminal", () => {
   assert.equal(herdrStateMutationChangesVisibleTerminal("pane.split"), true);
+  assert.equal(herdrStateMutationChangesVisibleTerminal("tab.create"), true);
+  assert.equal(herdrStateMutationChangesVisibleTerminal("agent.start"), false);
   assert.equal(herdrStateMutationChangesVisibleTerminal("workspace.rename"), false);
 });

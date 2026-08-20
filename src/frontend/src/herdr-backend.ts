@@ -59,6 +59,21 @@ export function selectHerdrTerminalPane(
   return tab.panes.find((pane) => pane.sessionBackend === "herdr" && !pane.closing);
 }
 
+export function selectActiveHerdrTerminalPane(
+  tab: TerminalTab | undefined,
+  pane: TerminalPane | undefined,
+): TerminalPane | undefined {
+  if (
+    !tab
+    || !pane
+    || pane.tabId !== tab.id
+    || pane.selector !== tab.selector
+    || pane.sessionBackend !== "herdr"
+    || pane.closing
+  ) return undefined;
+  return pane;
+}
+
 export function herdrEventSocketUrl(selector: string): URL {
   const url = new URL("./ws/herdr", window.location.href);
   url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";

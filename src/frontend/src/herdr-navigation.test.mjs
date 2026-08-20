@@ -63,6 +63,7 @@ function navigationHarness(overrides = {}) {
     selectedGeneration: () => 7,
     currentState: () => state,
     isCurrent: (selector, generation) => selector === "alpha@owner" && generation === 7,
+    canNavigate: () => true,
     request: async (selector, action, options) => {
       requests.push({ selector, action, options });
       return state;
@@ -163,4 +164,35 @@ test("ignores an authoritative snapshot after the selected Herdr session changes
   assert.deepEqual(harness.state().tabs.map((tab) => tab.focused), [true, false, false]);
   assert.deepEqual(harness.settled, []);
   assert.deepEqual(harness.errors, []);
+});
+
+test("does not navigate when a pinned console target is already stale", async () => {
+  const harness = navigationHarness({
+    isCurrent: (_selector, generation) => generation === 8,
+  });
+
+  const focused = await harness.controller.focusPane("p4", {
+    selector: "alpha@owner",
+    generation: 7,
+  });
+
+  assert.equal(focused, false);
+  assert.deepEqual(harness.requests, []);
+});
+
+test("does not navigate when the pinned console pane is an observer", async () => {
+  const context = {
+    selector: "alpha@owner",
+    generation: 7,
+    paneId: "webshell-pane-2",
+    sessionId: "session-2",
+  };
+  const harness = navigationHarness({
+    canNavigate: (_selector, requestContext) => requestContext !== context,
+  });
+
+  const focused = await harness.controller.focusPane("p4", context);
+
+  assert.equal(focused, false);
+  assert.deepEqual(harness.requests, []);
 });

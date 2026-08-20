@@ -2,6 +2,24 @@ import contract from "../../herdr_socket_contract.json" with { type: "json" };
 
 import type { HerdrAgentInfo, HerdrPaneInfo, HerdrSocketEnvelope, HerdrWorkspaceInfo, JsonRecord } from "./types";
 
+export class HerdrSocketRequestError extends Error {
+  readonly code: string;
+
+  constructor(error: NonNullable<HerdrSocketEnvelope["error"]>) {
+    const code = error.code?.trim() ?? "";
+    super(error.message?.trim() || code || "Herdr socket request failed");
+    this.name = "HerdrSocketRequestError";
+    this.code = code;
+  }
+}
+
+export function herdrSocketErrorCode(error: unknown): string {
+  if (error instanceof HerdrSocketRequestError) return error.code;
+  if (!error || typeof error !== "object" || Array.isArray(error)) return "";
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code.trim() : "";
+}
+
 export const HERDR_SOCKET_PROTOCOL = contract.protocol;
 export const HERDR_SOCKET_SCHEMA_VERSION = contract.schema_version;
 export const HERDR_SOCKET_SOURCE_VERSION = contract.source_version;

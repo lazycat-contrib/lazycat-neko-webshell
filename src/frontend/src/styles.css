@@ -2385,7 +2385,7 @@ textarea:focus-visible {
   top: calc(100% + 7px);
   right: 0;
   display: grid;
-  min-width: 190px;
+  min-width: min(230px, calc(100vw - 24px));
   padding: 5px;
   border: 1px solid var(--menu-border);
   border-radius: var(--radius-md);
@@ -2415,12 +2415,26 @@ textarea:focus-visible {
   text-align: left;
 }
 
+.herdr-more-menu button > span {
+  white-space: nowrap;
+}
+
 .herdr-more-menu button:hover {
   background: var(--control-hover-bg);
 }
 
 .herdr-more-menu button.danger {
   color: var(--danger);
+}
+
+.herdr-more-menu button[hidden] {
+  display: none;
+}
+
+.herdr-more-separator {
+  height: 1px;
+  margin: 4px 7px;
+  background: var(--menu-border);
 }
 
 .herdr-more-menu svg {
@@ -2455,6 +2469,296 @@ textarea:focus-visible {
   min-height: 32px;
   padding: 0 7px;
   color: var(--accent-strong);
+}
+
+.herdr-console-overlay {
+  position: fixed;
+  z-index: 130;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(16px, var(--lzc-safe-area-inset-top)) max(16px, var(--lzc-safe-area-inset-right)) max(16px, var(--lzc-safe-area-inset-bottom)) max(16px, var(--lzc-safe-area-inset-left));
+  background: var(--overlay-wash), var(--overlay-scrim);
+  backdrop-filter: blur(10px);
+}
+
+.herdr-console-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 32px));
+  max-height: min(620px, calc(var(--app-viewport-height) - 32px));
+  overflow: hidden;
+  border: 1px solid var(--dialog-border);
+  border-radius: var(--radius-lg);
+  background: var(--dialog-material), var(--dialog-bg);
+  box-shadow: var(--shadow-deep);
+  transform-origin: 50% 40%;
+  animation: herdr-console-dialog-in var(--motion-dialog-in) var(--ease-out);
+}
+
+.herdr-console-dialog.is-search {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.herdr-console-dialog > header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  min-height: 64px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--dialog-border);
+}
+
+.herdr-console-dialog > header h2,
+.herdr-console-dialog > header p {
+  margin: 0;
+}
+
+.herdr-console-dialog > header h2 {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.herdr-console-dialog > header p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.herdr-console-dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--component-border);
+  border-radius: 9px;
+  background: var(--component-wash), var(--surface-2);
+  color: var(--accent-strong);
+}
+
+.herdr-console-dialog-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.herdr-console-dialog-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.herdr-console-dialog > footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--dialog-border);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.herdr-console-dialog.is-search > footer {
+  justify-content: flex-start;
+  min-height: 34px;
+}
+
+.herdr-console-form {
+  display: grid;
+  gap: 14px;
+}
+
+.herdr-console-form > label:not(.herdr-console-check) {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.herdr-console-form input:not([type="checkbox"]),
+.herdr-console-form select,
+.herdr-console-search-field input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--component-border);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--text);
+  padding: 0 11px;
+  font: inherit;
+}
+
+.herdr-console-form input:focus-visible,
+.herdr-console-form select:focus-visible,
+.herdr-console-search-field input:focus-visible,
+.herdr-console-results button:focus-visible,
+.herdr-console-dialog button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.herdr-console-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--component-border);
+  border-radius: var(--radius-sm);
+  background: var(--component-wash);
+}
+
+.herdr-console-check[hidden] {
+  display: none;
+}
+
+.herdr-console-check input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.herdr-console-check span,
+.herdr-console-check small {
+  display: block;
+}
+
+.herdr-console-check strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.herdr-console-check small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-family: var(--terminal-font-family);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.herdr-console-form-error {
+  min-height: 17px;
+  margin: 0;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.herdr-console-search-field {
+  position: relative;
+  display: block;
+}
+
+.herdr-console-search-field > svg {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.herdr-console-search-field input {
+  padding-left: 38px;
+}
+
+.herdr-console-results {
+  display: grid;
+  gap: 2px;
+  max-height: min(360px, calc(var(--app-viewport-height) - 210px));
+  margin-top: 8px;
+  overflow-y: auto;
+}
+
+.herdr-console-results button {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 46px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  padding: 5px 10px;
+  text-align: left;
+}
+
+.herdr-console-results button:hover,
+.herdr-console-results button[aria-selected="true"] {
+  background: var(--control-hover-bg);
+}
+
+.herdr-console-results button > svg {
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+}
+
+.herdr-console-results button strong,
+.herdr-console-results button small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.herdr-console-results button strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.herdr-console-results button small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.herdr-console-empty,
+.herdr-console-loading {
+  margin: 0;
+  padding: 24px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.herdr-console-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+
+.herdr-console-loading::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes herdr-console-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .herdr-console-dialog,
+  .herdr-console-loading::before {
+    animation: none;
+  }
 }
 
 .herdr-status {
@@ -2524,6 +2828,7 @@ textarea:focus-visible {
 .new-tab-menu button,
 .pane-menu button,
 .settings-menu button,
+.herdr-more-menu button,
 .herdr-workspace-row {
   transition: transform var(--motion-press) var(--ease-out);
 }
@@ -2531,6 +2836,7 @@ textarea:focus-visible {
 .new-tab-menu button:active:not(:disabled),
 .pane-menu button:active:not(:disabled),
 .settings-menu button:active:not(:disabled),
+.herdr-more-menu button:active:not(:disabled),
 .herdr-workspace-row:active:not(:disabled) {
   transform: scale(0.985);
 }
@@ -4379,6 +4685,7 @@ output {
   .new-tab-menu button,
   .pane-menu button,
   .settings-menu button,
+  .herdr-more-menu button,
   .herdr-workspace-row,
   .instance-row {
     transition: none;
@@ -4394,6 +4701,7 @@ output {
   .new-tab-menu button:active:not(:disabled),
   .pane-menu button:active:not(:disabled),
   .settings-menu button:active:not(:disabled),
+  .herdr-more-menu button:active:not(:disabled),
   .herdr-workspace-row:active:not(:disabled),
   .instance-row:active:not(:disabled) {
     transform: none;

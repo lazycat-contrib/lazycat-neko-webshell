@@ -6,6 +6,13 @@ export type HerdrNavigationTarget = {
   id: string;
 };
 
+export type HerdrNavigationContext = {
+  selector: string;
+  generation: number;
+  paneId?: string;
+  sessionId?: string;
+};
+
 type HerdrNavigationOptions = {
   workspaceId?: string;
   tabId?: string;
@@ -19,6 +26,7 @@ type HerdrNavigationDeps = {
   selectedGeneration: () => number;
   currentState: () => HerdrBridgeState | undefined;
   isCurrent: (selector: string, generation: number) => boolean;
+  canNavigate: (selector: string, context?: HerdrNavigationContext) => boolean;
   request: (
     selector: string,
     action: HerdrAction,
@@ -36,13 +44,25 @@ export function createHerdrNavigationController(deps: HerdrNavigationDeps) {
     target: HerdrNavigationTarget,
     action: HerdrAction,
     options: HerdrNavigationOptions,
+    context?: HerdrNavigationContext,
   ): Promise<boolean> {
-    const selector = normalizeSelector(deps.selectedSelector());
-    const generation = deps.selectedGeneration();
-    if (!selector || !deps.currentState()?.available) return Promise.resolve(false);
+    const selector = normalizeSelector(context?.selector ?? deps.selectedSelector());
+    const generation = context?.generation ?? deps.selectedGeneration();
+    if (
+      !selector
+      || !deps.isCurrent(selector, generation)
+      || !deps.currentState()?.available
+      || !deps.canNavigate(selector, context)
+    ) {
+      return Promise.resolve(false);
+    }
 
     return deps.runSerial(async () => {
-      if (!deps.isCurrent(selector, generation) || !deps.currentState()?.available) return false;
+      if (
+        !deps.isCurrent(selector, generation)
+        || !deps.currentState()?.available
+        || !deps.canNavigate(selector, context)
+      ) return false;
       deps.invalidate();
       try {
         const state = await deps.request(selector, action, options);
@@ -62,20 +82,20 @@ export function createHerdrNavigationController(deps: HerdrNavigationDeps) {
   }
 
   return {
-    focusWorkspace(workspaceId: string) {
+    focusWorkspace(workspaceId: string, context?: HerdrNavigationContext) {
       const id = workspaceId.trim();
       if (!id) return Promise.resolve(false);
-      return navigate({ kind: "workspace", id }, "focus_workspace", { workspaceId: id });
+      return navigate({ kind: "workspace", id }, "focus_workspace", { workspaceId: id }, context);
     },
-    focusTab(tabId: string) {
+    focusTab(tabId: string, context?: HerdrNavigationContext) {
       const id = tabId.trim();
       if (!id) return Promise.resolve(false);
-      return navigate({ kind: "tab", id }, "focus_tab", { tabId: id });
+      return navigate({ kind: "tab", id }, "focus_tab", { tabId: id }, context);
     },
-    focusPane(paneId: string) {
+    focusPane(paneId: string, context?: HerdrNavigationContext) {
       const id = paneId.trim();
       if (!id) return Promise.resolve(false);
-      return navigate({ kind: "pane", id }, "focus_pane", { paneId: id });
+      return navigate({ kind: "pane", id }, "focus_pane", { paneId: id }, context);
     },
   };
 }
