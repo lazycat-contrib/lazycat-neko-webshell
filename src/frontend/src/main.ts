@@ -106,6 +106,7 @@ import {
 } from "./herdr-state-mutation";
 import { createHerdrWheelInputBatcher } from "./herdr-wheel-input-batcher";
 import { translate, type MessageKey } from "./i18n";
+import { createInstanceLoadCoordinator } from "./instance-loader";
 import { renderInstanceListView } from "./instance-views";
 import {
   boolField,
@@ -156,6 +157,7 @@ import {
   shouldConnectRestoredPane as paneShouldConnectRestored,
   terminalErrorBlocksReconnect,
 } from "./pane-reconnect-policy";
+import { createPaneConnectionLifecycle } from "./pane-connection-lifecycle";
 import { legacyCopyText, writeSystemClipboardText } from "./browser-clipboard";
 import {
   allTabPanes,
@@ -167,6 +169,7 @@ import {
   visibleTabPanes,
 } from "./pane-selection";
 import { createPaneTransport } from "./pane-transport";
+import { createPerformanceMeter } from "./performance-meter";
 import {
   clearPanePendingInput,
   flushPanePendingInput,
@@ -401,12 +404,13 @@ import {
   terminalAppearanceContext,
 } from "./terminal-appearance";
 import { MAX_PENDING_INPUT_BYTES, monotonicSequence, parseTerminalServerMessage } from "./terminal-protocol";
+import { createTerminalReplayController } from "./terminal-replay-controller";
+import { matchesTerminalReplayIdentity } from "./terminal-replay-identity";
 import {
-  beginTerminalReplayBuffer,
-  bufferTerminalReplayBytes,
-  discardTerminalReplayBuffer,
-  drainTerminalReplayBuffer,
-} from "./terminal-replay-buffer";
+  recordTerminalPerformance,
+  terminalPerformanceSnapshot,
+} from "./terminal-performance";
+import { createTerminalResizeScheduler } from "./terminal-resize-scheduler";
 import { normalizeTerminalReplyAuthority } from "./terminal-reply-authority";
 import { terminalThemeSocketColors } from "./terminal-theme-wire";
 import { createUploadProgressController } from "./upload-progress";
@@ -491,9 +495,9 @@ import {
 
 const terminalEncoder = new TextEncoder();
 const REPLAY_INPUT_LOCK_TIMEOUT_MS = 30_000;
+const TERMINAL_REPLAY_WRITE_BUDGET_BYTES = 128 * 1024;
 const HERDR_FOCUS_REFRESH_DELAYS_MS = [80] as const;
 const HERDR_ACTION_REFRESH_DELAYS_MS = [120, 450, 900, 1800, 3000] as const;
-const TERMINAL_SIZE_REFRESH_DELAYS_MS = [80, 250, 600] as const;
 const MOBILE_KEYBOARD_INSET_THRESHOLD_PX = 80;
 const MOBILE_TERMINAL_SCROLL_AXIS_RATIO = 1.1;
 const AI_TERMINAL_CONTEXT_LINES = 40;
@@ -522,6 +526,7 @@ const initialSelector = normalizeSelector(params.get("name") ?? "");
 const initialSelectorExplicit = params.has("name") && Boolean(initialSelector);
 
 const elements = renderShell(qs<HTMLDivElement>("#app"));
+const performanceMeter = createPerformanceMeter(elements.terminalStage);
 let herdrJumpController: ReturnType<typeof createHerdrJumpController> | undefined;
 let herdrConsole: ReturnType<typeof createHerdrConsoleController> | undefined;
 const imageUploadProgress = createUploadProgressController(elements.webshell);
@@ -1100,7 +1105,41 @@ const terminalMcp = createTerminalMcpController({
   onRender: renderPluginSettings,
   onStatus: setPluginStatus,
 });
-let terminalResizeTimers: number[] = [];
+const terminalResizeScheduler = createTerminalResizeScheduler<TerminalPane>({
+  refresh: refreshPaneTerminalSize,
+  isVisible: (pane) => !pane.closing && pane.tabId === activeTabId && pane.mount.isConnected,
+});
+const paneConnectionLifecycle = createPaneConnectionLifecycle({
+  canConnect: canConnectPanePty,
+  autoRestartEnabled: () => settings.autoRestartSessions,
+  isHerdr: isHerdrTerminalPane,
+  isOnline: () => navigator.onLine,
+  connect: connectPanePty,
+  setStatus: setPaneStatus,
+  tr,
+  recordReconnectDelay: (delayMs) => recordTerminalPerformance("reconnectDelay", delayMs),
+});
+const terminalReplayController = createTerminalReplayController({
+  byteBudget: TERMINAL_REPLAY_WRITE_BUDGET_BYTES,
+  writeBytes: writeTerminalBytes,
+  updateSequence: updatePaneOutputSequence,
+  updateReplayBoundary: (pane, sequence) => {
+    updatePaneOutputSequence(pane, sequence, { allowReset: true });
+  },
+  onUnlocked: (pane) => {
+    applyCursorAppearance(pane, settings);
+    flushPendingInput(pane);
+    if (pane.sessionStatus === "running") markPaneConnected(pane);
+  },
+  onInterrupted: (pane) => {
+    pane.term?.reset();
+    pane.decoder = new TextDecoder();
+    pane.lastOutputSequence = pane.lastReplayAfter ?? 0;
+  },
+  onOverflow: (pane) => pane.socket?.close(),
+  debugEnabled: () => settings.debugMode,
+});
+const instanceLoadCoordinator = createInstanceLoadCoordinator(fetchInstances);
 const {
   paneForShortcutTarget,
   handleTerminalClipboardCapture,
@@ -2090,11 +2129,17 @@ function bindSettings() {
   elements.debugMode.addEventListener("change", () => {
     settings.debugMode = elements.debugMode.checked;
     saveSettings();
+    if (settings.debugMode) console.debug("[terminal-performance]", terminalPerformanceSnapshot());
+  });
+  elements.performanceMeterEnabled.addEventListener("change", () => {
+    settings.performanceMeterEnabled = elements.performanceMeterEnabled.checked;
+    saveSettings();
+    performanceMeter.setEnabled(settings.performanceMeterEnabled);
   });
 }
 
 function bindActions() {
-  elements.refreshInstances.addEventListener("click", () => void loadInstances());
+  elements.refreshInstances.addEventListener("click", () => void loadInstances({ restart: true }));
   elements.newTabButton.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleNewTabMenu();
@@ -2361,9 +2406,16 @@ function bindActions() {
 
 function bindLifecycleEvents() {
   window.addEventListener("online", () => {
+    void loadInstances({ restart: true });
     void connectRestoredPanes();
     void refreshSessionBackends(selectedSelector);
     void refreshHerdrState(selectedSelector);
+  });
+  window.addEventListener("offline", () => {
+    paneConnectionLifecycle.handleOfflineHint(allPanes());
+    if (activePane()?.connectionState !== "connected") {
+      setGlobalStatus(tr("status.offline"), "neutral");
+    }
   });
   window.addEventListener("popstate", () => {
     const nextParams = new URLSearchParams(window.location.search);
@@ -3025,6 +3077,8 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   mobileClock.updateSettingsState();
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;
+  elements.performanceMeterEnabled.checked = settings.performanceMeterEnabled;
+  performanceMeter.setEnabled(settings.performanceMeterEnabled);
   updateSessionBackendSettings();
   renderMobileQuickInput();
   renderPlugins();
@@ -4117,10 +4171,25 @@ function setFileTransferStatus(message: string, tone: Tone = "neutral") {
   setGlobalStatus(message, tone);
 }
 
-async function loadInstances() {
+async function loadInstances(options: { restart?: boolean } = {}) {
   setGlobalStatus(tr("status.loadingInstances"));
   try {
-    instances = await fetchInstances();
+    const loaded = await instanceLoadCoordinator.run({
+      restart: options.restart,
+      onRetry: (attempt, delayMs) => {
+        setGlobalStatus(
+          navigator.onLine
+            ? tr("status.retryingInstances", {
+                attempt,
+                seconds: Math.max(1, Math.round(delayMs / 1000)),
+              })
+            : tr("status.offline"),
+          "neutral",
+        );
+      },
+    });
+    if (!loaded) return;
+    instances = loaded;
     const reconcile = reconcileSelectedInstance();
     renderInstances();
     if (reconcile.explicitFallback && selectedSelector) {
@@ -4130,7 +4199,11 @@ async function loadInstances() {
     }
   } catch (error) {
     renderInstances();
-    setGlobalStatus(tr("status.instanceLoadFailed", { message: errorMessage(error) }), "error");
+    if (navigator.onLine) {
+      setGlobalStatus(tr("status.instanceLoadFailed", { message: errorMessage(error) }), "error");
+    } else {
+      setGlobalStatus(tr("status.offline"), "neutral");
+    }
   }
 }
 
@@ -5245,7 +5318,7 @@ async function restoreWorkspacePane(
 }
 
 function preparePaneForFullReplay(pane: TerminalPane) {
-  window.clearTimeout(pane.reconnectTimer);
+  paneConnectionLifecycle.clearReconnect(pane);
   clearReplayInputLock(pane);
   terminalTransfer.resetPane(pane);
   flushPaneDecoder(pane);
@@ -5472,6 +5545,8 @@ function makePane(tab: TerminalTab, restoredId?: string): TerminalPane {
     tone: "neutral",
     mount,
     reconnectDelay: 1000,
+    connectionState: "idle",
+    hasConnected: false,
     processExitObserved: false,
     fatalErrorObserved: false,
     pendingInput: [],
@@ -5769,6 +5844,7 @@ async function openSocketPrepared(pane: TerminalPane) {
   if (!pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
   if (pendingPaneSocketOpens.has(pane.id)) return;
+  paneConnectionLifecycle.beginConnection(pane);
   pendingPaneSocketOpens.add(pane.id);
   let attach: Awaited<ReturnType<typeof terminalControl.prepareAttach>>;
   try {
@@ -5820,19 +5896,18 @@ async function openSocketPrepared(pane: TerminalPane) {
     if (pane.socket !== socket) return;
     pane.remoteKeepaliveStop?.();
     pane.remoteKeepaliveStop = installRemoteClientKeepalive(pane.selector, socket);
-    if (pane.sessionBackend !== "herdr") pane.reconnectDelay = 1000;
     beginReplayInputLock(pane, socket);
     flushPendingInput(pane);
     pane.transport?.notifyConnect();
     sendRestartPolicy(pane);
     sendOutputBufferLimit(pane);
-    setPaneStatus(pane, tr("status.loadingGhostty"));
+    paneConnectionLifecycle.markReplaying(pane);
     if (activeTabId === pane.tabId && activePane()?.id === pane.id) {
       focusPaneCanvas(pane);
     }
   });
   socket.addEventListener("message", (event) => {
-    if (pane.socket === socket) handleSocketMessage(pane, event);
+    if (pane.socket === socket) handleSocketMessage(pane, socket, event);
   });
   socket.addEventListener("close", () => {
     if (pane.socket !== socket) return;
@@ -5856,7 +5931,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     clearReplayInputLock(pane);
     herdrWheelInputBatcher.clear(pane);
     pane.transport?.notifyError(tr("status.socketError"));
-    setPaneStatus(pane, tr("status.socketError"), "error");
+    paneConnectionLifecycle.markTransientFailure(pane);
   });
 }
 
@@ -5865,31 +5940,23 @@ function beginReplayInputLock(
   socket: WebSocket,
   timeoutMs = REPLAY_INPUT_LOCK_TIMEOUT_MS,
 ) {
-  window.clearTimeout(pane.replayTimer);
   herdrWheelInputBatcher.clear(pane);
   pane.remoteClipboardRetryClear?.();
-  pane.replaying = true;
-  beginTerminalReplayBuffer(pane);
-  pane.replayTimer = window.setTimeout(() => {
-    if (pane.socket !== socket || pane.closing || !pane.replaying) return;
-    finishReplayInputLock(pane);
-  }, timeoutMs);
+  terminalReplayController.begin(pane, socket, timeoutMs);
+}
+
+function validateReplayInputLock(
+  pane: TerminalPane,
+  socket: WebSocket | undefined,
+  timeoutMs = REPLAY_INPUT_LOCK_TIMEOUT_MS,
+) {
+  herdrWheelInputBatcher.clear(pane);
+  pane.remoteClipboardRetryClear?.();
+  terminalReplayController.validate(pane, socket, timeoutMs);
 }
 
 function clearReplayInputLock(pane: TerminalPane) {
-  window.clearTimeout(pane.replayTimer);
-  pane.replayTimer = undefined;
-  pane.replaying = false;
-  pane.allowGeneratedInputDuringReplay = false;
-  discardTerminalReplayBuffer(pane);
-}
-
-function finishReplayInputLock(pane: TerminalPane) {
-  const replay = drainTerminalReplayBuffer(pane);
-  if (replay) writeTerminalBytes(pane, replay);
-  clearReplayInputLock(pane);
-  applyCursorAppearance(pane, settings);
-  flushPendingInput(pane);
+  terminalReplayController.clear(pane);
 }
 
 function syncRestartPolicyToServer() {
@@ -5951,7 +6018,7 @@ function updatePaneOutputSequence(
   }
 }
 
-function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {
+function handleSocketMessage(pane: TerminalPane, socket: WebSocket, event: MessageEvent) {
   if (pane.closing) return;
   if (event.data instanceof ArrayBuffer) {
     handleTerminalBytes(pane, new Uint8Array(event.data));
@@ -5959,7 +6026,9 @@ function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {
   }
   if (event.data instanceof Blob) {
     event.data.arrayBuffer().then((buffer) => {
-      if (!pane.closing) handleTerminalBytes(pane, new Uint8Array(buffer));
+      if (!pane.closing && pane.socket === socket) {
+        handleTerminalBytes(pane, new Uint8Array(buffer));
+      }
     });
     return;
   }
@@ -5967,7 +6036,7 @@ function handleSocketMessage(pane: TerminalPane, event: MessageEvent) {
 }
 
 function handleTerminalBytes(pane: TerminalPane, bytes: Uint8Array) {
-  if (bufferTerminalReplayBytes(pane, bytes)) return;
+  if (terminalReplayController.push(pane, bytes)) return;
   if (terminalTransfer.consumePaneOutput(pane, bytes)) return;
   writeTerminalBytes(pane, bytes);
 }
@@ -5988,11 +6057,8 @@ function handleServerText(pane: TerminalPane, text: string) {
     if (typeof event.cols === "number" && typeof event.rows === "number") {
       terminalControl.noteServerSize(pane, event.cols, event.rows);
     }
-    setPaneStatus(
-      pane,
-      pane.replaying ? tr("status.loadingGhostty") : tr("status.shellReady"),
-      pane.replaying ? "neutral" : "ok",
-    );
+    if (pane.replaying) paneConnectionLifecycle.markReplaying(pane);
+    else markPaneConnected(pane);
   } else if (event.type === "control-state") {
     terminalControl.noteControlState(pane, event);
   } else if (event.type === "agent-preparing") {
@@ -6011,7 +6077,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     return;
   } else if (event.type === "replay-start") {
     herdrWheelInputBatcher.clear(pane);
-    if (!matchesPaneReplay(pane, event)) {
+    if (!matchesTerminalReplayIdentity(pane, event)) {
       clearReplayInputLock(pane);
       pane.socket?.close();
       setPaneStatus(pane, tr("status.terminalError"), "error");
@@ -6021,22 +6087,16 @@ function handleServerText(pane: TerminalPane, text: string) {
       pane.lastReplayAfter = Math.max(0, Math.trunc(event.replay_after));
     }
     resetRemoteClientTerminalForReplay(pane);
+    validateReplayInputLock(
+      pane,
+      pane.socket,
+      remoteClientReplayLockTimeout(
+        pane.selector,
+        event.type,
+        REPLAY_INPUT_LOCK_TIMEOUT_MS,
+      ),
+    );
     pane.allowGeneratedInputDuringReplay = event.allow_generated_input === true;
-    if (pane.socket) {
-      beginReplayInputLock(
-        pane,
-        pane.socket,
-        remoteClientReplayLockTimeout(
-          pane.selector,
-          event.type,
-          REPLAY_INPUT_LOCK_TIMEOUT_MS,
-        ),
-      );
-    } else {
-      beginTerminalReplayBuffer(pane);
-      pane.remoteClipboardRetryClear?.();
-      pane.replaying = true;
-    }
   } else if (event.type === "error") {
     clearReplayInputLock(pane);
     if (event.message === "terminal control is held by another client") {
@@ -6045,6 +6105,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     pane.transport?.notifyError(event.message ?? tr("status.terminalError"));
     setPaneStatus(pane, event.message ?? tr("status.terminalError"), "error");
     if (event.fatal) {
+      paneConnectionLifecycle.markFatal(pane);
       if (terminalErrorBlocksReconnect(event)) pane.fatalErrorObserved = true;
       pane.exited = true;
       pane.sessionStatus = "stopped";
@@ -6060,6 +6121,7 @@ function handleServerText(pane: TerminalPane, text: string) {
       return;
     }
     pane.processExitObserved = true;
+    paneConnectionLifecycle.markFatal(pane);
     pane.exited = true;
     if (
       pane.sessionBackend === "herdr"
@@ -6096,29 +6158,24 @@ function handleServerText(pane: TerminalPane, text: string) {
     clearReplayInputLock(pane);
     clearPendingInput(pane);
     pane.sessionStatus = "stopped";
-    setPaneStatus(pane, event.message || tr("status.sessionStopped"), "neutral");
+    paneConnectionLifecycle.markIdle(pane, event.message || tr("status.sessionStopped"));
   } else if (event.type === "output-sequence") {
-    updatePaneOutputSequence(pane, event.sequence);
+    if (!terminalReplayController.markSequence(pane, event.sequence)) {
+      updatePaneOutputSequence(pane, event.sequence);
+    }
   } else if (event.type === "replay-complete") {
-    if (!matchesPaneReplay(pane, event)) {
+    if (!matchesTerminalReplayIdentity(pane, event)) {
       clearReplayInputLock(pane);
       pane.socket?.close();
       setPaneStatus(pane, tr("status.terminalError"), "error");
       return;
     }
-    updatePaneOutputSequence(pane, event.last_sequence, { allowReset: true });
-    pane.reconnectDelay = 1000;
-    finishReplayInputLock(pane);
-    if (pane.sessionStatus === "running") {
-      setPaneStatus(pane, tr("status.shellReady"), "ok");
-    }
+    const replaySocket = pane.socket;
+    void terminalReplayController.finish(pane, event.last_sequence).then((finished) => {
+      if (!finished || pane.socket !== replaySocket || pane.sessionStatus !== "running") return;
+      markPaneConnected(pane);
+    });
   }
-}
-
-function matchesPaneReplay(pane: TerminalPane, event: { session_id?: string; pane_id?: string }): boolean {
-  if (event.session_id && event.session_id !== pane.sessionId) return false;
-  if (event.pane_id && event.pane_id !== pane.workspacePaneId) return false;
-  return true;
 }
 
 function writeTerminalBytes(pane: TerminalPane, bytes: Uint8Array) {
@@ -6147,34 +6204,16 @@ function observeTerminalTitle(pane: TerminalPane, text: string) {
 }
 
 function scheduleReconnect(pane: TerminalPane) {
-  if (!canConnectPanePty(pane)) return;
-  if (pane.sessionStatus !== "running" && !settings.autoRestartSessions && !isHerdrTerminalPane(pane)) {
-    setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
-    return;
-  }
-  window.clearTimeout(pane.reconnectTimer);
-  const delay = pane.reconnectDelay;
-  pane.reconnectDelay = Math.min(pane.reconnectDelay * 2, 30000);
-  setPaneStatus(pane, tr("status.reconnecting", { seconds: Math.round(delay / 1000) }), "error");
-  pane.reconnectTimer = window.setTimeout(() => connectPanePty(pane), delay);
+  paneConnectionLifecycle.scheduleReconnect(pane);
 }
 
 function scheduleTerminalSizeRefresh() {
-  for (const timer of terminalResizeTimers) {
-    window.clearTimeout(timer);
-  }
-  terminalResizeTimers = TERMINAL_SIZE_REFRESH_DELAYS_MS.map((delay) => (
-    window.setTimeout(refreshTerminalSizes, delay)
-  ));
-}
-
-function refreshTerminalSizes() {
-  for (const pane of allPanes()) {
-    refreshPaneTerminalSize(pane);
-  }
+  const tab = activeTab();
+  if (tab) terminalResizeScheduler.scheduleAll(visiblePanes(tab));
 }
 
 function refreshPaneTerminalSize(pane: TerminalPane) {
+  const startedAt = performance.now();
   resetPaneViewport(pane);
   pane.term?.restty?.updateSize(true);
   const cols = pane.term?.cols ?? pane.cols;
@@ -6182,6 +6221,7 @@ function refreshPaneTerminalSize(pane: TerminalPane) {
   if (pane.socket?.readyState === WebSocket.OPEN && Number.isFinite(cols) && Number.isFinite(rows)) {
     sendPaneResize(pane, cols, rows);
   }
+  recordTerminalPerformance("resize", performance.now() - startedAt);
 }
 
 async function remountTerminalsForTouchMode() {
@@ -6206,6 +6246,7 @@ function activateTab(tabId: string, options: { focus?: boolean; sync?: boolean; 
     tab.mount.classList.toggle("active", active);
     tab.mount.setAttribute("aria-hidden", active ? "false" : "true");
   }
+  terminalResizeScheduler.scheduleAll(visiblePanes(tab));
   renderTabs();
   updateActiveDetails();
   renderHerdrDock();
@@ -6635,7 +6676,8 @@ async function promoteSessionToNewTab(sourceTab: TerminalTab, pane: TerminalPane
 
 function disposePaneLocal(pane: TerminalPane) {
   pane.closing = true;
-  window.clearTimeout(pane.reconnectTimer);
+  terminalResizeScheduler.cancel(pane);
+  paneConnectionLifecycle.clearReconnect(pane);
   clearReplayInputLock(pane);
   flushPaneDecoder(pane);
   clearPendingInput(pane);
@@ -6696,6 +6738,10 @@ function setPaneStatus(pane: TerminalPane, message: string, tone: Tone = "neutra
     setGlobalStatus(message, tone);
     updateActiveDetails();
   }
+}
+
+function markPaneConnected(pane: TerminalPane) {
+  paneConnectionLifecycle.markConnected(pane);
 }
 
 function setGlobalStatus(message: string, tone: Tone = "neutral") {

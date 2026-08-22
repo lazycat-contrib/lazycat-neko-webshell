@@ -135,6 +135,7 @@ export type ShellElements = {
   mobileQuickPhraseStatus: HTMLElement;
   autoRestartSessions: HTMLInputElement;
   debugMode: HTMLInputElement;
+  performanceMeterEnabled: HTMLInputElement;
   shortcutHelpButton: HTMLButtonElement;
   shortcutHelp: HTMLDivElement;
   shortcutHelpClose: HTMLButtonElement;
@@ -466,6 +467,10 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <input id="debugMode" type="checkbox" />
                 <span data-i18n="setting.debugAdapter">Debug adapter</span>
               </label>
+              <label class="switch">
+                <input id="performanceMeterEnabled" type="checkbox" />
+                <span data-i18n="setting.performanceMeter">FPS monitor</span>
+              </label>
             </section>
 
             <section class="settings-section" id="remoteHostsSettingsPanel" data-settings-panel="remote-hosts" role="tabpanel" hidden>
@@ -688,6 +693,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     mobileQuickPhraseStatus: qs<HTMLElement>("#mobileQuickPhraseStatus"),
     autoRestartSessions: qs<HTMLInputElement>("#autoRestartSessions"),
     debugMode: qs<HTMLInputElement>("#debugMode"),
+    performanceMeterEnabled: qs<HTMLInputElement>("#performanceMeterEnabled"),
     shortcutHelpButton: qs<HTMLButtonElement>("#shortcutHelpButton"),
     shortcutHelp: qs<HTMLDivElement>("#shortcutHelp"),
     shortcutHelpClose: qs<HTMLButtonElement>("#shortcutHelpClose"),

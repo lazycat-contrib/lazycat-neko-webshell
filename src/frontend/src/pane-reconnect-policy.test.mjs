@@ -2,9 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canConnectPane,
+  reconnectDelayWithJitter,
   shouldConnectRestoredPane,
   terminalErrorBlocksReconnect,
 } from "./pane-reconnect-policy.ts";
+
+test("adds bounded jitter without changing the exponential backoff base", () => {
+  assert.deepEqual(reconnectDelayWithJitter(1000, () => 0), {
+    delayMs: 800,
+    nextBaseDelayMs: 2000,
+  });
+  assert.deepEqual(reconnectDelayWithJitter(30_000, () => 1), {
+    delayMs: 30_000,
+    nextBaseDelayMs: 30_000,
+  });
+});
 
 const herdrPane = {
   sessionId: "session-1",

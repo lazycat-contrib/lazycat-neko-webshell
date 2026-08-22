@@ -10,6 +10,18 @@ export type PaneReconnectState = {
   closing?: boolean;
 };
 
+export function reconnectDelayWithJitter(
+  baseDelayMs: number,
+  random: () => number = Math.random,
+): { delayMs: number; nextBaseDelayMs: number } {
+  const base = Math.min(30_000, Math.max(1_000, Math.trunc(baseDelayMs)));
+  const jitter = 0.8 + Math.min(1, Math.max(0, random())) * 0.4;
+  return {
+    delayMs: Math.min(30_000, Math.max(1, Math.round(base * jitter))),
+    nextBaseDelayMs: Math.min(base * 2, 30_000),
+  };
+}
+
 export function terminalErrorBlocksReconnect(
   event: { fatal?: boolean; retryable?: boolean },
 ): boolean {

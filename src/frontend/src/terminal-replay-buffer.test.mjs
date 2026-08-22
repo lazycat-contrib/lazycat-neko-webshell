@@ -5,28 +5,38 @@ import {
   beginTerminalReplayBuffer,
   bufferTerminalReplayBytes,
   discardTerminalReplayBuffer,
-  drainTerminalReplayBuffer,
+  takeTerminalReplayBatch,
+  terminalReplayBufferStats,
 } from "./terminal-replay-buffer.ts";
 
-test("holds replay frames and drains them as one ordered terminal update", () => {
+test("drains replay in bounded ordered batches without one full-history allocation", () => {
   const pane = {};
   beginTerminalReplayBuffer(pane);
-
-  assert.equal(bufferTerminalReplayBytes(pane, new TextEncoder().encode("old ")), true);
-  assert.equal(bufferTerminalReplayBytes(pane, new TextEncoder().encode("latest")), true);
-
-  const replay = drainTerminalReplayBuffer(pane);
-  assert.equal(new TextDecoder().decode(replay), "old latest");
-  assert.equal(drainTerminalReplayBuffer(pane), undefined);
-  assert.equal(bufferTerminalReplayBytes(pane, new Uint8Array([1])), false);
+  assert.equal(bufferTerminalReplayBytes(pane, Uint8Array.from([1, 2, 3])), true);
+  assert.equal(bufferTerminalReplayBytes(pane, Uint8Array.from([4, 5, 6, 7])), true);
+  assert.deepEqual([...takeTerminalReplayBatch(pane, 4)], [1, 2, 3, 4]);
+  assert.deepEqual([...takeTerminalReplayBatch(pane, 4)], [5, 6, 7]);
+  assert.equal(takeTerminalReplayBatch(pane, 4), undefined);
+  assert.deepEqual(terminalReplayBufferStats(pane), {
+    bufferedBytes: 0,
+    totalBytes: 7,
+    chunkCount: 2,
+  });
 });
 
-test("discards an incomplete replay without exposing partial terminal state", () => {
+test("splits a single oversized chunk at the byte budget", () => {
   const pane = {};
   beginTerminalReplayBuffer(pane);
-  bufferTerminalReplayBytes(pane, new TextEncoder().encode("partial"));
+  bufferTerminalReplayBytes(pane, Uint8Array.from([1, 2, 3, 4, 5]));
+  assert.deepEqual([...takeTerminalReplayBatch(pane, 2)], [1, 2]);
+  assert.deepEqual([...takeTerminalReplayBatch(pane, 2)], [3, 4]);
+  assert.deepEqual([...takeTerminalReplayBatch(pane, 2)], [5]);
+});
 
+test("discard rejects subsequent replay bytes", () => {
+  const pane = {};
+  beginTerminalReplayBuffer(pane);
   discardTerminalReplayBuffer(pane);
-
-  assert.equal(drainTerminalReplayBuffer(pane), undefined);
+  assert.equal(bufferTerminalReplayBytes(pane, Uint8Array.of(1)), false);
+  assert.equal(terminalReplayBufferStats(pane), undefined);
 });

@@ -13,6 +13,7 @@ import type {
   WorkspaceState,
 } from "./types";
 import { isHerdrSocketRequestMethod } from "./herdr-socket-api";
+import { HttpRequestError } from "./http-request-error";
 
 export type WorkspaceRequestOptions = {
   cols: number;
@@ -39,12 +40,15 @@ export type WorkspaceActionRequestOptions = {
   pinnedOrder?: number;
 };
 
-export async function fetchInstances(): Promise<Instance[]> {
+export async function fetchInstances(signal?: AbortSignal): Promise<Instance[]> {
   const response = await fetch(new URL("./api/instances", window.location.href), {
     cache: "no-store",
     credentials: "same-origin",
+    signal,
   });
-  await throwIfFailed(response);
+  if (!response.ok) {
+    throw new HttpRequestError(await response.text() || response.statusText, response.status);
+  }
   const payload = await response.json() as unknown;
   if (!Array.isArray(payload)) {
     throw new Error("invalid instances response");

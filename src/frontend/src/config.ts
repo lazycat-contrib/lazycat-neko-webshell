@@ -180,6 +180,7 @@ export const DEFAULT_SETTINGS: Settings = {
   herdrActiveBackgroundLight: "#f0f7ff",
   autoRestartSessions: false,
   debugMode: false,
+  performanceMeterEnabled: false,
   aiProvider: DEFAULT_AI_PROVIDER,
   aiBaseUrl: "",
   aiApiKey: "",

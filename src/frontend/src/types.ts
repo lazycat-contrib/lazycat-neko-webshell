@@ -3,6 +3,14 @@ import type { Terminal } from "restty/xterm";
 import type { TerminalReplyAuthority } from "./terminal-reply-authority";
 
 export type Tone = "ok" | "error" | "neutral";
+export type TerminalConnectionState =
+  | "idle"
+  | "connecting"
+  | "replaying"
+  | "connected"
+  | "reconnecting"
+  | "offline"
+  | "fatal";
 export type TabLayout = "horizontal" | "vertical";
 export type CursorShape = "block" | "bar" | "underline";
 export type SplitPlacement = "up" | "down" | "left" | "right";
@@ -411,6 +419,7 @@ export type Settings = {
   herdrActiveBackgroundLight: string;
   autoRestartSessions: boolean;
   debugMode: boolean;
+  performanceMeterEnabled: boolean;
   aiProvider: string;
   aiBaseUrl: string;
   aiApiKey: string;
@@ -452,8 +461,9 @@ export type TerminalPane = {
   decoder?: TextDecoder;
   titleBuffer: string;
   reconnectTimer?: number;
-  replayTimer?: number;
   reconnectDelay: number;
+  connectionState: TerminalConnectionState;
+  hasConnected: boolean;
   processExitObserved?: boolean;
   fatalErrorObserved?: boolean;
   pendingInput: string[];

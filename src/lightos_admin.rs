@@ -48,6 +48,18 @@ impl LightOsAdminError {
             message: message.into(),
         }
     }
+
+    fn upstream_request(error: reqwest::Error) -> Self {
+        let status = if error.is_timeout() {
+            StatusCode::GATEWAY_TIMEOUT
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        Self {
+            status,
+            message: error.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,8 +121,10 @@ async fn list_visible_instances_from(
         .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
     let client_url = build_admin_url(base_url, "/api/client-instances")
         .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
-    let webshell = fetch_admin_json(client, webshell_url, headers.clone()).await?;
-    let client_instances = fetch_admin_json(client, client_url, headers).await?;
+    let (webshell, client_instances) = tokio::try_join!(
+        fetch_admin_json(client, webshell_url, headers.clone()),
+        fetch_admin_json(client, client_url, headers),
+    )?;
     let mut instances =
         parse_visible_instances(&webshell).map_err(LightOsAdminError::bad_gateway)?;
     instances
@@ -171,7 +185,7 @@ async fn fetch_admin_json(
         .headers(headers)
         .send()
         .await
-        .map_err(|error| LightOsAdminError::bad_gateway(error.to_string()))?;
+        .map_err(LightOsAdminError::upstream_request)?;
     let status = response.status();
     let body = read_limited_body(response, MAX_ADMIN_RESPONSE_BYTES, "LightOS admin response")
         .await
@@ -184,15 +198,22 @@ async fn fetch_admin_json(
             detail
         };
         return Err(LightOsAdminError {
-            status: if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-                status
-            } else {
-                StatusCode::BAD_GATEWAY
-            },
+            status: upstream_status_for_frontend(status),
             message,
         });
     }
     Ok(body)
+}
+
+fn upstream_status_for_frontend(status: StatusCode) -> StatusCode {
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => status,
+        StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => StatusCode::GATEWAY_TIMEOUT,
+        StatusCode::INTERNAL_SERVER_ERROR
+        | StatusCode::BAD_GATEWAY
+        | StatusCode::SERVICE_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+        _ => StatusCode::BAD_GATEWAY,
+    }
 }
 
 pub(crate) fn current_request_account_id(headers: &HeaderMap) -> Option<String> {
@@ -474,6 +495,7 @@ mod tests {
     use super::{
         account_id_from, build_admin_url, build_upstream_headers, fetch_admin_json,
         list_visible_instances_from, parse_client_instances, parse_visible_instances,
+        upstream_status_for_frontend,
     };
     use crate::proto::lazycat::webshell::v1::InstanceKind;
 
@@ -506,6 +528,22 @@ mod tests {
                 .expect("admin URL")
                 .as_str(),
             "https://admin.example/root/api/webshell/instances"
+        );
+    }
+
+    #[test]
+    fn classifies_only_transient_upstream_failures_for_frontend_retry() {
+        assert_eq!(
+            upstream_status_for_frontend(StatusCode::INTERNAL_SERVER_ERROR),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            upstream_status_for_frontend(StatusCode::BAD_GATEWAY),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            upstream_status_for_frontend(StatusCode::NOT_FOUND),
+            StatusCode::BAD_GATEWAY
         );
     }
 

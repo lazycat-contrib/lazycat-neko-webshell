@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, INTERFACE_STYLE_IDS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "../config";
+import { normalizeBooleanSetting } from "../boolean-setting";
 import { normalizeMobileQuickPhrases } from "../mobile/quick-input";
 import { normalizePreventMobileKeyboardAutoOpen } from "../mobile/settings/keyboard-preference";
 import {
@@ -103,6 +104,10 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     autoRestartSessions: value.autoRestartSessions ?? DEFAULT_SETTINGS.autoRestartSessions,
     tabLayout: value.tabLayout === "vertical" ? "vertical" : DEFAULT_SETTINGS.tabLayout,
     debugMode: value.debugMode ?? DEFAULT_SETTINGS.debugMode,
+    performanceMeterEnabled: normalizeBooleanSetting(
+      value.performanceMeterEnabled,
+      DEFAULT_SETTINGS.performanceMeterEnabled,
+    ),
     aiProvider: activeAiProfile?.provider ?? legacyProfile.provider,
     aiBaseUrl: activeAiProfile?.baseUrl ?? legacyProfile.baseUrl,
     aiApiKey: activeAiProfile?.apiKey ?? legacyProfile.apiKey,
