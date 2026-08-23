@@ -16,7 +16,6 @@
   color: var(--text);
   box-shadow: var(--shadow-deep);
   overflow: hidden;
-  backdrop-filter: blur(16px);
   opacity: 1;
   transform: translateX(0) scale(1);
   transform-origin: right center;
@@ -285,25 +284,8 @@
   gap: 12px;
   border-top: 0;
   border-radius: 10px;
-  background:
-    radial-gradient(circle at 50% 22%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 42%),
-    var(--component-wash),
-    var(--surface);
+  background: var(--surface);
   padding: 14px;
-}
-
-.pomodoro-tool[data-pomodoro-state="running"] {
-  background:
-    radial-gradient(circle at 50% 20%, color-mix(in srgb, var(--danger) 20%, transparent), transparent 44%),
-    linear-gradient(180deg, color-mix(in srgb, var(--danger) 12%, transparent), transparent 52%),
-    var(--surface);
-}
-
-.pomodoro-tool[data-pomodoro-state="completed"] {
-  background:
-    radial-gradient(circle at 50% 20%, color-mix(in srgb, var(--ok) 18%, transparent), transparent 44%),
-    linear-gradient(180deg, color-mix(in srgb, var(--ok) 10%, transparent), transparent 52%),
-    var(--surface);
 }
 
 .pomodoro-tool-head {
@@ -338,9 +320,6 @@
   gap: 6px;
   min-height: 126px;
   place-content: center;
-  border: 1px solid color-mix(in srgb, var(--component-border) 76%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--surface-2) 74%, transparent);
   padding: 16px;
 }
 

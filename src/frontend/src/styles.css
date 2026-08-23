@@ -512,12 +512,10 @@ textarea:focus-visible {
 
 .tab-status[data-tone="ok"] {
   background: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-soft);
 }
 
 .tab-status[data-tone="error"] {
   background: var(--danger);
-  box-shadow: 0 0 0 3px var(--danger-soft);
 }
 
 .tab-title {
@@ -720,7 +718,6 @@ textarea:focus-visible {
     var(--menu-bg);
   color: var(--menu-text);
   box-shadow: var(--shadow-popover);
-  backdrop-filter: blur(16px);
 }
 
 .new-tab-menu button {
@@ -1226,12 +1223,10 @@ textarea:focus-visible {
 
 .herdr-protocol-notice[data-state="newer"] {
   color: var(--warning);
-  box-shadow: 0 0 0 3px var(--warning-soft);
 }
 
 .herdr-protocol-notice[data-state="older"] {
   color: var(--ok);
-  box-shadow: 0 0 0 3px var(--ok-soft);
 }
 
 .herdr-protocol-notice svg {
@@ -1341,17 +1336,14 @@ textarea:focus-visible {
   border-radius: 999px;
   flex: 0 0 auto;
   background: var(--status-idle);
-  box-shadow: 0 0 0 4px var(--line-soft);
 }
 
 .status-dot[data-status="running"] {
   background: var(--status-running);
-  box-shadow: 0 0 0 4px var(--ok-soft);
 }
 
 .status-dot[data-status="stopped"] {
   background: var(--status-stopped);
-  box-shadow: 0 0 0 4px var(--danger-soft);
 }
 
 .switcher-menu {
@@ -1369,7 +1361,6 @@ textarea:focus-visible {
     var(--menu-wash),
     var(--menu-bg);
   box-shadow: var(--shadow-popover);
-  backdrop-filter: blur(16px);
 }
 
 .pane-menu,
@@ -1385,7 +1376,6 @@ textarea:focus-visible {
     var(--menu-wash),
     var(--menu-bg);
   box-shadow: var(--shadow-popover);
-  backdrop-filter: blur(16px);
 }
 
 .settings-menu {
@@ -1411,7 +1401,6 @@ textarea:focus-visible {
     var(--menu-wash),
     var(--menu-bg);
   box-shadow: var(--shadow-popover);
-  backdrop-filter: blur(16px);
 }
 
 .notification-button.has-unread {
@@ -1733,7 +1722,6 @@ textarea:focus-visible {
     var(--menu-wash),
     var(--menu-bg);
   box-shadow: var(--shadow-popover);
-  backdrop-filter: blur(16px);
 }
 
 .herdr-workspace-menu-list {
