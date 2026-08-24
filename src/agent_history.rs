@@ -65,6 +65,12 @@ impl AgentHistory {
         self.prune();
     }
 
+    pub fn clear(&mut self) {
+        self.frames.clear();
+        self.total_bytes = 0;
+        self.total_lines = 0;
+    }
+
     // Keep the original replay API available for callers that do not need explicit bounds.
     #[allow(dead_code)]
     pub fn snapshot_after(&self, sequence: u64) -> (Vec<AgentHistoryFrame>, u64) {

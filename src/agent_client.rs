@@ -1623,22 +1623,23 @@ mod tests {
     #[test]
     fn agent_ready_cache_preserves_feature_version_requirements() {
         let selector = format!("cache-test-{}", std::process::id());
-        mark_agent_ensured(&selector, MIN_SUPPORTED_AGENT_VERSION);
+        let weaker_version = MIN_SUPPORTED_AGENT_VERSION.saturating_sub(1);
+        mark_agent_ensured(&selector, weaker_version);
         assert!(agent_was_recently_ensured(
             &selector,
-            MIN_SUPPORTED_AGENT_VERSION,
+            weaker_version,
             Instant::now(),
         ));
         assert!(!agent_was_recently_ensured(
             &selector,
-            AGENT_VERSION,
+            MIN_SUPPORTED_AGENT_VERSION,
             Instant::now(),
         ));
 
-        mark_agent_ensured(&selector, AGENT_VERSION);
+        mark_agent_ensured(&selector, MIN_SUPPORTED_AGENT_VERSION);
         assert!(agent_was_recently_ensured(
             &selector,
-            AGENT_VERSION,
+            MIN_SUPPORTED_AGENT_VERSION,
             Instant::now(),
         ));
 
@@ -1653,21 +1654,26 @@ mod tests {
     #[test]
     fn stronger_agent_failure_cooldown_does_not_block_weaker_features() {
         let selector = format!("failure-cache-test-{}", std::process::id());
-        mark_agent_ensure_failure(&selector, AGENT_VERSION, "v9 failed".to_owned());
+        let stronger_version = MIN_SUPPORTED_AGENT_VERSION.saturating_add(1);
+        mark_agent_ensure_failure(
+            &selector,
+            stronger_version,
+            "stronger feature failed".to_owned(),
+        );
 
         assert!(
             recent_agent_ensure_failure(&selector, MIN_SUPPORTED_AGENT_VERSION, Instant::now())
                 .is_none()
         );
         assert_eq!(
-            recent_agent_ensure_failure(&selector, AGENT_VERSION, Instant::now()).as_deref(),
-            Some("v9 failed")
+            recent_agent_ensure_failure(&selector, stronger_version, Instant::now()).as_deref(),
+            Some("stronger feature failed")
         );
 
         clear_agent_ensure_failure(&selector, MIN_SUPPORTED_AGENT_VERSION);
-        assert!(recent_agent_ensure_failure(&selector, AGENT_VERSION, Instant::now()).is_some());
-        clear_agent_ensure_failure(&selector, AGENT_VERSION);
-        assert!(recent_agent_ensure_failure(&selector, AGENT_VERSION, Instant::now()).is_none());
+        assert!(recent_agent_ensure_failure(&selector, stronger_version, Instant::now()).is_some());
+        clear_agent_ensure_failure(&selector, stronger_version);
+        assert!(recent_agent_ensure_failure(&selector, stronger_version, Instant::now()).is_none());
     }
 
     #[test]

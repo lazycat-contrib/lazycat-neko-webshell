@@ -686,6 +686,7 @@ impl OutputBuffer {
             .history_lock
             .lock()
             .expect("terminal output history lock poisoned");
+        let record = record && !self.history_closed.load(Ordering::Relaxed);
         let (frame, first_retained_sequence) = {
             let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
             inner.next_sequence = inner.next_sequence.saturating_add(1);
@@ -828,22 +829,16 @@ impl OutputBuffer {
         }
     }
 
-    pub fn detach_history(&self) {
-        self.history_closed.store(true, Ordering::Relaxed);
-    }
-
-    #[cfg(test)]
     pub fn delete_history(&self) {
         self.history_closed.store(true, Ordering::Relaxed);
         let _history_guard = self
             .history_lock
             .lock()
             .expect("terminal output history lock poisoned");
-        if let Some(store) = &self.store
-            && let Err(err) = store.remove()
-        {
-            warn!(error = %err, session_id = %store.session_id, "failed to remove terminal output history");
-        }
+        let mut inner = self.inner.lock().expect("terminal output buffer poisoned");
+        inner.frames.clear();
+        inner.total_bytes = 0;
+        inner.total_lines = 0;
     }
 }
 
@@ -1108,6 +1103,18 @@ mod tests {
         assert_eq!(last_sequence, 2);
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].sequence, 1);
+    }
+
+    #[test]
+    fn deleted_history_rejects_late_recorded_frames() {
+        let output = OutputBuffer::new(128);
+        output.push(b"before close".to_vec());
+
+        output.delete_history();
+        let late = output.push(b"late output".to_vec());
+
+        assert_eq!(late.sequence, 2);
+        assert!(output.snapshot_after(0).0.is_empty());
     }
 
     #[test]

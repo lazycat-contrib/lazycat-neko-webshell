@@ -2447,7 +2447,7 @@ async fn resolve_terminal_target(
                     return Err(err);
                 }
             };
-            let output = state.output_buffer(session_id, spec.output_frame_limit);
+            let output = state.output_buffer(session_id, spec.output_frame_limit)?;
             return Ok(TerminalAttachTarget::Managed(ManagedTerminalAttachTarget {
                 spec,
                 allow_spawn,
@@ -2482,7 +2482,7 @@ async fn resolve_terminal_target(
         };
         let lifetime = managed_terminal_lifetime(backend);
         let output = if lifetime == ManagedTerminalLifetime::Persistent {
-            Some(state.output_buffer(session_id, spec.output_frame_limit))
+            Some(state.output_buffer(session_id, spec.output_frame_limit)?)
         } else {
             None
         };

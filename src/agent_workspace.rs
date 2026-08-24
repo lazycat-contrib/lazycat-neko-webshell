@@ -192,7 +192,11 @@ impl AgentPane {
     }
 
     fn close(&self) {
+        self.history_recording.store(false, Ordering::Relaxed);
         self.pty.close();
+        if let Ok(mut history) = self.history.lock() {
+            history.clear();
+        }
         if let Ok(mut status) = self.status.lock() {
             status.clear();
             status.push_str("closed");
@@ -200,12 +204,13 @@ impl AgentPane {
     }
 
     fn push_output(&self, data: Vec<u8>) {
-        let record = self.history_recording.load(Ordering::Relaxed);
-        let frame = self
+        let mut history = self
             .history
             .lock()
-            .expect("agent pane history lock poisoned")
-            .push_recorded(data, record);
+            .expect("agent pane history lock poisoned");
+        let record = self.history_recording.load(Ordering::Relaxed);
+        let frame = history.push_recorded(data, record);
+        drop(history);
         self.broadcast(&AgentPaneEvent::Output(frame));
     }
 
@@ -1218,6 +1223,14 @@ mod tests {
             .ensure_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
             .unwrap();
         let session_id = initial.tabs[0].panes[0].session_id.clone().unwrap();
+        let pane = workspace.pane("pane-1").unwrap();
+        pane.push_output(b"history before close".to_vec());
+        assert_eq!(
+            pane.snapshot_after_bounded(0, usize::MAX, usize::MAX)
+                .frames
+                .len(),
+            1
+        );
 
         let closed = workspace
             .close_session(&session_id, DEFAULT_COLS, DEFAULT_ROWS, 32)
@@ -1225,6 +1238,17 @@ mod tests {
 
         assert_eq!(closed.tabs.len(), 0);
         assert!(workspace.pane("pane-1").is_err());
+        assert!(
+            pane.snapshot_after_bounded(0, usize::MAX, usize::MAX)
+                .frames
+                .is_empty()
+        );
+        pane.push_output(b"late output".to_vec());
+        assert!(
+            pane.snapshot_after_bounded(0, usize::MAX, usize::MAX)
+                .frames
+                .is_empty()
+        );
     }
 
     #[test]

@@ -747,7 +747,15 @@ pub(crate) async fn post_herdr_output_sequence(
 ) -> Result<Json<HerdrOutputSequenceResponse>, HerdrBridgeError> {
     let target = authorize_lightos_target(&request.name).await?;
     let session_id = request.session_id.trim();
-    authorize_herdr_output_sequence_session(&state, &target.selector, session_id)?;
+    let workspaces = state.workspaces.read().map_err(|_| HerdrBridgeError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: "workspace store lock poisoned".to_owned(),
+    })?;
+    let sessions = state.sessions.read().map_err(|_| HerdrBridgeError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: "session store lock poisoned".to_owned(),
+    })?;
+    validate_herdr_output_sequence_session(&workspaces, &sessions, &target.selector, session_id)?;
     let sequence = state
         .database()
         .store_herdr_output_sequence(session_id, request.sequence)
@@ -1778,16 +1786,29 @@ fn authorize_herdr_output_sequence_session(
     selector: &str,
     session_id: &str,
 ) -> Result<(), HerdrBridgeError> {
+    let workspaces = state.workspaces.read().map_err(|_| HerdrBridgeError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: "workspace store lock poisoned".to_owned(),
+    })?;
+    let sessions = state.sessions.read().map_err(|_| HerdrBridgeError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: "session store lock poisoned".to_owned(),
+    })?;
+    validate_herdr_output_sequence_session(&workspaces, &sessions, selector, session_id)
+}
+
+fn validate_herdr_output_sequence_session(
+    workspaces: &HashMap<String, crate::workspace::WorkspaceRecord>,
+    sessions: &HashMap<String, crate::state::SessionRecord>,
+    selector: &str,
+    session_id: &str,
+) -> Result<(), HerdrBridgeError> {
     if session_id.is_empty() {
         return Err(HerdrBridgeError {
             status: StatusCode::BAD_REQUEST,
             message: "session_id is required".to_owned(),
         });
     }
-    let sessions = state.sessions.read().map_err(|_| HerdrBridgeError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        message: "session store lock poisoned".to_owned(),
-    })?;
     let Some(session) = sessions.get(session_id) else {
         return Err(HerdrBridgeError {
             status: StatusCode::NOT_FOUND,
@@ -1810,12 +1831,6 @@ fn authorize_herdr_output_sequence_session(
             message: "session is not a Herdr session".to_owned(),
         });
     }
-    drop(sessions);
-
-    let workspaces = state.workspaces.read().map_err(|_| HerdrBridgeError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        message: "workspace store lock poisoned".to_owned(),
-    })?;
     let in_workspace = workspaces.get(selector).is_some_and(|workspace| {
         workspace
             .tabs

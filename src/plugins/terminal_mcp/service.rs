@@ -603,7 +603,8 @@ impl TerminalControlService {
         let mut events = terminal.as_ref().map(|terminal| terminal.subscribe());
         let output = self
             .state
-            .output_buffer(&session.id, session.output_frame_limit());
+            .output_buffer(&session.id, session.output_frame_limit())
+            .map_err(|_| TerminalMcpError::session_not_found())?;
         let mut snapshot = output.snapshot_after_bounded(after_sequence, max_bytes, 1024);
         let mut timed_out = false;
         if snapshot.frames.is_empty() && wait_ms > 0 {

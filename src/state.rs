@@ -137,7 +137,11 @@ impl AppState {
         PluginStore::new(Arc::clone(&self.database)).save(plugins)
     }
 
-    pub fn output_buffer(&self, session_id: &str, limit: usize) -> Arc<OutputBuffer> {
+    pub fn output_buffer(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Arc<OutputBuffer>> {
         self.sessions.output_buffer(session_id, limit)
     }
 
@@ -1199,16 +1203,27 @@ mod tests {
     #[test]
     fn output_buffers_are_session_scoped_until_removed() {
         let state = test_app_state();
+        {
+            let mut sessions = state.sessions.write().unwrap();
+            sessions.insert(
+                "session-one".to_owned(),
+                test_session("session-one", "running", Some(false)),
+            );
+            sessions.insert(
+                "session-two".to_owned(),
+                test_session("session-two", "running", Some(false)),
+            );
+        }
 
-        let first = state.output_buffer("session-one", 128);
-        let second = state.output_buffer("session-one", 512);
-        let other = state.output_buffer("session-two", 128);
+        let first = state.output_buffer("session-one", 128).unwrap();
+        let second = state.output_buffer("session-one", 512).unwrap();
+        let other = state.output_buffer("session-two", 128).unwrap();
 
         assert!(Arc::ptr_eq(&first, &second));
         assert!(!Arc::ptr_eq(&first, &other));
 
-        state.sessions.remove_output_buffer("session-one");
-        let recreated = state.output_buffer("session-one", 128);
+        state.sessions.delete_output_history("session-one");
+        let recreated = state.output_buffer("session-one", 128).unwrap();
 
         assert!(!Arc::ptr_eq(&first, &recreated));
     }

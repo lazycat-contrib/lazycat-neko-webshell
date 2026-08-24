@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "lazycat-neko-webshell"
-version = "0.7.21"
+version = "0.7.22"
 dependencies = [
  "anyhow",
  "async-openai",
