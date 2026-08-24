@@ -469,7 +469,7 @@ export function renderShell(app: HTMLElement): ShellElements {
               </label>
               <label class="switch">
                 <input id="performanceMeterEnabled" type="checkbox" />
-                <span data-i18n="setting.performanceMeter">FPS monitor</span>
+                <span data-i18n="setting.performanceMeter">Frame scheduler monitor</span>
               </label>
             </section>
 

@@ -3,8 +3,8 @@ const WARMUP_FRAMES = 12;
 const MAX_INTERVALS = 90;
 
 export type PerformanceMeterSample = {
-  fps: number;
-  refreshRate: number;
+  rafRate: number;
+  p95FrameTimeMs: number;
 };
 
 export function calculatePerformanceMeterSample(
@@ -15,12 +15,12 @@ export function calculatePerformanceMeterSample(
   const validIntervals = frameIntervals
     .filter((interval) => Number.isFinite(interval) && interval > 0 && interval < 1000)
     .sort((left, right) => left - right);
-  const median = validIntervals.length > 0
-    ? validIntervals[Math.floor(validIntervals.length / 2)]
+  const p95 = validIntervals.length > 0
+    ? validIntervals[Math.max(0, Math.ceil(validIntervals.length * 0.95) - 1)]
     : 0;
   return {
-    fps: elapsedMs > 0 ? Math.max(0, Math.round(frameCount * 1000 / elapsedMs)) : 0,
-    refreshRate: median > 0 ? Math.max(0, Math.round(1000 / median)) : 0,
+    rafRate: elapsedMs > 0 ? Math.max(0, Math.round(frameCount * 1000 / elapsedMs)) : 0,
+    p95FrameTimeMs: p95 > 0 ? Math.round(p95 * 10) / 10 : 0,
   };
 }
 
@@ -28,19 +28,19 @@ export function createPerformanceMeter(root: HTMLElement) {
   let frame = 0;
   let enabled = false;
   let meter: HTMLDivElement | undefined;
-  let fpsLabel: HTMLSpanElement | undefined;
-  let refreshLabel: HTMLSpanElement | undefined;
+  let rateLabel: HTMLSpanElement | undefined;
+  let frameTimeLabel: HTMLSpanElement | undefined;
 
   function mount(): void {
     if (meter?.isConnected) return;
     meter = document.createElement("div");
     meter.className = "performance-meter";
     meter.setAttribute("aria-hidden", "true");
-    fpsLabel = document.createElement("span");
-    refreshLabel = document.createElement("span");
-    fpsLabel.textContent = "-- FPS";
-    refreshLabel.textContent = "-- Hz";
-    meter.append(fpsLabel, refreshLabel);
+    rateLabel = document.createElement("span");
+    frameTimeLabel = document.createElement("span");
+    rateLabel.textContent = "RAF --/s";
+    frameTimeLabel.textContent = "P95 -- ms";
+    meter.append(rateLabel, frameTimeLabel);
     root.appendChild(meter);
   }
 
@@ -76,10 +76,10 @@ export function createPerformanceMeter(root: HTMLElement) {
       const elapsed = time - sampleStart;
       if (elapsed >= SAMPLE_MS) {
         const sample = calculatePerformanceMeterSample(sampleFrames, elapsed, intervals);
-        if (fpsLabel) fpsLabel.textContent = `${sample.fps} FPS`;
-        if (refreshLabel) refreshLabel.textContent = sample.refreshRate > 0
-          ? `${sample.refreshRate} Hz`
-          : "-- Hz";
+        if (rateLabel) rateLabel.textContent = `RAF ${sample.rafRate}/s`;
+        if (frameTimeLabel) frameTimeLabel.textContent = sample.p95FrameTimeMs > 0
+          ? `P95 ${sample.p95FrameTimeMs.toFixed(1)} ms`
+          : "P95 -- ms";
         sampleStart = time;
         sampleFrames = 0;
       }
@@ -93,8 +93,8 @@ export function createPerformanceMeter(root: HTMLElement) {
     frame = 0;
     meter?.remove();
     meter = undefined;
-    fpsLabel = undefined;
-    refreshLabel = undefined;
+    rateLabel = undefined;
+    frameTimeLabel = undefined;
   }
 
   function setEnabled(next: boolean): void {

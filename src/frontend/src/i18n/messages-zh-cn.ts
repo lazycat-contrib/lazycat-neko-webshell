@@ -419,7 +419,7 @@ export const zhCNMessages = {
   "setting.copyOnSelect": "选中即复制",
   "setting.cursorBlink": "光标闪烁",
   "setting.debugAdapter": "调试适配器",
-  "setting.performanceMeter": "FPS 监视器",
+  "setting.performanceMeter": "帧调度监视器",
   "setting.defaultSessionBackendHelp": "+ 按钮使用这个后端创建。Herdr 已有引擎入口时，再点 + 会在同一个 Herdr session 里新建 Workspace。",
   "setting.aiTerminalContext": "终端上下文",
   "setting.fontHinting": "字体微调",

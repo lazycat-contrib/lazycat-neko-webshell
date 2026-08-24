@@ -417,7 +417,7 @@ export const enMessages = {
   "setting.copyOnSelect": "Copy on select",
   "setting.cursorBlink": "Cursor blink",
   "setting.debugAdapter": "Debug adapter",
-  "setting.performanceMeter": "FPS monitor",
+  "setting.performanceMeter": "Frame scheduler monitor",
   "setting.defaultSessionBackendHelp": "The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.",
   "setting.aiTerminalContext": "Terminal context",
   "setting.fontHinting": "Font hinting",
