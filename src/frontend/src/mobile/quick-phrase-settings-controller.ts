@@ -4,6 +4,7 @@ import {
   createMobileQuickPhraseEditor,
   type MobileQuickPhraseEditorElements,
 } from "./quick-phrase-editor";
+import { moveMobileQuickPhrase } from "./quick-input";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -59,6 +60,12 @@ export function createMobileQuickPhraseSettingsController(options: MobileQuickPh
       options.saveSettings();
       options.onChanged();
       setStatus(options.tr("status.quickPhraseRemoved"));
+    },
+    move(id: string, direction: -1 | 1) {
+      const phrases = moveMobileQuickPhrase(options.phrases(), id, direction);
+      options.setPhrases(phrases);
+      options.saveSettings();
+      options.onChanged();
     },
     setStatus,
   };

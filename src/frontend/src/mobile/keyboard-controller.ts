@@ -22,6 +22,8 @@ import {
 } from "./quick-input";
 import type { MobileQuickPhrase } from "../types";
 import { updateSystemKeyboardToggleState } from "./system-keyboard-state";
+import type { MobileKeyboardLayout, MobileKeyboardPresetId } from "./keyboard-layout-types.ts";
+import { renderMobileKeyboardPanels } from "./keyboard-layout-view.ts";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -42,6 +44,8 @@ export type MobileKeyboardRenderInput = {
   phrases: MobileQuickPhrase[];
   symbolAgent: MobileSymbolAgent;
   tr: Translate;
+  layout: MobileKeyboardLayout;
+  preset: MobileKeyboardPresetId;
 };
 
 export function createMobileKeyboardController(options: MobileKeyboardControllerOptions) {
@@ -102,7 +106,7 @@ export function createMobileKeyboardController(options: MobileKeyboardController
         : null;
       if (
         event.target instanceof Element
-        && event.target.closest("[data-mobile-shortcut], [data-mobile-action], [data-mobile-chord], [data-mobile-page], [data-mobile-phrase]")
+        && event.target.closest("[data-mobile-shortcut], [data-mobile-action], [data-mobile-chord], [data-mobile-text], [data-mobile-page], [data-mobile-phrase]")
       ) {
         event.preventDefault();
       }
@@ -123,6 +127,16 @@ export function createMobileKeyboardController(options: MobileKeyboardController
       else if (activation.kind === "page") activatePage(activation.value);
       else if (activation.kind === "phrase") void runPhrase(activation.value, restore);
       else if (activation.kind === "action") void runAction(activation.value, restore);
+      else if (activation.kind === "text") runText(activation.value, button.dataset.mobileAutoEnter === "true", restore);
+    });
+
+    options.root.addEventListener("pointerdown", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest<HTMLButtonElement>("[data-mobile-text]")
+        : null;
+      if (!button) return;
+      event.preventDefault();
+      runText(button.dataset.mobileText ?? "", button.dataset.mobileAutoEnter === "true", takeKeyboardRestore(button));
     });
 
     options.root.addEventListener("pointerdown", (event) => {
@@ -182,38 +196,45 @@ export function createMobileKeyboardController(options: MobileKeyboardController
       activatePage(button.dataset.mobilePage ?? "");
     });
 
-    options.root.querySelectorAll<HTMLButtonElement>("[data-mobile-repeat='true']").forEach((button) => {
-      button.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
-        button.setPointerCapture?.(event.pointerId);
-        const shortcut = button.dataset.mobileShortcut ?? "";
-        void runShortcut(shortcut, { keepModifiers: true }, takeKeyboardRestore(button));
-        window.clearTimeout(repeatTimer);
-        window.clearInterval(repeatInterval);
-        repeatTimer = window.setTimeout(() => {
-          repeatInterval = window.setInterval(() => {
-            void runShortcut(shortcut, { keepModifiers: true }, options.preserveSystemKeyboardState());
-          }, 86);
-        }, 360);
-      });
-      const stopRepeat = () => {
-        stopRepeatInput();
-        clearSticky();
-      };
-      button.addEventListener("pointerup", stopRepeat);
-      button.addEventListener("pointercancel", stopRepeat);
-      button.addEventListener("lostpointercapture", stopRepeat);
+    options.root.addEventListener("pointerdown", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest<HTMLButtonElement>("[data-mobile-repeat='true']")
+        : null;
+      if (!button) return;
+      event.preventDefault();
+      button.setPointerCapture?.(event.pointerId);
+      const shortcut = button.dataset.mobileShortcut ?? "";
+      void runShortcut(shortcut, { keepModifiers: true }, takeKeyboardRestore(button));
+      window.clearTimeout(repeatTimer);
+      window.clearInterval(repeatInterval);
+      repeatTimer = window.setTimeout(() => {
+        repeatInterval = window.setInterval(() => {
+          void runShortcut(shortcut, { keepModifiers: true }, options.preserveSystemKeyboardState());
+        }, 86);
+      }, 360);
     });
+    const stopRepeat = () => {
+      if (repeatTimer === undefined && repeatInterval === undefined) return;
+      stopRepeatInput();
+      clearSticky();
+    };
+    options.root.addEventListener("pointerup", stopRepeat);
+    options.root.addEventListener("pointercancel", stopRepeat);
+    options.root.addEventListener("lostpointercapture", stopRepeat);
     updateShortcutState();
   }
 
   function renderQuickInput(input: MobileKeyboardRenderInput): MobileQuickPhrase[] {
     const pages = options.root.querySelector<HTMLElement>(".mobile-keyboard-pages");
     const pageTabs = options.root.querySelector<HTMLElement>(".mobile-keyboard-page-tabs");
-    const symPanel = options.root.querySelector<HTMLElement>("[data-mobile-panel='sym']");
-    const phrasePanel = options.root.querySelector<HTMLElement>("[data-mobile-panel='phrases']");
-    if (!pages || !pageTabs || !symPanel || !phrasePanel) return input.phrases;
+    const controls = options.root.querySelector<HTMLElement>(".mobile-keyboard-controls");
+    if (!pages || !pageTabs || !controls) return input.phrases;
     const currentPage = activePage();
+    controls.innerHTML = `${renderMobileKeyboardPanels(input.layout)}<div class="mobile-keyboard-panel" data-mobile-panel="phrases" hidden></div>`;
+    updateShortcutState();
+    const symPanel = controls.querySelector<HTMLElement>("[data-mobile-panel='sym']");
+    const phrasePanel = controls.querySelector<HTMLElement>("[data-mobile-panel='phrases']");
+    if (!symPanel || !phrasePanel) return input.phrases;
 
     const phraseButton = pages.querySelector<HTMLElement>("[data-mobile-page='phrases']");
     phraseButton?.remove();
@@ -225,7 +246,7 @@ export function createMobileKeyboardController(options: MobileKeyboardController
       activatePage("sym");
     }
 
-    symPanel.innerHTML = renderMobileSymbolKeyboardPanel(input.symbolAgent);
+    if (input.preset !== "custom") symPanel.innerHTML = renderMobileSymbolKeyboardPanel(input.symbolAgent);
     phrasePanel.innerHTML = renderMobileQuickPhraseKeyboardPanel(phrases);
     activatePage(currentPage === "phrases" && !phrases.length ? "sym" : currentPage);
     return phrases;
@@ -281,6 +302,12 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     if (data) {
       options.onKeyInput(data);
     }
+    clearSticky();
+    restoreKeyboard();
+  }
+
+  function runText(text: string, autoEnter: boolean, restoreKeyboard: () => void) {
+    if (text) options.onKeyInput(autoEnter ? `${text}\r` : text);
     clearSticky();
     restoreKeyboard();
   }

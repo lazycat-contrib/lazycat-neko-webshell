@@ -3,6 +3,7 @@ import { renderAboutDialog } from "./about-view";
 import { renderHerdrJumpShell } from "./herdr-jump-shell";
 import { renderHerdrNotificationSettingsView } from "./herdr-notifications/settings-view";
 import { renderMobileKeyboardView } from "./mobile/keyboard-view";
+import { renderMobileWorkspaceOverviewShell } from "./mobile/workspace-overview-view";
 import { renderMobileSettingsView } from "./mobile/settings-view";
 import { renderTerminalControlSettingsView } from "./terminal-control/settings-view";
 
@@ -43,6 +44,7 @@ export type ShellElements = {
   herdrHandoff: HTMLButtonElement;
   terminalStage: HTMLDivElement;
   mobileShortcuts: HTMLDivElement;
+  mobileWorkspaceOverview: HTMLDivElement;
   terminalInputActionsSurface: HTMLDivElement;
   mobileShortcutClock: HTMLSpanElement;
   emptyState: HTMLDivElement;
@@ -127,9 +129,12 @@ export type ShellElements = {
   mobileClockUse24Hour: HTMLInputElement;
   mobileClockShowPeriod: HTMLInputElement;
   mobileQuickPhraseSettings: HTMLDivElement;
+  mobileKeyboardLayoutSettings: HTMLDivElement;
   mobileQuickPhraseList: HTMLDivElement;
   mobileQuickPhraseLabel: HTMLInputElement;
+  mobileQuickPhraseGroup: HTMLInputElement;
   mobileQuickPhraseText: HTMLTextAreaElement;
+  mobileQuickPhraseSendEnter: HTMLInputElement;
   mobileQuickPhraseSave: HTMLButtonElement;
   mobileQuickPhraseCancel: HTMLButtonElement;
   mobileQuickPhraseStatus: HTMLElement;
@@ -285,6 +290,7 @@ export function renderShell(app: HTMLElement): ShellElements {
       </div>
 
       ${renderMobileKeyboardView()}
+      ${renderMobileWorkspaceOverviewShell()}
 
       <div class="terminal-input-actions-surface" id="terminalInputActionsSurface" hidden></div>
 
@@ -601,6 +607,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     herdrHandoff: qs<HTMLButtonElement>("#herdrHandoff"),
     terminalStage: qs<HTMLDivElement>("#terminalStage"),
     mobileShortcuts: qs<HTMLDivElement>("#mobileShortcuts"),
+    mobileWorkspaceOverview: qs<HTMLDivElement>("#mobileWorkspaceOverview"),
     terminalInputActionsSurface: qs<HTMLDivElement>("#terminalInputActionsSurface"),
     mobileShortcutClock: qs<HTMLSpanElement>("#mobileShortcutClock"),
     emptyState: qs<HTMLDivElement>("#emptyState"),
@@ -685,9 +692,12 @@ export function renderShell(app: HTMLElement): ShellElements {
     mobileClockUse24Hour: qs<HTMLInputElement>("#mobileClockUse24Hour"),
     mobileClockShowPeriod: qs<HTMLInputElement>("#mobileClockShowPeriod"),
     mobileQuickPhraseSettings: qs<HTMLDivElement>("#mobileQuickPhraseSettings"),
+    mobileKeyboardLayoutSettings: qs<HTMLDivElement>("#mobileKeyboardLayoutSettings"),
     mobileQuickPhraseList: qs<HTMLDivElement>("#mobileQuickPhraseList"),
     mobileQuickPhraseLabel: qs<HTMLInputElement>("#mobileQuickPhraseLabel"),
+    mobileQuickPhraseGroup: qs<HTMLInputElement>("#mobileQuickPhraseGroup"),
     mobileQuickPhraseText: qs<HTMLTextAreaElement>("#mobileQuickPhraseText"),
+    mobileQuickPhraseSendEnter: qs<HTMLInputElement>("#mobileQuickPhraseSendEnter"),
     mobileQuickPhraseSave: qs<HTMLButtonElement>("#mobileQuickPhraseSave"),
     mobileQuickPhraseCancel: qs<HTMLButtonElement>("#mobileQuickPhraseCancel"),
     mobileQuickPhraseStatus: qs<HTMLElement>("#mobileQuickPhraseStatus"),

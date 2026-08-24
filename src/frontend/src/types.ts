@@ -1,6 +1,7 @@
 import type { ResttyFontInput } from "restty";
 import type { Terminal } from "restty/xterm";
 import type { TerminalReplyAuthority } from "./terminal-reply-authority";
+import type { MobileKeyboardLayout, MobileKeyboardPresetId } from "./mobile/keyboard-layout-types";
 
 export type Tone = "ok" | "error" | "neutral";
 export type TerminalConnectionState =
@@ -294,6 +295,9 @@ export type MobileQuickPhrase = {
   text: string;
   useCount: number;
   lastUsedAt: number;
+  group: string;
+  order: number;
+  sendEnter: boolean;
 };
 
 export type ClipboardImagePayload = {
@@ -434,6 +438,8 @@ export type Settings = {
   aiVoiceReplyProviderProfiles: AiVoiceSpeechProviderProfile[];
   aiVoiceReplyActiveProviderProfileId: string;
   mobileQuickPhrases: MobileQuickPhrase[];
+  mobileKeyboardPreset: MobileKeyboardPresetId;
+  mobileKeyboardLayout: MobileKeyboardLayout;
 };
 
 export type TerminalPane = {

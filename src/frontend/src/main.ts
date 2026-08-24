@@ -119,6 +119,8 @@ import {
 } from "./mobile/quick-input";
 import { createMobileQuickPhraseSettingsController } from "./mobile/quick-phrase-settings-controller";
 import { createMobileKeyboardController } from "./mobile/keyboard-controller";
+import { createMobileKeyboardLayoutSettingsController } from "./mobile/keyboard-layout-settings-controller";
+import { resolveMobileKeyboardLayout } from "./mobile/keyboard-layout";
 import { formatMobileClockTime } from "./mobile/clock";
 import { createMobileClockController } from "./mobile/clock-controller";
 import { createHerdrJumpMobileAdapter } from "./mobile/herdr-jump-adapter";
@@ -126,6 +128,8 @@ import { isMobileOverlayMode, prepareMobileOverlay } from "./mobile/overlay";
 import { createMobileSymbolAgentController } from "./mobile/symbol-agent-controller";
 import { isCoarseTouchPointer } from "./mobile/terminal-gestures";
 import { createMobileTerminalInteractionController } from "./mobile/terminal-interaction-controller";
+import { createMobileWorkspaceOverviewController } from "./mobile/workspace-overview-controller";
+import { buildMobileWorkspaceOverviewItems } from "./mobile/workspace-overview-model";
 import {
   forwardPaneContextMenuToRestty,
   hideResttyPaneContextMenus,
@@ -138,7 +142,9 @@ import {
 import { createNotificationController } from "./notifications/controller";
 import { createNotificationDom } from "./notifications/dom";
 import { notificationDisplayTitle, notificationTone } from "./notifications/presenter";
+import { createPaneMaximizeController } from "./pane-maximize-controller";
 import { renderNewTabMenuView, syncTabsView, type TabViewItem } from "./navigation-views";
+import { syncActiveTabMounts } from "./tab-mount-state";
 import {
   createExitedPaneCleanupController,
   hasExitedPaneForSelector,
@@ -527,6 +533,7 @@ const initialSelectorExplicit = params.has("name") && Boolean(initialSelector);
 
 const elements = renderShell(qs<HTMLDivElement>("#app"));
 const performanceMeter = createPerformanceMeter(elements.terminalStage);
+const paneMaximize = createPaneMaximizeController();
 let herdrJumpController: ReturnType<typeof createHerdrJumpController> | undefined;
 let herdrConsole: ReturnType<typeof createHerdrConsoleController> | undefined;
 const imageUploadProgress = createUploadProgressController(elements.webshell);
@@ -552,6 +559,22 @@ mobileSystemKeyboard = createMobileSystemKeyboardController({
   preventAutoOpen: () => settings.preventMobileKeyboardAutoOpen,
   updateToggle: mobileKeyboard.updateSystemKeyboardState,
 });
+const mobileWorkspaceOverview = createMobileWorkspaceOverviewController({
+  root: elements.mobileWorkspaceOverview,
+  items: () => buildMobileWorkspaceOverviewItems({
+    tabs,
+    activeTabId,
+    tabLabel: tabDisplayName,
+    selectorLabel,
+    visiblePanes,
+    backendLabel: (backend) => tr(`backend.${backend}` as MessageKey),
+  }),
+  activate: (tabId, paneId) => activatePane(tabId, paneId, { focus: false }),
+  prepare: () => prepareMobileOverlay(() => mobileSystemKeyboard.dismissForOverlay()),
+  restoreFallback: focusActivePaneCanvas,
+  updateIcons,
+  tr,
+});
 const prepareAppMobileOverlay = () => {
   prepareMobileOverlay(() => mobileSystemKeyboard.dismissForOverlay());
 };
@@ -565,6 +588,17 @@ const mobileQuickPhraseSettings = createMobileQuickPhraseSettingsController({
   saveSettings,
   updateIcons,
   onChanged: renderMobileQuickInput,
+});
+const mobileKeyboardLayoutSettings = createMobileKeyboardLayoutSettingsController({
+  root: elements.mobileKeyboardLayoutSettings,
+  preset: () => settings.mobileKeyboardPreset,
+  layout: () => settings.mobileKeyboardLayout,
+  setPreset: (preset) => { settings.mobileKeyboardPreset = preset; },
+  setLayout: (layout) => { settings.mobileKeyboardLayout = layout; },
+  save: saveSettings,
+  changed: renderMobileQuickInput,
+  updateIcons,
+  tr,
 });
 const mobileTerminalInteractions = createMobileTerminalInteractionController({
   activePane,
@@ -1107,7 +1141,10 @@ const terminalMcp = createTerminalMcpController({
 });
 const terminalResizeScheduler = createTerminalResizeScheduler<TerminalPane>({
   refresh: refreshPaneTerminalSize,
-  isVisible: (pane) => !pane.closing && pane.tabId === activeTabId && pane.mount.isConnected,
+  isVisible: (pane) => !pane.closing
+    && pane.tabId === activeTabId
+    && pane.mount.isConnected
+    && paneMaximize.allowsPane(pane.id),
 });
 const paneConnectionLifecycle = createPaneConnectionLifecycle({
   canConnect: canConnectPanePty,
@@ -2102,6 +2139,16 @@ function bindSettings() {
     mobileClock.update();
   });
   elements.mobileQuickPhraseList.addEventListener("click", (event) => {
+    const moveButton = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-quick-phrase-move]")
+      : null;
+    if (moveButton) {
+      mobileQuickPhraseSettings.move(
+        moveButton.dataset.quickPhraseMove ?? "",
+        moveButton.dataset.direction === "-1" ? -1 : 1,
+      );
+      return;
+    }
     const removeButton = event.target instanceof Element
       ? event.target.closest<HTMLButtonElement>("[data-quick-phrase-remove]")
       : null;
@@ -2480,6 +2527,8 @@ function handleViewportChange() {
 
 function bindMobileShortcuts() {
   mobileKeyboard.bind();
+  mobileKeyboardLayoutSettings.bind();
+  mobileWorkspaceOverview.bind();
 }
 
 function bindSettingsTabs() {
@@ -2509,9 +2558,10 @@ async function runMobileQuickPhrase(id: string) {
   if (!phrase?.text) return;
   const pane = activeHerdrTerminalPane() ?? activePane();
   if (!pane) return;
+  const text = phrase.sendEnter ? `${phrase.text}\r` : phrase.text;
   const sent = pane.sessionBackend === "herdr"
-    ? await pasteTextIntoHerdrPane(pane, phrase.text, true)
-    : pasteTextIntoPane(pane, phrase.text);
+    ? await pasteTextIntoHerdrPane(pane, text, true)
+    : pasteTextIntoPane(pane, text);
   if (!sent) return;
   settings.mobileQuickPhrases = markMobileQuickPhraseUsed(settings.mobileQuickPhrases, id);
   saveSettings();
@@ -2545,6 +2595,10 @@ async function runMobileAction(action: string) {
     setTerminalFontSize(settings.fontSize - 1);
   } else if (action === "pane-menu") {
     openActivePaneMenu();
+  } else if (action === "maximize-pane") {
+    toggleActivePaneMaximize();
+  } else if (action === "workspace-overview") {
+    mobileWorkspaceOverview.open();
   } else if (action === "toggle-system-keyboard") {
     mobileSystemKeyboard.toggle();
   }
@@ -2559,11 +2613,14 @@ function renderMobileQuickInput() {
     phrases: settings.mobileQuickPhrases,
     symbolAgent: mobileSymbolAgent.current(),
     tr,
+    preset: settings.mobileKeyboardPreset,
+    layout: resolveMobileKeyboardLayout(settings.mobileKeyboardPreset, settings.mobileKeyboardLayout),
   });
   if (phrases !== settings.mobileQuickPhrases) {
     settings.mobileQuickPhrases = phrases;
   }
   renderMobileQuickPhraseSettings();
+  mobileKeyboardLayoutSettings.render();
   mobileClock.update();
 }
 
@@ -2681,6 +2738,10 @@ function hidePaneContextMenus() {
 async function runPaneActionForPane(pane: TerminalPane, action: PaneMenuAction | string) {
   const tab = tabForPane(pane);
   if (tab) activatePane(tab.id, pane.id);
+  if (action === "toggle-pane-maximize" && tab) {
+    togglePaneMaximize(tab, pane);
+    return;
+  }
   if (pane.sessionBackend === "herdr") {
     await runHerdrPaneMenuAction(action, pane);
     return;
@@ -5632,6 +5693,20 @@ function renderPaneLayout(tab: TerminalTab) {
     ));
   }
   updatePaneActiveState(tab);
+  if (tab.id === activeTabId) paneMaximize.sync(tab.mount, activePane(tab)?.mount);
+}
+
+function toggleActivePaneMaximize() {
+  const tab = activeTab();
+  const pane = activePane(tab);
+  if (!tab || !pane) return;
+  togglePaneMaximize(tab, pane);
+}
+
+function togglePaneMaximize(tab: TerminalTab, pane: TerminalPane) {
+  const maximized = paneMaximize.toggle(tab.mount, pane.mount);
+  if (maximized) terminalResizeScheduler.schedule(pane);
+  else scheduleTerminalSizeRefresh();
 }
 
 function updatePaneActiveState(tab: TerminalTab) {
@@ -6241,11 +6316,8 @@ function activateTab(tabId: string, options: { focus?: boolean; sync?: boolean; 
   if (!tab) return;
   activeTabId = tabId;
   followActiveTabSelector(tab);
-  for (const tab of tabs) {
-    const active = tab.id === tabId;
-    tab.mount.classList.toggle("active", active);
-    tab.mount.setAttribute("aria-hidden", active ? "false" : "true");
-  }
+  syncActiveTabMounts(tabs, tabId);
+  paneMaximize.sync(tab.mount, activePane(tab)?.mount);
   terminalResizeScheduler.scheduleAll(visiblePanes(tab));
   renderTabs();
   updateActiveDetails();
@@ -6293,15 +6365,23 @@ function activateAdjacentTab(direction: -1 | 1, options: { focus?: boolean } = {
 
 function activatePane(tabId: string, paneId: string, options: { focus?: boolean; sync?: boolean } = {}) {
   const tab = tabs.find((item) => item.id === tabId);
-  if (!tab) return;
+  const pane = tab?.panes.find((item) => item.id === paneId && !item.closing);
+  if (!tab || !pane) return;
+  const tabChanged = activeTabId !== tabId;
   activeTabId = tabId;
   followActiveTabSelector(tab);
   tab.activePaneId = paneId;
+  syncActiveTabMounts(tabs, tabId);
   updatePaneActiveState(tab);
+  const wasMaximized = paneMaximize.isMaximized();
+  paneMaximize.sync(tab.mount, activePane(tab)?.mount);
+  if (wasMaximized && !paneMaximize.isMaximized()) scheduleTerminalSizeRefresh();
+  else if (tabChanged) terminalResizeScheduler.scheduleAll(visiblePanes(tab));
   renderTabs();
   updateActiveDetails();
   renderHerdrDock();
   syncAIChatForActiveTerminal();
+  if (tabChanged) rememberActiveTab();
   if (options.focus !== false) {
     const mobileFocusHandled = restoreMobileSystemKeyboardFocus();
     if (!mobileFocusHandled) focusPaneCanvas(activePane(tab));

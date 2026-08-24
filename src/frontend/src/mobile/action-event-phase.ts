@@ -4,11 +4,11 @@ export function mobileActionEventPhase(action: string): "pointerdown" | "pointer
 }
 
 export function mobileActionRestoresKeyboard(action: string): boolean {
-  return action !== "pane-menu" && action !== "toggle-system-keyboard";
+  return action !== "pane-menu" && action !== "toggle-system-keyboard" && action !== "workspace-overview";
 }
 
 export type MobileSyntheticActivation = {
-  kind: "shortcut" | "chord" | "page" | "phrase" | "action";
+  kind: "shortcut" | "chord" | "page" | "phrase" | "action" | "text";
   value: string;
 };
 
@@ -23,6 +23,7 @@ export function mobileSyntheticActivation(
     { kind: "page", value: button.dataset.mobilePage ?? "" },
     { kind: "phrase", value: button.dataset.mobilePhrase ?? "" },
     { kind: "action", value: button.dataset.mobileAction ?? "" },
+    { kind: "text", value: button.dataset.mobileText ?? "" },
   ];
   return candidates.find((candidate) => Boolean(candidate.value));
 }

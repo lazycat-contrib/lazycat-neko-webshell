@@ -1,11 +1,11 @@
-import type { MessageKey } from "../i18n";
+import type { MessageKey } from "../i18n.ts";
 import {
   MAX_MOBILE_QUICK_PHRASES,
   makeMobileQuickPhrase,
   normalizeMobileQuickPhrases,
   renderMobileQuickPhraseList,
-} from "./quick-input";
-import type { MobileQuickPhrase, Tone } from "../types";
+} from "./quick-input.ts";
+import type { MobileQuickPhrase, Tone } from "../types.ts";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -14,7 +14,9 @@ export type MobileQuickPhraseEditorElements = {
   mobileQuickPhraseSave: HTMLButtonElement;
   mobileQuickPhraseCancel: HTMLButtonElement;
   mobileQuickPhraseLabel: HTMLInputElement;
+  mobileQuickPhraseGroup: HTMLInputElement;
   mobileQuickPhraseText: HTMLTextAreaElement;
+  mobileQuickPhraseSendEnter: HTMLInputElement;
   mobileQuickPhraseStatus: HTMLElement;
 };
 
@@ -38,7 +40,9 @@ export function createMobileQuickPhraseEditor(elements: MobileQuickPhraseEditorE
     if (!phrase) return false;
     editingId = phrase.id;
     elements.mobileQuickPhraseLabel.value = phrase.label;
+    elements.mobileQuickPhraseGroup.value = phrase.group;
     elements.mobileQuickPhraseText.value = phrase.text;
+    elements.mobileQuickPhraseSendEnter.checked = phrase.sendEnter;
     clearStatus();
     render(phrases, tr);
     elements.mobileQuickPhraseText.focus();
@@ -48,7 +52,9 @@ export function createMobileQuickPhraseEditor(elements: MobileQuickPhraseEditorE
   function reset(phrases: MobileQuickPhrase[], tr: Translate) {
     editingId = "";
     elements.mobileQuickPhraseLabel.value = "";
+    elements.mobileQuickPhraseGroup.value = "";
     elements.mobileQuickPhraseText.value = "";
+    elements.mobileQuickPhraseSendEnter.checked = false;
     clearStatus();
     render(phrases, tr);
   }
@@ -63,12 +69,15 @@ export function createMobileQuickPhraseEditor(elements: MobileQuickPhraseEditorE
       id: existingIndex >= 0 ? editingId : undefined,
       label: elements.mobileQuickPhraseLabel.value,
       text,
+      group: elements.mobileQuickPhraseGroup.value,
+      sendEnter: elements.mobileQuickPhraseSendEnter.checked,
     }, phrases);
     const current = existingIndex >= 0 ? phrases[existingIndex] : undefined;
     const next = {
       ...phrase,
       useCount: current?.useCount ?? 0,
       lastUsedAt: current?.lastUsedAt ?? 0,
+      order: current?.order ?? phrase.order,
     };
     if (existingIndex >= 0) {
       return {
@@ -93,7 +102,9 @@ export function createMobileQuickPhraseEditor(elements: MobileQuickPhraseEditorE
     if (editingId === id) {
       editingId = "";
       elements.mobileQuickPhraseLabel.value = "";
+      elements.mobileQuickPhraseGroup.value = "";
       elements.mobileQuickPhraseText.value = "";
+      elements.mobileQuickPhraseSendEnter.checked = false;
       clearStatus();
     }
     return normalizeMobileQuickPhrases(next);

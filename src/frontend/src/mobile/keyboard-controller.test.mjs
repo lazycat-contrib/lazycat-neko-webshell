@@ -18,6 +18,7 @@ test("uses one user-activation event for mobile actions", () => {
 test("keeps overlay and keyboard toggle actions in charge of their own focus", () => {
   assert.equal(mobileActionRestoresKeyboard("pane-menu"), false);
   assert.equal(mobileActionRestoresKeyboard("toggle-system-keyboard"), false);
+  assert.equal(mobileActionRestoresKeyboard("workspace-overview"), false);
   assert.equal(mobileActionRestoresKeyboard("split-right"), true);
 });
 
@@ -35,6 +36,15 @@ test("keeps keyboard activation for the system keyboard toggle without replaying
   assert.deepEqual(mobileSyntheticActivation(button, 0), {
     kind: "action",
     value: "toggle-system-keyboard",
+  });
+  assert.equal(mobileSyntheticActivation(button, 1), undefined);
+});
+
+test("makes custom text keys available to synthesized keyboard activation", () => {
+  const button = { dataset: { mobileText: "git status", mobileAutoEnter: "true" } };
+  assert.deepEqual(mobileSyntheticActivation(button, 0), {
+    kind: "text",
+    value: "git status",
   });
   assert.equal(mobileSyntheticActivation(button, 1), undefined);
 });

@@ -2,6 +2,7 @@ import type { FontPreset, InterfaceStyleId, Settings, TerminalTheme } from "./ty
 import { DEFAULT_AI_PROVIDER } from "./plugins/ai-chat/settings/provider-profile-state";
 import { defaultAiVoiceProviderProfiles } from "./plugins/ai-chat/voice-profiles";
 import { defaultAiVoiceSpeechProviderProfiles } from "./plugins/ai-chat/voice-speech-profiles";
+import { mobileKeyboardPresetLayout } from "./mobile/keyboard-layout";
 
 export const INITIAL_COLS = 120;
 export const INITIAL_ROWS = 32;
@@ -195,4 +196,6 @@ export const DEFAULT_SETTINGS: Settings = {
   aiVoiceReplyProviderProfiles: defaultAiVoiceSpeechProviderProfiles(),
   aiVoiceReplyActiveProviderProfileId: "mimo",
   mobileQuickPhrases: [],
+  mobileKeyboardPreset: "default",
+  mobileKeyboardLayout: mobileKeyboardPresetLayout("default"),
 };

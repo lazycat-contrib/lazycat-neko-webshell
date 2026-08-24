@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS, INTERFACE_STYLE_IDS, MAX_CUSTOM_THEME_SOURCE_BYTES, MAX_OUTPUT_BUFFER_LIMIT, MIN_OUTPUT_BUFFER_LIMIT } from "../config";
 import { normalizeBooleanSetting } from "../boolean-setting";
 import { normalizeMobileQuickPhrases } from "../mobile/quick-input";
+import { normalizeMobileKeyboardLayout, normalizeMobileKeyboardPreset } from "../mobile/keyboard-layout";
 import { normalizePreventMobileKeyboardAutoOpen } from "../mobile/settings/keyboard-preference";
 import {
   normalizeAiVoiceActiveProfileId,
@@ -122,6 +123,8 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     aiVoiceReplyProviderProfiles,
     aiVoiceReplyActiveProviderProfileId,
     mobileQuickPhrases: normalizeMobileQuickPhrases(value.mobileQuickPhrases),
+    mobileKeyboardPreset: normalizeMobileKeyboardPreset(value.mobileKeyboardPreset),
+    mobileKeyboardLayout: normalizeMobileKeyboardLayout(value.mobileKeyboardLayout ?? DEFAULT_SETTINGS.mobileKeyboardLayout),
   };
 }
 

@@ -13,6 +13,7 @@ export type PaneMenuAction =
   | "resize-right"
   | "copy-selection"
   | "paste-clipboard"
+  | "toggle-pane-maximize"
   | "promote-session-to-tab"
   | "close-active-session";
 
@@ -43,6 +44,7 @@ const ACTION_LABELS: Record<PaneMenuAction, MessageKey> = {
   "resize-right": "action.resizeRight",
   "copy-selection": "action.copySelection",
   "paste-clipboard": "action.pasteClipboard",
+  "toggle-pane-maximize": "action.maximizePane",
   "promote-session-to-tab": "action.promoteSessionToTab",
   "close-active-session": "action.closeActiveSession",
 };
@@ -50,7 +52,7 @@ const ACTION_LABELS: Record<PaneMenuAction, MessageKey> = {
 const ACTION_GROUPS: PaneMenuAction[][] = [
   ["split-up", "split-down", "split-left", "split-right"],
   ["resize-up", "resize-down", "resize-left", "resize-right"],
-  ["copy-selection", "paste-clipboard", "promote-session-to-tab"],
+  ["copy-selection", "paste-clipboard", "toggle-pane-maximize", "promote-session-to-tab"],
   ["close-active-session"],
 ];
 
@@ -101,6 +103,7 @@ export function paneMenuActionSupported(
       || isHerdrPaneResizeAction(action)
       || action === "copy-selection"
       || action === "paste-clipboard"
+      || action === "toggle-pane-maximize"
       || action === "close-active-session";
   }
   if (pane.sessionBackend === "zellij") {
@@ -108,6 +111,7 @@ export function paneMenuActionSupported(
       || action === "split-down"
       || action === "copy-selection"
       || action === "paste-clipboard"
+      || action === "toggle-pane-maximize"
       || action === "close-active-session";
   }
   if (action === "promote-session-to-tab") {
@@ -119,6 +123,7 @@ export function paneMenuActionSupported(
     || action === "split-right"
     || action === "copy-selection"
     || action === "paste-clipboard"
+    || action === "toggle-pane-maximize"
     || action === "close-active-session";
 }
 

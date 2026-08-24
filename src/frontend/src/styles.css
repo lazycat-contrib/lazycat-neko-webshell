@@ -3110,6 +3110,20 @@ textarea:focus-visible {
   box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
+.tab-mount.pane-maximized > :not(.pane-maximize-path, .pane-maximized-target),
+.tab-mount.pane-maximized .pane-maximize-path > :not(.pane-maximize-path, .pane-maximized-target) {
+  display: none;
+}
+
+.tab-mount.pane-maximized .pane-maximize-path {
+  display: block;
+}
+
+.tab-mount.pane-maximized .pane-maximized-target {
+  width: 100%;
+  height: 100%;
+}
+
 .remote-clipboard-retry {
   position: absolute;
   right: max(14px, var(--lzc-safe-area-inset-right));
@@ -3997,8 +4011,13 @@ textarea:focus-visible {
 
 .quick-phrase-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 34px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  gap: 8px;
+}
+
+.quick-phrase-row-actions {
+  display: flex;
   gap: 8px;
 }
 
@@ -4033,6 +4052,17 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.quick-phrase-preview small b {
+  margin-right: 6px;
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+.quick-phrase-preview small span {
+  margin-right: 4px;
+  color: var(--accent-fg);
+}
+
 .quick-phrase-preview span {
   font-size: 12px;
   font-weight: 600;
@@ -4057,6 +4087,10 @@ textarea:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.quick-phrase-actions .command-button[hidden] {
+  display: none;
 }
 
 .shortcut-help {

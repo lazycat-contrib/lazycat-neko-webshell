@@ -1,7 +1,7 @@
-import type { MessageKey } from "../i18n";
-import type { JsonRecord, MobileQuickPhrase } from "../types";
-import { recordField, stringField } from "../json-meta";
-import { escapeAttr, escapeHtml } from "../utils";
+import type { MessageKey } from "../i18n.ts";
+import type { JsonRecord, MobileQuickPhrase } from "../types.ts";
+import { recordField, stringField } from "../json-meta.ts";
+import { escapeAttr, escapeHtml } from "../utils.ts";
 
 export type MobileSymbolAgent =
   | "default"
@@ -29,6 +29,7 @@ type Translate = (key: MessageKey, values?: Record<string, string | number>) => 
 export const MAX_MOBILE_QUICK_PHRASES = 24;
 export const MAX_MOBILE_QUICK_PHRASE_LABEL = 32;
 export const MAX_MOBILE_QUICK_PHRASE_TEXT = 256;
+export const MAX_MOBILE_QUICK_PHRASE_GROUP = 24;
 
 const SYMBOL_LABELS: Record<string, string> = {
   "|": "Pipe",
@@ -147,7 +148,7 @@ export function renderMobileQuickPhrasePageButton(phrases: MobileQuickPhrase[], 
 
 export function renderMobileQuickPhraseKeyboardPanel(phrases: MobileQuickPhrase[]): string {
   return sortedMobileQuickPhrases(phrases).map((phrase) => (
-    `<button type="button" data-mobile-phrase="${escapeAttr(phrase.id)}" title="${escapeAttr(phrase.text)}">${escapeHtml(phrase.label || phrase.text)}</button>`
+    `<button type="button" data-mobile-phrase="${escapeAttr(phrase.id)}" title="${escapeAttr(phrase.text)}"${phrase.sendEnter ? ' data-mobile-phrase-enter="true"' : ""}>${escapeHtml(phrase.label || phrase.text)}${phrase.sendEnter ? '<span class="mobile-phrase-enter" aria-hidden="true">↵</span>' : ""}</button>`
   )).join("");
 }
 
@@ -156,25 +157,23 @@ export function renderMobileQuickPhraseList(phrases: MobileQuickPhrase[], tr: Tr
   if (!sorted.length) {
     return `<p class="empty">${escapeHtml(tr("status.noQuickPhrases"))}</p>`;
   }
-  return sorted.map((phrase) => `
+  return sorted.map((phrase, index) => `
     <div class="quick-phrase-row" data-quick-phrase-row="${escapeAttr(phrase.id)}">
       <button type="button" class="quick-phrase-preview" data-quick-phrase-edit="${escapeAttr(phrase.id)}">
         <span>${escapeHtml(phrase.label || phrase.text)}</span>
-        <small>${escapeHtml(phrase.text)}</small>
+        <small>${phrase.group ? `<b>${escapeHtml(phrase.group)}</b>` : ""}${phrase.sendEnter ? '<span aria-hidden="true">↵</span>' : ""}${escapeHtml(phrase.text)}</small>
       </button>
-      <button type="button" class="icon-button" data-quick-phrase-remove="${escapeAttr(phrase.id)}" aria-label="${escapeAttr(tr("action.quickPhraseRemove"))}" title="${escapeAttr(tr("action.quickPhraseRemove"))}">
-        <i data-lucide="trash-2"></i>
-      </button>
+      <div class="quick-phrase-row-actions">
+        <button type="button" class="icon-button" data-quick-phrase-move="${escapeAttr(phrase.id)}" data-direction="-1" aria-label="${escapeAttr(tr("action.moveUp"))}" title="${escapeAttr(tr("action.moveUp"))}"${index === 0 ? " disabled" : ""}><i data-lucide="chevron-up"></i></button>
+        <button type="button" class="icon-button" data-quick-phrase-move="${escapeAttr(phrase.id)}" data-direction="1" aria-label="${escapeAttr(tr("action.moveDown"))}" title="${escapeAttr(tr("action.moveDown"))}"${index === sorted.length - 1 ? " disabled" : ""}><i data-lucide="chevron-down"></i></button>
+        <button type="button" class="icon-button" data-quick-phrase-remove="${escapeAttr(phrase.id)}" aria-label="${escapeAttr(tr("action.quickPhraseRemove"))}" title="${escapeAttr(tr("action.quickPhraseRemove"))}"><i data-lucide="trash-2"></i></button>
+      </div>
     </div>
   `).join("");
 }
 
 export function sortedMobileQuickPhrases(phrases: MobileQuickPhrase[]): MobileQuickPhrase[] {
-  return [...phrases].sort((left, right) => {
-    const uses = right.useCount - left.useCount;
-    if (uses !== 0) return uses;
-    return right.lastUsedAt - left.lastUsedAt;
-  });
+  return [...phrases].sort((left, right) => left.order - right.order);
 }
 
 export function normalizeMobileQuickPhrases(value: unknown): MobileQuickPhrase[] {
@@ -194,14 +193,20 @@ export function normalizeMobileQuickPhrases(value: unknown): MobileQuickPhrase[]
       text,
       useCount: normalizeCount(raw.useCount),
       lastUsedAt: normalizeTimestamp(raw.lastUsedAt),
+      group: normalizePhraseGroup(raw.group),
+      order: normalizeOrder(raw.order, phrases.length),
+      sendEnter: raw.sendEnter === true,
     });
     ids.add(id);
     if (phrases.length >= MAX_MOBILE_QUICK_PHRASES) break;
   }
-  return phrases;
+  return phrases.sort((left, right) => left.order - right.order).map((phrase, order) => ({ ...phrase, order }));
 }
 
-export function makeMobileQuickPhrase(input: { id?: string; label: string; text: string }, existing: MobileQuickPhrase[] = []): MobileQuickPhrase {
+export function makeMobileQuickPhrase(
+  input: { id?: string; label: string; text: string; group?: string; sendEnter?: boolean },
+  existing: MobileQuickPhrase[] = [],
+): MobileQuickPhrase {
   const ids = new Set(existing.map((phrase) => phrase.id).filter((id) => id !== input.id));
   return {
     id: normalizePhraseId(input.id, ids, existing.length),
@@ -209,7 +214,20 @@ export function makeMobileQuickPhrase(input: { id?: string; label: string; text:
     text: normalizePhraseText(input.text),
     useCount: 0,
     lastUsedAt: 0,
+    group: normalizePhraseGroup(input.group),
+    order: existing.length,
+    sendEnter: input.sendEnter === true,
   };
+}
+
+export function moveMobileQuickPhrase(phrases: MobileQuickPhrase[], id: string, direction: -1 | 1): MobileQuickPhrase[] {
+  const next = sortedMobileQuickPhrases(normalizeMobileQuickPhrases(phrases));
+  const index = next.findIndex((phrase) => phrase.id === id);
+  const target = index + direction;
+  if (index >= 0 && target >= 0 && target < next.length) {
+    [next[index], next[target]] = [next[target], next[index]];
+  }
+  return next.map((phrase, order) => ({ ...phrase, order }));
 }
 
 export function markMobileQuickPhraseUsed(phrases: MobileQuickPhrase[], id: string, now = Date.now()): MobileQuickPhrase[] {
@@ -242,6 +260,17 @@ function normalizePhraseText(value: unknown): string {
 function normalizePhraseLabel(value: unknown): string {
   if (typeof value !== "string") return "";
   return value.replace(/\s+/g, " ").trim().slice(0, MAX_MOBILE_QUICK_PHRASE_LABEL);
+}
+
+function normalizePhraseGroup(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, MAX_MOBILE_QUICK_PHRASE_GROUP);
+}
+
+function normalizeOrder(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : fallback;
 }
 
 function normalizePhraseId(value: unknown, used: Set<string>, index: number): string {
