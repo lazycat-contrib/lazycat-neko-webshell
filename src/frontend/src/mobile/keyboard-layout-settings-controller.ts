@@ -70,18 +70,22 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
     list.innerHTML = keys.length ? keys.map((key, index) => `
       <div class="mobile-keyboard-key-row${key.hidden ? " is-hidden" : ""}" data-mobile-layout-key="${escapeAttr(key.id)}" data-mobile-key-width="${escapeAttr(key.width)}" draggable="true">
         <div class="mobile-keyboard-key-card">
-          <button type="button" class="mobile-keyboard-key-preview" data-mobile-key-visibility="${escapeAttr(key.id)}" aria-pressed="${!key.hidden}" aria-label="${escapeAttr(options.tr(key.hidden ? "action.show" : "action.hide"))}">
-            ${key.icon ? `<i data-lucide="${escapeAttr(key.icon)}"></i>` : ""}<span>${escapeHtml(key.label || key.value)}</span>${key.autoEnter ? '<small aria-hidden="true">↵</small>' : ""}
-          </button>
-          <span class="mobile-keyboard-key-meta"><span data-i18n="field.mobileKeyboardKeyWidth">${escapeHtml(options.tr("field.mobileKeyboardKeyWidth"))}</span> ${escapeHtml(options.tr(key.width === "sm" ? "option.mobileKeyboardWidthSmall" : key.width === "lg" ? "option.mobileKeyboardWidthLarge" : "option.mobileKeyboardWidthMedium"))}</span>
+          <div class="mobile-keyboard-key-card-head">
+            <span class="mobile-keyboard-drag-handle" aria-hidden="true"><i data-lucide="grip-vertical"></i></span>
+            <button type="button" class="mobile-keyboard-key-preview" data-mobile-key-visibility="${escapeAttr(key.id)}" aria-pressed="${!key.hidden}" aria-label="${escapeAttr(options.tr(key.hidden ? "action.show" : "action.hide"))}">
+              ${key.icon ? `<i data-lucide="${escapeAttr(key.icon)}"></i>` : ""}<span>${escapeHtml(key.label || key.value)}</span>${key.autoEnter ? '<small aria-hidden="true">↵</small>' : ""}
+            </button>
+          </div>
+          <span class="mobile-keyboard-key-meta">${escapeHtml(key.ariaLabel || key.label || key.value)}</span>
         </div>
-        <span class="mobile-keyboard-drag-handle" aria-hidden="true"><i data-lucide="grip-vertical"></i></span>
-        <select data-mobile-key-width="${escapeAttr(key.id)}" aria-label="${escapeAttr(options.tr("field.mobileKeyboardKeyWidth"))}">
-          <option value="sm"${key.width === "sm" ? " selected" : ""}>${escapeHtml(options.tr("option.mobileKeyboardWidthSmall"))}</option><option value="md"${key.width === "md" ? " selected" : ""}>${escapeHtml(options.tr("option.mobileKeyboardWidthMedium"))}</option><option value="lg"${key.width === "lg" ? " selected" : ""}>${escapeHtml(options.tr("option.mobileKeyboardWidthLarge"))}</option>
-        </select>
-        <button type="button" class="icon-button" data-mobile-key-move="${escapeAttr(key.id)}" data-direction="-1" aria-label="${escapeAttr(options.tr("action.moveUp"))}"${index === 0 ? " disabled" : ""}><i data-lucide="chevron-up"></i></button>
-        <button type="button" class="icon-button" data-mobile-key-move="${escapeAttr(key.id)}" data-direction="1" aria-label="${escapeAttr(options.tr("action.moveDown"))}"${index === keys.length - 1 ? " disabled" : ""}><i data-lucide="chevron-down"></i></button>
-        ${key.custom ? `<button type="button" class="icon-button danger" data-mobile-key-remove="${escapeAttr(key.id)}" aria-label="${escapeAttr(options.tr("action.remove"))}"><i data-lucide="trash-2"></i></button>` : ""}
+        <div class="mobile-keyboard-key-controls">
+          <label class="mobile-keyboard-key-width-control"><span>${escapeHtml(options.tr("field.mobileKeyboardKeyWidth"))}</span><select data-mobile-key-width="${escapeAttr(key.id)}" aria-label="${escapeAttr(options.tr("field.mobileKeyboardKeyWidth"))}">
+            <option value="sm"${key.width === "sm" ? " selected" : ""}>${escapeHtml(options.tr("option.mobileKeyboardWidthSmall"))}</option><option value="md"${key.width === "md" ? " selected" : ""}>${escapeHtml(options.tr("option.mobileKeyboardWidthMedium"))}</option><option value="lg"${key.width === "lg" ? " selected" : ""}>${escapeHtml(options.tr("option.mobileKeyboardWidthLarge"))}</option>
+          </select></label>
+          <button type="button" class="icon-button" data-mobile-key-move="${escapeAttr(key.id)}" data-direction="-1" aria-label="${escapeAttr(options.tr("action.moveUp"))}"${index === 0 ? " disabled" : ""}><i data-lucide="chevron-up"></i></button>
+          <button type="button" class="icon-button" data-mobile-key-move="${escapeAttr(key.id)}" data-direction="1" aria-label="${escapeAttr(options.tr("action.moveDown"))}"${index === keys.length - 1 ? " disabled" : ""}><i data-lucide="chevron-down"></i></button>
+          ${key.custom ? `<button type="button" class="icon-button danger" data-mobile-key-remove="${escapeAttr(key.id)}" aria-label="${escapeAttr(options.tr("action.remove"))}"><i data-lucide="trash-2"></i></button>` : ""}
+        </div>
       </div>
     `).join("") : `<p class="empty">${escapeHtml(options.tr("status.mobileKeyboardPageEmpty"))}</p>`;
     options.updateIcons();

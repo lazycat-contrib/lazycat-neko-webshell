@@ -53,6 +53,6 @@
 - Modify: `package-lock.json` if present
 
 - [x] Run focused tests, typecheck, and production build.
-- [x] Bump `0.7.25` to `0.7.26`.
-- [ ] Commit the complete change with a focused message.
-- [ ] Push the commit and create/push `v0.7.26`.
+- [x] Bump the application version to `0.7.27` for the follow-up visual fix.
+- [x] Commit the complete change with a focused message.
+- [x] Push the commit and create/push `v0.7.27`.

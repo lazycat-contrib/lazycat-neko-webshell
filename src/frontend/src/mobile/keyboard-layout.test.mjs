@@ -13,6 +13,7 @@ import {
   decodeMobileKeyboardText,
 } from "./keyboard-layout.ts";
 import { renderMobileKeyboardKey } from "./keyboard-layout-view.ts";
+import { renderMobileKeyboardLayoutSettingsView } from "./settings/keyboard-layout-view.ts";
 
 test("normalizes mobile keyboard layouts through the shortcut and action allowlists", () => {
   const layout = normalizeMobileKeyboardLayout({
@@ -107,4 +108,11 @@ test("moves a key to an exact visual grid position without mutating the source l
   const moved = moveMobileKeyboardKeyToIndex(layout, "main", keyId, 6);
   assert.equal(moved.pages.find((item) => item.id === "main")?.keys[6]?.id, keyId);
   assert.equal(layout.pages.find((item) => item.id === "main")?.keys[1]?.id, keyId);
+});
+
+test("keeps the settings editor tabs isolated from the live shortcut toolbar", () => {
+  const html = renderMobileKeyboardLayoutSettingsView();
+  assert.match(html, /mobile-keyboard-editor-tabs/);
+  assert.doesNotMatch(html, /class="mobile-keyboard-page-tabs"/);
+  assert.match(html, /role="tabpanel"/);
 });

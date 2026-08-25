@@ -24,7 +24,7 @@ export function renderMobileKeyboardLayoutSettingsView(): string {
           </div>
         </div>
       </div>
-      <div class="mobile-keyboard-width-legend" aria-label="Key width legend" data-i18n-aria="setting.mobileKeyboardWidthHelp">
+      <div class="mobile-keyboard-width-legend" role="group" aria-label="Key width legend" data-i18n-aria="setting.mobileKeyboardWidthHelp">
         <span><i data-width="sm"></i><b data-i18n="option.mobileKeyboardWidthSmall">Narrow</b><small data-i18n="option.mobileKeyboardWidthSmallHint">one slot</small></span>
         <span><i data-width="md"></i><b data-i18n="option.mobileKeyboardWidthMedium">Standard</b><small data-i18n="option.mobileKeyboardWidthMediumHint">two slots</small></span>
         <span><i data-width="lg"></i><b data-i18n="option.mobileKeyboardWidthLarge">Wide</b><small data-i18n="option.mobileKeyboardWidthLargeHint">three slots</small></span>
