@@ -954,7 +954,8 @@ fn apply_workspace_action(
         if matches!(
             request.action,
             WorkspaceAction::SetTabPinned | WorkspaceAction::CreateTab
-        ) {
+        ) || workspace.tabs.is_empty()
+        {
             workspace.repair();
         } else {
             workspace.ensure_ready(&mut sessions, defaults);
@@ -2193,6 +2194,55 @@ mod tests {
         assert_eq!(
             workspace.tabs[0].custom_label.as_deref(),
             Some("ssh DemoServerA")
+        );
+    }
+
+    #[test]
+    fn stale_close_tab_does_not_recreate_a_legacy_empty_workspace() {
+        let app_state = test_app_state();
+        let defaults = test_defaults(&app_state, "", SessionBackend::Herdr);
+        let create = WorkspaceActionRequest {
+            name: "demo@owner".to_owned(),
+            action: WorkspaceAction::CreateTab,
+            tab_id: None,
+            pane_id: None,
+            direction: None,
+            label: None,
+            layout: None,
+            active_pane_id: None,
+            cols: None,
+            rows: None,
+            output_limit: None,
+            auto_restart: None,
+            session_backend: Some(SessionBackend::Herdr),
+            pinned: None,
+            pinned_order: None,
+        };
+        let (created, _) = apply_workspace_action(&app_state, "demo@owner", &defaults, &create)
+            .expect("create legacy tab");
+        let tab_id = created.tabs[0].id.clone();
+        let close = WorkspaceActionRequest {
+            action: WorkspaceAction::CloseTab,
+            tab_id: Some(tab_id.clone()),
+            ..create
+        };
+        let (closed, _) = apply_workspace_action(&app_state, "demo@owner", &defaults, &close)
+            .expect("close legacy tab");
+        assert!(closed.tabs.is_empty());
+
+        let stale = WorkspaceActionRequest {
+            action: WorkspaceAction::CloseTab,
+            tab_id: Some(tab_id),
+            ..close
+        };
+        assert!(apply_workspace_action(&app_state, "demo@owner", &defaults, &stale).is_err());
+        assert!(
+            app_state
+                .workspaces
+                .read()
+                .unwrap()
+                .get("demo@owner")
+                .is_some_and(|workspace| workspace.tabs.is_empty())
         );
     }
 

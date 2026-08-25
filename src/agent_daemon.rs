@@ -15,6 +15,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use buffa::Message;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use crate::agent_protocol::{
     AGENT_PROTOCOL_VERSION, AGENT_VERSION, MAX_AGENT_MESSAGE_BYTES, MIN_SUPPORTED_AGENT_VERSION,
@@ -30,6 +31,7 @@ use crate::config::{
 };
 use crate::proto::lazycat::webshell::v1::{
     AgentControlType, AgentFrame, AgentFrameType, AgentRequest, AgentRequestType,
+    AgentWorkspaceAction, AgentWorkspaceActionType,
 };
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 
@@ -486,6 +488,8 @@ fn run_agent_daemon(socket: &str, selector: &str, username: &str) -> anyhow::Res
     let listener = UnixListener::bind(socket).context("failed to listen on agent unix socket")?;
     fs::set_permissions(socket, std::os::unix::fs::PermissionsExt::from_mode(0o600))
         .context("failed to chmod agent socket")?;
+    let workspace_recovery_path = workspace_recovery_path(selector);
+    let recovery_tabs = load_workspace_recovery(&workspace_recovery_path);
 
     let daemon = Arc::new(AgentDaemon {
         selector: selector.trim().to_owned(),
@@ -493,6 +497,9 @@ fn run_agent_daemon(socket: &str, selector: &str, username: &str) -> anyhow::Res
         payload_manifest: running_agent_payload_manifest(),
         agent_version: AGENT_VERSION,
         workspace: Mutex::new(None),
+        workspace_recovery_path,
+        recovery_tabs: Mutex::new(recovery_tabs),
+        recovery_lock: Mutex::new(()),
     });
     for connection in listener.incoming() {
         let daemon = Arc::clone(&daemon);
@@ -508,12 +515,61 @@ fn run_agent_daemon(socket: &str, selector: &str, username: &str) -> anyhow::Res
     Ok(())
 }
 
+const WORKSPACE_RECOVERY_VERSION: u32 = 1;
+const MAX_WORKSPACE_RECOVERY_TABS: usize = 64;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PersistedWorkspaceRecovery {
+    version: u32,
+    tabs: usize,
+}
+
+fn workspace_recovery_path(selector: &str) -> PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(selector.trim().as_bytes());
+    let digest = hasher.finalize();
+    let mut scope = String::with_capacity(24);
+    for &byte in &digest[..12] {
+        use std::fmt::Write as _;
+        let _ = write!(&mut scope, "{byte:02x}");
+    }
+    PathBuf::from(format!(
+        "/tmp/lazycat-neko-webshell-agent-{scope}.workspace"
+    ))
+}
+
+fn load_workspace_recovery(path: &Path) -> Option<usize> {
+    let bytes = fs::read(path).ok()?;
+    let state = serde_json::from_slice::<PersistedWorkspaceRecovery>(&bytes).ok()?;
+    (state.version == WORKSPACE_RECOVERY_VERSION)
+        .then_some(state.tabs.min(MAX_WORKSPACE_RECOVERY_TABS))
+}
+
+fn persist_workspace_recovery(path: &Path, tabs: usize) -> anyhow::Result<()> {
+    let bytes = serde_json::to_vec(&PersistedWorkspaceRecovery {
+        version: WORKSPACE_RECOVERY_VERSION,
+        tabs,
+    })
+    .context("failed to encode workspace recovery state")?;
+    let temporary = path.with_extension(format!("workspace.tmp-{}", std::process::id()));
+    fs::write(&temporary, bytes).context("failed to write workspace recovery state")?;
+    fs::set_permissions(
+        &temporary,
+        std::os::unix::fs::PermissionsExt::from_mode(0o600),
+    )
+    .context("failed to chmod workspace recovery state")?;
+    fs::rename(&temporary, path).context("failed to commit workspace recovery state")
+}
+
 struct AgentDaemon {
     selector: String,
     username: String,
     payload_manifest: Option<String>,
     agent_version: u64,
     workspace: Mutex<Option<Arc<AgentWorkspace>>>,
+    workspace_recovery_path: PathBuf,
+    recovery_tabs: Mutex<Option<usize>>,
+    recovery_lock: Mutex<()>,
 }
 
 impl AgentDaemon {
@@ -571,21 +627,29 @@ impl AgentDaemon {
         &self,
         request: &AgentRequest,
     ) -> Result<crate::proto::lazycat::webshell::v1::AgentResponse, String> {
+        let _recovery_guard = self
+            .recovery_lock
+            .lock()
+            .map_err(|_| "workspace recovery lock poisoned".to_owned())?;
         let workspace = self
             .workspace_for_request(request)
             .map_err(|err| err.to_string())?;
         let (cols, rows) = request_size(request).map_err(|err| err.to_string())?;
         let output_limit = request_output_limit(request);
-        workspace
-            .snapshot_state(cols, rows, output_limit)
-            .map(state_response)
-            .map_err(|err| err.to_string())
+        let state = self
+            .restore_workspace(&workspace, cols, rows, output_limit)
+            .map_err(|err| err.to_string())?;
+        Ok(state_response(state))
     }
 
     fn action(
         &self,
         request: &AgentRequest,
     ) -> Result<crate::proto::lazycat::webshell::v1::AgentResponse, String> {
+        let _recovery_guard = self
+            .recovery_lock
+            .lock()
+            .map_err(|_| "workspace recovery lock poisoned".to_owned())?;
         let workspace = self
             .workspace_for_request(request)
             .map_err(|err| err.to_string())?;
@@ -595,16 +659,36 @@ impl AgentDaemon {
             .action
             .as_option()
             .ok_or_else(|| "workspace action is required".to_owned())?;
-        workspace
+        let is_create_tab = action.action.as_ref().and_then(buffa::EnumValue::as_known)
+            == Some(AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB);
+        // A CREATE_TAB on a brand-new workspace must create the first tab itself.
+        // Once a recovery marker exists, restore the persisted workspace first so
+        // the new tab is added to the recovered tab set instead of replacing it.
+        let has_recovery_marker = self
+            .recovery_tabs
+            .lock()
+            .map_err(|_| "workspace recovery state lock poisoned".to_owned())?
+            .is_some();
+        if !is_create_tab || has_recovery_marker {
+            self.restore_workspace(&workspace, cols, rows, output_limit)
+                .map_err(|err| err.to_string())?;
+        }
+        let state = workspace
             .apply_action(action, cols, rows, output_limit)
-            .map(state_response)
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        self.persist_workspace_state(&state)
+            .map_err(|err| err.to_string())?;
+        Ok(state_response(state))
     }
 
     fn close_session(
         &self,
         request: &AgentRequest,
     ) -> Result<crate::proto::lazycat::webshell::v1::AgentResponse, String> {
+        let _recovery_guard = self
+            .recovery_lock
+            .lock()
+            .map_err(|_| "workspace recovery lock poisoned".to_owned())?;
         let workspace = self
             .workspace_for_request(request)
             .map_err(|err| err.to_string())?;
@@ -616,17 +700,25 @@ impl AgentDaemon {
             .map(str::trim)
             .filter(|id| !id.is_empty())
             .ok_or_else(|| "session_id is required".to_owned())?;
-        workspace
+        self.restore_workspace(&workspace, cols, rows, output_limit)
+            .map_err(|err| err.to_string())?;
+        let state = workspace
             .close_session(session_id, cols, rows, output_limit)
-            .map(state_response)
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        self.persist_workspace_state(&state)
+            .map_err(|err| err.to_string())?;
+        Ok(state_response(state))
     }
 
     fn attach(&self, mut stream: UnixStream, request: &AgentRequest) -> anyhow::Result<()> {
+        let recovery_guard = self
+            .recovery_lock
+            .lock()
+            .map_err(|_| anyhow!("workspace recovery lock poisoned"))?;
         let workspace = self.workspace_for_request(request)?;
         let (cols, rows) = request_size(request)?;
         let output_limit = request_output_limit(request);
-        workspace.ensure_state(cols, rows, output_limit)?;
+        self.restore_workspace(&workspace, cols, rows, output_limit)?;
         let pane = match request
             .pane_id
             .as_deref()
@@ -638,7 +730,54 @@ impl AgentDaemon {
         };
         pane.resize(cols, rows)?;
         pane.set_output_limit(output_limit);
+        drop(recovery_guard);
         serve_attach_stream(&mut stream, &pane, request_replay_after(request))
+    }
+
+    fn restore_workspace(
+        &self,
+        workspace: &AgentWorkspace,
+        cols: u16,
+        rows: u16,
+        output_limit: usize,
+    ) -> anyhow::Result<crate::proto::lazycat::webshell::v1::AgentWorkspaceState> {
+        let current = workspace.snapshot_state(cols, rows, output_limit)?;
+        let desired_tabs = self
+            .recovery_tabs
+            .lock()
+            .map_err(|_| anyhow!("workspace recovery state lock poisoned"))?
+            .unwrap_or(1);
+        if current.tabs.is_empty() && desired_tabs > 0 {
+            workspace.ensure_state(cols, rows, output_limit)?;
+            let create_tab = AgentWorkspaceAction {
+                action: Some(
+                    AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB.into(),
+                ),
+                ..Default::default()
+            };
+            for _ in 1..desired_tabs {
+                workspace.apply_action(&create_tab, cols, rows, output_limit)?;
+            }
+        }
+        let state = workspace.snapshot_state(cols, rows, output_limit)?;
+        self.persist_workspace_state(&state)?;
+        Ok(state)
+    }
+
+    fn persist_workspace_state(
+        &self,
+        state: &crate::proto::lazycat::webshell::v1::AgentWorkspaceState,
+    ) -> anyhow::Result<()> {
+        let tabs = state.tabs.len();
+        if let Err(err) = persist_workspace_recovery(&self.workspace_recovery_path, tabs) {
+            eprintln!("webshell agent workspace recovery state unavailable: {err:#}");
+        }
+        let mut recovery_tabs = self
+            .recovery_tabs
+            .lock()
+            .map_err(|_| anyhow!("workspace recovery state lock poisoned"))?;
+        *recovery_tabs = Some(tabs);
+        Ok(())
     }
 
     fn workspace_for_request(&self, request: &AgentRequest) -> anyhow::Result<Arc<AgentWorkspace>> {
@@ -992,6 +1131,9 @@ mod tests {
             payload_manifest: Some("sha256:running".to_owned()),
             agent_version: 1,
             workspace: Mutex::new(None),
+            workspace_recovery_path: PathBuf::from("/tmp/test-agent.workspace"),
+            recovery_tabs: Mutex::new(Some(0)),
+            recovery_lock: Mutex::new(()),
         };
         let request = crate::agent_protocol::ping_request("demo@owner", "alice");
 
@@ -1011,8 +1153,97 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 10);
-        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 10);
+        assert_eq!(AGENT_VERSION, 11);
+        assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 11);
+    }
+
+    #[test]
+    fn workspace_recovery_restores_tabs_after_daemon_restart() {
+        let path = std::env::temp_dir().join(format!(
+            "lazycat-neko-webshell-agent-recovery-{}.workspace",
+            uuid::Uuid::new_v4()
+        ));
+        let request = crate::agent_protocol::state_request(
+            "demo@owner".to_owned(),
+            String::new(),
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            32,
+        );
+        let daemon = AgentDaemon {
+            selector: "demo@owner".to_owned(),
+            username: String::new(),
+            payload_manifest: None,
+            agent_version: AGENT_VERSION,
+            workspace: Mutex::new(None),
+            workspace_recovery_path: path.clone(),
+            recovery_tabs: Mutex::new(Some(2)),
+            recovery_lock: Mutex::new(()),
+        };
+
+        let first = daemon.state(&request).expect("initial workspace state");
+        assert_eq!(first.state.tabs.len(), 2);
+        drop(daemon);
+
+        let restarted = AgentDaemon {
+            selector: "demo@owner".to_owned(),
+            username: String::new(),
+            payload_manifest: None,
+            agent_version: AGENT_VERSION,
+            workspace: Mutex::new(None),
+            workspace_recovery_path: path.clone(),
+            recovery_tabs: Mutex::new(load_workspace_recovery(&path)),
+            recovery_lock: Mutex::new(()),
+        };
+        let restored = restarted.state(&request).expect("restored workspace state");
+        assert_eq!(restored.state.tabs.len(), 2);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn create_tab_preserves_recovered_workspace_tabs() {
+        let path = std::env::temp_dir().join(format!(
+            "lazycat-neko-webshell-agent-recovery-create-{}.workspace",
+            uuid::Uuid::new_v4()
+        ));
+        let daemon = AgentDaemon {
+            selector: "demo@owner".to_owned(),
+            username: String::new(),
+            payload_manifest: None,
+            agent_version: AGENT_VERSION,
+            workspace: Mutex::new(None),
+            workspace_recovery_path: path.clone(),
+            recovery_tabs: Mutex::new(Some(2)),
+            recovery_lock: Mutex::new(()),
+        };
+        let state_request = crate::agent_protocol::state_request(
+            "demo@owner".to_owned(),
+            String::new(),
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            32,
+        );
+        assert_eq!(daemon.state(&state_request).unwrap().state.tabs.len(), 2);
+
+        let create_request = crate::agent_protocol::action_request(
+            "demo@owner".to_owned(),
+            String::new(),
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            32,
+            AgentWorkspaceAction {
+                action: Some(
+                    AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB.into(),
+                ),
+                ..Default::default()
+            },
+        );
+        let created = daemon.action(&create_request).expect("create tab");
+        assert_eq!(created.state.tabs.len(), 3);
+        assert_eq!(load_workspace_recovery(&path), Some(3));
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]

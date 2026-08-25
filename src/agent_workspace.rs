@@ -288,7 +288,8 @@ impl AgentWorkspace {
         if matches!(
             action_kind,
             AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CREATE_TAB
-        ) {
+        ) || inner.tabs.is_empty()
+        {
             inner.update_existing_panes(cols, rows, output_limit)?;
         } else {
             inner.ensure_ready(cols, rows, output_limit)?;
@@ -1214,6 +1215,53 @@ mod tests {
             .unwrap();
 
         assert_eq!(created.tabs.len(), 1);
+    }
+
+    #[test]
+    fn stale_close_tab_does_not_recreate_a_closed_workspace() {
+        let workspace = AgentWorkspace::new("demo@owner", "");
+        let initial = workspace
+            .ensure_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+            .unwrap();
+        let tab_id = initial.tabs[0].id.clone().unwrap();
+
+        workspace
+            .apply_action(
+                &AgentWorkspaceAction {
+                    action: Some(
+                        AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CLOSE_TAB.into(),
+                    ),
+                    tab_id: Some(tab_id.clone()),
+                    ..Default::default()
+                },
+                DEFAULT_COLS,
+                DEFAULT_ROWS,
+                32,
+            )
+            .unwrap();
+
+        let stale = workspace.apply_action(
+            &AgentWorkspaceAction {
+                action: Some(
+                    AgentWorkspaceActionType::AGENT_WORKSPACE_ACTION_TYPE_CLOSE_TAB.into(),
+                ),
+                tab_id: Some(tab_id),
+                ..Default::default()
+            },
+            DEFAULT_COLS,
+            DEFAULT_ROWS,
+            32,
+        );
+
+        assert!(stale.is_err());
+        assert!(
+            workspace
+                .snapshot_state(DEFAULT_COLS, DEFAULT_ROWS, 32)
+                .unwrap()
+                .tabs
+                .is_empty()
+        );
+        assert!(workspace.pane("pane-1").is_err());
     }
 
     #[test]
