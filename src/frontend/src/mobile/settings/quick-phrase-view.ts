@@ -19,8 +19,9 @@ export function renderMobileQuickPhraseSettingsView(): string {
                   </label>
                   <label class="check-line">
                     <input id="mobileQuickPhraseSendEnter" type="checkbox" />
-                    <span data-i18n="field.quickPhraseSendEnter">Send Enter after text</span>
+                    <span data-i18n="field.quickPhraseSendEnter">Press Enter after sending this phrase</span>
                   </label>
+                  <p class="settings-help settings-help-inline" data-i18n="setting.quickPhraseSendEnterHelp">Turn this on for commands that should run immediately after the phrase is sent.</p>
                   <div class="quick-phrase-actions">
                     <button class="command-button primary" id="mobileQuickPhraseSave" type="button" data-i18n="action.quickPhraseAdd">Add phrase</button>
                     <button class="command-button" id="mobileQuickPhraseCancel" type="button" data-i18n="action.quickPhraseCancel" hidden>Cancel</button>

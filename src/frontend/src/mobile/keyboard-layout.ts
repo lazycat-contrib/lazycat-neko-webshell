@@ -265,6 +265,24 @@ export function moveMobileKeyboardKey(
   return next;
 }
 
+export function moveMobileKeyboardKeyToIndex(
+  layout: MobileKeyboardLayout,
+  pageId: MobileKeyboardPageId,
+  keyId: string,
+  targetIndex: number,
+): MobileKeyboardLayout {
+  const next = structuredClone(normalizeMobileKeyboardLayout(layout));
+  const page = next.pages.find((item) => item.id === pageId);
+  if (!page) return next;
+  const sourceIndex = page.keys.findIndex((item) => item.id === keyId);
+  if (sourceIndex < 0) return next;
+  const clampedIndex = Math.max(0, Math.min(targetIndex, page.keys.length - 1));
+  if (sourceIndex === clampedIndex) return next;
+  const [item] = page.keys.splice(sourceIndex, 1);
+  if (item) page.keys.splice(clampedIndex, 0, item);
+  return next;
+}
+
 export function updateMobileKeyboardKey(
   layout: MobileKeyboardLayout,
   pageId: MobileKeyboardPageId,

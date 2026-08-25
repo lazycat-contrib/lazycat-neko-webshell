@@ -8,6 +8,7 @@ import {
   addMobileKeyboardKey,
   mobileKeyboardPresetLayout,
   moveMobileKeyboardKey,
+  moveMobileKeyboardKeyToIndex,
   removeMobileKeyboardKey,
   resolveMobileKeyboardLayout,
   updateMobileKeyboardKey,
@@ -30,7 +31,7 @@ type Options = {
 export function createMobileKeyboardLayoutSettingsController(options: Options) {
   let pageId: MobileKeyboardPageId = "main";
   const preset = options.root.querySelector<HTMLSelectElement>("[data-mobile-layout-preset]");
-  const page = options.root.querySelector<HTMLSelectElement>("[data-mobile-layout-page]");
+  const pageTabs = options.root.querySelector<HTMLElement>("[data-mobile-layout-page-tabs]");
   const list = options.root.querySelector<HTMLElement>("[data-mobile-layout-key-list]");
   const label = options.root.querySelector<HTMLInputElement>("[data-mobile-key-label]");
   const kind = options.root.querySelector<HTMLSelectElement>("[data-mobile-key-kind]");
@@ -41,6 +42,7 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
   const width = options.root.querySelector<HTMLSelectElement>("[data-mobile-key-new-width]");
   const enter = options.root.querySelector<HTMLInputElement>("[data-mobile-key-enter]");
   const enterField = options.root.querySelector<HTMLElement>("[data-mobile-key-enter-field]");
+  const enterHelp = options.root.querySelector<HTMLElement>("[data-mobile-key-enter-help]");
   const status = options.root.querySelector<HTMLElement>("[data-mobile-layout-status]");
 
   function currentLayout() {
@@ -57,16 +59,25 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
 
   function render() {
     if (preset) preset.value = options.preset();
-    if (page) page.value = pageId;
+    pageTabs?.querySelectorAll<HTMLButtonElement>("[data-mobile-layout-page-tab]").forEach((tab) => {
+      const selected = tab.dataset.mobileLayoutPageTab === pageId;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+    });
+    list?.setAttribute("aria-labelledby", `mobileLayoutPageTab${pageId.charAt(0).toUpperCase()}${pageId.slice(1)}`);
     if (!list) return;
     const keys = currentLayout().pages.find((item) => item.id === pageId)?.keys ?? [];
     list.innerHTML = keys.length ? keys.map((key, index) => `
-      <div class="mobile-keyboard-key-row" data-mobile-layout-key="${escapeAttr(key.id)}">
-        <button type="button" class="mobile-keyboard-key-preview" data-mobile-key-visibility="${escapeAttr(key.id)}" aria-pressed="${!key.hidden}" aria-label="${escapeAttr(options.tr(key.hidden ? "action.show" : "action.hide"))}">
-          ${key.icon ? `<i data-lucide="${escapeAttr(key.icon)}"></i>` : ""}<span>${escapeHtml(key.label || key.value)}</span>${key.autoEnter ? '<small aria-hidden="true">↵</small>' : ""}
-        </button>
+      <div class="mobile-keyboard-key-row${key.hidden ? " is-hidden" : ""}" data-mobile-layout-key="${escapeAttr(key.id)}" data-mobile-key-width="${escapeAttr(key.width)}" draggable="true">
+        <div class="mobile-keyboard-key-card">
+          <button type="button" class="mobile-keyboard-key-preview" data-mobile-key-visibility="${escapeAttr(key.id)}" aria-pressed="${!key.hidden}" aria-label="${escapeAttr(options.tr(key.hidden ? "action.show" : "action.hide"))}">
+            ${key.icon ? `<i data-lucide="${escapeAttr(key.icon)}"></i>` : ""}<span>${escapeHtml(key.label || key.value)}</span>${key.autoEnter ? '<small aria-hidden="true">↵</small>' : ""}
+          </button>
+          <span class="mobile-keyboard-key-meta"><span data-i18n="field.mobileKeyboardKeyWidth">${escapeHtml(options.tr("field.mobileKeyboardKeyWidth"))}</span> ${escapeHtml(options.tr(key.width === "sm" ? "option.mobileKeyboardWidthSmall" : key.width === "lg" ? "option.mobileKeyboardWidthLarge" : "option.mobileKeyboardWidthMedium"))}</span>
+        </div>
+        <span class="mobile-keyboard-drag-handle" aria-hidden="true"><i data-lucide="grip-vertical"></i></span>
         <select data-mobile-key-width="${escapeAttr(key.id)}" aria-label="${escapeAttr(options.tr("field.mobileKeyboardKeyWidth"))}">
-          <option value="sm"${key.width === "sm" ? " selected" : ""}>S</option><option value="md"${key.width === "md" ? " selected" : ""}>M</option><option value="lg"${key.width === "lg" ? " selected" : ""}>L</option>
+          <option value="sm"${key.width === "sm" ? " selected" : ""}>${escapeHtml(options.tr("option.mobileKeyboardWidthSmall"))}</option><option value="md"${key.width === "md" ? " selected" : ""}>${escapeHtml(options.tr("option.mobileKeyboardWidthMedium"))}</option><option value="lg"${key.width === "lg" ? " selected" : ""}>${escapeHtml(options.tr("option.mobileKeyboardWidthLarge"))}</option>
         </select>
         <button type="button" class="icon-button" data-mobile-key-move="${escapeAttr(key.id)}" data-direction="-1" aria-label="${escapeAttr(options.tr("action.moveUp"))}"${index === 0 ? " disabled" : ""}><i data-lucide="chevron-up"></i></button>
         <button type="button" class="icon-button" data-mobile-key-move="${escapeAttr(key.id)}" data-direction="1" aria-label="${escapeAttr(options.tr("action.moveDown"))}"${index === keys.length - 1 ? " disabled" : ""}><i data-lucide="chevron-down"></i></button>
@@ -82,6 +93,7 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
       if (textField) textField.hidden = selected !== "text";
       if (valueField) valueField.hidden = selected === "text";
       if (enterField) enterField.hidden = selected !== "text";
+      if (enterHelp) enterHelp.hidden = selected !== "text";
       if (!value || selected === "text") return;
       const entries = selected === "action"
         ? MOBILE_KEYBOARD_ACTIONS.map((item) => [item, actionLabel(item)] as const)
@@ -102,9 +114,23 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
       options.changed();
       render();
     });
-    page?.addEventListener("change", () => {
-      if (MOBILE_KEYBOARD_PAGE_IDS.includes(page.value as MobileKeyboardPageId)) pageId = page.value as MobileKeyboardPageId;
-      render();
+    pageTabs?.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-mobile-layout-page-tab]") : null;
+      const nextPage = target?.dataset.mobileLayoutPageTab as MobileKeyboardPageId | undefined;
+      if (nextPage && MOBILE_KEYBOARD_PAGE_IDS.includes(nextPage)) {
+        pageId = nextPage;
+        render();
+      }
+    });
+    pageTabs?.addEventListener("keydown", (event) => {
+      if (!(event.target instanceof HTMLButtonElement)) return;
+      const tabs = [...pageTabs.querySelectorAll<HTMLButtonElement>("[data-mobile-layout-page-tab]")];
+      const current = tabs.indexOf(event.target);
+      if (current < 0 || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const next = tabs[(current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length];
+      next?.click();
+      next?.focus();
     });
     options.root.addEventListener("change", (event) => {
       const control = event.target instanceof Element ? event.target.closest<HTMLSelectElement>("[data-mobile-key-width]") : null;
@@ -163,6 +189,75 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
       if (enter) enter.checked = false;
       if (status) status.textContent = "";
     });
+    options.root.addEventListener("dragstart", (event) => {
+      const row = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-mobile-layout-key]") : null;
+      if (!row) return;
+      row.classList.add("is-dragging");
+      event.dataTransfer?.setData("text/plain", row.dataset.mobileLayoutKey ?? "");
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+    });
+    options.root.addEventListener("dragend", (event) => {
+      const row = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-mobile-layout-key]") : null;
+      row?.classList.remove("is-dragging");
+      list?.querySelectorAll(".is-drag-over").forEach((item) => item.classList.remove("is-drag-over"));
+    });
+    options.root.addEventListener("dragover", (event) => {
+      const row = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-mobile-layout-key]") : null;
+      if (!row) return;
+      event.preventDefault();
+      list?.querySelectorAll(".is-drag-over").forEach((item) => item.classList.remove("is-drag-over"));
+      row.classList.add("is-drag-over");
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    });
+    options.root.addEventListener("drop", (event) => {
+      const row = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-mobile-layout-key]") : null;
+      if (!row) return;
+      event.preventDefault();
+      const sourceId = event.dataTransfer?.getData("text/plain") ?? "";
+      const targetId = row.dataset.mobileLayoutKey ?? "";
+      const keys = currentLayout().pages.find((item) => item.id === pageId)?.keys ?? [];
+      const sourceIndex = keys.findIndex((item) => item.id === sourceId);
+      const targetIndex = keys.findIndex((item) => item.id === targetId);
+      const insertIndex = sourceIndex >= 0 && sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+      if (sourceId && targetIndex >= 0) commit(moveMobileKeyboardKeyToIndex(currentLayout(), pageId, sourceId, insertIndex));
+    });
+    let pointerDragKeyId = "";
+    let pointerDragTargetId = "";
+    const clearPointerDrag = () => {
+      if (!pointerDragKeyId) return;
+      list?.querySelectorAll(".is-dragging, .is-drag-over").forEach((item) => item.classList.remove("is-dragging", "is-drag-over"));
+      pointerDragKeyId = "";
+      pointerDragTargetId = "";
+    };
+    options.root.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse") return;
+      const handle = event.target instanceof Element ? event.target.closest<HTMLElement>(".mobile-keyboard-drag-handle") : null;
+      const row = handle?.closest<HTMLElement>("[data-mobile-layout-key]");
+      if (!row?.dataset.mobileLayoutKey) return;
+      pointerDragKeyId = row.dataset.mobileLayoutKey;
+      pointerDragTargetId = pointerDragKeyId;
+      row.classList.add("is-dragging");
+      row.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    });
+    options.root.addEventListener("pointermove", (event) => {
+      if (!pointerDragKeyId) return;
+      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-mobile-layout-key]");
+      if (!target || target.dataset.mobileLayoutKey === pointerDragKeyId) return;
+      list?.querySelectorAll(".is-drag-over").forEach((item) => item.classList.remove("is-drag-over"));
+      target.classList.add("is-drag-over");
+      pointerDragTargetId = target.dataset.mobileLayoutKey ?? pointerDragKeyId;
+    });
+    options.root.addEventListener("pointerup", () => {
+      if (!pointerDragKeyId) return;
+      const keys = currentLayout().pages.find((item) => item.id === pageId)?.keys ?? [];
+      const sourceIndex = keys.findIndex((item) => item.id === pointerDragKeyId);
+      const targetIndex = keys.findIndex((item) => item.id === pointerDragTargetId);
+      const insertIndex = sourceIndex >= 0 && sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+      if (targetIndex >= 0) commit(moveMobileKeyboardKeyToIndex(currentLayout(), pageId, pointerDragKeyId, insertIndex));
+      clearPointerDrag();
+    });
+    options.root.addEventListener("pointercancel", clearPointerDrag);
     render();
   }
 

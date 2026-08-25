@@ -5,6 +5,7 @@ import {
   MAX_MOBILE_KEY_TEXT,
   mobileKeyboardPresetLayout,
   moveMobileKeyboardKey,
+  moveMobileKeyboardKeyToIndex,
   normalizeMobileKeyboardLayout,
   normalizeMobileKeyboardPreset,
   resolveMobileKeyboardLayout,
@@ -96,4 +97,14 @@ test("moves and updates keys without mutating the source layout", () => {
   const key = updated.pages.find((item) => item.id === "main")?.keys[0];
   assert.equal(key?.hidden, true);
   assert.equal(key?.width, "lg");
+});
+
+test("moves a key to an exact visual grid position without mutating the source layout", () => {
+  const layout = mobileKeyboardPresetLayout("default");
+  const page = layout.pages.find((item) => item.id === "main");
+  assert.ok(page);
+  const keyId = page.keys[1].id;
+  const moved = moveMobileKeyboardKeyToIndex(layout, "main", keyId, 6);
+  assert.equal(moved.pages.find((item) => item.id === "main")?.keys[6]?.id, keyId);
+  assert.equal(layout.pages.find((item) => item.id === "main")?.keys[1]?.id, keyId);
 });

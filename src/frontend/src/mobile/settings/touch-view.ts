@@ -13,8 +13,9 @@ export function renderMobileTouchSettingsView(): string {
                 <p class="settings-help" data-i18n="setting.preventMobileKeyboardAutoOpenHelp">Keep Page Up, Page Down, and other shortcut keys from opening the system keyboard. Use the keyboard button or double-tap the terminal to open it.</p>
                 <label class="switch">
                   <input id="preventMobileKeyboardAutoOpen" type="checkbox" />
-                  <span data-i18n="setting.preventMobileKeyboardAutoOpen">Prevent automatic system keyboard</span>
+                  <span data-i18n="setting.preventMobileKeyboardAutoOpen">Keep shortcut taps from opening the system keyboard</span>
                 </label>
+                <p class="settings-help settings-help-inline" data-i18n="setting.preventMobileKeyboardAutoOpenHelpShort">The keyboard button and a double-tap still open it when you want to type.</p>
               </div>
   `;
 }
