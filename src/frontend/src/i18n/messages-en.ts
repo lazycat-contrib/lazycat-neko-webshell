@@ -825,6 +825,7 @@ export const enMessages = {
   "status.shellReady": "Shell ready",
   "status.socketError": "Socket error",
   "status.startupFailed": "Startup failed: {message}",
+  "status.providerUpdated": "WebShell was updated. Refresh this page before continuing.",
   "status.sessionStopped": "Session stopped",
   "status.sshUrlOpenFailed": "SSH URL open failed: {message}",
   "status.sshUrlProfileReady": "SSH profile ready: {name}",

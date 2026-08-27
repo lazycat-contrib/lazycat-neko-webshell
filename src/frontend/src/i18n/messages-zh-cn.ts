@@ -827,6 +827,7 @@ export const zhCNMessages = {
   "status.shellReady": "Shell 已就绪",
   "status.socketError": "Socket 错误",
   "status.startupFailed": "启动失败：{message}",
+  "status.providerUpdated": "WebShell 已更新，请刷新页面后继续操作。",
   "status.sessionStopped": "会话已停止",
   "status.sshUrlOpenFailed": "SSH URL 打开失败：{message}",
   "status.sshUrlProfileReady": "SSH profile 已就绪：{name}",

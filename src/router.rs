@@ -166,6 +166,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
 struct RuntimeInfo {
     mode: &'static str,
     lightos_features_enabled: bool,
+    revision: String,
 }
 
 async fn runtime_info() -> Json<RuntimeInfo> {
@@ -176,7 +177,24 @@ async fn runtime_info() -> Json<RuntimeInfo> {
     Json(RuntimeInfo {
         mode,
         lightos_features_enabled: lightos_features_enabled(),
+        revision: format!(
+            "{}:{}",
+            env!("CARGO_PKG_VERSION"),
+            crate::embedded_frontend::FRONTEND_CONTENT_REVISION,
+        ),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runtime_info;
+
+    #[tokio::test]
+    async fn runtime_info_includes_a_content_revision() {
+        let info = runtime_info().await.0;
+        assert!(!info.revision.is_empty());
+        assert!(info.revision.contains(':'));
+    }
 }
 
 async fn lightos_admin_info() -> Result<Json<AdminInfo>, (StatusCode, String)> {

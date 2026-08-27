@@ -320,6 +320,7 @@ import { enabledPluginTools, resolveActivePluginToolId } from "./plugins/tool-re
 import { renderPluginToolEmpty, syncPluginToolTabs } from "./plugins/tool-shell-view";
 import { workingDirectoryFromOsc7, workingDirectoryFromPrompt } from "./remote-files";
 import { fetchRuntimeInfo, type RuntimeInfo } from "./runtime";
+import { createProviderRevisionController } from "./provider-revision-controller";
 import { loadLocalSettings, loadSettings, saveSettings as persistSettings } from "./settings";
 import { renderFontFamilyOptions, renderThemeSelectOptions } from "./settings-options-view";
 import { activateFontPanel, activateSettingsPanel, bindSettingsTabControls } from "./settings-tabs";
@@ -736,7 +737,16 @@ const notificationController = createNotificationController({
 });
 
 let settings = loadLocalSettings();
-let runtimeInfo: RuntimeInfo = { mode: "lightos", lightosFeaturesEnabled: true };
+let runtimeInfo: RuntimeInfo = { mode: "lightos", lightosFeaturesEnabled: true, revision: "" };
+let providerRevisionStale = false;
+const providerRevisionController = createProviderRevisionController({
+  fetchRevision: async () => (await fetchRuntimeInfo()).revision,
+  onChanged: () => {
+    providerRevisionStale = true;
+    setGlobalStatus(tr("status.providerUpdated"), "error");
+    for (const pane of allPanes()) setPaneStatus(pane, tr("status.providerUpdated"), "error");
+  },
+});
 let instances: Instance[] = [];
 let selectedSelector = initialSelector;
 let selectedSelectorGeneration = 0;
@@ -1318,11 +1328,12 @@ async function loadRuntimeInfo() {
   try {
     runtimeInfo = await fetchRuntimeInfo();
   } catch (error) {
-    runtimeInfo = { mode: "lightos", lightosFeaturesEnabled: true };
+    runtimeInfo = { mode: "lightos", lightosFeaturesEnabled: true, revision: "" };
     if (settings.debugMode) {
       setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
     }
   }
+  providerRevisionController.setInitialRevision(runtimeInfo.revision);
 }
 
 function saveSettings() {
@@ -2453,10 +2464,13 @@ function bindActions() {
 
 function bindLifecycleEvents() {
   window.addEventListener("online", () => {
-    void loadInstances({ restart: true });
-    void connectRestoredPanes();
-    void refreshSessionBackends(selectedSelector);
-    void refreshHerdrState(selectedSelector);
+    void providerRevisionController.check().then((changed) => {
+      if (changed || providerRevisionController.isStale()) return;
+      void loadInstances({ restart: true });
+      void connectRestoredPanes();
+      void refreshSessionBackends(selectedSelector);
+      void refreshHerdrState(selectedSelector);
+    });
   });
   window.addEventListener("offline", () => {
     paneConnectionLifecycle.handleOfflineHint(allPanes());
@@ -2490,9 +2504,12 @@ function bindLifecycleEvents() {
   });
   window.addEventListener("focus", () => {
     handleViewportChange();
-    void connectRestoredPanes();
-    void refreshSessionBackends(selectedSelector);
-    void refreshHerdrState(selectedSelector);
+    void providerRevisionController.check().then((changed) => {
+      if (changed || providerRevisionController.isStale()) return;
+      void connectRestoredPanes();
+      void refreshSessionBackends(selectedSelector);
+      void refreshHerdrState(selectedSelector);
+    });
   });
   window.addEventListener("resize", handleViewportChange);
   window.addEventListener("orientationchange", handleViewportChange);
@@ -2504,9 +2521,12 @@ function bindLifecycleEvents() {
       return;
     }
     handleViewportChange();
-    void connectRestoredPanes();
-    void refreshSessionBackends(selectedSelector);
-    void refreshHerdrState(selectedSelector);
+    void providerRevisionController.check().then((changed) => {
+      if (changed || providerRevisionController.isStale()) return;
+      void connectRestoredPanes();
+      void refreshSessionBackends(selectedSelector);
+      void refreshHerdrState(selectedSelector);
+    });
   });
 }
 
@@ -5902,6 +5922,7 @@ function sendPaneResize(pane: TerminalPane, cols: number, rows: number): boolean
 }
 
 function connectPanePty(pane: TerminalPane) {
+  if (providerRevisionStale) return;
   if (!canConnectPanePty(pane)) return;
   const restty = pane.term?.restty;
   if (restty) {
@@ -5916,12 +5937,14 @@ function openSocket(pane: TerminalPane) {
 }
 
 async function openSocketPrepared(pane: TerminalPane) {
+  if (providerRevisionStale) return;
   if (!pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
   if (pendingPaneSocketOpens.has(pane.id)) return;
   paneConnectionLifecycle.beginConnection(pane);
   pendingPaneSocketOpens.add(pane.id);
   let attach: Awaited<ReturnType<typeof terminalControl.prepareAttach>>;
+  const revisionAtPrepareStart = providerRevisionController.expectedRevision();
   try {
     if (
       pane.sessionBackend === "herdr"
@@ -5941,7 +5964,12 @@ async function openSocketPrepared(pane: TerminalPane) {
   } finally {
     pendingPaneSocketOpens.delete(pane.id);
   }
-  if (pane.closing || !pane.sessionId) return;
+  if (
+    providerRevisionStale
+    || providerRevisionController.expectedRevision() !== revisionAtPrepareStart
+    || pane.closing
+    || !pane.sessionId
+  ) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
   const replayAfter = paneReplayAfter(pane);
   pane.lastReplayAfter = replayAfter;
@@ -6279,6 +6307,10 @@ function observeTerminalTitle(pane: TerminalPane, text: string) {
 }
 
 function scheduleReconnect(pane: TerminalPane) {
+  if (providerRevisionStale) {
+    setPaneStatus(pane, tr("status.providerUpdated"), "error");
+    return;
+  }
   paneConnectionLifecycle.scheduleReconnect(pane);
 }
 
@@ -6830,6 +6862,7 @@ function setGlobalStatus(message: string, tone: Tone = "neutral") {
 }
 
 function sendActivePaneKeyInput(data: string): boolean {
+  if (providerRevisionStale) return false;
   const pane = activePane();
   if (!pane?.term?.restty || !data) return false;
   if (!terminalControl.canWrite(pane)) return false;
@@ -6937,6 +6970,7 @@ function sendHistoryRecording(pane: TerminalPane, enabled: boolean) {
 }
 
 function sendPaneInput(pane: TerminalPane, data: string): boolean {
+  if (providerRevisionStale) return false;
   if (!pane || !canConnectPanePty(pane)) {
     focusActivePaneCanvas();
     return false;
@@ -6955,6 +6989,7 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
 }
 
 function sendHerdrWheelInputNow(pane: TerminalPane, data: string): boolean {
+  if (providerRevisionStale) return false;
   if (!canConnectPanePty(pane) || !terminalControl.canWrite(pane, { report: false })) return false;
   if (pane.socket?.readyState !== WebSocket.OPEN || pane.closing) return false;
   return sendPaneInputDirect(pane, data);

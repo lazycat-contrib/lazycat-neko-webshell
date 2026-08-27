@@ -62,13 +62,28 @@ fn embed_webshell_agent() -> std::io::Result<()> {
 }
 
 fn sha256_manifest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+    digest_manifest(Sha256::digest(bytes))
+}
+
+fn digest_manifest(digest: impl AsRef<[u8]>) -> String {
+    let digest = digest.as_ref();
     let mut manifest = String::with_capacity("sha256:".len() + digest.len() * 2);
     manifest.push_str("sha256:");
     for byte in digest {
         write!(&mut manifest, "{byte:02x}").expect("writing to String cannot fail");
     }
     manifest
+}
+
+fn frontend_content_revision(files: &[(String, PathBuf)]) -> std::io::Result<String> {
+    let mut hasher = Sha256::new();
+    for (asset_path, file_path) in files {
+        hasher.update(asset_path.as_bytes());
+        hasher.update([0]);
+        hasher.update(fs::read(file_path)?);
+        hasher.update([0]);
+    }
+    Ok(digest_manifest(hasher.finalize()))
 }
 
 fn embed_frontend_assets() -> std::io::Result<()> {
@@ -82,6 +97,7 @@ fn embed_frontend_assets() -> std::io::Result<()> {
         collect_files(&frontend_dist, &frontend_dist, &mut files)?;
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
+    let content_revision = frontend_content_revision(&files)?;
 
     let mut generated = String::from("pub static FRONTEND_ASSETS: &[(&str, &[u8])] = &[\n");
     for (asset_path, file_path) in files {
@@ -93,6 +109,11 @@ fn embed_frontend_assets() -> std::io::Result<()> {
         .expect("writing to String cannot fail");
     }
     generated.push_str("];\n");
+    writeln!(
+        &mut generated,
+        "pub const FRONTEND_CONTENT_REVISION: &str = {content_revision:?};"
+    )
+    .expect("writing to String cannot fail");
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("missing OUT_DIR"));
     fs::write(out_dir.join("frontend_assets.rs"), generated)

@@ -1,6 +1,7 @@
 export type RuntimeInfo = {
   mode: "lightos" | "generic";
   lightosFeaturesEnabled: boolean;
+  revision: string;
 };
 
 export async function fetchRuntimeInfo(): Promise<RuntimeInfo> {
@@ -15,5 +16,6 @@ export async function fetchRuntimeInfo(): Promise<RuntimeInfo> {
   return {
     mode: payload.mode === "generic" ? "generic" : "lightos",
     lightosFeaturesEnabled: Boolean(payload.lightosFeaturesEnabled),
+    revision: typeof payload.revision === "string" ? payload.revision.trim().slice(0, 256) : "",
   };
 }

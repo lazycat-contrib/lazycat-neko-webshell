@@ -40,9 +40,9 @@
 - Modify: `src/frontend/src/main.ts` only for controller wiring
 - Test: `src/frontend/src/provider-revision-controller.test.mjs`
 
-- [ ] Define a no-store revision response and a controller that remembers the initial revision.
-- [ ] Recheck on reconnect, visibility regain, and recovery; stale revisions lock terminal input and show a reload action.
-- [ ] Add generation tests for unchanged, changed, cancelled, and stale responses.
+- [x] Define a no-store revision response and a controller that remembers the initial revision.
+- [x] Recheck on reconnect, visibility regain, and recovery; stale revisions lock terminal input and show a reload instruction.
+- [x] Add generation tests for unchanged, changed, cancelled, and stale responses.
 
 ### Task 3: Make replay generations and gaps explicit
 
