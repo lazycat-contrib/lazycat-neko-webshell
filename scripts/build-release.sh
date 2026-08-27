@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+node scripts/check-version-consistency.mjs
+
 content_dir="./dist/content"
 rm -rf "${content_dir}"
 mkdir -p "${content_dir}"
@@ -16,7 +18,10 @@ cp vendor/restty/0.2.6/LICENSE "${content_dir}/licenses/restty-0.2.6-LICENSE"
 
 npm ci
 node scripts/export-restty-wasm.mjs
+npm test
 npm run build
+cargo fmt --check
+cargo test --locked
 
 protoc_version="31.1"
 protoc_sha256="96553041f1a91ea0efee963cb16f462f5985b4d65365f3907414c360044d8065"

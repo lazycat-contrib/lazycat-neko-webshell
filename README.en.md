@@ -2,8 +2,6 @@
 
 [中文](./README.md)
 
-Current version: `0.7.24`
-
 Neko Webshell is a browser WebShell workbench. It defaults to LazyCat / LightOS app instances, but it can also run as a generic WebShell with LightOS initialization disabled and manage remote terminal targets through SSH profiles.
 
 It works as a remote workbench you can reach from a browser. On desktop, it is comfortable for longer development and troubleshooting sessions. On mobile, it keeps the keys, vertical history scrolling, and tab switching behavior terminal work needs.

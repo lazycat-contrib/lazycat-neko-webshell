@@ -30,7 +30,6 @@ permissions:
 
 jobs:
   verify-source:
-    if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -74,6 +73,7 @@ jobs:
 
   publish-tag:
     if: github.ref_type == 'tag'
+    needs: verify-source
     uses: ca-x/lazycat-github-action/.github/workflows/lazycat.yml@v1
     with:
       operation: auto
