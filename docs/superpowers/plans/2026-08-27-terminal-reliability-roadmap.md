@@ -28,9 +28,9 @@
 - Modify: `README.en.md`
 - Test: add a focused shell or Rust test beside the release guard
 
-- [ ] Make frontend tests, Rust tests, formatting, and Clippy check prerequisites explicit in PR and tag workflows.
-- [ ] Add one release guard asserting `Cargo.toml`, `package.json`, `package-lock.json`, and `package.yml` versions agree.
-- [ ] Remove manually duplicated README version strings or generate them from canonical metadata.
+- [x] Make frontend tests, Rust tests, and formatting prerequisites explicit in PR and tag workflows. Clippy remains a follow-up because the pinned baseline currently has existing `-D warnings` failures.
+- [x] Add one release guard asserting `Cargo.toml`, `package.json`, `package-lock.json`, and `package.yml` versions agree.
+- [x] Remove manually duplicated README version strings or generate them from canonical metadata.
 
 ### Task 2: Add provider revision detection
 
@@ -83,4 +83,3 @@
 - [ ] Prototype a generation-keyed local cache only after replay identity is stable and privacy/eviction rules are documented.
 - [ ] Extend the existing mobile overview for live previews and lifecycle actions before considering durable Cache API previews.
 - [ ] Add a user-facing Auto/Mobile/Desktop override and fullscreen-TUI touch arbitration only after the current generic gesture path is characterized on real devices.
-
