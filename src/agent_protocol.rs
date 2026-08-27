@@ -12,7 +12,7 @@ pub const AGENT_PROTOCOL_VERSION: &str = "lazycat-neko-webshell-agent-v4";
 // Bump when target-local agent code or one of its runtime dependencies changes.
 // Existing targets may keep an older agent until the provider raises its
 // minimum supported version.
-pub const AGENT_VERSION: u64 = 11;
+pub const AGENT_VERSION: u64 = 12;
 // Bump only when the provider can no longer safely use an older agent. Protocol
 // compatibility is checked before this version floor.
 pub const MIN_SUPPORTED_AGENT_VERSION: u64 = 11;
@@ -284,6 +284,28 @@ pub fn replay_start_frame(
     })
 }
 
+pub fn replay_start_frame_with_metadata(
+    session_id: impl Into<String>,
+    selector: impl Into<String>,
+    pane_id: impl Into<String>,
+    replay_after: u64,
+    replay_mode: impl Into<String>,
+    replay_gap: bool,
+    oldest_sequence: Option<u64>,
+) -> AgentFrame {
+    control_frame(AgentControl {
+        r#type: Some(AgentControlType::AGENT_CONTROL_TYPE_REPLAY_START.into()),
+        session_id: Some(session_id.into()),
+        selector: Some(selector.into()),
+        pane_id: Some(pane_id.into()),
+        replay_after: Some(clamped_i64(replay_after)),
+        replay_mode: Some(replay_mode.into()),
+        replay_gap: Some(replay_gap),
+        oldest_sequence: oldest_sequence.map(clamped_i64),
+        ..Default::default()
+    })
+}
+
 pub fn replay_complete_frame(
     session_id: impl Into<String>,
     selector: impl Into<String>,
@@ -401,6 +423,24 @@ mod tests {
         assert_eq!(request.selector.as_deref(), Some("app@owner"));
         assert_eq!(request.username.as_deref(), Some("alice"));
         assert_eq!(request.session_id.as_deref(), Some("session-1"));
+    }
+
+    #[test]
+    fn replay_start_frame_carries_gap_metadata() {
+        let frame = replay_start_frame_with_metadata(
+            "session-1",
+            "app@owner",
+            "pane-1",
+            42,
+            "gap",
+            true,
+            Some(100),
+        );
+        let control = frame.control.into_option().expect("replay control");
+
+        assert_eq!(control.replay_mode.as_deref(), Some("gap"));
+        assert_eq!(control.replay_gap, Some(true));
+        assert_eq!(control.oldest_sequence, Some(100));
     }
 
     #[test]

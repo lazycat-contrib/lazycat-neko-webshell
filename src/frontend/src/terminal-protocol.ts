@@ -30,6 +30,9 @@ export type TerminalServerEvent =
     session_id?: string;
     pane_id?: string;
     replay_after?: number;
+    replay_mode?: "tail" | "delta" | "gap" | string;
+    replay_gap?: boolean;
+    oldest_sequence?: number;
     allow_generated_input?: boolean;
   }
   | { type: "replay-complete"; session_id?: string; pane_id?: string; last_sequence?: number };

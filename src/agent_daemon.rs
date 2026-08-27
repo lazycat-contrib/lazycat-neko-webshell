@@ -21,7 +21,7 @@ use crate::agent_protocol::{
     AGENT_PROTOCOL_VERSION, AGENT_VERSION, MAX_AGENT_MESSAGE_BYTES, MIN_SUPPORTED_AGENT_VERSION,
     attach_request, binary_frame_with_sequence, error_response, ok_response, process_exit_frame,
     read_agent_frame, read_agent_request, read_agent_response, replay_complete_frame,
-    replay_start_frame, state_response, write_agent_frame, write_agent_request,
+    replay_start_frame_with_metadata, state_response, write_agent_frame, write_agent_request,
     write_agent_response,
 };
 use crate::agent_workspace::{AgentPane, AgentPaneEvent, AgentWorkspace};
@@ -840,6 +840,8 @@ fn serve_attach_stream(
     } else {
         pane.snapshot_after_bounded(replay_after, usize::MAX, usize::MAX)
     };
+    let (replay_mode, replay_gap) = replay_mode_for(replay_after, snapshot.replay_gap);
+    let oldest_sequence = snapshot.oldest_sequence;
     let frames = snapshot.frames;
     let mut last_sequence = snapshot.last_sequence;
 
@@ -858,7 +860,15 @@ fn serve_attach_stream(
 
     write_agent_frame(
         &mut *stream,
-        &replay_start_frame(pane.session_id(), pane.selector(), pane.id(), replay_after),
+        &replay_start_frame_with_metadata(
+            pane.session_id(),
+            pane.selector(),
+            pane.id(),
+            replay_after,
+            replay_mode,
+            replay_gap,
+            oldest_sequence,
+        ),
     )?;
     for frame in frames {
         write_agent_frame(
@@ -905,6 +915,16 @@ fn serve_attach_stream(
         }
     }
     Ok(())
+}
+
+fn replay_mode_for(replay_after: u64, replay_gap: bool) -> (&'static str, bool) {
+    if replay_after == 0 {
+        ("tail", false)
+    } else if replay_gap {
+        ("gap", true)
+    } else {
+        ("delta", false)
+    }
 }
 
 fn accept_live_sequence(last_sequence: &mut u64, sequence: u64) -> bool {
@@ -1153,8 +1173,15 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 11);
+        assert_eq!(AGENT_VERSION, 12);
         assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 11);
+    }
+
+    #[test]
+    fn replay_mode_marks_only_nonzero_cursor_gaps() {
+        assert_eq!(replay_mode_for(0, true), ("tail", false));
+        assert_eq!(replay_mode_for(42, false), ("delta", false));
+        assert_eq!(replay_mode_for(42, true), ("gap", true));
     }
 
     #[test]

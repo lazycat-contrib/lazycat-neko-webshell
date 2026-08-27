@@ -324,6 +324,9 @@ message AgentControl {
   int32 exit_code = 7;
   string message = 8;
   bool history_recording = 9;
+  string replay_mode = 10;
+  bool replay_gap = 11;
+  int64 oldest_sequence = 12;
 }
 
 enum AgentControlType {

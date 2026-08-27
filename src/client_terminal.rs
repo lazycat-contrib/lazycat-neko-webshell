@@ -1058,7 +1058,7 @@ fn translate_remote_control(
             "remote terminal replay identity mismatch",
         ));
     }
-    let translated = if kind == "history-replay-start" {
+    let mut translated = if kind == "history-replay-start" {
         let allow_generated_input = value
             .get("allow_generated_input")
             .or_else(|| value.get("allowGeneratedInput"))
@@ -1086,6 +1086,36 @@ fn translate_remote_control(
             "last_sequence": last_sequence,
         })
     };
+    if let Some(object) = translated.as_object_mut() {
+        if let Some(mode) = value
+            .get("replay_mode")
+            .or_else(|| value.get("replayMode"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|mode| !mode.is_empty())
+        {
+            object.insert(
+                "replay_mode".to_owned(),
+                serde_json::Value::String(mode.to_owned()),
+            );
+        }
+        if let Some(gap) = value
+            .get("replay_gap")
+            .or_else(|| value.get("replayGap"))
+            .and_then(serde_json::Value::as_bool)
+        {
+            object.insert("replay_gap".to_owned(), serde_json::Value::Bool(gap));
+        }
+        if let Some(oldest) = value
+            .get("oldest_sequence")
+            .or_else(|| value.get("oldestSequence"))
+            .and_then(serde_json::Value::as_u64)
+        {
+            object.insert(
+                "oldest_sequence".to_owned(),
+                serde_json::Value::from(oldest),
+            );
+        }
+    }
     serde_json::to_string(&translated)
         .map_err(|error| ClientTerminalError::bad_gateway(error.to_string()))
 }
@@ -1897,7 +1927,7 @@ mod tests {
     #[test]
     fn translates_official_history_replay_controls_for_the_current_frontend() {
         let start = translate_remote_control(
-            r#"{"type":"history-replay-start","selector":"client:client-a","pane_id":"pane-1","allow_generated_input":true}"#,
+            r#"{"type":"history-replay-start","selector":"client:client-a","pane_id":"pane-1","allow_generated_input":true,"replay_mode":"gap","replay_gap":true,"oldest_sequence":100}"#,
             "client:client-a",
             "pane-1",
             12,
@@ -1909,6 +1939,9 @@ mod tests {
         assert_eq!(start["session_id"], "pane-1");
         assert_eq!(start["replay_after"], 12);
         assert_eq!(start["allow_generated_input"], true);
+        assert_eq!(start["replay_mode"], "gap");
+        assert_eq!(start["replay_gap"], true);
+        assert_eq!(start["oldest_sequence"], 100);
 
         let complete = translate_remote_control(
             r#"{"type":"history-replay-complete","selector":"client:client-a","pane_id":"pane-1","last_sequence":19}"#,

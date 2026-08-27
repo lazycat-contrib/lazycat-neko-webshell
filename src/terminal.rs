@@ -138,6 +138,12 @@ enum TerminalServerMessage<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         pane_id: Option<&'a str>,
         replay_after: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        replay_mode: Option<&'a str>,
+        #[serde(skip_serializing_if = "is_false")]
+        replay_gap: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        oldest_sequence: Option<u64>,
     },
     ReplayComplete {
         session_id: &'a str,
@@ -158,6 +164,10 @@ enum TerminalServerMessage<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         control_action: Option<&'a str>,
     },
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 enum TerminalAttachTarget {
@@ -1247,6 +1257,14 @@ async fn handle_agent_control_frame(
                         .replay_after
                         .and_then(|value| u64::try_from(value).ok())
                         .unwrap_or(0),
+                    replay_mode: control
+                        .replay_mode
+                        .as_deref()
+                        .filter(|value| !value.is_empty()),
+                    replay_gap: control.replay_gap.unwrap_or(false),
+                    oldest_sequence: control
+                        .oldest_sequence
+                        .and_then(|value| u64::try_from(value).ok()),
                 },
             )
             .await?;
@@ -1714,6 +1732,15 @@ async fn send_replay_snapshot(
             selector: terminal.selector(),
             pane_id,
             replay_after,
+            replay_mode: Some(if replay_after == 0 {
+                "tail"
+            } else if snapshot.replay_gap {
+                "gap"
+            } else {
+                "delta"
+            }),
+            replay_gap: snapshot.replay_gap && replay_after > 0,
+            oldest_sequence: snapshot.oldest_sequence,
         },
         bounded_send,
     )
@@ -1780,6 +1807,7 @@ async fn send_replay_snapshot_for_target(
     output: &OutputBuffer,
     replay_after: u64,
 ) -> anyhow::Result<Option<u64>> {
+    let snapshot = output.snapshot_after_bounded(replay_after, usize::MAX, usize::MAX);
     send_control(
         sender,
         &TerminalServerMessage::ReplayStart {
@@ -1787,11 +1815,19 @@ async fn send_replay_snapshot_for_target(
             selector,
             pane_id,
             replay_after,
+            replay_mode: Some(if replay_after == 0 {
+                "tail"
+            } else if snapshot.replay_gap {
+                "gap"
+            } else {
+                "delta"
+            }),
+            replay_gap: snapshot.replay_gap && replay_after > 0,
+            oldest_sequence: snapshot.oldest_sequence,
         },
     )
     .await?;
 
-    let snapshot = output.snapshot_after_bounded(replay_after, usize::MAX, usize::MAX);
     let frames = snapshot.frames;
     let last_sequence = snapshot.last_sequence;
     info!(
@@ -2960,6 +2996,26 @@ mod tests {
         assert!(snapshot.replay_gap);
         assert!(validate_replay_snapshot(&snapshot, true).is_err());
         assert!(validate_replay_snapshot(&snapshot, false).is_ok());
+    }
+
+    #[test]
+    fn replay_start_serializes_optional_gap_metadata_without_changing_legacy_fields() {
+        let value = serde_json::to_value(TerminalServerMessage::ReplayStart {
+            session_id: "session-1",
+            selector: "app@owner",
+            pane_id: Some("pane-1"),
+            replay_after: 42,
+            replay_mode: Some("gap"),
+            replay_gap: true,
+            oldest_sequence: Some(100),
+        })
+        .expect("replay start JSON");
+
+        assert_eq!(value["type"], "replay-start");
+        assert_eq!(value["replay_after"], 42);
+        assert_eq!(value["replay_mode"], "gap");
+        assert_eq!(value["replay_gap"], true);
+        assert_eq!(value["oldest_sequence"], 100);
     }
 
     #[test]
