@@ -20,8 +20,6 @@ npm ci
 node scripts/export-restty-wasm.mjs
 npm test
 npm run build
-cargo fmt --check
-cargo test --locked
 
 protoc_version="31.1"
 protoc_sha256="96553041f1a91ea0efee963cb16f462f5985b4d65365f3907414c360044d8065"
@@ -43,6 +41,9 @@ if [[ -z "${PROTOC:-}" && ! -x "${protoc_bin}" ]]; then
 fi
 export PROTOC="${protoc_bin}"
 "${PROTOC}" --version
+
+cargo fmt --check
+cargo test --locked
 
 missing_packages=()
 command -v musl-gcc >/dev/null || missing_packages+=(musl-tools)
