@@ -164,6 +164,7 @@ import {
   terminalErrorBlocksReconnect,
 } from "./pane-reconnect-policy";
 import { createPaneConnectionLifecycle } from "./pane-connection-lifecycle";
+import { createPaneConnectionScheduler } from "./pane-connection-scheduler";
 import { legacyCopyText, writeSystemClipboardText } from "./browser-clipboard";
 import {
   allTabPanes,
@@ -747,6 +748,7 @@ const providerRevisionController = createProviderRevisionController({
     for (const pane of allPanes()) setPaneStatus(pane, tr("status.providerUpdated"), "error");
   },
 });
+const paneConnectionScheduler = createPaneConnectionScheduler({ capacity: 3 });
 let instances: Instance[] = [];
 let selectedSelector = initialSelector;
 let selectedSelectorGeneration = 0;
@@ -5454,7 +5456,9 @@ function shouldRestartSessionOnConnect(pane: TerminalPane): boolean {
 }
 
 async function connectRestoredPanes() {
-  for (const pane of allPanes()) {
+  const panes = allPanes();
+  for (const pane of panes) {
+    paneConnectionScheduler.reprioritize(pane.id, paneConnectionPriority(pane));
     if (!canConnectPanePty(pane)) continue;
     if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) continue;
     if (!shouldConnectRestoredPane(pane)) {
@@ -5470,7 +5474,9 @@ async function connectRestoredPanes() {
 }
 
 function connectWorkspacePanes() {
-  for (const pane of allPanes()) {
+  const panes = allPanes();
+  for (const pane of panes) {
+    paneConnectionScheduler.reprioritize(pane.id, paneConnectionPriority(pane));
     if (!shouldConnectRestoredPane(pane)) {
       if (!pane.exited) {
         setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
@@ -5933,11 +5939,26 @@ function connectPanePty(pane: TerminalPane) {
 }
 
 function openSocket(pane: TerminalPane) {
-  void openSocketPrepared(pane);
+  paneConnectionScheduler.request(
+    pane.id,
+    paneConnectionPriority(pane),
+    () => openSocketPrepared(pane),
+    (error) => {
+      if (pane.closing || providerRevisionStale) return;
+      setPaneStatus(pane, errorMessage(error), "error");
+      scheduleReconnect(pane);
+    },
+  );
+}
+
+function paneConnectionPriority(pane: TerminalPane): number {
+  if (activePane()?.id === pane.id) return 300;
+  if (activeTabId === pane.tabId) return 200;
+  return 100;
 }
 
 async function openSocketPrepared(pane: TerminalPane) {
-  if (providerRevisionStale) return;
+  if (providerRevisionStale || pane.closing) return;
   if (!pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
   if (pendingPaneSocketOpens.has(pane.id)) return;
@@ -6788,6 +6809,7 @@ async function promoteSessionToNewTab(sourceTab: TerminalTab, pane: TerminalPane
 
 function disposePaneLocal(pane: TerminalPane) {
   pane.closing = true;
+  paneConnectionScheduler.cancel(pane.id);
   terminalResizeScheduler.cancel(pane);
   paneConnectionLifecycle.clearReconnect(pane);
   clearReplayInputLock(pane);
