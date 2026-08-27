@@ -60,6 +60,30 @@ test("clearing a replay prevents an older finish from unlocking input", async ()
   assert.equal(unlocked, 0);
 });
 
+test("can discard stale replay state without resetting the rendered terminal", () => {
+  let interrupted = 0;
+  const target = pane();
+  const controller = createTerminalReplayController({
+    byteBudget: 8,
+    writeBytes: () => undefined,
+    updateSequence: () => undefined,
+    onUnlocked: () => undefined,
+    onInterrupted: () => { interrupted += 1; },
+    debugEnabled: () => false,
+    requestFrame: () => 1,
+    cancelFrame: () => undefined,
+    setTimer: () => 1,
+    clearTimer: () => undefined,
+    nextFrame: async () => undefined,
+    now: () => 0,
+  });
+  controller.validate(target);
+  controller.push(target, Uint8Array.from([1, 2, 3]));
+  controller.clear(target, { interrupted: false });
+  assert.equal(interrupted, 0);
+  assert.equal(target.replaying, false);
+});
+
 test("does not render bytes until replay identity is validated", async () => {
   const writes = [];
   const target = pane();

@@ -96,9 +96,9 @@ export function createTerminalReplayController(options: TerminalReplayController
     return state;
   }
 
-  function clear(pane: TerminalPane): void {
+  function clear(pane: TerminalPane, options: { interrupted?: boolean } = {}): void {
     const state = states.get(pane);
-    if (state) clearState(pane, state, true);
+    if (state) clearState(pane, state, options.interrupted !== false);
     pane.replaying = false;
     pane.allowGeneratedInputDuringReplay = false;
   }

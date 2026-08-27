@@ -5372,6 +5372,7 @@ async function restoreWorkspacePane(
   pane.selector = tab.selector;
   pane.label = tab.label;
   pane.sessionId = paneState.session_id;
+  pane.workspaceRefreshPending = false;
   pane.sessionStatus = paneState.status;
   pane.sessionBackend = nextBackend;
   pane.terminalReplyAuthority = nextReplyAuthority;
@@ -5928,7 +5929,7 @@ function sendPaneResize(pane: TerminalPane, cols: number, rows: number): boolean
 }
 
 function connectPanePty(pane: TerminalPane) {
-  if (providerRevisionStale) return;
+  if (providerRevisionStale || pane.workspaceRefreshPending) return;
   if (!canConnectPanePty(pane)) return;
   const restty = pane.term?.restty;
   if (restty) {
@@ -5958,7 +5959,7 @@ function paneConnectionPriority(pane: TerminalPane): number {
 }
 
 async function openSocketPrepared(pane: TerminalPane) {
-  if (providerRevisionStale || pane.closing) return;
+  if (providerRevisionStale || pane.workspaceRefreshPending || pane.closing) return;
   if (!pane.sessionId) return;
   if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
   if (pendingPaneSocketOpens.has(pane.id)) return;
@@ -6079,8 +6080,8 @@ function validateReplayInputLock(
   terminalReplayController.validate(pane, socket, timeoutMs);
 }
 
-function clearReplayInputLock(pane: TerminalPane) {
-  terminalReplayController.clear(pane);
+function clearReplayInputLock(pane: TerminalPane, options: { interrupted?: boolean } = {}) {
+  terminalReplayController.clear(pane, options);
 }
 
 function syncRestartPolicyToServer() {
@@ -6202,9 +6203,7 @@ function handleServerText(pane: TerminalPane, text: string) {
   } else if (event.type === "replay-start") {
     herdrWheelInputBatcher.clear(pane);
     if (!matchesTerminalReplayIdentity(pane, event)) {
-      clearReplayInputLock(pane);
-      pane.socket?.close();
-      setPaneStatus(pane, tr("status.terminalError"), "error");
+      refreshWorkspaceAfterReplayIdentityMismatch(pane);
       return;
     }
     if (typeof event.replay_after === "number" && Number.isFinite(event.replay_after)) {
@@ -6289,9 +6288,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     }
   } else if (event.type === "replay-complete") {
     if (!matchesTerminalReplayIdentity(pane, event)) {
-      clearReplayInputLock(pane);
-      pane.socket?.close();
-      setPaneStatus(pane, tr("status.terminalError"), "error");
+      refreshWorkspaceAfterReplayIdentityMismatch(pane);
       return;
     }
     const replaySocket = pane.socket;
@@ -6300,6 +6297,19 @@ function handleServerText(pane: TerminalPane, text: string) {
       markPaneConnected(pane);
     });
   }
+}
+
+function refreshWorkspaceAfterReplayIdentityMismatch(pane: TerminalPane) {
+  clearReplayInputLock(pane, { interrupted: false });
+  pane.workspaceRefreshPending = true;
+  const staleSocket = pane.socket;
+  pane.socket = undefined;
+  staleSocket?.close();
+  setPaneStatus(pane, tr("status.terminalRefreshRequired"), "error");
+  void loadWorkspace(pane.selector, {
+    activateSelector: false,
+    background: true,
+  });
 }
 
 function writeTerminalBytes(pane: TerminalPane, bytes: Uint8Array) {
@@ -6886,7 +6896,7 @@ function setGlobalStatus(message: string, tone: Tone = "neutral") {
 function sendActivePaneKeyInput(data: string): boolean {
   if (providerRevisionStale) return false;
   const pane = activePane();
-  if (!pane?.term?.restty || !data) return false;
+  if (!pane?.term?.restty || pane.workspaceRefreshPending || !data) return false;
   if (!terminalControl.canWrite(pane)) return false;
   pane.term.restty.sendKeyInput(data);
   return true;
@@ -6992,7 +7002,7 @@ function sendHistoryRecording(pane: TerminalPane, enabled: boolean) {
 }
 
 function sendPaneInput(pane: TerminalPane, data: string): boolean {
-  if (providerRevisionStale) return false;
+  if (providerRevisionStale || pane.workspaceRefreshPending) return false;
   if (!pane || !canConnectPanePty(pane)) {
     focusActivePaneCanvas();
     return false;
@@ -7011,7 +7021,7 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
 }
 
 function sendHerdrWheelInputNow(pane: TerminalPane, data: string): boolean {
-  if (providerRevisionStale) return false;
+  if (providerRevisionStale || pane.workspaceRefreshPending) return false;
   if (!canConnectPanePty(pane) || !terminalControl.canWrite(pane, { report: false })) return false;
   if (pane.socket?.readyState !== WebSocket.OPEN || pane.closing) return false;
   return sendPaneInputDirect(pane, data);

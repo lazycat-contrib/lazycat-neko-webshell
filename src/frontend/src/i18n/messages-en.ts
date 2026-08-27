@@ -830,6 +830,7 @@ export const enMessages = {
   "status.sshUrlOpenFailed": "SSH URL open failed: {message}",
   "status.sshUrlProfileReady": "SSH profile ready: {name}",
   "status.terminalError": "Terminal error",
+  "status.terminalRefreshRequired": "Terminal state changed. Refreshing the workspace…",
   "status.terminalControlObserver": "Observation mode. Take control before sending input.",
   "status.terminalControlReleased": "Terminal control released",
   "status.terminalControlReleaseFailed": "Failed to release terminal control",

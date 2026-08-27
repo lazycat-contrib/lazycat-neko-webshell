@@ -832,6 +832,7 @@ export const zhCNMessages = {
   "status.sshUrlOpenFailed": "SSH URL 打开失败：{message}",
   "status.sshUrlProfileReady": "SSH profile 已就绪：{name}",
   "status.terminalError": "终端错误",
+  "status.terminalRefreshRequired": "终端状态已变化，正在刷新工作区…",
   "status.terminalControlObserver": "当前是观察模式，请先接管再输入。",
   "status.terminalControlReleased": "已释放终端控制权",
   "status.terminalControlReleaseFailed": "释放终端控制权失败",

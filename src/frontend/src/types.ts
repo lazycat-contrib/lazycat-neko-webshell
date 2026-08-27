@@ -462,6 +462,7 @@ export type TerminalPane = {
   terminalCanvas?: HTMLCanvasElement;
   terminalImeInput?: HTMLTextAreaElement;
   socket?: WebSocket;
+  workspaceRefreshPending?: boolean;
   remoteKeepaliveStop?: () => void;
   transport?: PaneTerminalTransport;
   decoder?: TextDecoder;
