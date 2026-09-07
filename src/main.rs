@@ -42,6 +42,7 @@ mod ssh_backend;
 mod ssh_config;
 mod state;
 mod terminal;
+mod terminal_agent_stream;
 mod terminal_control;
 mod terminal_manager;
 mod terminal_reply_authority;

@@ -18,7 +18,7 @@ use tracing::warn;
 
 use crate::agent_protocol::{
     AGENT_PROTOCOL_VERSION, AGENT_VERSION, MIN_SUPPORTED_AGENT_VERSION, action_request,
-    close_session_request, ping_request, read_agent_response, state_request,
+    close_session_request, ping_request, read_agent_response, snapshot_request, state_request,
 };
 use crate::config::LIGHTOSCTL;
 use crate::proto::lazycat::webshell::v1::{
@@ -403,6 +403,39 @@ impl AgentClient {
 
 pub async fn ensure_agent(selector: &str, username: &str) -> anyhow::Result<AgentClient> {
     ensure_agent_at_least(selector, username, MIN_SUPPORTED_AGENT_VERSION).await
+}
+
+/// Read only an already-installed, running agent. Older agents reject the
+/// optional request rather than silently falling back to restoring STATE.
+/// `None` means this compatible target does not support passive snapshots.
+pub(crate) async fn existing_agent_snapshot(
+    selector: &str,
+    username: &str,
+) -> anyhow::Result<Option<AgentWorkspaceState>> {
+    let selector = selector.trim();
+    validate_selector(selector).map_err(|err| anyhow!(err.to_string()))?;
+    let client = AgentClient {
+        selector: selector.to_owned(),
+        username: username.trim().to_owned(),
+        socket_path: scoped_socket_path(selector),
+    };
+    let response = run_agent_request(
+        &client,
+        &snapshot_request(selector, client.username.clone()),
+    )
+    .await?;
+    snapshot_response_state(response)
+}
+
+fn snapshot_response_state(response: AgentResponse) -> anyhow::Result<Option<AgentWorkspaceState>> {
+    const SNAPSHOT_AGENT_VERSION: u64 = 13;
+    reject_unsupported_newer_agent(&response)?;
+    if !agent_protocol_version_is_current(response.version.as_deref())
+        || response.agent_version.unwrap_or(0) < SNAPSHOT_AGENT_VERSION
+    {
+        return Ok(None);
+    }
+    response_state(response).map(Some)
 }
 
 pub(crate) async fn ensure_agent_at_least(
@@ -1490,6 +1523,44 @@ fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passive_snapshot_accepts_capable_agents_and_rejects_stale_or_newer_protocols() {
+        let mut response = crate::agent_protocol::state_response(AgentWorkspaceState {
+            selector: Some("demo@owner".to_owned()),
+            ..Default::default()
+        });
+        response.agent_version = Some(13);
+        assert_eq!(
+            snapshot_response_state(response.clone())
+                .unwrap()
+                .unwrap()
+                .selector
+                .as_deref(),
+            Some("demo@owner")
+        );
+        response.agent_version = Some(12);
+        assert!(snapshot_response_state(response.clone()).unwrap().is_none());
+        response.agent_version = Some(999);
+        response.version = Some("lazycat-neko-webshell-agent-v3".to_owned());
+        assert!(snapshot_response_state(response.clone()).unwrap().is_none());
+        response.version = Some("lazycat-neko-webshell-agent-v999".to_owned());
+        assert!(snapshot_response_state(response).is_err());
+    }
+
+    #[test]
+    fn passive_snapshot_does_not_hide_errors_from_a_capable_agent() {
+        let mut response = crate::agent_protocol::error_response("snapshot failed");
+        response.agent_version = Some(13);
+        assert!(
+            snapshot_response_state(response)
+                .unwrap_err()
+                .to_string()
+                .contains("snapshot failed")
+        );
+        let unsupported = crate::agent_protocol::error_response("unknown agent request type");
+        assert!(snapshot_response_state(unsupported).unwrap().is_none());
+    }
 
     #[test]
     fn scope_paths_are_stable_and_safe() {

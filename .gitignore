@@ -6,4 +6,5 @@
 /node_modules/
 /src/frontend/dist/
 /src/frontend/src/gen/
+/tests-auto/artifacts/
 *.lpk

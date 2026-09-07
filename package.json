@@ -1,12 +1,13 @@
 {
   "name": "lazycat-neko-webshell",
-  "version": "0.7.28",
+  "version": "0.7.29",
   "private": true,
   "type": "module",
   "scripts": {
     "check:versions": "node scripts/check-version-consistency.mjs",
     "proto:ts": "buf generate",
     "test": "npm run test:frontend && npm run test:release",
+    "test:browser": "node tests-auto/run.mjs",
     "test:frontend": "find src/frontend/src -name '*.test.mjs' -exec node --test --experimental-strip-types {} +",
     "test:release": "node --test scripts/*.test.mjs",
     "typecheck": "npm run proto:ts && tsc --noEmit",
@@ -19,7 +20,7 @@
     "@connectrpc/connect-web": "2.1.1",
     "@lobehub/icons-static-svg": "^1.94.0",
     "lucide": "^0.475.0",
-    "restty": "0.2.6",
+    "restty": "0.3.0",
     "trzsz": "^1.1.6",
     "zmodem-ts": "^1.0.8"
   },
@@ -27,6 +28,7 @@
     "@bufbuild/buf": "1.69.0",
     "@bufbuild/protoc-gen-es": "2.12.0",
     "typescript": "^5.9.3",
-    "vite": "^7.3.6"
+    "vite": "^7.3.6",
+    "ws": "8.21.3"
   }
 }

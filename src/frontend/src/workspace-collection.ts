@@ -51,3 +51,30 @@ export function selectorTabIdForWorkspaceId<
     && tab.workspaceTabId === normalizedWorkspaceTabId
   ))?.id;
 }
+
+/** Local navigation wins ordinary snapshots; only a structural response may select its new tab. */
+export function activeTabAfterWorkspaceSnapshot<T extends Pick<TerminalTab, "id" | "selector" | "workspaceTabId">>(options: {
+  tabs: T[];
+  previous?: string;
+  selector: string;
+  selectedSelector: string;
+  requestedTabId?: string;
+  rememberedTabId?: string;
+  stateActiveTabId?: string;
+  preserveFocus?: boolean;
+  preferStateActiveTab?: boolean;
+  activateSelector?: boolean;
+  passive?: boolean;
+}): string | undefined {
+  const { tabs, selector, previous } = options;
+  if (options.preserveFocus && tabs.some((tab) => tab.id === previous
+    && (!options.activateSelector || normalizeSelector(tab.selector) === selector))) return previous;
+  const candidates = options.preferStateActiveTab
+    ? [options.stateActiveTabId, options.requestedTabId, options.rememberedTabId]
+    : [options.requestedTabId, options.rememberedTabId, options.stateActiveTabId];
+  const preferred = options.passive
+    ? tabs.find((tab) => normalizeSelector(tab.selector) === selector)?.id
+    : candidates.map((id) => selectorTabIdForWorkspaceId(tabs, selector, id)).find(Boolean);
+  return activeTabAfterSelectorReconcile(previous, tabs, selector, preferred,
+    options.activateSelector === true || (options.passive === true && normalizeSelector(options.selectedSelector) === selector));
+}

@@ -178,6 +178,14 @@ Settings include:
 
 The settings menu also includes an About page for version and app information.
 
+## Synchronization and diagnostics
+
+Targets that support read-only snapshots synchronize tab and pane creation, renaming, and removal across open pages while preserving each page's current focus. Synchronization reuses unchanged terminals and does not restore stopped sessions. Compatible older agents remain usable without background synchronization.
+
+Enable debug mode in settings to copy or download terminal connection, replay, resize, and recovery events. Records exclude commands, terminal output, and authentication data, and are cleared when debug mode is disabled.
+
+Developers can run `npm run test:browser`; see the [browser test guide](tests-auto/README.md) for requirements and coverage limits.
+
 ## Technical Notes
 
 This section is for developers and package maintainers. You do not need it for normal use.

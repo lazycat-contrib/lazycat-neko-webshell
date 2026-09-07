@@ -1,3 +1,4 @@
+import type { TerminalTraceHook } from "./diagnostics/terminal-trace.ts";
 import { reconnectDelayWithJitter } from "./pane-reconnect-policy.ts";
 import type { TerminalPane, Tone } from "./types.ts";
 
@@ -18,6 +19,7 @@ export type PaneConnectionLifecycleOptions = {
   connect: (pane: TerminalPane) => void;
   setStatus: (pane: TerminalPane, message: string, tone?: Tone) => void;
   tr: (key: ConnectionMessageKey, values?: Record<string, string | number>) => string;
+  trace?: TerminalTraceHook;
   recordReconnectDelay?: (delayMs: number) => void;
   random?: () => number;
   setTimer?: (callback: () => void, timeoutMs: number) => number;
@@ -30,6 +32,7 @@ export function createPaneConnectionLifecycle(options: PaneConnectionLifecycleOp
   const clearTimer = options.clearTimer ?? window.clearTimeout.bind(window);
 
   function beginConnection(pane: TerminalPane): void {
+    options.trace?.(pane, "connect-requested");
     clearReconnect(pane);
     pane.connectionState = pane.hasConnected ? "reconnecting" : "connecting";
     options.setStatus(
@@ -45,6 +48,7 @@ export function createPaneConnectionLifecycle(options: PaneConnectionLifecycleOp
   }
 
   function markConnected(pane: TerminalPane): void {
+    if (pane.connectionState !== "connected") options.trace?.(pane, "ready");
     clearReconnect(pane);
     pane.reconnectDelay = 1000;
     pane.connectionState = "connected";
@@ -53,6 +57,7 @@ export function createPaneConnectionLifecycle(options: PaneConnectionLifecycleOp
   }
 
   function markTransientFailure(pane: TerminalPane): void {
+    options.trace?.(pane, "error", undefined, options.isOnline() ? "transport" : "offline");
     pane.connectionState = options.isOnline() ? "reconnecting" : "offline";
     options.setStatus(
       pane,
@@ -62,6 +67,7 @@ export function createPaneConnectionLifecycle(options: PaneConnectionLifecycleOp
   }
 
   function markFatal(pane: TerminalPane): void {
+    options.trace?.(pane, "error", undefined, "fatal");
     clearReconnect(pane);
     pane.connectionState = "fatal";
   }
@@ -88,6 +94,7 @@ export function createPaneConnectionLifecycle(options: PaneConnectionLifecycleOp
     // without an Internet/default route, so retries must continue while "offline".
     const delayMs = options.isOnline() ? backoff.delayMs : Math.max(5_000, backoff.delayMs);
     options.recordReconnectDelay?.(delayMs);
+    options.trace?.(pane, "reconnect-scheduled", { delayMs }, options.isOnline() ? "transport" : "offline");
     pane.reconnectDelay = backoff.nextBaseDelayMs;
     pane.connectionState = options.isOnline() ? "reconnecting" : "offline";
     options.setStatus(

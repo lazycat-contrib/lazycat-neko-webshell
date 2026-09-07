@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Restty terminal output benchmark</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101216; color: #d8dee9; }
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; }
+      body { margin: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+      header { display: flex; gap: 1rem; align-items: baseline; padding: .65rem 1rem; border-bottom: 1px solid #30343d; }
+      h1 { margin: 0; font-size: 1rem; font-weight: 650; }
+      #status { color: #9aa4b2; font: 12px "Liberation Mono", monospace; }
+      #panes { min-height: 0; overflow: hidden; padding: 8px; display: grid; gap: 8px; grid-template-columns: repeat(var(--columns), minmax(0, 1fr)); }
+      .pane { min-width: 0; min-height: 0; overflow: hidden; border: 1px solid #30343d; background: #050a12; }
+      .pane > div { width: 100%; height: 100%; }
+      #result { max-height: 7rem; overflow: auto; margin: 0; padding: .55rem 1rem; border-top: 1px solid #30343d; color: #aab3c0; font: 11px/1.35 "Liberation Mono", monospace; }
+    </style>
+  </head>
+  <body>
+    <header><h1>Restty 0.3 output benchmark</h1><span id="status">booting</span></header>
+    <main id="panes"></main>
+    <pre id="result"></pre>
+    <script type="module" src="./terminal-output.mjs"></script>
+  </body>
+</html>

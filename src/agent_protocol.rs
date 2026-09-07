@@ -12,7 +12,7 @@ pub const AGENT_PROTOCOL_VERSION: &str = "lazycat-neko-webshell-agent-v4";
 // Bump when target-local agent code or one of its runtime dependencies changes.
 // Existing targets may keep an older agent until the provider raises its
 // minimum supported version.
-pub const AGENT_VERSION: u64 = 12;
+pub const AGENT_VERSION: u64 = 13;
 // Bump only when the provider can no longer safely use an older agent. Protocol
 // compatibility is checked before this version floor.
 pub const MIN_SUPPORTED_AGENT_VERSION: u64 = 11;
@@ -162,6 +162,14 @@ pub fn state_request(
     request.rows = Some(i32::from(rows));
     request.output_limit = Some(clamped_i32(output_limit));
     request
+}
+
+pub fn snapshot_request(selector: impl Into<String>, username: impl Into<String>) -> AgentRequest {
+    base_request(
+        AgentRequestType::AGENT_REQUEST_TYPE_SNAPSHOT,
+        selector.into(),
+        username.into(),
+    )
 }
 
 pub fn action_request(

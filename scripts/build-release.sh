@@ -14,7 +14,7 @@ mkdir -p "${content_dir}"
   fi
 } > "${content_dir}/.env"
 mkdir -p "${content_dir}/licenses"
-cp vendor/restty/0.2.6/LICENSE "${content_dir}/licenses/restty-0.2.6-LICENSE"
+cp vendor/restty/0.3.0/LICENSE "${content_dir}/licenses/restty-0.3.0-LICENSE"
 
 npm ci
 node scripts/export-restty-wasm.mjs

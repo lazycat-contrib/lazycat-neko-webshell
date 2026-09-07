@@ -202,6 +202,8 @@ enum AgentRequestType {
   AGENT_REQUEST_TYPE_ACTION = 3;
   AGENT_REQUEST_TYPE_ATTACH = 4;
   AGENT_REQUEST_TYPE_CLOSE_SESSION = 5;
+  // Optional since agent version 13. Never restores tabs or starts a PTY.
+  AGENT_REQUEST_TYPE_SNAPSHOT = 6;
 }
 
 message AgentResponse {

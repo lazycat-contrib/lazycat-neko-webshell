@@ -591,6 +591,11 @@ impl AgentDaemon {
                 let response = self.state(&request).unwrap_or_else(error_response);
                 write_agent_response(stream, &response)?;
             }
+            Some(AgentRequestType::AGENT_REQUEST_TYPE_SNAPSHOT) => {
+                let mut response = self.snapshot(&request).unwrap_or_else(error_response);
+                response.agent_version = Some(self.agent_version);
+                write_agent_response(stream, &response)?;
+            }
             Some(AgentRequestType::AGENT_REQUEST_TYPE_ACTION) => {
                 let response = self.action(&request).unwrap_or_else(error_response);
                 write_agent_response(stream, &response)?;
@@ -621,6 +626,44 @@ impl AgentDaemon {
         response.payload_generation = Some(LEGACY_PROVIDER_COMPAT_GENERATION);
         response.agent_version = Some(self.agent_version);
         Ok(response)
+    }
+
+    fn snapshot(
+        &self,
+        request: &AgentRequest,
+    ) -> Result<crate::proto::lazycat::webshell::v1::AgentResponse, String> {
+        let selector = self
+            .request_selector(request)
+            .map_err(|err| err.to_string())?;
+        // A state/action restore creates several tabs under this lock. Observers
+        // must never see its partial membership as an authoritative snapshot.
+        let _recovery_guard = self
+            .recovery_lock
+            .lock()
+            .map_err(|_| "workspace recovery lock poisoned".to_owned())?;
+        let workspace = self
+            .workspace
+            .lock()
+            .map_err(|_| "agent workspace slot lock poisoned".to_owned())?
+            .clone();
+        if workspace.is_none()
+            && self
+                .recovery_tabs
+                .lock()
+                .map_err(|_| "workspace recovery state lock poisoned".to_owned())?
+                .unwrap_or(1)
+                > 0
+        {
+            return Err("workspace is awaiting explicit recovery".to_owned());
+        }
+        let state = match workspace {
+            Some(workspace) => workspace.read_state().map_err(|err| err.to_string())?,
+            None => crate::proto::lazycat::webshell::v1::AgentWorkspaceState {
+                selector: Some(selector),
+                ..Default::default()
+            },
+        };
+        Ok(state_response(state))
     }
 
     fn state(
@@ -1173,7 +1216,7 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 12);
+        assert_eq!(AGENT_VERSION, 13);
         assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 11);
     }
 
@@ -1226,6 +1269,81 @@ mod tests {
         assert_eq!(restored.state.tabs.len(), 2);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn passive_snapshot_never_restores_a_workspace_or_changes_recovery_state() {
+        let path = std::env::temp_dir().join(format!(
+            "lazycat-neko-webshell-passive-{}.workspace",
+            uuid::Uuid::new_v4()
+        ));
+        let daemon = AgentDaemon {
+            selector: "demo@owner".to_owned(),
+            username: String::new(),
+            payload_manifest: None,
+            agent_version: AGENT_VERSION,
+            workspace: Mutex::new(None),
+            workspace_recovery_path: path.clone(),
+            recovery_tabs: Mutex::new(Some(2)),
+            recovery_lock: Mutex::new(()),
+        };
+        let mut request = crate::agent_protocol::snapshot_request("demo@owner", "");
+        // Even malicious dimensions are irrelevant to a read-only snapshot.
+        request.cols = Some(1);
+        request.rows = Some(1);
+        assert!(
+            daemon
+                .snapshot(&request)
+                .unwrap_err()
+                .contains("awaiting explicit recovery")
+        );
+        assert!(daemon.workspace.lock().unwrap().is_none());
+        assert_eq!(*daemon.recovery_tabs.lock().unwrap(), Some(2));
+        assert!(!path.exists());
+        // An intentionally empty workspace, unlike pending recovery, is a
+        // complete snapshot and must converge across attached browsers.
+        *daemon.recovery_tabs.lock().unwrap() = Some(0);
+        assert!(daemon.snapshot(&request).unwrap().state.tabs.is_empty());
+        request.selector = Some("other@owner".to_owned());
+        assert!(daemon.snapshot(&request).is_err());
+    }
+
+    #[test]
+    fn passive_snapshot_preserves_running_pane_geometry() {
+        let path = std::env::temp_dir().join(format!(
+            "lazycat-neko-webshell-passive-live-{}.workspace",
+            uuid::Uuid::new_v4()
+        ));
+        let workspace = Arc::new(AgentWorkspace::new("demo@owner".to_owned(), String::new()));
+        let before = workspace.ensure_state(100, 32, 64).unwrap();
+        let daemon = AgentDaemon {
+            selector: "demo@owner".to_owned(),
+            username: String::new(),
+            payload_manifest: None,
+            agent_version: AGENT_VERSION,
+            workspace: Mutex::new(Some(workspace)),
+            workspace_recovery_path: path.clone(),
+            recovery_tabs: Mutex::new(Some(1)),
+            recovery_lock: Mutex::new(()),
+        };
+        let mut request = crate::agent_protocol::snapshot_request("demo@owner", "");
+        request.cols = Some(1);
+        request.rows = Some(1);
+        request.output_limit = Some(1);
+        let after = daemon.snapshot(&request).unwrap();
+        assert_eq!(
+            after.state.tabs[0].panes[0].cols,
+            before.tabs[0].panes[0].cols
+        );
+        assert_eq!(
+            after.state.tabs[0].panes[0].rows,
+            before.tabs[0].panes[0].rows
+        );
+        assert_eq!(
+            after.state.tabs[0].panes[0].session_id,
+            before.tabs[0].panes[0].session_id
+        );
+        assert!(!path.exists());
     }
 
     #[test]

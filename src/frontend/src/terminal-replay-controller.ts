@@ -1,3 +1,4 @@
+import type { TerminalTraceHook } from "./diagnostics/terminal-trace.ts";
 import type { TerminalPane } from "./types.ts";
 import {
   beginTerminalReplayBuffer,
@@ -12,7 +13,7 @@ import {
   markTerminalReplaySequence,
   takeRenderedReplaySequences,
 } from "./terminal-replay-cursor.ts";
-import { recordTerminalPerformance, terminalPerformanceSnapshot } from "./terminal-performance.ts";
+import { recordTerminalPerformance } from "./terminal-performance.ts";
 
 type ReplayState = {
   socket?: WebSocket;
@@ -26,6 +27,7 @@ type ReplayState = {
   liveChunks: Uint8Array[];
   liveSequences: unknown[];
   liveBytes: number;
+  startedAt: number;
 };
 
 export type TerminalReplayControllerOptions = {
@@ -36,7 +38,7 @@ export type TerminalReplayControllerOptions = {
   onUnlocked: (pane: TerminalPane) => void;
   onInterrupted?: (pane: TerminalPane) => void;
   onOverflow?: (pane: TerminalPane) => void;
-  debugEnabled: () => boolean;
+  trace?: TerminalTraceHook;
   requestFrame?: (callback: FrameRequestCallback) => number;
   cancelFrame?: (handle: number) => void;
   setTimer?: (callback: () => void, timeoutMs: number) => number;
@@ -64,6 +66,7 @@ export function createTerminalReplayController(options: TerminalReplayController
 
   function validate(pane: TerminalPane, socket?: WebSocket, timeoutMs = 30_000): void {
     const state = replaceState(pane, socket, timeoutMs, true);
+    options.trace?.(pane, "replay-validated");
     queueFlush(pane, state);
   }
 
@@ -83,6 +86,7 @@ export function createTerminalReplayController(options: TerminalReplayController
       liveChunks: [],
       liveSequences: [],
       liveBytes: 0,
+      startedAt: now(),
     };
     states.set(pane, state);
     pane.replaying = true;
@@ -114,6 +118,7 @@ export function createTerminalReplayController(options: TerminalReplayController
     pane.allowGeneratedInputDuringReplay = false;
     discardTerminalReplayBuffer(pane);
     discardTerminalReplayCursor(pane);
+    if (interrupted && state.validated) options.trace?.(pane, "replay-interrupted", undefined, "replaced");
     if (interrupted && (stats?.totalBytes ?? 0) > (stats?.bufferedBytes ?? 0)) {
       options.onInterrupted?.(pane);
     }
@@ -125,7 +130,7 @@ export function createTerminalReplayController(options: TerminalReplayController
     if (state.completing) {
       if (bytes.byteLength > 0) {
         if (state.liveBytes + bytes.byteLength > maxLiveBytes) {
-          overflow(pane, state);
+          overflow(pane, state, "live-bytes");
           return true;
         }
         state.liveChunks.push(bytes);
@@ -147,7 +152,7 @@ export function createTerminalReplayController(options: TerminalReplayController
     if (!state || !pane.replaying || !stats || typeof sequence !== "number") return false;
     if (state.completing) {
       if (state.liveSequences.length >= maxLiveSequences) {
-        overflow(pane, state);
+        overflow(pane, state, "live-sequences");
         return true;
       }
       state.liveSequences.push(sequence);
@@ -159,9 +164,17 @@ export function createTerminalReplayController(options: TerminalReplayController
   }
 
   function finish(pane: TerminalPane, replayBoundary?: unknown): Promise<boolean> {
+    return startFinish(pane, replayBoundary, true);
+  }
+
+  function startFinish(pane: TerminalPane, replayBoundary: unknown, received: boolean): Promise<boolean> {
     const state = states.get(pane);
     if (!state?.validated) return Promise.resolve(false);
     if (state.finishPromise) return state.finishPromise;
+    if (received) {
+      const stats = terminalReplayBufferStats(pane);
+      options.trace?.(pane, "replay-received", { bytes: stats?.totalBytes ?? 0, bufferedBytes: stats?.bufferedBytes ?? 0, chunks: stats?.chunkCount ?? 0 });
+    }
     state.completing = true;
     cancelFlush(state);
     clearTimer(state.timer);
@@ -191,31 +204,29 @@ export function createTerminalReplayController(options: TerminalReplayController
     for (const chunk of state.liveChunks) writeMeasured(pane, chunk);
     for (const sequence of state.liveSequences) options.updateSequence(pane, sequence);
     const stats = terminalReplayBufferStats(pane);
+    options.trace?.(pane, "replay-applied", {
+      bytes: stats?.totalBytes ?? 0, chunks: stats?.chunkCount ?? 0,
+      bufferedBytes: stats?.bufferedBytes ?? 0, durationMs: now() - state.startedAt,
+    });
     clearState(pane, state, false);
     options.onUnlocked(pane);
-    if (options.debugEnabled()) {
-      console.debug("[terminal-replay]", {
-        paneId: pane.id,
-        bytes: stats?.totalBytes ?? 0,
-        chunks: stats?.chunkCount ?? 0,
-        performance: terminalPerformanceSnapshot(),
-      });
-    }
     return true;
   }
 
   function finishAfterTimeout(pane: TerminalPane, state: ReplayState): void {
     if (states.get(pane) !== state || pane.closing) return;
+    options.trace?.(pane, "replay-timeout", undefined, "timeout");
     if (!state.validated) {
       clearState(pane, state, false);
       options.onUnlocked(pane);
       return;
     }
-    void finish(pane);
+    void startFinish(pane, undefined, false);
   }
 
-  function overflow(pane: TerminalPane, state: ReplayState): void {
+  function overflow(pane: TerminalPane, state: ReplayState, reason: "live-bytes" | "live-sequences"): void {
     if (states.get(pane) !== state) return;
+    options.trace?.(pane, "overflow", { bufferedBytes: state.liveBytes }, reason);
     clearState(pane, state, true);
     options.onOverflow?.(pane);
   }

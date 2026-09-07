@@ -1,3 +1,9 @@
+import { createTerminalTrace } from "./diagnostics/terminal-trace";
+import { createTerminalDiagnosticsSettings } from "./diagnostics/settings-controller";
+import { createWorkspaceRequestController, workspaceActionChangesFocus, type WorkspaceRequest } from "./workspace-request-controller";
+import { createWorkspacePaneLifetime } from "./workspace-pane-lifetime";
+import { reconcileWorkspace } from "./workspace-reconcile";
+import { createWorkspacePassiveSync, bindWorkspacePassiveSync, refreshWorkspaceSelectors } from "./workspace-passive-sync";
 import "./styles.css";
 import "./plugin-tools.css";
 import "./webshell-themes.css";
@@ -340,9 +346,8 @@ import { createSshProfileSettingsController } from "./ssh-backend/settings-contr
 import { isSshSelector } from "./ssh-backend/selector";
 import { openOrCreateOpenSshProfile, sshCommandForTarget } from "./ssh-backend/target";
 import { consumeSshUrlOpenRequest, hasSshUrlOpenRequest, replaceSshUrlOpenParams } from "./ssh-backend/url-open";
-import { paneLayoutNode } from "./split-layout";
 import { bindTabWheelSwitch } from "./tab-wheel-switch";
-import { createSelectorRequestTracker } from "./selector-request-tracker";
+import { HttpRequestError } from "./http-request-error";
 import {
   isHerdrTab,
   defaultTabDisplayName as defaultDisplayNameForTab,
@@ -356,6 +361,7 @@ import {
   tabTone as toneForTab,
 } from "./tab-labels";
 import { applyPaneMouseMode } from "./terminal-mouse-mode";
+import { installHerdrPointerController } from "./mobile/herdr-pointer-controller";
 import {
   installPaneScrollbackFallback,
   TOUCH_SCROLL_THRESHOLD_PX,
@@ -419,7 +425,6 @@ import {
   terminalPerformanceSnapshot,
 } from "./terminal-performance";
 import { createTerminalResizeScheduler } from "./terminal-resize-scheduler";
-import { normalizeTerminalReplyAuthority } from "./terminal-reply-authority";
 import { terminalThemeSocketColors } from "./terminal-theme-wire";
 import { createUploadProgressController } from "./upload-progress";
 import { CUSTOM_THEME_PREFIX } from "./theme-registry";
@@ -447,7 +452,6 @@ import type {
   TerminalTheme,
   Tone,
   WorkspaceAction,
-  WorkspacePaneState,
   WorkspaceState,
 } from "./types";
 import { clampNumber, errorMessage, escapeAttr, escapeHtml, newId, qs, selectorLabel } from "./utils";
@@ -472,13 +476,11 @@ import {
 } from "./workspace-api";
 import { resolveWorkspaceActionTarget } from "./workspace-action-target";
 import {
-  activeTabAfterSelectorReconcile,
-  replaceSelectorTabs,
+  activeTabAfterWorkspaceSnapshot,
   selectorTabIdForWorkspaceId,
 } from "./workspace-collection";
 import {
   workspaceEntityId,
-  workspaceLayoutToView,
 } from "./workspace-identity";
 import {
   clearWorkspaceLocation,
@@ -738,6 +740,11 @@ const notificationController = createNotificationController({
 });
 
 let settings = loadLocalSettings();
+const terminalTrace = createTerminalTrace();
+const terminalDiagnosticsSettings = createTerminalDiagnosticsSettings({
+  root: qs<HTMLElement>("#terminalDiagnostics"), trace: terminalTrace, tr,
+});
+terminalDiagnosticsSettings.setEnabled(settings.debugMode);
 let runtimeInfo: RuntimeInfo = { mode: "lightos", lightosFeaturesEnabled: true, revision: "" };
 let providerRevisionStale = false;
 const providerRevisionController = createProviderRevisionController({
@@ -783,7 +790,22 @@ let sessionBackendsState: SessionBackendsState | undefined;
 let sessionBackendsGeneration = 0;
 const herdrAutoRestoredSelectors = new Set<string>();
 const pendingPaneSocketOpens = new Set<string>();
-const workspaceRequestTracker = createSelectorRequestTracker();
+const workspaceRequests = createWorkspaceRequestController();
+const workspacePaneLifetime = createWorkspacePaneLifetime({
+  makePane, disposePane: disposePaneLocal, prepareReplay: preparePaneForFullReplay,
+  initialCols: INITIAL_COLS, initialRows: INITIAL_ROWS,
+});
+const passiveUnsupportedSelectors = new Set<string>();
+const workspacePassiveSync = createWorkspacePassiveSync({
+  enabled: () => document.visibilityState !== "hidden" && navigator.onLine && Boolean(selectedSelector),
+  refresh: (signal) => refreshWorkspaceSelectors({
+    selectors: [selectedSelector, ...tabs.map((tab) => tab.selector)], signal,
+    skip: (selector) => passiveUnsupportedSelectors.has(selector),
+    refresh: (selector, signal) => loadWorkspace(selector, { passive: true, signal, background: true, activateSelector: false }),
+  }),
+  schedule: (callback, delay) => window.setTimeout(callback, delay),
+  cancel: (timer) => window.clearTimeout(timer as number),
+});
 const exitedPaneCleanupController = createExitedPaneCleanupController({
   reconcile: async (selector) => {
     const activateSelector = normalizeSelector(selector) === normalizeSelector(selectedSelector);
@@ -1166,6 +1188,7 @@ const paneConnectionLifecycle = createPaneConnectionLifecycle({
   connect: connectPanePty,
   setStatus: setPaneStatus,
   tr,
+  trace: terminalTrace.record,
   recordReconnectDelay: (delayMs) => recordTerminalPerformance("reconnectDelay", delayMs),
 });
 const terminalReplayController = createTerminalReplayController({
@@ -1186,7 +1209,7 @@ const terminalReplayController = createTerminalReplayController({
     pane.lastOutputSequence = pane.lastReplayAfter ?? 0;
   },
   onOverflow: (pane) => pane.socket?.close(),
-  debugEnabled: () => settings.debugMode,
+  trace: terminalTrace.record,
 });
 const instanceLoadCoordinator = createInstanceLoadCoordinator(fetchInstances);
 const {
@@ -1367,6 +1390,7 @@ function setSelectedSelector(
   const normalized = normalizeSelector(selector);
   if (normalized !== selectedSelector) {
     herdrConsole?.dismiss();
+    workspaceRequests.invalidate(selectedSelector);
     selectedSelector = normalized;
     selectedSelectorGeneration += 1;
   }
@@ -2188,6 +2212,7 @@ function bindSettings() {
   });
   elements.debugMode.addEventListener("change", () => {
     settings.debugMode = elements.debugMode.checked;
+    terminalDiagnosticsSettings.setEnabled(settings.debugMode);
     saveSettings();
     if (settings.debugMode) console.debug("[terminal-performance]", terminalPerformanceSnapshot());
   });
@@ -2514,6 +2539,10 @@ function bindLifecycleEvents() {
     });
   });
   window.addEventListener("resize", handleViewportChange);
+  bindWorkspacePassiveSync(workspacePassiveSync, window, document, () => {
+    workspaceRequests.dispose();
+    terminalDiagnosticsSettings.dispose();
+  });
   window.addEventListener("orientationchange", handleViewportChange);
   window.visualViewport?.addEventListener("resize", handleViewportChange);
   window.visualViewport?.addEventListener("scroll", handleViewportChange);
@@ -3160,6 +3189,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   mobileClock.updateSettingsState();
   elements.autoRestartSessions.checked = settings.autoRestartSessions;
   elements.debugMode.checked = settings.debugMode;
+  terminalDiagnosticsSettings.setEnabled(settings.debugMode);
   elements.performanceMeterEnabled.checked = settings.performanceMeterEnabled;
   performanceMeter.setEnabled(settings.performanceMeterEnabled);
   updateSessionBackendSettings();
@@ -4364,16 +4394,24 @@ type LoadWorkspaceOptions = {
   activateSelector?: boolean;
   allowReconcileRetry?: boolean;
   background?: boolean;
+  passive?: boolean;
+  signal?: AbortSignal;
+  replayPaneId?: string;
 };
 
 async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {}): Promise<boolean> {
   const requestSelector = normalizeSelector(selector);
   if (!requestSelector) return false;
-  const requestGeneration = workspaceRequestTracker.begin(requestSelector);
+  const ownedRequest = workspaceRequests.read(requestSelector, { passive: options.passive });
+  const request: WorkspaceRequest = {
+    ...ownedRequest,
+    isCurrent: () => ownedRequest.isCurrent() && !options.signal?.aborted,
+  };
+  if (!request.isCurrent()) return false;
   const selectedGeneration = selectedSelectorGeneration;
   const activateRequested = options.activateSelector
     ?? requestSelector === normalizeSelector(selectedSelector);
-  if (activateRequested && isCurrentSelectorRequest(requestSelector, selectedGeneration)) {
+  if (!options.passive && activateRequested && isCurrentSelectorRequest(requestSelector, selectedGeneration)) {
     clearSessionBackendsState();
     clearHerdrState();
   }
@@ -4383,7 +4421,9 @@ async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {
         cols: INITIAL_COLS,
         rows: INITIAL_ROWS,
         outputLimit: settings.outputBufferLimit,
-        autoRestart: settings.autoRestartSessions,
+        autoRestart: options.passive ? false : settings.autoRestartSessions,
+        passive: options.passive,
+        signal: options.signal,
         selectRunningInstanceMessage: tr("status.selectRunningInstance"),
       }),
       isRemoteClientSelector(requestSelector),
@@ -4391,18 +4431,25 @@ async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {
       herdrExitRecovery.removableWorkspacePaneIds(requestSelector),
       herdrWorkspacePaneIds(allPanes(), requestSelector),
     );
-    if (!workspaceRequestTracker.isCurrent(requestSelector, requestGeneration)) {
+    if (!request.isCurrent() || options.signal?.aborted) {
       return false;
     }
     const activateSelector = activateRequested
       && isCurrentSelectorRequest(requestSelector, selectedGeneration);
     const applied = await applyWorkspaceState(workspace, {
       activateSelector,
-      requestGeneration,
-      replayFromStart: true,
+      request,
+      preserveFocus: true,
+      passive: options.passive,
+      replayPaneId: options.replayPaneId,
       selector: requestSelector,
     });
     if (applied) {
+      if (!options.passive) {
+        passiveUnsupportedSelectors.delete(requestSelector);
+        ownedRequest.finish();
+        workspacePassiveSync.refresh();
+      }
       syncWorkspacePresence(requestSelector, workspace.tabs.length);
       if (activateSelector) {
         const activeGeneration = selectedSelectorGeneration;
@@ -4412,7 +4459,15 @@ async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {
     }
     return applied;
   } catch (error) {
-    if (!workspaceRequestTracker.isCurrent(requestSelector, requestGeneration)) {
+    if (options.passive) {
+      if (error instanceof HttpRequestError && error.status === 409) {
+        passiveUnsupportedSelectors.add(requestSelector);
+        return false;
+      }
+      if (options.signal?.aborted || !request.isCurrent()) return false;
+      throw error;
+    }
+    if (!request.isCurrent() || options.signal?.aborted) {
       return false;
     }
     const activeRequest = activateRequested
@@ -4437,6 +4492,8 @@ async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {
     clearHerdrState();
     setGlobalStatus(tr("status.connectFailed", { message: errorMessage(error) }), "error");
     return false;
+  } finally {
+    ownedRequest.finish();
   }
 }
 
@@ -4458,12 +4515,13 @@ async function runWorkspaceAction(
 ): Promise<WorkspaceState | undefined> {
   const selector = normalizeSelector(options.selector ?? activeTab()?.selector ?? selectedSelector);
   if (!selector) return undefined;
-  const requestGeneration = workspaceRequestTracker.begin(selector);
+  const focusOnly = action === "activate_tab" || action === "activate_pane";
   const selectedGeneration = selectedSelectorGeneration;
-  const target = resolveWorkspaceActionTarget(tabs, selector, options);
-  let workspace: WorkspaceState;
-  try {
-    workspace = normalizeExitedWorkspaceState(
+  let recoveryRequest: WorkspaceRequest | undefined;
+  return workspaceRequests.run(selector, focusOnly ? "focus" : "mutation", async (request) => {
+    recoveryRequest = request;
+    const target = resolveWorkspaceActionTarget(tabs, selector, options);
+    const workspace = normalizeExitedWorkspaceState(
       await runWorkspaceActionRequest(action, {
         selector,
         cols: INITIAL_COLS,
@@ -4485,34 +4543,31 @@ async function runWorkspaceAction(
       herdrExitRecovery.removableWorkspacePaneIds(selector),
       herdrWorkspacePaneIds(allPanes(), selector),
     );
-  } catch (error) {
+    const applyResponse = shouldApplyWorkspaceActionResponse(
+      focusOnly ? false : options.apply,
+      hasExitedPaneForSelector(allPanes(), selector),
+    );
     if (
-      workspaceRequestTracker.isCurrent(selector, requestGeneration)
-      && hasExitedPaneForSelector(allPanes(), selector)
+      !focusOnly && applyResponse
+      && request.isCurrent()
     ) {
-      await loadWorkspace(selector, {
+      const preferStateActiveTab = workspaceActionChangesFocus(action) && request.focusUnchanged();
+      await applyWorkspaceState(workspace, {
         activateSelector: isCurrentSelectorRequest(selector, selectedGeneration),
+        preferStateActiveTab,
+        preserveFocus: !preferStateActiveTab,
+        request,
+        selector,
       });
+      syncWorkspacePresence(selector, workspace.tabs.length);
+    }
+    return workspace;
+  }).catch(async (error) => {
+    if (recoveryRequest?.isCurrent() && hasExitedPaneForSelector(allPanes(), selector)) {
+      await loadWorkspace(selector, { activateSelector: isCurrentSelectorRequest(selector, selectedGeneration) });
     }
     throw error;
-  }
-  const applyResponse = shouldApplyWorkspaceActionResponse(
-    options.apply,
-    hasExitedPaneForSelector(allPanes(), selector),
-  );
-  if (
-    applyResponse
-    && workspaceRequestTracker.isCurrent(selector, requestGeneration)
-  ) {
-    await applyWorkspaceState(workspace, {
-      activateSelector: isCurrentSelectorRequest(selector, selectedGeneration),
-      preferStateActiveTab: true,
-      requestGeneration,
-      selector,
-    });
-    syncWorkspacePresence(selector, workspace.tabs.length);
-  }
-  return workspace;
+  });
 }
 
 function syncWorkspacePresence(selector: string, tabCount: number) {
@@ -5217,8 +5272,10 @@ function focusedHerdrWorkspace(): HerdrWorkspaceInfo | undefined {
 type ApplyWorkspaceOptions = {
   activateSelector?: boolean;
   preferStateActiveTab?: boolean;
-  requestGeneration?: number;
-  replayFromStart?: boolean;
+  request?: WorkspaceRequest;
+  preserveFocus?: boolean;
+  passive?: boolean;
+  replayPaneId?: string;
   selector?: string;
 };
 
@@ -5231,84 +5288,36 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
   const workspaceSelector = responseSelector || expectedSelector;
   if (!workspaceSelector) return false;
   if (
-    options.requestGeneration !== undefined
-    && !workspaceRequestTracker.isCurrent(workspaceSelector, options.requestGeneration)
+    options.request && !options.request.isCurrent()
   ) {
     return false;
   }
   const previousActiveTabId = activeTabId;
-  const existingSelectorTabs = tabs.filter((tab) => (
-    normalizeSelector(tab.selector) === workspaceSelector
-  ));
-  const existingSelectorPanes = new Map(
-    allPanes()
-      .filter((pane) => normalizeSelector(pane.selector) === workspaceSelector)
-      .map((pane) => [pane.id, pane]),
-  );
-  const retainedPaneIds = new Set<string>();
-  const replacementTabs: TerminalTab[] = [];
-  const requestedWorkspaceTabId = options.activateSelector
-    ? requestedTabIdFromLocation()
-    : "";
-  const rememberedWorkspaceTabId = readRememberedTabId(workspaceSelector);
-  const stateActiveWorkspaceTabId = workspace.active_tab_id;
-  const preferredWorkspaceTabIds = options.preferStateActiveTab
-    ? [stateActiveWorkspaceTabId, requestedWorkspaceTabId, rememberedWorkspaceTabId]
-    : [requestedWorkspaceTabId, rememberedWorkspaceTabId, stateActiveWorkspaceTabId];
-  for (const tabState of workspace.tabs) {
-    const tab = makeTab(workspaceSelector, tabState.id);
-    tab.customTitle = tabState.custom_label?.trim() || undefined;
-    tab.pinned = tabState.pinned === true;
-    tab.pinnedOrder = typeof tabState.pinned_order === "number" ? tabState.pinned_order : undefined;
-    tab.activePaneId = tabState.active_pane_id
-      ? workspaceEntityId(workspaceSelector, "pane", tabState.active_pane_id)
-      : undefined;
-    tab.layout = workspaceLayoutToView(workspaceSelector, tabState.layout);
-    replacementTabs.push(tab);
-    elements.terminalStage.appendChild(tab.mount);
-    for (const paneState of tabState.panes) {
-      const paneId = workspaceEntityId(workspaceSelector, "pane", paneState.id);
-      const pane = await restoreWorkspacePane(
-        tab,
-        paneState,
-        existingSelectorPanes.get(paneId),
-        options,
-      );
-      retainedPaneIds.add(pane.id);
-    }
-    if (!tab.activePaneId) {
-      tab.activePaneId = tab.panes[0]?.id;
-    }
-    if (!tab.layout && tab.panes.length) {
-      tab.layout = paneLayoutNode(tab.panes[0].id);
-    }
-    renderPaneLayout(tab);
-  }
-  tabs = replaceSelectorTabs(
-    tabs,
-    workspaceSelector,
-    replacementTabs,
-    previousActiveTabId,
-  );
-  for (const tab of existingSelectorTabs) {
-    tab.mount.remove();
-  }
+  const result = reconcileWorkspace({
+    workspace, selector: workspaceSelector, tabs, activeTabId,
+    preserveFocus: options.preserveFocus ?? !options.preferStateActiveTab,
+    replayPaneId: options.replayPaneId,
+    passive: options.passive,
+    markPassive: workspacePaneLifetime.markPassive,
+    makeTab, restorePane: workspacePaneLifetime.restore, disposePane: workspacePaneLifetime.dispose,
+    attachTab: (tab) => elements.terminalStage.appendChild(tab.mount),
+    renderLayout: renderPaneLayout,
+  });
+  tabs = result.tabs;
   restoreTerminalStageChrome();
-  const preferredTabId = preferredWorkspaceTabIds
-    .map((workspaceTabId) => (
-      selectorTabIdForWorkspaceId(tabs, workspaceSelector, workspaceTabId)
-    ))
-    .find(Boolean);
-  activeTabId = activeTabAfterSelectorReconcile(
-    previousActiveTabId,
-    tabs,
-    workspaceSelector,
-    preferredTabId,
-    options.activateSelector === true,
-  );
+  activeTabId = activeTabAfterWorkspaceSnapshot({
+    tabs, previous: previousActiveTabId, selector: workspaceSelector, selectedSelector,
+    requestedTabId: options.activateSelector ? requestedTabIdFromLocation() : "",
+    rememberedTabId: readRememberedTabId(workspaceSelector),
+    stateActiveTabId: workspace.active_tab_id,
+    preserveFocus: options.preserveFocus, preferStateActiveTab: options.preferStateActiveTab,
+    activateSelector: options.activateSelector, passive: options.passive,
+  });
+  for (const tab of tabs) updatePaneActiveState(tab);
   if (activeTabId) {
     activateTab(activeTabId, {
       sync: false,
+      focus: !options.passive,
       updateLocation: options.activateSelector === true,
     });
   } else {
@@ -5323,13 +5332,24 @@ async function applyWorkspaceState(workspace: WorkspaceState, options: ApplyWork
     updateActiveDetails();
     restoreMobileSystemKeyboardFocus();
   }
-  for (const [paneId, pane] of existingSelectorPanes) {
-    if (!retainedPaneIds.has(paneId)) {
-      disposePaneLocal(pane);
+  for (const pane of result.toMount) {
+    if (options.request && !options.request.isCurrent()) return false;
+    if (findPaneById(pane.id) !== pane || pane.closing) continue;
+    setPaneStatus(pane, tr("status.loadingGhostty"));
+    await mountTerminal(pane);
+    if (!shouldConnectRestoredPane(pane) || (options.passive && pane.sessionStatus !== "running")) {
+      setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
     }
   }
   await nextAnimationFrame();
-  connectWorkspacePanes();
+  if (options.request && !options.request.isCurrent()) return false;
+  if (options.passive) {
+    for (const pane of result.panes) {
+      if (findPaneById(pane.id) === pane && pane.sessionStatus === "running"
+        && !pane.workspaceRefreshPending && !pane.processExitObserved
+        && !pane.socket && !pane.hasConnected) connectPanePty(pane);
+    }
+  } else connectWorkspacePanes();
   scheduleTerminalSizeRefresh();
   return true;
 }
@@ -5340,65 +5360,6 @@ function restoreTerminalStageChrome() {
       elements.terminalStage.appendChild(element);
     }
   }
-}
-
-async function restoreWorkspacePane(
-  tab: TerminalTab,
-  paneState: WorkspacePaneState,
-  existing?: TerminalPane,
-  options: ApplyWorkspaceOptions = {},
-): Promise<TerminalPane> {
-  const nextBackend = normalizeSessionMode(paneState.session_backend);
-  const nextReplyAuthority = normalizeTerminalReplyAuthority(paneState.terminal_reply_authority);
-  let pane: TerminalPane;
-  if (
-    existing
-    && existing.sessionId === paneState.session_id
-    && existing.sessionBackend === nextBackend
-    && existing.terminalReplyAuthority === nextReplyAuthority
-  ) {
-    pane = existing;
-    if (options.replayFromStart) {
-      preparePaneForFullReplay(pane);
-    }
-  } else {
-    if (existing) {
-      disposePaneLocal(existing);
-    }
-    pane = makePane(tab, paneState.id);
-  }
-  pane.tabId = tab.id;
-  pane.workspacePaneId = paneState.id;
-  pane.selector = tab.selector;
-  pane.label = tab.label;
-  pane.sessionId = paneState.session_id;
-  pane.workspaceRefreshPending = false;
-  pane.sessionStatus = paneState.status;
-  pane.sessionBackend = nextBackend;
-  pane.terminalReplyAuthority = nextReplyAuthority;
-  pane.programKind = paneState.program_kind;
-  pane.serverCols = paneState.cols || INITIAL_COLS;
-  pane.serverRows = paneState.rows || INITIAL_ROWS;
-  pane.cols = pane.localCols || pane.serverCols;
-  pane.rows = pane.localRows || pane.serverRows;
-  if (!pane.localCols || !pane.localRows) {
-    pane.localCols = pane.serverCols;
-    pane.localRows = pane.serverRows;
-  }
-  pane.exited = paneState.status === "exited";
-  pane.closing = false;
-  tab.panes.push(pane);
-  renderPaneLayout(tab);
-  if (!pane.term) {
-    setPaneStatus(pane, tr("status.loadingGhostty"));
-    await mountTerminal(pane);
-  }
-  if (!shouldConnectRestoredPane(pane)) {
-    setPaneStatus(pane, tr("status.sessionStopped"), "neutral");
-  } else if (pane.socket?.readyState !== WebSocket.OPEN && pane.socket?.readyState !== WebSocket.CONNECTING) {
-    setPaneStatus(pane, tr("status.loadingGhostty"));
-  }
-  return pane;
 }
 
 function preparePaneForFullReplay(pane: TerminalPane) {
@@ -5453,7 +5414,7 @@ function canConnectPanePty(pane: TerminalPane): boolean {
 }
 
 function shouldRestartSessionOnConnect(pane: TerminalPane): boolean {
-  return settings.autoRestartSessions || isHerdrTerminalPane(pane);
+  return workspacePaneLifetime.mayRestart(pane) && (settings.autoRestartSessions || isHerdrTerminalPane(pane));
 }
 
 async function connectRestoredPanes() {
@@ -5843,6 +5804,18 @@ async function mountTerminal(pane: TerminalPane) {
     scrollLockThresholdPx: TOUCH_SCROLL_THRESHOLD_PX,
     scrollAxisRatio: MOBILE_TERMINAL_SCROLL_AXIS_RATIO,
   });
+  pane.herdrPointerDispose = installHerdrPointerController({
+    root: pane.mount,
+    globalTarget: window,
+    visibilityTarget: document,
+    canvas: () => pane.mount.querySelector<HTMLCanvasElement>(".pane-canvas"),
+    enabled: () => pane.sessionBackend === "herdr"
+      && Boolean(pane.term?.restty?.getMouseStatus().active),
+    ready: () => !pane.closing && !pane.replaying && !pane.exited
+      && pane.socket?.readyState === WebSocket.OPEN,
+    connection: () => pane.socket,
+    moveThresholdPx: TOUCH_SCROLL_THRESHOLD_PX,
+  });
   installPaneViewportGuard(pane, {
     scheduleSizeRefresh: scheduleTerminalSizeRefresh,
   });
@@ -5921,6 +5894,7 @@ function sendPaneResize(pane: TerminalPane, cols: number, rows: number): boolean
   }
   if (pane.socket?.readyState === WebSocket.OPEN) {
     pane.socket.send(webshellResizeMessage(pane.cols, pane.rows));
+    terminalTrace.record(pane, "resize", { cols: pane.cols, rows: pane.rows });
     terminalControl.noteServerSize(pane, pane.cols, pane.rows);
     updateActiveDetails();
     return true;
@@ -5946,6 +5920,7 @@ function openSocket(pane: TerminalPane) {
     () => openSocketPrepared(pane),
     (error) => {
       if (pane.closing || providerRevisionStale) return;
+      terminalTrace.record(pane, "error", undefined, "transport");
       setPaneStatus(pane, errorMessage(error), "error");
       scheduleReconnect(pane);
     },
@@ -6019,6 +5994,7 @@ async function openSocketPrepared(pane: TerminalPane) {
   socket.binaryType = "arraybuffer";
   socket.addEventListener("open", () => {
     if (pane.socket !== socket) return;
+    terminalTrace.record(pane, "socket-open");
     pane.remoteKeepaliveStop?.();
     pane.remoteKeepaliveStop = installRemoteClientKeepalive(pane.selector, socket);
     beginReplayInputLock(pane, socket);
@@ -6034,8 +6010,9 @@ async function openSocketPrepared(pane: TerminalPane) {
   socket.addEventListener("message", (event) => {
     if (pane.socket === socket) handleSocketMessage(pane, socket, event);
   });
-  socket.addEventListener("close", () => {
+  socket.addEventListener("close", (event) => {
     if (pane.socket !== socket) return;
+    terminalTrace.record(pane, "socket-closed", { closeCode: event.code });
     pane.remoteKeepaliveStop?.();
     pane.remoteKeepaliveStop = undefined;
     pendingPaneSocketOpens.delete(pane.id);
@@ -6118,7 +6095,7 @@ function sendOutputBufferLimit(pane: TerminalPane) {
 }
 
 function sendRestartPolicy(pane: TerminalPane) {
-  if (pane.socket?.readyState !== WebSocket.OPEN) return;
+  if (pane.socket?.readyState !== WebSocket.OPEN || !workspacePaneLifetime.mayRestart(pane)) return;
   pane.socket.send(webshellRestartPolicyMessage(settings.autoRestartSessions));
 }
 
@@ -6206,6 +6183,9 @@ function handleServerText(pane: TerminalPane, text: string) {
       refreshWorkspaceAfterReplayIdentityMismatch(pane);
       return;
     }
+    if (event.replay_gap || event.replay_mode === "gap") {
+      terminalTrace.record(pane, "replay-gap", undefined, "history-gap");
+    }
     if (typeof event.replay_after === "number" && Number.isFinite(event.replay_after)) {
       pane.lastReplayAfter = Math.max(0, Math.trunc(event.replay_after));
     }
@@ -6221,6 +6201,7 @@ function handleServerText(pane: TerminalPane, text: string) {
     );
     pane.allowGeneratedInputDuringReplay = event.allow_generated_input === true;
   } else if (event.type === "error") {
+    terminalTrace.record(pane, "error", undefined, "server");
     clearReplayInputLock(pane);
     if (event.message === "terminal control is held by another client") {
       terminalControl.handleRejectedWrite(pane);
@@ -6300,6 +6281,7 @@ function handleServerText(pane: TerminalPane, text: string) {
 }
 
 function refreshWorkspaceAfterReplayIdentityMismatch(pane: TerminalPane) {
+  terminalTrace.record(pane, "replay-gap", undefined, "identity-mismatch");
   clearReplayInputLock(pane, { interrupted: false });
   pane.workspaceRefreshPending = true;
   const staleSocket = pane.socket;
@@ -6309,6 +6291,7 @@ function refreshWorkspaceAfterReplayIdentityMismatch(pane: TerminalPane) {
   void loadWorkspace(pane.selector, {
     activateSelector: false,
     background: true,
+    replayPaneId: pane.id,
   });
 }
 
@@ -6829,6 +6812,7 @@ function disposePaneLocal(pane: TerminalPane) {
   disposePaneTerminalRuntime(pane);
   destroyPaneTransport(pane);
   pane.mount.remove();
+  terminalTrace.forget(pane);
 }
 
 function updatePaneTitle(pane: TerminalPane, title: string) {

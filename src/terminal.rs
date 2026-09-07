@@ -14,7 +14,7 @@ use axum::response::{IntoResponse, Response};
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::{broadcast, oneshot};
 use tokio::time::{MissedTickBehavior, interval, timeout};
@@ -22,10 +22,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::agent_client::ensure_agent;
-use crate::agent_protocol::{
-    detach_frame, history_recording_frame, input_frame, read_agent_frame_async, resize_frame,
-    write_agent_frame_async,
-};
+use crate::agent_protocol::{detach_frame, history_recording_frame, input_frame, resize_frame};
 use crate::client_terminal;
 use crate::config::{DEFAULT_COLS, DEFAULT_ROWS, LIGHTOSCTL, MAX_CLIPBOARD_IMAGE_BYTES};
 use crate::lightos;
@@ -35,6 +32,10 @@ use crate::proto::lazycat::webshell::v1::{
 };
 use crate::ssh_backend;
 use crate::state::{AppState, mark_session_status, sync_session_login_user};
+use crate::terminal_agent_stream::{
+    AGENT_ATTACH_CLEANUP_TIMEOUT, AGENT_ATTACH_STDERR_LIMIT, AgentFrameReader, read_bounded_text,
+    write_agent_frame_bounded,
+};
 use crate::terminal_control::TerminalControlSnapshot;
 use crate::terminal_manager::{
     CONNECTION_TERMINAL_CLOSE_TIMEOUT, ManagedTerminal, OutputBuffer, OutputFrame, OutputSnapshot,
@@ -494,21 +495,11 @@ async fn handle_terminal_socket(
     client_reply_authority: ClientReplyAuthority,
 ) -> anyhow::Result<()> {
     let (mut sender, receiver) = socket.split();
-    let connection_scoped_request = query
-        .backend
-        .as_deref()
-        .is_some_and(|backend| backend.trim() == "herdr");
     let target = match resolve_terminal_target(&state, &query, client_reply_authority).await {
         Ok(target) => target,
         Err(err) => {
             let message = err.to_string();
-            let _ = send_terminal_error_with_policy(
-                &mut sender,
-                message,
-                true,
-                connection_scoped_request,
-            )
-            .await;
+            let _ = send_terminal_error_with_policy(&mut sender, message, true, true).await;
             return Err(err);
         }
     };
@@ -521,13 +512,7 @@ async fn handle_terminal_socket(
                 let error =
                     anyhow!("terminal client reply authority is stale; reload the application");
                 target.control.disconnect(&state);
-                send_terminal_error_with_policy(
-                    &mut sender,
-                    error.to_string(),
-                    true,
-                    target.lifetime == ManagedTerminalLifetime::Connection,
-                )
-                .await?;
+                send_terminal_error_with_policy(&mut sender, error.to_string(), true, true).await?;
                 return Err(error);
             }
             target
@@ -587,13 +572,8 @@ async fn handle_terminal_socket(
                 && err
                     .downcast_ref::<RetryableConnectionTerminalError>()
                     .is_some();
-            let _ = send_terminal_error_with_policy(
-                &mut sender,
-                message,
-                !retryable_open,
-                lifetime == ManagedTerminalLifetime::Connection,
-            )
-            .await;
+            let _ =
+                send_terminal_error_with_policy(&mut sender, message, !retryable_open, true).await;
             return Err(err);
         }
     };
@@ -671,7 +651,7 @@ async fn serve_open_terminal(
     lifetime: ManagedTerminalLifetime,
 ) -> anyhow::Result<()> {
     let _control_lease = TerminalControlLease::new(Arc::clone(&state), control.clone());
-    let bounded_send = lifetime == ManagedTerminalLifetime::Connection;
+    let bounded_send = true;
     let mut event_rx = terminal.subscribe();
     let mut control_rx = control.subscribe(&state);
     send_control_with_policy(
@@ -1077,90 +1057,162 @@ async fn serve_agent_terminal(
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(err) => return Err(anyhow!("failed to start webshell agent attach: {err}")),
     };
     let Some(mut stdin) = child.stdin.take() else {
+        let _ = timeout(AGENT_ATTACH_CLEANUP_TIMEOUT, child.kill()).await;
         return Err(anyhow!("failed to open agent attach stdin"));
     };
-    let Some(mut stdout) = child.stdout.take() else {
+    let Some(stdout) = child.stdout.take() else {
+        let _ = timeout(AGENT_ATTACH_CLEANUP_TIMEOUT, child.kill()).await;
         return Err(anyhow!("failed to open agent attach stdout"));
     };
-    let mut stderr = child.stderr.take();
-    let stderr_task = tokio::spawn(async move {
-        let mut text = String::new();
-        if let Some(stderr) = stderr.as_mut() {
-            let _ = stderr.read_to_string(&mut text).await;
+    let stderr = child.stderr.take();
+    let mut stderr_task = tokio::spawn(async move {
+        match stderr {
+            Some(stderr) => read_bounded_text(stderr, AGENT_ATTACH_STDERR_LIMIT)
+                .await
+                .unwrap_or_default(),
+            None => String::new(),
         }
-        text
     });
-    let mut wait_task = tokio::spawn(async move { child.wait().await });
+    let mut frame_reader = AgentFrameReader::spawn(stdout);
     let mut pending_clipboard_image = None;
     let mut control_rx = target.control.subscribe(&state);
-    send_terminal_control_state(&mut sender, &state, &target.control).await?;
+    let mut terminal_reply_sent = false;
 
-    loop {
-        tokio::select! {
-            frame = read_agent_frame_async(&mut stdout) => {
-                match frame {
-                    Ok(frame) => {
-                        if !handle_agent_frame(&mut sender, &target, frame).await? {
+    let relay_result: anyhow::Result<()> = async {
+        send_terminal_control_state(&mut sender, &state, &target.control).await?;
+        loop {
+            tokio::select! {
+                frame = frame_reader.recv() => {
+                    match frame {
+                        Some(Ok(frame)) => {
+                            let is_terminal_reply = agent_frame_is_terminal_reply(&frame);
+                            if !handle_agent_frame(&mut sender, &target, frame).await? {
+                                terminal_reply_sent = is_terminal_reply;
+                                break;
+                            }
+                        }
+                        Some(Err(err)) => {
+                            if err.kind() != std::io::ErrorKind::UnexpectedEof {
+                                send_terminal_error(&mut sender, format!("agent attach stream failed: {err}"), true).await?;
+                            }
                             break;
                         }
+                        None => break,
                     }
-                    Err(err) => {
-                        if err.kind() != std::io::ErrorKind::UnexpectedEof {
-                            send_terminal_error(&mut sender, format!("agent attach stream failed: {err}"), true).await?;
+                }
+                update = recv_terminal_control_update(&mut control_rx) => {
+                    match update {
+                        Some(Ok(()) | Err(broadcast::error::RecvError::Lagged(_))) => {
+                            send_terminal_control_state(&mut sender, &state, &target.control).await?;
                         }
+                        Some(Err(broadcast::error::RecvError::Closed)) | None => {}
+                    }
+                }
+                message = receiver.next() => {
+                    let Some(message) = message else {
+                        break;
+                    };
+                    if !handle_agent_client_message(
+                        &mut sender,
+                        &state,
+                        &target,
+                        &mut stdin,
+                        &mut pending_clipboard_image,
+                        message?,
+                    ).await? {
                         break;
                     }
                 }
+                else => break,
             }
-            update = recv_terminal_control_update(&mut control_rx) => {
-                match update {
-                    Some(Ok(()) | Err(broadcast::error::RecvError::Lagged(_))) => {
-                        send_terminal_control_state(&mut sender, &state, &target.control).await?;
-                    }
-                    Some(Err(broadcast::error::RecvError::Closed)) | None => {}
+        }
+        Ok(())
+    }
+    .await;
+
+    let _ = write_agent_frame_bounded(&mut stdin, &detach_frame()).await;
+    let _ = timeout(AGENT_ATTACH_CLEANUP_TIMEOUT, stdin.shutdown()).await;
+    drop(stdin);
+    frame_reader.shutdown().await;
+
+    let child_result = match timeout(AGENT_ATTACH_CLEANUP_TIMEOUT, child.wait()).await {
+        Ok(result) => Some(result),
+        Err(_) => {
+            warn!(
+                selector = %target.selector,
+                pane_id,
+                "agent attach child cleanup timed out"
+            );
+            // This is the local lightosctl attach process. The target agent owns the PTY.
+            let _ = timeout(AGENT_ATTACH_CLEANUP_TIMEOUT, child.kill()).await;
+            None
+        }
+    };
+    let stderr_text = match timeout(AGENT_ATTACH_CLEANUP_TIMEOUT, &mut stderr_task).await {
+        Ok(Ok(text)) => text,
+        Ok(Err(error)) => {
+            warn!(error = %error, "agent attach stderr task failed");
+            String::new()
+        }
+        Err(_) => {
+            stderr_task.abort();
+            let _ = stderr_task.await;
+            warn!("agent attach stderr cleanup timed out");
+            String::new()
+        }
+    };
+
+    relay_result?;
+    if let Some(result) = child_result {
+        match result {
+            Ok(status) => {
+                if !terminal_reply_sent
+                    && let Some(message) = agent_attach_failure_message(
+                        status.success(),
+                        &status.to_string(),
+                        &stderr_text,
+                    )
+                {
+                    send_terminal_error(&mut sender, message, true).await?;
                 }
             }
-            Some(message) = receiver.next() => {
-                if !handle_agent_client_message(
-                    &mut sender,
-                    &state,
-                    &target,
-                    &mut stdin,
-                    &mut pending_clipboard_image,
-                    message?,
-                ).await? {
-                    break;
-                }
+            Err(err) if !terminal_reply_sent => {
+                send_terminal_error(&mut sender, format!("agent attach exited: {err}"), true)
+                    .await?;
             }
-            result = &mut wait_task => {
-                match result {
-                    Ok(Ok(status)) => {
-                        if !status.success() {
-                            let stderr = stderr_task.await.unwrap_or_default();
-                            send_terminal_error(&mut sender, stderr.trim().to_owned(), true).await?;
-                        }
-                    }
-                    Ok(Err(err)) => {
-                        send_terminal_error(&mut sender, format!("agent attach exited: {err}"), true).await?;
-                    }
-                    Err(err) => {
-                        send_terminal_error(&mut sender, format!("agent attach wait failed: {err}"), true).await?;
-                    }
-                }
-                break;
-            }
-            else => break,
+            Err(_) => {}
         }
     }
 
-    let _ = write_agent_frame_async(&mut stdin, &detach_frame()).await;
     Ok(())
+}
+
+fn agent_frame_is_terminal_reply(frame: &AgentFrame) -> bool {
+    frame
+        .control
+        .r#type
+        .as_ref()
+        .and_then(buffa::EnumValue::as_known)
+        == Some(AgentControlType::AGENT_CONTROL_TYPE_PROCESS_EXIT)
+}
+
+fn agent_attach_failure_message(success: bool, status: &str, stderr: &str) -> Option<String> {
+    if success {
+        return None;
+    }
+    let stderr = stderr.trim();
+    Some(if stderr.is_empty() {
+        format!("agent attach exited with {status}")
+    } else {
+        stderr.to_owned()
+    })
 }
 
 fn agent_pane_reply_authority(
@@ -1199,10 +1251,13 @@ async fn handle_agent_frame(
 ) -> anyhow::Result<bool> {
     match frame.r#type.as_ref().and_then(buffa::EnumValue::as_known) {
         Some(AgentFrameType::AGENT_FRAME_TYPE_BINARY) => {
-            if sender
-                .send(Message::Binary(frame.payload.unwrap_or_default().into()))
-                .await
-                .is_err()
+            if send_terminal_message_with_policy(
+                sender,
+                Message::Binary(frame.payload.unwrap_or_default().into()),
+                true,
+            )
+            .await
+            .is_err()
             {
                 return Ok(false);
             }
@@ -1216,7 +1271,10 @@ async fn handle_agent_frame(
         Some(AgentFrameType::AGENT_FRAME_TYPE_TEXT) => {
             let payload = frame.payload.unwrap_or_default();
             let text = String::from_utf8_lossy(&payload).into_owned();
-            if sender.send(Message::Text(text.into())).await.is_err() {
+            if send_terminal_message_with_policy(sender, Message::Text(text.into()), true)
+                .await
+                .is_err()
+            {
                 return Ok(false);
             }
         }
@@ -1326,7 +1384,7 @@ where
             if let Some(pending) = pending_clipboard_image.take() {
                 match stage_clipboard_image_path_for_agent(target, &pending, data.as_ref()).await {
                     Ok(path) => {
-                        write_agent_frame_async(stdin, &input_frame(path.into_bytes())).await?;
+                        write_agent_frame_bounded(stdin, &input_frame(path.into_bytes())).await?;
                     }
                     Err(err) => {
                         warn!(error = %err, "failed to paste clipboard image through agent");
@@ -1335,7 +1393,7 @@ where
                 }
                 return Ok(true);
             }
-            write_agent_frame_async(stdin, &input_frame(data.to_vec())).await?;
+            write_agent_frame_bounded(stdin, &input_frame(data.to_vec())).await?;
             Ok(true)
         }
         Message::Text(text) => {
@@ -1351,7 +1409,7 @@ where
         }
         Message::Close(_) => Ok(false),
         Message::Ping(payload) => {
-            let _ = sender.send(Message::Pong(payload)).await;
+            let _ = send_terminal_message_with_policy(sender, Message::Pong(payload), true).await;
             Ok(true)
         }
         Message::Pong(_) => Ok(true),
@@ -1385,7 +1443,7 @@ where
             .await?;
             return Ok(true);
         }
-        write_agent_frame_async(stdin, &input_frame(rest.as_bytes().to_vec())).await?;
+        write_agent_frame_bounded(stdin, &input_frame(rest.as_bytes().to_vec())).await?;
         return Ok(true);
     }
 
@@ -1400,7 +1458,7 @@ where
             return Ok(true);
         }
         let (cols, rows) = parse_resize_payload(rest)?;
-        write_agent_frame_async(stdin, &resize_frame(cols, rows)).await?;
+        write_agent_frame_bounded(stdin, &resize_frame(cols, rows)).await?;
         return Ok(true);
     }
 
@@ -1415,7 +1473,7 @@ where
                 .await?;
                 return Ok(true);
             }
-            write_agent_frame_async(stdin, &input_frame(data.into_bytes())).await?;
+            write_agent_frame_bounded(stdin, &input_frame(data.into_bytes())).await?;
             Ok(true)
         }
         Ok(TerminalClientMessage::Resize { cols, rows }) => {
@@ -1428,7 +1486,7 @@ where
                 .await?;
                 return Ok(true);
             }
-            write_agent_frame_async(stdin, &resize_frame(cols, rows)).await?;
+            write_agent_frame_bounded(stdin, &resize_frame(cols, rows)).await?;
             Ok(true)
         }
         Ok(TerminalClientMessage::ClipboardImage { extension, size }) => {
@@ -1453,7 +1511,7 @@ where
             Ok(true)
         }
         Ok(TerminalClientMessage::HistoryRecording { enabled }) => {
-            write_agent_frame_async(stdin, &history_recording_frame(enabled)).await?;
+            write_agent_frame_bounded(stdin, &history_recording_frame(enabled)).await?;
             Ok(true)
         }
         Ok(TerminalClientMessage::TakeControl { request_id }) => {
@@ -1518,10 +1576,7 @@ where
             TerminalClientMessage::RestartPolicy { .. }
             | TerminalClientMessage::OutputBuffer { .. },
         ) => Ok(true),
-        Ok(TerminalClientMessage::Close) => {
-            write_agent_frame_async(stdin, &detach_frame()).await?;
-            Ok(false)
-        }
+        Ok(TerminalClientMessage::Close) => Ok(false),
         Err(_) => {
             warn!(message = ?text, "ignored non-control agent websocket text frame");
             Ok(true)
@@ -1662,7 +1717,7 @@ async fn handle_terminal_event(
             if frame.sequence <= *last_sent_sequence {
                 return Ok(true);
             }
-            if !send_output_frame(sender, &frame, !persist_session_exit).await? {
+            if !send_output_frame(sender, &frame, true).await? {
                 return Ok(false);
             }
             *last_sent_sequence = frame.sequence;
@@ -1673,11 +1728,11 @@ async fn handle_terminal_event(
                 mark_session_status(state, terminal.session_id(), "exited");
                 state.sessions.forget_terminal(terminal.session_id());
             }
-            send_terminal_process_exit(sender, info, !persist_session_exit).await?;
+            send_terminal_process_exit(sender, info, true).await?;
             Ok(false)
         }
         Ok(TerminalEvent::Error(message)) => {
-            send_terminal_error_with_policy(sender, message, true, !persist_session_exit).await?;
+            send_terminal_error_with_policy(sender, message, true, true).await?;
             Ok(false)
         }
         Err(broadcast::error::RecvError::Lagged(_)) => {
@@ -1685,7 +1740,7 @@ async fn handle_terminal_event(
                 sender,
                 "terminal output backlog exceeded; reconnecting".to_owned(),
                 false,
-                !persist_session_exit,
+                true,
             )
             .await?;
             Ok(false)
@@ -1843,7 +1898,7 @@ async fn send_replay_snapshot_for_target(
     );
     let mut last_sent_sequence = last_sequence;
     for frame in frames {
-        if !send_output_frame(sender, &frame, false).await? {
+        if !send_output_frame(sender, &frame, true).await? {
             return Ok(None);
         }
         last_sent_sequence = last_sent_sequence.max(frame.sequence);
@@ -2219,7 +2274,7 @@ async fn send_terminal_control_state(
     state: &AppState,
     control: &TerminalControlGuard,
 ) -> anyhow::Result<()> {
-    send_terminal_control_state_with_policy(sender, state, control, false).await
+    send_terminal_control_state_with_policy(sender, state, control, true).await
 }
 
 async fn send_terminal_control_state_with_policy(
@@ -2246,7 +2301,7 @@ async fn send_terminal_control_snapshot(
     request_id: Option<&str>,
     control_action: Option<&str>,
 ) -> anyhow::Result<()> {
-    send_terminal_control_snapshot_with_policy(sender, snapshot, request_id, control_action, false)
+    send_terminal_control_snapshot_with_policy(sender, snapshot, request_id, control_action, true)
         .await
 }
 
@@ -2277,7 +2332,7 @@ async fn send_control(
     sender: &mut TerminalSender,
     message: &TerminalServerMessage<'_>,
 ) -> anyhow::Result<()> {
-    send_control_with_policy(sender, message, false).await
+    send_control_with_policy(sender, message, true).await
 }
 
 async fn send_control_with_policy(
@@ -2299,15 +2354,23 @@ async fn send_connection_terminal_message(
 async fn send_terminal_message_with_policy(
     sender: &mut TerminalSender,
     message: Message,
-    bounded: bool,
+    _bounded: bool,
 ) -> anyhow::Result<()> {
-    if bounded {
-        timeout(TERMINAL_SOCKET_SEND_TIMEOUT, sender.send(message))
-            .await
-            .map_err(|_| anyhow!("terminal websocket send timed out"))??;
-        return Ok(());
-    }
-    sender.send(message).await?;
+    send_terminal_message_with_timeout(sender, message, TERMINAL_SOCKET_SEND_TIMEOUT).await
+}
+
+async fn send_terminal_message_with_timeout<S>(
+    sender: &mut S,
+    message: Message,
+    deadline: Duration,
+) -> anyhow::Result<()>
+where
+    S: futures::Sink<Message> + Unpin,
+    S::Error: std::error::Error + Send + Sync + 'static,
+{
+    timeout(deadline, sender.send(message))
+        .await
+        .map_err(|_| anyhow!("terminal websocket send timed out"))??;
     Ok(())
 }
 
@@ -2316,7 +2379,7 @@ async fn send_terminal_error(
     message: String,
     fatal: bool,
 ) -> anyhow::Result<()> {
-    send_terminal_error_with_policy(sender, message, fatal, false).await
+    send_terminal_error_with_policy(sender, message, fatal, true).await
 }
 
 async fn send_terminal_error_with_policy(
@@ -2811,19 +2874,23 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::time::Duration;
 
     use axum::extract::ws::Message;
     use axum::http::header::{HOST, ORIGIN};
     use axum::http::{HeaderMap, HeaderValue};
+    use futures::channel::mpsc;
 
     use super::{
         ClientReplyAuthority, MAX_REPLAY_DEFERRED_BYTES, MAX_REPLAY_DEFERRED_MESSAGES,
         ManagedTerminalLifetime, TerminalClientMessage, TerminalServerMessage,
-        agent_pane_reply_authority, clipboard_image_stage_script, is_terminal_close_message,
-        managed_terminal_lifetime, origin_allowed, parse_client_reply_authority,
-        push_replay_deferred_message, sanitize_clipboard_image_extension, validate_replay_snapshot,
-        validate_terminal_backend,
+        agent_attach_failure_message, agent_frame_is_terminal_reply, agent_pane_reply_authority,
+        clipboard_image_stage_script, is_terminal_close_message, managed_terminal_lifetime,
+        origin_allowed, parse_client_reply_authority, push_replay_deferred_message,
+        sanitize_clipboard_image_extension, send_terminal_message_with_timeout,
+        validate_replay_snapshot, validate_terminal_backend,
     };
+    use crate::agent_protocol::{binary_frame_with_sequence, process_exit_frame};
     use crate::proto::lazycat::webshell::v1::{AgentPaneState, AgentTabState, AgentWorkspaceState};
     use crate::terminal_manager::OutputSnapshot;
 
@@ -3043,5 +3110,48 @@ mod tests {
         assert!(validate_terminal_backend("zellij", "zellij").is_ok());
         assert!(validate_terminal_backend("herdr", "webshell").is_err());
         assert!(validate_terminal_backend("zellij", "herdr").is_err());
+    }
+
+    #[tokio::test]
+    async fn websocket_send_to_a_non_reading_peer_times_out() {
+        let (mut sender, _receiver) = mpsc::channel(0);
+
+        let error = send_terminal_message_with_timeout(
+            &mut sender,
+            Message::Binary(vec![1].into()),
+            Duration::from_millis(20),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("timed out"));
+    }
+
+    #[test]
+    fn terminal_process_exit_suppresses_a_duplicate_attach_child_error() {
+        assert!(agent_frame_is_terminal_reply(&process_exit_frame(
+            7,
+            Some("remote process exited".to_owned()),
+        )));
+        assert!(!agent_frame_is_terminal_reply(&binary_frame_with_sequence(
+            b"tail output".to_vec(),
+            9
+        )));
+    }
+
+    #[test]
+    fn attach_child_failures_prefer_bounded_stderr_details() {
+        assert_eq!(
+            agent_attach_failure_message(true, "success", "ignored"),
+            None
+        );
+        assert_eq!(
+            agent_attach_failure_message(false, "exit status: 7", " attach failed\n"),
+            Some("attach failed".to_owned())
+        );
+        assert_eq!(
+            agent_attach_failure_message(false, "exit status: 7", ""),
+            Some("agent attach exited with exit status: 7".to_owned())
+        );
     }
 }

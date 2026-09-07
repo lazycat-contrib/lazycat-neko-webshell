@@ -1,3 +1,5 @@
+import "./diagnostics/settings.css";
+import { renderTerminalDiagnosticsSettings } from "./diagnostics/settings-view";
 import { qs } from "./utils";
 import { renderAboutDialog } from "./about-view";
 import { renderHerdrJumpShell } from "./herdr-jump-shell";
@@ -473,6 +475,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <input id="debugMode" type="checkbox" />
                 <span data-i18n="setting.debugAdapter">Debug adapter</span>
               </label>
+              ${renderTerminalDiagnosticsSettings()}
               <label class="switch">
                 <input id="performanceMeterEnabled" type="checkbox" />
                 <span data-i18n="setting.performanceMeter">Frame scheduler monitor</span>

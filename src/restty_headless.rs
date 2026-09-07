@@ -1,16 +1,17 @@
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use anyhow::{Context as _, anyhow, bail};
 use sha2::{Digest as _, Sha256};
 use wasmi::{
-    Caller, CompilationMode, Config, Engine, Linker, Memory, Module, Store, StoreLimits,
-    StoreLimitsBuilder, TypedFunc,
+    Caller, CompilationMode, Config, Engine, ExternType, Linker, Memory, Module, Store,
+    StoreLimits, StoreLimitsBuilder, TypedFunc, ValType,
 };
 
 use crate::config::{MAX_COLS, MAX_ROWS};
 
-const RESTTY_WASM: &[u8] = include_bytes!("../vendor/restty/0.2.6/restty.wasm");
-const RESTTY_WASM_SHA256: &str = "998cee70f955a7f48390347d9453aa412f2305c85dec1574e046739f10e05ace";
+const RESTTY_WASM: &[u8] = include_bytes!("../vendor/restty/0.3.0/restty.wasm");
+const RESTTY_WASM_SHA256: &str = "2ac53b6ee3ea00f1b4e122cf4fa9ef3f18c5ca7e8a8dd288e8575b87626566f9";
 const MAX_WASM_WRITE_BYTES: usize = 1024 * 1024;
 const MAX_WASM_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_WASM_MEMORY_BYTES: usize = 16 * 1024 * 1024;
@@ -29,6 +30,7 @@ struct CompiledRestty {
 
 struct WasmStoreState {
     limits: StoreLimits,
+    clock_origin: Instant,
 }
 
 pub struct ResttyHeadlessTerminal {
@@ -57,7 +59,13 @@ impl ResttyHeadlessTerminal {
             .memories(1)
             .trap_on_grow_failure(true)
             .build();
-        let mut store = Store::new(&compiled.engine, WasmStoreState { limits });
+        let mut store = Store::new(
+            &compiled.engine,
+            WasmStoreState {
+                limits,
+                clock_origin: Instant::now(),
+            },
+        );
         store.limiter(|state| &mut state.limits);
         store
             .set_fuel(MAX_WASM_FUEL_PER_OPERATION)
@@ -66,10 +74,10 @@ impl ResttyHeadlessTerminal {
         linker
             .func_wrap(
                 "env",
-                "log",
-                |_caller: Caller<'_, WasmStoreState>, _pointer: i32, _length: i32| {},
+                "now_ms",
+                |caller: Caller<'_, WasmStoreState>| -> f64 { monotonic_now_ms(caller.data()) },
             )
-            .context("failed to link Restty env.log")?;
+            .context("failed to link Restty env.now_ms")?;
         let instance = linker
             .instantiate_and_start(&mut store, &compiled.module)
             .context("failed to instantiate Restty WASM")?;
@@ -274,9 +282,40 @@ fn compile_artifact(bytes: &[u8]) -> anyhow::Result<CompiledRestty> {
     let mut config = Config::default();
     config.compilation_mode(CompilationMode::Eager);
     config.consume_fuel(true);
+    config.wasm_simd(true);
+    config.wasm_relaxed_simd(false);
     let engine = Engine::new(&config);
     let module = Module::new(&engine, bytes).context("failed to compile Restty WASM")?;
+    validate_host_import(&module)?;
     Ok(CompiledRestty { engine, module })
+}
+
+fn validate_host_import(module: &Module) -> anyhow::Result<()> {
+    let mut imports = module.imports();
+    let import = imports
+        .next()
+        .ok_or_else(|| anyhow!("Restty WASM is missing env.now_ms"))?;
+    if imports.next().is_some() {
+        bail!("Restty WASM must import only env.now_ms");
+    }
+    if import.module() != "env" || import.name() != "now_ms" {
+        bail!(
+            "unexpected Restty WASM import: {}.{}",
+            import.module(),
+            import.name()
+        );
+    }
+    let ExternType::Func(function) = import.ty() else {
+        bail!("Restty WASM env.now_ms import is not a function");
+    };
+    if !function.params().is_empty() || function.results() != [ValType::F64] {
+        bail!(
+            "invalid Restty WASM env.now_ms ABI: expected () -> f64, found {:?} -> {:?}",
+            function.params(),
+            function.results()
+        );
+    }
+    Ok(())
 }
 
 fn validate_artifact(bytes: &[u8]) -> anyhow::Result<()> {
@@ -300,6 +339,10 @@ fn hex_lower(bytes: &[u8]) -> String {
     output
 }
 
+fn monotonic_now_ms(state: &WasmStoreState) -> f64 {
+    state.clock_origin.elapsed().as_secs_f64() * 1_000.0
+}
+
 fn validate_dimensions(cols: u16, rows: u16) -> anyhow::Result<()> {
     if cols == 0 || cols > MAX_COLS || rows == 0 || rows > MAX_ROWS {
         bail!("terminal size must be between 1x1 and {MAX_COLS}x{MAX_ROWS}");
@@ -320,13 +363,71 @@ mod tests {
     #[test]
     fn validates_the_pinned_wasm_artifact() {
         validate_artifact(RESTTY_WASM).expect("pinned Restty WASM must validate");
-        assert_eq!(RESTTY_WASM.len(), 1_045_460);
+        compile_artifact(RESTTY_WASM).expect("pinned Restty WASM contract must validate");
+        assert_eq!(RESTTY_WASM.len(), 1_058_249);
     }
 
     #[test]
     fn rejects_an_invalid_wasm_artifact() {
         let error = compile_artifact(b"not wasm").expect_err("invalid artifact must fail");
         assert!(error.to_string().contains("WebAssembly v1"));
+    }
+
+    #[test]
+    fn rejects_a_wasm_artifact_with_the_wrong_hash() {
+        let mut bytes = RESTTY_WASM.to_vec();
+        let last = bytes.last_mut().expect("pinned WASM is non-empty");
+        *last ^= 0x01;
+
+        let error = validate_artifact(&bytes).expect_err("modified artifact must fail");
+        assert!(error.to_string().contains("SHA-256"));
+    }
+
+    #[test]
+    fn validates_the_now_ms_import_and_rejects_wrong_imports_or_abi() {
+        let correct = test_now_ms_import_module();
+        let module = test_module(&correct);
+        validate_host_import(&module).expect("() -> f64 env.now_ms import must validate");
+
+        let mut wrong_name = correct.clone();
+        wrong_name[23] = b'x';
+        let error = validate_host_import(&test_module(&wrong_name))
+            .expect_err("unexpected import name must fail");
+        assert!(error.to_string().contains("unexpected Restty WASM import"));
+
+        let mut wrong_abi = correct;
+        wrong_abi[14] = 0x7e;
+        let error = validate_host_import(&test_module(&wrong_abi))
+            .expect_err("non-f64 clock result must fail");
+        assert!(error.to_string().contains("expected () -> f64"));
+    }
+
+    #[test]
+    fn now_ms_is_monotonic_from_each_store_origin() {
+        let state = WasmStoreState {
+            limits: StoreLimitsBuilder::new().build(),
+            clock_origin: Instant::now(),
+        };
+        let first = monotonic_now_ms(&state);
+        std::thread::sleep(Duration::from_millis(1));
+        let second = monotonic_now_ms(&state);
+
+        assert!(first.is_finite() && first >= 0.0);
+        assert!(second > first);
+    }
+
+    fn test_module(bytes: &[u8]) -> Module {
+        let engine = Engine::default();
+        Module::new(&engine, bytes).expect("test WebAssembly module must compile")
+    }
+
+    fn test_now_ms_import_module() -> Vec<u8> {
+        vec![
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // WebAssembly v1.
+            0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7c, // Type 0: () -> f64.
+            0x02, 0x0e, 0x01, 0x03, b'e', b'n', b'v', 0x06, b'n', b'o', b'w', b'_', b'm', b's',
+            0x00, 0x00, // Function import env.now_ms with type 0.
+        ]
     }
 
     #[test]

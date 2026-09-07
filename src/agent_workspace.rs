@@ -264,6 +264,12 @@ impl AgentWorkspace {
         Ok(inner.snapshot())
     }
 
+    /// Observe the running workspace without repairing it, resizing panes,
+    /// changing output limits, or restoring a missing shell.
+    pub fn read_state(&self) -> anyhow::Result<AgentWorkspaceState> {
+        Ok(self.lock_inner()?.snapshot())
+    }
+
     pub fn snapshot_state(
         &self,
         cols: u16,

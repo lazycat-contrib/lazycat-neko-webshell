@@ -1,6 +1,6 @@
 import type { MessageKey } from "./i18n";
 import type { SessionBackendId, SessionBackendsState, SessionBackendInfo } from "./types";
-import { escapeAttr, escapeHtml } from "./utils";
+import { escapeAttr, escapeHtml } from "./utils.ts";
 
 export type SessionMode = SessionBackendId;
 

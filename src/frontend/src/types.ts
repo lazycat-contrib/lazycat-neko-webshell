@@ -489,6 +489,7 @@ export type TerminalPane = {
   scrollbackFallbackInstalled?: boolean;
   touchKeyboardGuardInstalled?: boolean;
   touchKeyboardGuardDispose?: () => void;
+  herdrPointerDispose?: () => void;
   remoteClipboardRetryClear?: () => void;
   remoteClipboardRetryDispose?: () => void;
   exited: boolean;

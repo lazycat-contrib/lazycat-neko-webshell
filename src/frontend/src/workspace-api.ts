@@ -21,6 +21,8 @@ export type WorkspaceRequestOptions = {
   outputLimit: number;
   autoRestart: boolean;
   selectRunningInstanceMessage: string;
+  passive?: boolean;
+  signal?: AbortSignal;
 };
 
 export type WorkspaceActionRequestOptions = {
@@ -69,8 +71,12 @@ export async function fetchWorkspace(
   url.searchParams.set("rows", String(options.rows));
   url.searchParams.set("output_limit", String(options.outputLimit));
   url.searchParams.set("auto_restart", String(options.autoRestart));
-  const response = await fetch(url, { cache: "no-store", credentials: "same-origin" });
-  await throwIfFailed(response);
+  if (options.passive) url.searchParams.set("passive", "true");
+  const signal = options.passive
+    ? AbortSignal.any([AbortSignal.timeout(8000), ...(options.signal ? [options.signal] : [])])
+    : options.signal;
+  const response = await fetch(url, { cache: "no-store", credentials: "same-origin", signal });
+  if (!response.ok) throw new HttpRequestError(await response.text() || response.statusText, response.status);
   return response.json() as Promise<WorkspaceState>;
 }
 

@@ -21,6 +21,8 @@ export function destroyPaneTransport(pane: TerminalPane) {
 }
 
 export function disposePaneTerminalRuntime(pane: TerminalPane) {
+  pane.herdrPointerDispose?.();
+  pane.herdrPointerDispose = undefined;
   pane.remoteClipboardRetryDispose?.();
   pane.remoteClipboardRetryDispose = undefined;
   pane.remoteClipboardRetryClear = undefined;

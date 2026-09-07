@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::agent_client::ensure_agent;
+use crate::agent_client::{ensure_agent, existing_agent_snapshot};
 use crate::config::{DEFAULT_COLS, DEFAULT_OUTPUT_FRAME_LIMIT, DEFAULT_ROWS, MAX_COLS, MAX_ROWS};
 use crate::database::{AppDatabase, KV_KEY_WORKSPACES, KV_NAMESPACE_STATE};
 use crate::lightos;
@@ -142,6 +142,8 @@ pub struct WorkspaceQuery {
     cols: Option<u16>,
     rows: Option<u16>,
     output_limit: Option<usize>,
+    #[serde(default)]
+    passive: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,6 +327,11 @@ pub async fn get_workspace(
     let output_limit = normalize_output_frame_limit(query.output_limit);
 
     if lightos_admin::is_client_selector(selector) {
+        if query.passive {
+            // The upstream client workspace endpoint does not advertise a
+            // non-restoring snapshot contract. Do not infer it from GET.
+            return passive_snapshot_unsupported();
+        }
         return match crate::client_terminal::get_workspace(
             &headers,
             selector,
@@ -348,6 +355,18 @@ pub async fn get_workspace(
         return Json(optional_backend_workspace_state(&state, selector)).into_response();
     }
 
+    if query.passive {
+        return match existing_agent_snapshot(selector, &login_user).await {
+            Ok(Some(snapshot)) => Json(merge_passive_workspace(
+                &state,
+                workspace_state_from_agent(snapshot),
+            ))
+            .into_response(),
+            Ok(None) => passive_snapshot_unsupported(),
+            Err(error) => (StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response(),
+        };
+    }
+
     match standard_agent_workspace(
         &state,
         selector,
@@ -362,6 +381,28 @@ pub async fn get_workspace(
         Ok(workspace) => Json(workspace).into_response(),
         Err(message) => bad_gateway(message),
     }
+}
+
+fn passive_snapshot_unsupported() -> Response {
+    (
+        StatusCode::CONFLICT,
+        "passive workspace snapshots are unavailable for this target",
+    )
+        .into_response()
+}
+
+fn merge_passive_workspace(state: &AppState, mut workspace: WorkspaceState) -> WorkspaceState {
+    let optional = optional_backend_workspace_state(state, &workspace.selector);
+    let mut tabs = optional.tabs;
+    tabs.extend(workspace.tabs);
+    workspace.tabs = tabs;
+    if let Ok(workspaces) = state.workspaces.read()
+        && let Some(record) = workspaces.get(&workspace.selector)
+    {
+        record.apply_tab_metadata(&mut workspace);
+    }
+    sort_workspace_tabs(&mut workspace);
+    workspace
 }
 
 pub async fn put_workspace_action(

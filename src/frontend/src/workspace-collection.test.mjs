@@ -71,3 +71,14 @@ test("resolves a raw workspace tab only inside its selector", () => {
     undefined,
   );
 });
+
+test("snapshot selection preserves local focus, handles deletion locally and still honors explicit target activation", async () => {
+  const { activeTabAfterWorkspaceSnapshot } = await import("./workspace-collection.ts");
+  const tabs = [{ id: "a", selector: "box", workspaceTabId: "a" }, { id: "b", selector: "box", workspaceTabId: "b" }, { id: "c", selector: "other", workspaceTabId: "c" }];
+  const base = { tabs, selector: "box", selectedSelector: "box", previous: "a", preserveFocus: true, stateActiveTabId: "b", passive: true };
+  assert.equal(activeTabAfterWorkspaceSnapshot(base), "a");
+  assert.equal(activeTabAfterWorkspaceSnapshot({ ...base, previous: "removed" }), "a");
+  assert.equal(activeTabAfterWorkspaceSnapshot({ ...base, previous: "c", selectedSelector: "other" }), "c");
+  assert.equal(activeTabAfterWorkspaceSnapshot({ ...base, previous: "c", passive: false, activateSelector: true }), "b");
+  assert.equal(activeTabAfterWorkspaceSnapshot({ ...base, passive: false, preserveFocus: false, activateSelector: true, preferStateActiveTab: true }), "b");
+});
