@@ -32,6 +32,7 @@ type HerdrJumpControllerDeps = {
   closeWorkspace: () => Promise<void> | void;
   closeWorkspaceGroup: () => Promise<void> | void;
   openIntegrations: () => Promise<void> | void;
+  openMachines?: () => Promise<void> | void;
   openHistory?: () => Promise<void> | void;
   runConsoleAction: (action: HerdrConsoleAction) => Promise<void> | void;
 };
@@ -238,6 +239,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     if (action === "refresh") await deps.refresh();
     if (action === "close-workspace") await deps.closeWorkspace();
     if (action === "close-workspace-group") await deps.closeWorkspaceGroup();
+    if (action === "machines") await deps.openMachines?.();
     if (action === "integrations") await deps.openIntegrations();
     if (action === "history") await deps.openHistory?.();
     if (

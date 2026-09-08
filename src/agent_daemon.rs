@@ -1,3 +1,6 @@
+#[path = "agent_daemon/machines.rs"]
+mod machines;
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -82,6 +85,9 @@ pub fn run_agent_command(args: &[String]) -> anyhow::Result<()> {
         "attach" => run_attach_command(&args[1..]),
         "herdr-socket-bridge" => run_herdr_socket_bridge_command(&args[1..]),
         "herdr-runtime" => run_herdr_runtime_command(&args[1..]),
+        "herdr-machines" => machines::run(&args[1..], false, false),
+        "herdr-machine-setup" => machines::run(&args[1..], true, false),
+        "herdr-machine-child" => machines::run(&args[1..], false, true),
         _ => bail!("unknown agent command {command:?}"),
     }
 }
@@ -1235,7 +1241,7 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 14);
+        assert_eq!(AGENT_VERSION, 15);
         assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 11);
     }
 

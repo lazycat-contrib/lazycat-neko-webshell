@@ -1,0 +1,37 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Machine manager QA</title></head><body><button id="open" type="button">机器管理</button><script type="module">
+import '/src/styles.css';
+import '/src/webshell-themes.css';
+import { createIcons, icons } from 'lucide';
+import { Terminal } from 'restty/xterm';
+import { createHerdrMachines } from '/src/herdr-machines/view.ts';
+import { translate } from '/src/i18n.ts';
+const machines = [
+{id:'a'.repeat(32),label:'开发工作站',target:'devbox',session:'default',enabled:true,selected:true},
+{id:'b'.repeat(32),label:'构建服务器',target:'build@build.example.test',session:'agents',enabled:true,selected:false},
+{id:'c'.repeat(32),label:'构建服务器',target:'build-backup',session:'long-session-name-for-agents',enabled:false,selected:false},
+{id:'d'.repeat(32),label:'这是一台名称很长的远端机器用于检查手机上的文字换行',target:'ssh://developer@a-very-long-hostname.example.test:2222',session:'default',enabled:true,selected:false}
+];
+window.qa={requests:[],sockets:[],machines,target:{selector:"dev@owner",generation:1}};
+const originalOpen=Terminal.prototype.open;Terminal.prototype.open=function(...args){window.qa.term=this;return originalOpen.apply(this,args)};
+const originalFetch = window.fetch.bind(window);
+window.fetch = async (url, init) => {
+ if(String(url).includes('/api/herdr/machines')) {
+  const action=init?.body ? JSON.parse(init.body):undefined; window.qa.requests.push(action||'list');
+  if(action){ const row=machines.find(m=>m.id===action.id); if(action.action==='rename')row.label=action.label; if(action.action==='enable'||action.action==='disable')row.enabled=action.action==='enable'; if(action.action==='remove')machines.splice(machines.indexOf(row),1); }
+  return Response.json({supported:true,machines});
+ }
+ if(String(url).includes('/api/ssh-config-hosts'))return Response.json([{alias:'devbox'},{alias:'build-box'}]);
+ return originalFetch(url,init);
+};
+class FakeSocket extends EventTarget {
+ static OPEN=1; static CONNECTING=0; static CLOSING=2; static CLOSED=3;
+ readyState=0;
+ constructor(url){super();this.url=url;window.qa.sockets.push(this);setTimeout(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));},80);}
+ send(value){ const m=JSON.parse(value);if(m.type==='input'){(this.inputs??=[]).push(m.data);} if(m.action){this.action=m;setTimeout(()=>this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({type:'output',data:btoa('SSH authentication test\r\nPassword: ')})})),200);} if(m.type==='input'&&m.data.includes('\r')){setTimeout(()=>this.finish(0),150);} }
+ finish(code){if(this.action?.action==='add'&&code===0)machines.push({id:'e'.repeat(32),...this.action,enabled:true,selected:false}); this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({type:'exit',code})}));}
+ close(){if(this.readyState===3)return;this.readyState=3;this.dispatchEvent(new Event('close'));}
+}
+window.WebSocket=FakeSocket;
+const manager=createHerdrMachines({target:()=>window.qa.target,tr:(key,values)=>translate('zh-CN',key,values),prepare:()=>{},updateIcons:()=>createIcons({icons}),terminalOptions:()=>({fonts:[{url:'/fonts/preinstalled/FiraCode-Regular.ttf',name:'Fira Code'}],fontSize:14})});
+document.querySelector('#open').onclick=()=>manager.open();window.qa.manager=manager;await manager.open();
+</script></body></html>

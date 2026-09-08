@@ -89,6 +89,8 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/api/workspace", get(get_workspace).put(put_workspace_action))
         .route("/api/herdr", get(get_herdr_state).post(post_herdr_action))
         .route("/api/herdr/runtime", get(get_herdr_runtime_status))
+        .route("/api/herdr/machines", get(crate::herdr::machines::list).post(crate::herdr::machines::mutate))
+        .route("/api/herdr/machines/setup", get(crate::herdr::machines::setup))
         .route("/api/herdr/handoff", post(post_herdr_handoff))
         .route("/api/herdr/socket", post(post_herdr_socket))
         .route(

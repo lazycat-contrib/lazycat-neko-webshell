@@ -12,6 +12,8 @@ mod agent_pty;
 mod agent_workspace;
 #[path = "../config.rs"]
 mod config;
+#[path = "../herdr_machines.rs"]
+mod herdr_machines;
 #[path = "../proto.rs"]
 mod proto;
 #[path = "../pty_io.rs"]

@@ -1,9 +1,9 @@
-import type { ResttyFontHintTarget, ResttyFontInput } from "restty";
+import type { PtyTransport, ResttyFontHintTarget, ResttyFontInput } from "restty";
 import { Terminal } from "restty/xterm";
 
 import type { NativePaneContextMenuItem } from "./pane-menu-actions";
 import type { PaneTerminalDom } from "./terminal-dom";
-import type { PaneTerminalTransport, TouchSelectionMode } from "./types";
+import type { TouchSelectionMode } from "./types";
 import { createTerminalFocusBoundary } from "./terminal-focus-boundary";
 
 type BeforeInputPayload = {
@@ -21,7 +21,7 @@ export type PaneTerminalOptions = {
   fonts: ResttyFontInput[];
   scrollbackLimit: number;
   touchSelectionMode: TouchSelectionMode;
-  transport: PaneTerminalTransport | undefined;
+  transport: PtyTransport | undefined;
   forwardTerminalReplies?: boolean;
   beforeInput: (payload: BeforeInputPayload) => string | undefined;
   beforeRenderOutput?: (payload: BeforeInputPayload) => string | undefined;

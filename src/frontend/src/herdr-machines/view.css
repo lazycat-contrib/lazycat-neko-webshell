@@ -1,0 +1,73 @@
+.herdr-console-dialog.herdr-machines-dialog {
+  width: min(660px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  color: var(--text);
+}
+.herdr-machines-dialog::backdrop { background: var(--overlay-wash), var(--overlay-scrim); }
+.herdr-console-dialog.herdr-machines-dialog > header { align-items: start; grid-template-columns: minmax(0, 1fr) auto; }
+.herdr-machines-dialog > header > span { min-width: 0; }
+.herdr-machines-dialog > footer { justify-content: flex-end; }
+.machine-body { overflow-y: auto; overscroll-behavior: contain; }
+.machine-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.machine-search { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; color: var(--muted); }
+.machine-search > svg { width: 16px; flex-shrink: 0; }
+.machine-search input { width: 100%; min-width: 0; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--input-bg); color: var(--text); font: inherit; font-size: 13px; }
+.machine-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.machine-row:first-child { padding-top: 4px; }
+.machine-row:last-child { border-bottom: 0; }
+.machine-icon { margin-top: 2px; color: var(--muted); }
+.machine-icon svg { width: 20px; height: 20px; }
+.machine-identity { min-width: 0; }
+.machine-identity h3 { margin: 0; font-size: 14px; line-height: 1.5; font-weight: 650; overflow-wrap: anywhere; }
+.machine-identity p { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.machine-identity code, .machine-setup-identity code, .machine-remove-preview code { font-family: var(--terminal-font-family); overflow-wrap: anywhere; }
+.machine-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; }
+.machine-state { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.machine-row[data-enabled="false"] .machine-state { color: var(--muted); }
+.machine-row-actions { display: flex; align-items: center; gap: 8px; }
+.machine-row-actions .icon-button { width: 32px; height: 32px; }
+.machine-row-actions button { flex-shrink: 0; }
+.machine-count { margin-right: auto; color: var(--muted); font-size: 12px; }
+.machine-empty { padding: 28px 12px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.machine-empty > svg { width: 28px; height: 28px; margin-bottom: 8px; }
+.machine-empty h3 { margin: 0 0 6px; color: var(--text); font-size: 15px; }
+.machine-empty p { margin: 0; }
+.machine-message { min-height: 18px; margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.machine-message[data-error="true"] { color: var(--danger-fg); }
+.machine-help { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.machine-advanced > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 8px 0; }
+.machine-advanced > label { margin-top: 6px; }
+.machine-advanced > .machine-help { margin-top: 8px; }
+.machine-remove-preview, .machine-setup-identity { display: grid; gap: 6px; margin-bottom: 16px; overflow-wrap: anywhere; }
+.machine-remove-preview strong, .machine-setup-identity strong { font-size: 15px; }
+.machine-remove-preview code, .machine-setup-identity code { color: var(--muted); font-size: 12px; }
+.machine-rename-target { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.machine-body .machine-terminal { height: min(340px, 45dvh); min-height: 180px; margin-bottom: 12px; overflow: hidden; background: var(--term-bg, #101114); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.herdr-machines-dialog button:focus-visible, .herdr-machines-dialog input:focus-visible, .herdr-machines-dialog select:focus-visible, .herdr-machines-dialog summary:focus-visible { outline: 2px solid var(--accent-fg); outline-offset: 3px; }
+@media (hover: hover) and (pointer: fine) {
+  .machine-row-actions button:hover { background: var(--accent-soft); color: var(--accent-fg); }
+  .machine-row-actions .machine-remove:hover { background: var(--danger-soft); color: var(--danger-fg); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .herdr-machines-dialog button { transition: transform 120ms ease-out; }
+  .herdr-machines-dialog button:active:not(:disabled) { transform: scale(0.97); }
+}
+@media (pointer: coarse), (max-width: 520px) {
+  .herdr-machines-dialog button, .herdr-machines-dialog select, .herdr-machines-dialog input, .machine-advanced > summary { min-height: 44px; }
+  .machine-row-actions .icon-button { width: 44px; height: 44px; }
+}
+@media (max-width: 520px) {
+  .herdr-console-dialog.herdr-machines-dialog { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
+  .machine-toolbar { flex-wrap: wrap; }
+  .machine-search { flex-basis: 100%; }
+  .machine-row { grid-template-columns: 24px minmax(0, 1fr); }
+  .machine-row-actions { grid-column: 2; justify-content: flex-end; }
+  .herdr-machines-dialog input, .herdr-machines-dialog select { font-size: 16px; }
+}
+
+.herdr-machines-dialog .herdr-console-form > label[hidden] { display: none; }
+
+.machine-source-picker { display: flex; gap: 8px; }
+.machine-source-picker > button { flex: 1; }
+.machine-source-picker > button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-fg); border-color: var(--accent-strong); }

@@ -112,6 +112,7 @@ import { createHerdrRefreshCoordinator, type HerdrRefreshMode } from "./herdr-re
 import { createHerdrRuntimeGuard } from "./herdr-runtime-guard";
 import { herdrEventMessage } from "./herdr-event-presentation";
 import { createHerdrConsoleController } from "./herdr-console-actions";
+import { createHerdrMachines } from "./herdr-machines/view";
 import { createHerdrHistoryDialog } from "./herdr-history/view";
 import { historyTargetFromPane } from "./herdr-history/types";
 import { HerdrSocketRequestError, isHerdrSocketRequestMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
@@ -554,6 +555,7 @@ const paneMaximize = createPaneMaximizeController();
 let herdrJumpController: ReturnType<typeof createHerdrJumpController> | undefined;
 let herdrConsole: ReturnType<typeof createHerdrConsoleController> | undefined;
 let herdrHistory: ReturnType<typeof createHerdrHistoryDialog> | undefined;
+let herdrMachines: ReturnType<typeof createHerdrMachines> | undefined;
 let herdrIntegrations: ReturnType<typeof createHerdrIntegrationsController> | undefined;
 const imageUploadProgress = createUploadProgressController(elements.webshell);
 let mobileSystemKeyboard: ReturnType<typeof createMobileSystemKeyboardController>;
@@ -1004,6 +1006,18 @@ herdrHistory = createHerdrHistoryDialog({
   request: (method, params, target) => runHerdrSocketApiRequest(target.selector, method, params),
   prepare: prepareAppMobileOverlay,
 });
+herdrMachines = createHerdrMachines({
+  tr,
+  target: () => {
+    const pane = activeHerdrTerminalPane();
+    const selector = normalizeSelector(selectedSelector);
+    return pane && selector && !isRemoteClientSelector(selector) && !isSshSelector(selector) && normalizeSelector(pane.selector) === selector
+      ? { selector, generation: selectedSelectorGeneration } : undefined;
+  },
+  prepare: prepareAppMobileOverlay,
+  updateIcons,
+  terminalOptions: () => ({ fonts: resttyFontSourcesFor(currentFont()), fontSize: settings.fontSize }),
+});
 const herdrIntegrationsView = createHerdrIntegrationsView({
   tr,
   prepare: prepareAppMobileOverlay,
@@ -1109,6 +1123,7 @@ herdrJumpController = createHerdrJumpController({
   },
   closeWorkspaceGroup: () => herdrGroupClose.closeWorkspaceGroup(),
   openIntegrations: () => herdrIntegrations?.open(),
+  openMachines: () => herdrMachines?.open(),
   runConsoleAction: (action) => herdrConsole?.open(action),
   openHistory: () => herdrHistory?.open(),
 });
@@ -1476,6 +1491,7 @@ function setSelectedSelector(
     herdrConsole?.dismiss();
     herdrHistory?.dismiss();
     herdrIntegrations?.dismiss();
+    herdrMachines?.dismiss();
     herdrGroupClose.clear();
     workspaceRequests.invalidate(selectedSelector);
     selectedSelector = normalized;
@@ -2493,8 +2509,12 @@ function bindActions() {
   document.addEventListener("keydown", handleGlobalShortcutCapture, true);
   document.addEventListener("keydown", handleTerminalImeFocusCapture, true);
   document.addEventListener("keydown", handleTerminalInterruptCapture, true);
-  document.addEventListener("keydown", handleTerminalClipboardCapture, true);
-  document.addEventListener("paste", handleTerminalPasteEvent, true);
+  document.addEventListener("keydown", event => {
+    if (!herdrMachines?.ownsEvent(event)) handleTerminalClipboardCapture(event);
+  }, true);
+  document.addEventListener("paste", event => {
+    if (!herdrMachines?.ownsEvent(event)) handleTerminalPasteEvent(event);
+  }, true);
   elements.instanceButton.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleInstanceMenu();
@@ -2532,6 +2552,7 @@ function bindActions() {
     }
   });
   document.addEventListener("keydown", (event) => {
+    if (herdrMachines?.ownsEvent(event)) return;
     if (event.key === "Escape") {
       closeInstanceMenu();
       closeSettingsMenu();
@@ -3172,6 +3193,7 @@ function setBackendActionFailed(pane: TerminalPane, message: string) {
 }
 
 function handleGlobalShortcutCapture(event: KeyboardEvent) {
+  if (herdrMachines?.ownsEvent(event)) return;
   if (event.defaultPrevented) return;
   if (handleFontZoomShortcut(event) || handleZellijTerminalShortcut(event)) {
     event.stopImmediatePropagation();
@@ -5147,6 +5169,7 @@ function clearHerdrState() {
 }
 
 function renderHerdrDock() {
+  herdrMachines?.sync();
   if (!runtimeInfo.lightosFeaturesEnabled) {
     herdrConsole?.dismiss();
     herdrIntegrations?.sync(undefined);

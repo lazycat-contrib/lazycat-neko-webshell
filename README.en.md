@@ -115,6 +115,10 @@ Herdr LazyCat notifications can be enabled in Terminal settings. While the curre
 
 WebShell calls only its embedded allowlist of Herdr SockAPI methods and accepts newer protocols that still meet its minimum compatibility version; a larger protocol number alone does not block the connection. If the installed Herdr client protocol is newer than the running server and the server supports live handoff, the interface offers a user-confirmed switch that preserves supported live panes. An older client, unknown protocol, or server without handoff support is never replaced automatically.
 
+Herdr versions with machine support expose an on-demand connection manager under **More → Manage machines**. Choose a Host from the target login user’s `~/.ssh/config` or enter an SSH target manually, and optionally test the connection before adding. Testing only checks SSH; adding opens a terminal for authentication, installation approval and Herdr setup.
+
+Saved connections show their labels and support renaming, enabling, disabling and removal. Removing a connection leaves remote sessions running. Management uses the target user’s Herdr CLI; Herdr’s own interface continues to provide machine and workspace navigation without a second persistent machine tree in WebShell.
+
 If Herdr is not installed, these controls stay out of the way.
 
 ## Port Forwarding And Public Tunnel

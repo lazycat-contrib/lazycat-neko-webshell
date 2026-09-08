@@ -48,6 +48,7 @@ export function renderHerdrJumpShell(): string {
             <button type="button" role="menuitem" data-herdr-jump-action="new-agent"><i data-lucide="sparkles"></i><span data-i18n="action.newHerdrAgent">New Agent</span></button>
             <button type="button" role="menuitem" data-herdr-jump-action="search"><i data-lucide="search"></i><span data-i18n="action.searchHerdr">Search agents and spaces</span></button>
             <button type="button" role="menuitem" data-herdr-jump-action="history"><i data-lucide="text-search"></i><span data-i18n="history.title">Search pane history</span></button>
+            <button type="button" role="menuitem" data-herdr-jump-action="machines"><i data-lucide="server"></i><span data-i18n="machines.title">Manage machines</span></button>
             <button type="button" role="menuitem" data-herdr-jump-action="integrations" hidden><i data-lucide="plug-zap"></i><span data-i18n="action.herdrIntegrations">Integration status</span></button>
             <button type="button" role="menuitem" data-herdr-jump-action="rename-workspace"><i data-lucide="pencil"></i><span data-i18n="action.renameHerdrSpace">Rename Herdr space</span></button>
             <div class="herdr-more-separator" role="separator"></div>
