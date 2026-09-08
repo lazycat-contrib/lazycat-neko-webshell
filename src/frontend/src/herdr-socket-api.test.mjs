@@ -44,11 +44,11 @@ test("normalizes Herdr 0.8.2 wire event names to the subscribed dot notation", (
   );
 });
 
-test("tracks the current Herdr 0.8.2 socket schema", () => {
-  assert.equal(HERDR_SOCKET_PROTOCOL, 20);
+test("tracks Herdr 0.9.0 source metadata without expanding the understood allowlist", () => {
+  assert.equal(HERDR_SOCKET_PROTOCOL, 22);
   assert.equal(HERDR_SOCKET_SCHEMA_VERSION, 1);
-  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.8.2");
-  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c");
+  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.9.0");
+  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "b99002ac99b09e00b4ca692436cb15a6b0d676f1");
   assert.equal(isHerdrSocketMethod("workspace.move_block"), true);
   assert.equal(isHerdrSocketMethod("workspace.report_metadata"), true);
   assert.equal(isHerdrSocketMethod("pane.graphics.set"), true);

@@ -4,6 +4,7 @@ import { Terminal } from "restty/xterm";
 import type { NativePaneContextMenuItem } from "./pane-menu-actions";
 import type { PaneTerminalDom } from "./terminal-dom";
 import type { PaneTerminalTransport, TouchSelectionMode } from "./types";
+import { createTerminalFocusBoundary } from "./terminal-focus-boundary";
 
 type BeforeInputPayload = {
   text: string;
@@ -32,6 +33,7 @@ export type PaneTerminalOptions = {
 };
 
 export function createPaneTerminal(options: PaneTerminalOptions): Terminal {
+  let focusBoundary: ReturnType<typeof createTerminalFocusBoundary> | undefined;
   const term = new Terminal({
     cols: options.cols,
     rows: options.rows,
@@ -72,6 +74,15 @@ export function createPaneTerminal(options: PaneTerminalOptions): Terminal {
       },
     },
     terminal: (context) => {
+      focusBoundary?.dispose();
+      const root = context.imeInput.parentElement;
+      if (root) {
+        focusBoundary = createTerminalFocusBoundary({
+          root,
+          canvas: () => root.querySelector<HTMLCanvasElement>(".pane-canvas"),
+          input: context.imeInput,
+        });
+      }
       options.onDomReady({ canvas: context.canvas, imeInput: context.imeInput });
       return {
         renderer: "auto",
@@ -93,11 +104,19 @@ export function createPaneTerminal(options: PaneTerminalOptions): Terminal {
       };
     },
     services: {
-      beforeInput: options.beforeInput,
+      beforeInput: (payload) => focusBoundary?.suppress(payload.text, payload.source)
+        ? null
+        : options.beforeInput(payload),
       beforeRenderOutput: options.beforeRenderOutput,
       ptyTransport: options.transport,
     },
   });
+  const disposeTerminal = term.dispose.bind(term);
+  term.dispose = () => {
+    focusBoundary?.dispose();
+    focusBoundary = undefined;
+    disposeTerminal();
+  };
   term.onResize(({ cols, rows }) => options.onGridSize(cols, rows));
   return term;
 }

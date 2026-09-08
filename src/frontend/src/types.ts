@@ -180,6 +180,12 @@ export type HerdrRuntimeGuardState = {
   server_protocol?: number;
   live_handoff_available: boolean;
   handoff_recent?: boolean;
+  client_endpoint_protocol_generation?: number;
+  client_endpoint_capabilities?: string[];
+  server_endpoint_protocol_generation?: number;
+  endpoint_compatible?: boolean;
+  server_binary_stale?: boolean;
+  private_protocol_matches?: boolean;
 };
 
 export type HerdrAction = "focus_workspace" | "focus_tab" | "focus_pane" | "create_tab" | "close_workspace" | "create_workspace";

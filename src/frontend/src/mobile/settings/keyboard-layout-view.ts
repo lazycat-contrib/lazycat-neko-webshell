@@ -24,6 +24,11 @@ export function renderMobileKeyboardLayoutSettingsView(): string {
           </div>
         </div>
       </div>
+      <div class="mobile-keyboard-layout-preview">
+        <strong data-i18n="label.mobileKeyboardPreview">Shortcut preview</strong>
+        <p class="settings-help" data-i18n="setting.mobileKeyboardPreviewHelp">Preview only; these keys do not send input. Place your most-used keys first to reduce scrolling.</p>
+        <div class="mobile-keyboard-panel" data-mobile-layout-preview></div>
+      </div>
       <div class="mobile-keyboard-width-legend" role="group" aria-label="Key width legend" data-i18n-aria="setting.mobileKeyboardWidthHelp">
         <span><i data-width="sm"></i><b data-i18n="option.mobileKeyboardWidthSmall">Narrow</b><small data-i18n="option.mobileKeyboardWidthSmallHint">one slot</small></span>
         <span><i data-width="md"></i><b data-i18n="option.mobileKeyboardWidthMedium">Standard</b><small data-i18n="option.mobileKeyboardWidthMediumHint">two slots</small></span>
@@ -32,19 +37,21 @@ export function renderMobileKeyboardLayoutSettingsView(): string {
       <p class="settings-help settings-help-inline" data-i18n="setting.mobileKeyboardDragHelp">Drag a key to place it. Use the arrow buttons when you prefer precise keyboard control.</p>
       <div class="mobile-keyboard-key-list" id="mobileKeyboardLayoutPagePanel" role="tabpanel" aria-labelledby="mobileLayoutPageTabMain" data-mobile-layout-key-list></div>
       <details class="mobile-keyboard-custom-key">
-        <summary data-i18n="action.mobileKeyboardAddKey">Add key</summary>
+        <summary data-mobile-key-editor-title data-i18n="action.mobileKeyboardAddKey">Add key</summary>
         <div class="mobile-keyboard-custom-key-fields">
-          <label class="field"><span data-i18n="field.mobileKeyboardKeyType">Key type</span><select data-mobile-key-kind><option value="text" data-i18n="option.mobileKeyboardKeyText">Text</option><option value="shortcut" data-i18n="option.mobileKeyboardKeySpecial">Special key</option><option value="action" data-i18n="option.mobileKeyboardKeyAction">App action</option></select></label>
+          <label class="field"><span data-i18n="field.mobileKeyboardKeyType">Key type</span><select data-mobile-key-kind><option value="text" data-i18n="option.mobileKeyboardKeyText">Text</option><option value="shortcut" data-i18n="option.mobileKeyboardKeySpecial">Special key</option><option value="action" data-i18n="option.mobileKeyboardKeyAction">App action</option><option value="chord" data-i18n="option.mobileKeyboardKeyChord">Key combination</option></select></label>
           <label class="field"><span data-i18n="field.mobileKeyboardKeyLabel">Label</span><input type="text" maxlength="24" data-mobile-key-label /></label>
-          <label class="field" data-mobile-key-text-field><span data-i18n="field.mobileKeyboardKeyText">Text or escape sequence</span><textarea rows="2" maxlength="256" data-mobile-key-text></textarea><small data-i18n="setting.mobileKeyboardEscapeHelp">Use \\e or \\x1b for Escape; \\r, \\n and \\t are supported.</small></label>
+          <label class="field" data-mobile-key-text-field><span data-i18n="field.mobileKeyboardKeyText">Text or escape sequence</span><textarea rows="2" maxlength="1536" data-mobile-key-text></textarea><small data-i18n="setting.mobileKeyboardEscapeHelp">Use \\e or \\x1b for Escape; \\r, \\n and \\t are supported.</small></label>
           <label class="field" data-mobile-key-value-field hidden><span data-i18n="field.mobileKeyboardKeyValue">Key or action</span><select data-mobile-key-value></select></label>
           <label class="field"><span data-i18n="field.mobileKeyboardKeyWidth">Width</span><select data-mobile-key-new-width><option value="sm" data-i18n="option.mobileKeyboardWidthSmall">Narrow</option><option value="md" selected data-i18n="option.mobileKeyboardWidthMedium">Standard</option><option value="lg" data-i18n="option.mobileKeyboardWidthLarge">Wide</option></select></label>
           <label class="check-line" data-mobile-key-enter-field><input type="checkbox" data-mobile-key-enter /><span data-i18n="field.mobileKeyboardKeyEnter">Press Enter after sending this key's text</span></label>
           <p class="settings-help settings-help-inline" data-mobile-key-enter-help data-i18n="setting.mobileKeyboardKeyEnterHelp">Useful for commands that should run immediately.</p>
           <button class="command-button primary" type="button" data-mobile-key-add data-i18n="action.mobileKeyboardAddKey">Add key</button>
+          <button class="command-button" type="button" data-mobile-key-cancel hidden data-i18n="action.cancel">Cancel</button>
           <p class="field-status" data-mobile-layout-status aria-live="polite"></p>
         </div>
       </details>
+      <button class="command-button" type="button" data-mobile-layout-undo disabled data-i18n="action.mobileKeyboardUndo">Undo last layout change</button>
       <button class="command-button" type="button" data-mobile-layout-reset data-i18n="action.mobileKeyboardRestoreDefault">Restore default</button>
     </div>
   `;

@@ -83,6 +83,17 @@ import {
   type HerdrStructuralAction,
 } from "./herdr-action-scheduler";
 import { createHerdrInteractionQueue } from "./herdr-interaction-queue";
+import {
+  createHerdrGroupCloseController,
+  herdrGroupCloseTarget,
+  herdrWorkspaceFingerprint,
+  type HerdrGroupCloseTarget,
+} from "./herdr-group-close/controller";
+import {
+  createHerdrIntegrationsController,
+  herdrIntegrationsTarget,
+} from "./herdr-integrations/controller";
+import { createHerdrIntegrationsView } from "./herdr-integrations/view";
 import { createHerdrJumpController } from "./herdr-jump-controller";
 import { createHerdrLazycatNotificationController } from "./herdr-notifications/controller";
 import { createHerdrNavigationController } from "./herdr-navigation";
@@ -101,6 +112,8 @@ import { createHerdrRefreshCoordinator, type HerdrRefreshMode } from "./herdr-re
 import { createHerdrRuntimeGuard } from "./herdr-runtime-guard";
 import { herdrEventMessage } from "./herdr-event-presentation";
 import { createHerdrConsoleController } from "./herdr-console-actions";
+import { createHerdrHistoryDialog } from "./herdr-history/view";
+import { historyTargetFromPane } from "./herdr-history/types";
 import { HerdrSocketRequestError, isHerdrSocketRequestMethod, normalizeHerdrSocketEnvelope } from "./herdr-socket-api";
 import {
   herdrBridgeStateForUi,
@@ -540,6 +553,8 @@ const performanceMeter = createPerformanceMeter(elements.terminalStage);
 const paneMaximize = createPaneMaximizeController();
 let herdrJumpController: ReturnType<typeof createHerdrJumpController> | undefined;
 let herdrConsole: ReturnType<typeof createHerdrConsoleController> | undefined;
+let herdrHistory: ReturnType<typeof createHerdrHistoryDialog> | undefined;
+let herdrIntegrations: ReturnType<typeof createHerdrIntegrationsController> | undefined;
 const imageUploadProgress = createUploadProgressController(elements.webshell);
 let mobileSystemKeyboard: ReturnType<typeof createMobileSystemKeyboardController>;
 const mobileKeyboard = createMobileKeyboardController({
@@ -981,6 +996,72 @@ herdrConsole = createHerdrConsoleController({
   updateIcons,
   returnFocus: () => elements.herdrMoreButton,
 });
+herdrHistory = createHerdrHistoryDialog({
+  tr,
+  target: () => historyTargetFromPane({
+    selector: selectedSelector, generation: selectedSelectorGeneration, pane: activeHerdrTerminalPane(),
+  }),
+  request: (method, params, target) => runHerdrSocketApiRequest(target.selector, method, params),
+  prepare: prepareAppMobileOverlay,
+});
+const herdrIntegrationsView = createHerdrIntegrationsView({
+  tr,
+  prepare: prepareAppMobileOverlay,
+  updateIcons,
+  onClose: () => herdrIntegrations?.close(),
+  onRefresh: () => void herdrIntegrations?.refresh(),
+});
+herdrIntegrations = createHerdrIntegrationsController({
+  target: () => herdrIntegrationsTarget(herdrState, selectedSelector, selectedSelectorGeneration),
+  isCurrent: ({ selector, generation }) => (
+    isCurrentSelectorRequest(selector, generation)
+    && normalizeSelector(herdrState?.selector ?? "") === selector
+  ),
+  request: (target) => runHerdrSocketRequest("integration.list", {}, {
+    selector: target.selector,
+    id: "lazycat-webshell:integration-list",
+    mirrorNotification: false,
+  }),
+  present: herdrIntegrationsView.present,
+  closeView: herdrIntegrationsView.close,
+  setMenuVisible: (visible) => {
+    const button = elements.herdrMoreMenu.querySelector<HTMLButtonElement>("[data-herdr-jump-action=integrations]");
+    if (button) button.hidden = !visible;
+  },
+  invalidResponse: () => tr("integrations.invalidResponse"),
+});
+const currentHerdrGroupCloseTarget = (): HerdrGroupCloseTarget | undefined => {
+  return herdrGroupCloseTarget(herdrState, selectedSelector, selectedSelectorGeneration);
+};
+const herdrGroupClose = createHerdrGroupCloseController({
+  target: currentHerdrGroupCloseTarget,
+  isCurrent: ({ selector, generation }) => isCurrentSelectorRequest(selector, generation),
+  canMutate: ({ selector }) => canMutateHerdrState(selector),
+  request: (method, params, target) => runHerdrSocketRequest(method, params, {
+    selector: target.selector,
+    id: `lazycat-webshell:${method}:${target.workspaceId}`,
+    mirrorNotification: false,
+  }),
+  runExclusive: (task) => herdrInteractionQueue.run(task),
+  confirm: (options) => confirmDialog.confirm(options),
+  afterClose: async ({ selector, generation }) => {
+    if (!isCurrentSelectorRequest(selector, generation)) return;
+    invalidatePendingHerdrStateRefresh();
+    await refreshHerdrState(selector, generation);
+    if (!isCurrentSelectorRequest(selector, generation)) return;
+    refreshHerdrTerminalAfterAction(selector, "close_workspace");
+    scheduleHerdrActionRefresh(selector);
+    void syncHerdrEventBridge({ force: true });
+    syncAIChatForActiveTerminal();
+    focusActivePaneCanvas();
+  },
+  setGroupActionVisible: (visible) => {
+    const button = elements.herdrMoreMenu.querySelector<HTMLButtonElement>("[data-herdr-jump-action=close-workspace-group]");
+    if (button) button.hidden = !visible;
+  },
+  onStatus: setGlobalStatus,
+  tr,
+});
 herdrJumpController = createHerdrJumpController({
   elements: {
     dock: elements.herdrDock,
@@ -1024,9 +1105,12 @@ herdrJumpController = createHerdrJumpController({
     await runHerdrAction("create_workspace");
   },
   closeWorkspace: async () => {
-    await runHerdrAction("close_workspace", () => ({ workspaceId: focusedHerdrWorkspace()?.workspace_id }));
+    await herdrGroupClose.closeWorkspace();
   },
+  closeWorkspaceGroup: () => herdrGroupClose.closeWorkspaceGroup(),
+  openIntegrations: () => herdrIntegrations?.open(),
   runConsoleAction: (action) => herdrConsole?.open(action),
+  openHistory: () => herdrHistory?.open(),
 });
 const activeAIChatTerminalTarget = createAIChatTerminalTargetResolver({
   pane: activeAIChatTerminalPane,
@@ -1390,6 +1474,9 @@ function setSelectedSelector(
   const normalized = normalizeSelector(selector);
   if (normalized !== selectedSelector) {
     herdrConsole?.dismiss();
+    herdrHistory?.dismiss();
+    herdrIntegrations?.dismiss();
+    herdrGroupClose.clear();
     workspaceRequests.invalidate(selectedSelector);
     selectedSelector = normalized;
     selectedSelectorGeneration += 1;
@@ -2542,6 +2629,7 @@ function bindLifecycleEvents() {
   bindWorkspacePassiveSync(workspacePassiveSync, window, document, () => {
     workspaceRequests.dispose();
     terminalDiagnosticsSettings.dispose();
+    mobileKeyboard.dispose();
   });
   window.addEventListener("orientationchange", handleViewportChange);
   window.visualViewport?.addEventListener("resize", handleViewportChange);
@@ -5061,6 +5149,8 @@ function clearHerdrState() {
 function renderHerdrDock() {
   if (!runtimeInfo.lightosFeaturesEnabled) {
     herdrConsole?.dismiss();
+    herdrIntegrations?.sync(undefined);
+    herdrGroupClose.clear();
     herdrJumpController?.close();
     elements.webshell.classList.remove("has-herdr");
     elements.herdrDock.hidden = true;
@@ -5259,7 +5349,13 @@ function closeHerdrWorkspaceMenu() {
 
 function renderHerdrWorkspaceMenu() {
   const installed = sessionBackendInstalled(sessionBackendsState, "herdr");
-  herdrJumpController?.render(installed ? herdrState : undefined);
+  const state = installed ? herdrState : undefined;
+  herdrIntegrations?.sync(state);
+  herdrGroupClose.observe(
+    installed ? currentHerdrGroupCloseTarget() : undefined,
+    state ? herdrWorkspaceFingerprint(state.workspaces) : "",
+  );
+  herdrJumpController?.render(state);
   elements.herdrWorkspaceMenuStatus.textContent = installed
     ? herdrState?.message ?? ""
     : tr("status.herdrUnavailable");

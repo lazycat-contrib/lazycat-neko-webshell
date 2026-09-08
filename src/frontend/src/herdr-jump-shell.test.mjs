@@ -18,7 +18,10 @@ test("renders three shared icon actions outside the Herdr jump panel", () => {
   assert.doesNotMatch(moreMenu, /data-herdr-jump-action="create-(?:tab|workspace)"/);
   assert.match(moreMenu, /data-herdr-jump-action="new-agent"/);
   assert.match(moreMenu, /data-herdr-jump-action="search"/);
+  assert.match(moreMenu, /data-herdr-jump-action="integrations" hidden/);
   assert.match(moreMenu, /data-herdr-jump-action="rename-workspace"/);
   assert.match(moreMenu, /data-herdr-jump-action="close-agent"/);
+  assert.match(moreMenu, /data-herdr-jump-action="close-workspace"/);
+  assert.match(moreMenu, /data-herdr-jump-action="close-workspace-group" hidden/);
   assert.doesNotMatch(shell, /herdr-mobile-jump-actions/);
 });

@@ -222,7 +222,16 @@ function validValue(kind: MobileKeyboardKeyKind, value: string): boolean {
 }
 
 function normalizeKeyText(value: string): string {
-  return value.replace(/\r\n/g, "\n").replace(/[\u0000\u0008\u000b\u000c\u007f]/g, "").slice(0, MAX_MOBILE_KEY_TEXT);
+  return cleanMobileKeyboardText(value).slice(0, MAX_MOBILE_KEY_TEXT);
+}
+
+function cleanMobileKeyboardText(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/[\u0000\u0008\u000b\u000c\u007f]/g, "");
+}
+
+export function mobileKeyboardTextError(value: string): "empty" | "tooLong" | undefined {
+  const text = cleanMobileKeyboardText(decodeMobileKeyboardText(value));
+  return !text.length ? "empty" : text.length > MAX_MOBILE_KEY_TEXT ? "tooLong" : undefined;
 }
 
 function normalizeLabel(value: unknown): string {
@@ -341,6 +350,33 @@ export function decodeMobileKeyboardText(value: string): string {
     if (sequence === "\\") return "\\";
     return match;
   });
+}
+
+/** Lossless editor representation of supported persisted terminal controls. */
+export function encodeMobileKeyboardText(value: string): string {
+  return value.replace(/[\\\x1b\r\n\t]/g, (character) => ({
+    "\\": "\\\\", "\x1b": "\\e", "\r": "\\r", "\n": "\\n", "\t": "\\t",
+  })[character] ?? character);
+}
+
+export function editMobileKeyboardCustomKey(
+  layout: MobileKeyboardLayout,
+  pageId: MobileKeyboardPageId,
+  keyId: string,
+  input: Pick<MobileKeyboardKey, "kind" | "label" | "value" | "width" | "autoEnter">,
+): MobileKeyboardLayout {
+  const next = structuredClone(normalizeMobileKeyboardLayout(layout));
+  const page = next.pages.find((item) => item.id === pageId);
+  const index = page?.keys.findIndex((item) => item.id === keyId && item.custom) ?? -1;
+  if (!page || index < 0) return next;
+  const original = page.keys[index]!;
+  const edited = normalizeKeys([{
+    ...original, ...input, ariaLabel: input.label, icon: undefined,
+    value: input.kind === "text" ? decodeMobileKeyboardText(input.value) : input.value,
+    repeat: original.kind === input.kind && original.value === input.value && original.repeat,
+  }])[0];
+  if (edited) page.keys[index] = edited;
+  return next;
 }
 
 export function removeMobileKeyboardKey(layout: MobileKeyboardLayout, pageId: MobileKeyboardPageId, keyId: string): MobileKeyboardLayout {

@@ -30,6 +30,9 @@ def main():
     config_path = state_dir / "config.toml"
     socket_path = state_dir / "herdr.sock"
     xdg_path = state_dir / "xdg"
+    # The launcher owns a fresh namespace; never attach to or stop an existing socket.
+    if socket_path.exists() or config_path.exists():
+        raise RuntimeError("Herdr fixture requires a fresh isolated state directory")
     config_path.write_text(
         'onboarding = false\n[terminal]\ndefault_shell = "/bin/sh"\nshell_mode = "non_login"\n'
         '[update]\nversion_check = false\nmanifest_check = false\n',
@@ -40,7 +43,7 @@ def main():
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 35, 120, 0, 0))
     child_env = controlled_environment(config_path, socket_path, xdg_path)
     child = subprocess.Popen(
-        [str(herdr_binary), "--no-session"],
+        [str(herdr_binary)],
         stdin=slave,
         stdout=slave,
         stderr=slave,
@@ -188,8 +191,20 @@ def main():
         server.serve_forever(poll_interval=0.1)
     finally:
         server.server_close()
-        stop_process_group(child)
-        os.close(master)
+        try:
+            # Normal 0.8/0.9 launches may detach a daemon outside the PTY process
+            # group. Address only the uniquely owned socket, never the default server.
+            result = subprocess.run(
+                [str(herdr_binary), "server", "stop"], env=child_env, cwd=state_dir,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False,
+            )
+            if result.returncode != 0 and socket_path.exists():
+                raise RuntimeError("failed to stop the isolated Herdr server")
+        finally:
+            try:
+                stop_process_group(child)
+            finally:
+                os.close(master)
 
 
 def controlled_environment(config_path, socket_path, xdg_path):
@@ -234,7 +249,11 @@ def write_all(fd, data):
 def stop_process_group(child):
     if child.poll() is not None:
         return
-    os.killpg(child.pid, signal.SIGTERM)
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        child.wait(timeout=3)
+        return
     try:
         child.wait(timeout=3)
     except subprocess.TimeoutExpired:

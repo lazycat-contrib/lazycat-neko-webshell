@@ -1,0 +1,113 @@
+.herdr-integrations-dialog {
+  width: min(540px, calc(100vw - 32px));
+  padding: 0;
+  color: var(--text);
+}
+
+.herdr-integrations-dialog::backdrop {
+  background: var(--overlay-wash), var(--overlay-scrim);
+  backdrop-filter: blur(10px);
+}
+
+.herdr-integrations-summary {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.herdr-integrations-list {
+  display: grid;
+  gap: 6px;
+}
+
+.herdr-integration-row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  border: 1px solid var(--component-border);
+  border-radius: var(--radius-sm);
+  background: var(--component-wash), var(--surface);
+  padding: 8px 10px;
+}
+
+.herdr-integration-mark {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.herdr-integration-mark[data-state="current"] {
+  background: var(--ok);
+}
+
+.herdr-integration-mark[data-state="outdated"] {
+  background: var(--warning);
+}
+
+.herdr-integration-copy,
+.herdr-integration-copy strong,
+.herdr-integration-copy small {
+  display: block;
+  min-width: 0;
+}
+
+.herdr-integration-copy strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.herdr-integration-copy small {
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-family: var(--terminal-font-family);
+  font-size: 10px;
+}
+
+.herdr-integration-state {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.herdr-integration-state[data-state="current"] {
+  border-color: color-mix(in srgb, var(--ok) 32%, var(--line));
+  color: var(--ok);
+}
+
+.herdr-integration-state[data-state="outdated"] {
+  border-color: color-mix(in srgb, var(--warning) 36%, var(--line));
+  color: var(--warning);
+}
+
+.herdr-integrations-error {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line));
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 520px) {
+  .herdr-integration-row {
+    grid-template-columns: 8px minmax(0, 1fr);
+  }
+
+  .herdr-integration-state {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

@@ -135,6 +135,7 @@ function controllerHarness() {
   moreMenu.hidden = true;
   const focusedTabs = [];
   const consoleActions = [];
+  const featureActions = [];
   createHerdrJumpController({
     elements: {
       dock,
@@ -165,9 +166,11 @@ function controllerHarness() {
     createTab() {},
     createWorkspace() {},
     closeWorkspace() {},
+    closeWorkspaceGroup: async () => featureActions.push("close-workspace-group"),
+    openIntegrations: async () => featureActions.push("integrations"),
     runConsoleAction: async (action) => consoleActions.push(action),
   });
-  return { dock, currentTargets, focusedTabs, consoleActions, moreButton, moreMenu };
+  return { dock, currentTargets, focusedTabs, consoleActions, featureActions, moreButton, moreMenu };
 }
 
 test("top Herdr tab clicks navigate even when the dock stores its display density", async (t) => {
@@ -192,6 +195,19 @@ test("routes HerdrM reference actions from the Herdr-only more menu", async (t) 
   }
 
   assert.deepEqual(consoleActions, ["new-agent", "search", "rename-workspace", "close-agent"]);
+});
+
+test("routes integration status and explicit workspace-group closure separately", async (t) => {
+  installFakeDom(t);
+  const { dock, featureActions } = controllerHarness();
+
+  for (const action of ["integrations", "close-workspace-group"]) {
+    const button = new FakeElement("button", { herdrJumpAction: action }).appendTo(dock);
+    dock.dispatch("click", button);
+    await Promise.resolve();
+  }
+
+  assert.deepEqual(featureActions, ["integrations", "close-workspace-group"]);
 });
 
 test("cycles visible more-menu items with Arrow, Home, and End keys", (t) => {

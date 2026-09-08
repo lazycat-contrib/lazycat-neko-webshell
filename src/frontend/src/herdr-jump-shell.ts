@@ -47,11 +47,14 @@ export function renderHerdrJumpShell(): string {
           <div class="herdr-more-menu" id="herdrMoreMenu" role="menu" hidden>
             <button type="button" role="menuitem" data-herdr-jump-action="new-agent"><i data-lucide="sparkles"></i><span data-i18n="action.newHerdrAgent">New Agent</span></button>
             <button type="button" role="menuitem" data-herdr-jump-action="search"><i data-lucide="search"></i><span data-i18n="action.searchHerdr">Search agents and spaces</span></button>
+            <button type="button" role="menuitem" data-herdr-jump-action="history"><i data-lucide="text-search"></i><span data-i18n="history.title">Search pane history</span></button>
+            <button type="button" role="menuitem" data-herdr-jump-action="integrations" hidden><i data-lucide="plug-zap"></i><span data-i18n="action.herdrIntegrations">Integration status</span></button>
             <button type="button" role="menuitem" data-herdr-jump-action="rename-workspace"><i data-lucide="pencil"></i><span data-i18n="action.renameHerdrSpace">Rename Herdr space</span></button>
             <div class="herdr-more-separator" role="separator"></div>
             <button id="herdrRefresh" type="button" role="menuitem" data-herdr-jump-action="refresh"><i data-lucide="refresh-cw"></i><span data-i18n="action.refreshHerdr">Refresh Herdr</span></button>
             <button class="danger" type="button" role="menuitem" data-herdr-jump-action="close-agent"><i data-lucide="square-x"></i><span data-i18n="action.closeHerdrAgent">Close Agent</span></button>
             <button class="danger" id="herdrCloseWorkspace" type="button" role="menuitem" data-herdr-jump-action="close-workspace"><i data-lucide="folder-x"></i><span data-i18n="action.closeHerdrSpace">Close Herdr space</span></button>
+            <button class="danger" type="button" role="menuitem" data-herdr-jump-action="close-workspace-group" hidden><i data-lucide="folders"></i><span data-i18n="action.closeHerdrSpaceGroup">Close workspace group…</span></button>
             <div class="herdr-runtime-guard" id="herdrRuntimeGuard" hidden>
               <p id="herdrRuntimeGuardMessage"></p>
               <button id="herdrHandoff" type="button"><i data-lucide="replace"></i><span data-i18n="action.herdrLiveHandoff">Switch without stopping panes</span></button>

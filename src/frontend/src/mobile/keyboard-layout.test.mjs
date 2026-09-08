@@ -116,3 +116,33 @@ test("keeps the settings editor tabs isolated from the live shortcut toolbar", (
   assert.doesNotMatch(html, /class="mobile-keyboard-page-tabs"/);
   assert.match(html, /role="tabpanel"/);
 });
+
+test("editing a custom key preserves its identity, order and hidden state", async () => {
+  const { addMobileKeyboardKey, editMobileKeyboardCustomKey } = await import("./keyboard-layout.ts");
+  const original = mobileKeyboardPresetLayout("default");
+  const withKey = addMobileKeyboardKey(original, "main", { kind: "text", label: "A", value: "one", width: "sm", autoEnter: true });
+  const added = withKey.pages[0].keys.at(-1);
+  const hidden = updateMobileKeyboardKey(withKey, "main", added.id, { hidden: true });
+  const edited = editMobileKeyboardCustomKey(hidden, "main", added.id, { kind: "text", label: "B", value: "two\\r", width: "lg", autoEnter: false });
+  assert.deepEqual(edited.pages[0].keys.map((key) => key.id), hidden.pages[0].keys.map((key) => key.id));
+  assert.equal(edited.pages[0].keys.at(-1).hidden, true);
+  assert.equal(edited.pages[0].keys.at(-1).value, "two\r");
+  assert.equal(edited.pages[0].keys.at(-1).ariaLabel, "B");
+  assert.equal(edited.pages[0].keys.at(-1).autoEnter, false);
+  assert.equal(hidden.pages[0].keys.at(-1).value, "one");
+  assert.deepEqual(editMobileKeyboardCustomKey(original, "main", original.pages[0].keys[0].id, { kind: "text", label: "B", value: "two", width: "lg", autoEnter: false }), original);
+});
+
+test("opening and saving escaped custom text is lossless, including literal backslashes", async () => {
+  const { encodeMobileKeyboardText, decodeMobileKeyboardText } = await import("./keyboard-layout.ts");
+  for (const value of ["\x1b[A\r", "\\e[Z", "\\r", "one\ntwo\tthree", "\\\\", "printf '%s\\n'", "中文"]) {
+    assert.equal(decodeMobileKeyboardText(encodeMobileKeyboardText(value)), value);
+  }
+});
+
+test("validates decoded custom text without truncating a command", async () => {
+  const { mobileKeyboardTextError } = await import("./keyboard-layout.ts");
+  assert.equal(mobileKeyboardTextError("a".repeat(257)), "tooLong");
+  assert.equal(mobileKeyboardTextError("\\e".repeat(256)), undefined);
+  assert.equal(mobileKeyboardTextError("\x00\x08"), "empty");
+});

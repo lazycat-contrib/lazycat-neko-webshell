@@ -1,0 +1,5 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Mobile keyboard gesture regression</title><style>
+body { margin: 0; font: 16px sans-serif; background: #171a1d; color: #eee; } main { padding: 24px; } #keyboard { position: fixed; bottom: 0; width: 100%; } .keys { display: flex; overflow-x: auto; gap: 8px; padding: 12px; touch-action: pan-x; } button { flex: 0 0 70px; height: 52px; } #state { white-space: pre-wrap; }
+</style></head><body><main><h1>Keyboard gestures</h1><p id="state">No input</p></main><div id="keyboard"><div class="keys">
+<button data-mobile-shortcut="escape">Esc</button><button data-mobile-shortcut="left" data-mobile-repeat="true">Left</button><button data-mobile-text="fixture">Text</button><button data-mobile-action="toggle-system-keyboard">Keyboard</button><button data-mobile-action="pane-menu">Menu</button>
+</div></div><script type="module" src="./fixture.ts"></script></body></html>

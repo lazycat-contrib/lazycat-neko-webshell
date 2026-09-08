@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createHerdrRuntimeGuard, herdrRuntimeGuardPresentation } from "./herdr-runtime-guard.ts";
+import { createHerdrRuntimeGuard, herdrRuntimeGuardPresentation, herdrRuntimeIsReady } from "./herdr-runtime-guard.ts";
 
 const tr = (key, values = {}) => `${key}:${values.client ?? ""}:${values.server ?? ""}`;
 const status = {
@@ -791,4 +791,97 @@ test("bounds background reconciliation for an uncertain handoff", async () => {
 
   assert.equal(fetches, 4);
   assert.deepEqual(failed, ["demo@owner"]);
+});
+
+
+const endpointStatus = {
+  ...status, client_version: "0.9.0", client_protocol: 22, server_protocol: 23,
+  client_endpoint_protocol_generation: 1, server_endpoint_protocol_generation: 1,
+  client_endpoint_capabilities: ["surface_interest", "health_check"],
+  endpoint_compatible: true, server_binary_stale: true, private_protocol_matches: false,
+};
+function endpointGuard(fetchStatus, overrides = {}) {
+  return createHerdrRuntimeGuard({
+    elements: { root: { hidden: true }, message: { textContent: "" }, handoff: { hidden: true, disabled: false, addEventListener() {} } },
+    tr, fetchStatus,
+    handoff: async () => assert.fail("compatible or unknown endpoint must not be handed off"),
+    confirm: async () => assert.fail("compatible or unknown endpoint must not prompt"),
+    onRecovered() {}, onError() {}, ...overrides,
+  });
+}
+
+test("known endpoint generation allows mixed private protocols without forcing a stale binary handoff", async () => {
+  for (const [client_protocol, server_protocol, state] of [[22, 23, "client_older"], [23, 22, "server_older"], [22, 22, "ready"]]) {
+    const candidate = { ...endpointStatus, client_protocol, server_protocol, state };
+    assert.equal(herdrRuntimeIsReady(candidate), true);
+    assert.deepEqual(herdrRuntimeGuardPresentation(candidate, tr), { hidden: true, message: "", handoffVisible: false });
+    const guard = endpointGuard(async () => candidate);
+    assert.deepEqual(await guard.prepareTerminal("demo@owner", true), { ready: true, retry: false });
+  }
+});
+
+test("private protocol equality does not override negative, missing or unsupported endpoint evidence", async () => {
+  for (const fields of [
+    { endpoint_compatible: false },
+    { endpoint_compatible: undefined },
+    { endpoint_compatible: "true" },
+    { client_endpoint_protocol_generation: undefined },
+    { server_endpoint_protocol_generation: undefined },
+    { client_endpoint_protocol_generation: -1 },
+    { server_endpoint_protocol_generation: 0 },
+    { client_endpoint_protocol_generation: "1" },
+    { client_endpoint_protocol_generation: 2, server_endpoint_protocol_generation: 2 },
+    { client_protocol: -1, server_protocol: -1 },
+  ]) {
+    const candidate = { ...endpointStatus, state: "ready", client_protocol: 22, server_protocol: 22, ...fields };
+    assert.equal(herdrRuntimeIsReady(candidate), false);
+    assert.equal(herdrRuntimeGuardPresentation(candidate, tr).hidden, false);
+    const guard = endpointGuard(async () => candidate);
+    assert.deepEqual(await guard.prepareTerminal("demo@owner", true), { ready: false, retry: false });
+  }
+});
+
+test("unknown endpoint generations and incomplete positive claims cannot force a directional handoff", async () => {
+  for (const fields of [
+    { client_endpoint_protocol_generation: 2, server_endpoint_protocol_generation: 2 },
+    { server_endpoint_protocol_generation: undefined },
+    { endpoint_compatible: "true" },
+  ]) {
+    const guard = endpointGuard(async () => ({ ...endpointStatus, state: "server_older", client_protocol: 23, server_protocol: 22, ...fields }));
+    assert.deepEqual(await guard.prepareTerminal("demo@owner", true), { ready: false, retry: false });
+  }
+});
+
+test("old agents omitting all endpoint metadata retain legacy ready and older-client behavior", async () => {
+  const ready = endpointGuard(async () => ({ ...status, state: "ready", client_protocol: 20, server_protocol: 20 }));
+  assert.deepEqual(await ready.prepareTerminal("demo@owner", true), { ready: true, retry: false });
+  const older = endpointGuard(async () => ({ ...status, state: "client_older", client_protocol: 20, server_protocol: 22 }));
+  assert.deepEqual(await older.prepareTerminal("demo@owner", true), { ready: false, retry: false });
+});
+
+test("revalidation after confirmation can discover endpoint compatibility and attach without posting handoff", async () => {
+  let reads = 0, prompts = 0;
+  const guard = endpointGuard(async () => ++reads === 1
+    ? { ...status, client_protocol: 22, server_protocol: 20, client_endpoint_protocol_generation: 1, endpoint_compatible: false }
+    : { ...endpointStatus, state: "ready" },
+  { confirm: async () => { prompts++; return true; } });
+  assert.deepEqual(await guard.prepareTerminal("demo@owner", true), { ready: true, retry: false });
+  assert.equal(prompts, 1); assert.equal(reads, 2);
+});
+
+test("endpoint metadata never allows an equal, older or invalid private client to hand off", async () => {
+  for (const [client_protocol, server_protocol] of [[22, 22], [21, 22], [-1, -2]]) {
+    const guard = endpointGuard(async () => ({ ...endpointStatus, state: "server_older", endpoint_compatible: false, client_protocol, server_protocol }));
+    assert.deepEqual(await guard.prepareTerminal("demo@owner", true), { ready: false, retry: false });
+  }
+});
+
+
+test("malformed legacy private protocol values cannot make a ready label attachable", async () => {
+  for (const protocol of [undefined, 0, -1, NaN, Infinity, "22"]) {
+    const candidate = { ...status, state: "ready", client_protocol: protocol, server_protocol: protocol };
+    assert.equal(herdrRuntimeIsReady(candidate), false);
+    const guard = endpointGuard(async () => candidate);
+    assert.deepEqual(await guard.prepareTerminal("demo@owner", true), { ready: false, retry: false });
+  }
 });

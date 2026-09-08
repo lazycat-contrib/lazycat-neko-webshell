@@ -11,8 +11,8 @@ import { updateSystemKeyboardToggleState } from "./system-keyboard-state.ts";
 test("uses one user-activation event for mobile actions", () => {
   assert.equal(mobileActionEventPhase("pane-menu"), "click");
   assert.equal(mobileActionEventPhase("toggle-system-keyboard"), "pointerup");
-  assert.equal(mobileActionEventPhase("split-right"), "pointerdown");
-  assert.equal(mobileActionEventPhase("copy-selection"), "pointerdown");
+  assert.equal(mobileActionEventPhase("split-right"), "pointerup");
+  assert.equal(mobileActionEventPhase("copy-selection"), "pointerup");
 });
 
 test("keeps overlay and keyboard toggle actions in charge of their own focus", () => {

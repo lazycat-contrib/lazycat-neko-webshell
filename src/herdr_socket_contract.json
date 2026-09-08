@@ -1,7 +1,7 @@
 {
-  "source_version": "0.8.2",
-  "source_revision": "9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c",
-  "protocol": 20,
+  "source_version": "0.9.0",
+  "source_revision": "b99002ac99b09e00b4ca692436cb15a6b0d676f1",
+  "protocol": 22,
   "schema_version": 1,
   "methods": [
     "ping",
@@ -95,7 +95,11 @@
     "plugin.log.list",
     "plugin.pane.open",
     "plugin.pane.focus",
-    "plugin.pane.close"
+    "plugin.pane.close",
+    "pane.copy_motion",
+    "pane.copy_search",
+    "pane.selection.read",
+    "integration.list"
   ],
   "stream_methods": [
     "events.subscribe",

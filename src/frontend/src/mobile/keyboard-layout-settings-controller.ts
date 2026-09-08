@@ -3,9 +3,6 @@ import type { MobileKeyboardKeyWidth, MobileKeyboardLayout, MobileKeyboardPageId
 import { escapeAttr, escapeHtml } from "../utils.ts";
 import {
   MOBILE_KEYBOARD_PAGE_IDS,
-  MOBILE_KEYBOARD_ACTIONS,
-  MAX_MOBILE_KEYS_PER_PAGE,
-  addMobileKeyboardKey,
   mobileKeyboardPresetLayout,
   moveMobileKeyboardKey,
   moveMobileKeyboardKeyToIndex,
@@ -13,6 +10,9 @@ import {
   resolveMobileKeyboardLayout,
   updateMobileKeyboardKey,
 } from "./keyboard-layout.ts";
+
+import { createMobileKeyEditor } from "./settings/key-editor.ts";
+import { renderMobileKeyboardKey } from "./keyboard-layout-view.ts";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -33,31 +33,38 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
   const preset = options.root.querySelector<HTMLSelectElement>("[data-mobile-layout-preset]");
   const pageTabs = options.root.querySelector<HTMLElement>("[data-mobile-layout-page-tabs]");
   const list = options.root.querySelector<HTMLElement>("[data-mobile-layout-key-list]");
-  const label = options.root.querySelector<HTMLInputElement>("[data-mobile-key-label]");
-  const kind = options.root.querySelector<HTMLSelectElement>("[data-mobile-key-kind]");
-  const text = options.root.querySelector<HTMLTextAreaElement>("[data-mobile-key-text]");
-  const textField = options.root.querySelector<HTMLElement>("[data-mobile-key-text-field]");
-  const valueField = options.root.querySelector<HTMLElement>("[data-mobile-key-value-field]");
-  const value = options.root.querySelector<HTMLSelectElement>("[data-mobile-key-value]");
-  const width = options.root.querySelector<HTMLSelectElement>("[data-mobile-key-new-width]");
-  const enter = options.root.querySelector<HTMLInputElement>("[data-mobile-key-enter]");
-  const enterField = options.root.querySelector<HTMLElement>("[data-mobile-key-enter-field]");
-  const enterHelp = options.root.querySelector<HTMLElement>("[data-mobile-key-enter-help]");
-  const status = options.root.querySelector<HTMLElement>("[data-mobile-layout-status]");
+  const preview = options.root.querySelector<HTMLElement>("[data-mobile-layout-preview]");
+  const undo = options.root.querySelector<HTMLButtonElement>("[data-mobile-layout-undo]");
+  let previous: { preset: MobileKeyboardPresetId; layout: MobileKeyboardLayout } | undefined;
+  let editor: ReturnType<typeof createMobileKeyEditor> | undefined;
+
+  function remember() {
+    previous = { preset: options.preset(), layout: structuredClone(options.layout()) };
+  }
 
   function currentLayout() {
     return resolveMobileKeyboardLayout(options.preset(), options.layout());
   }
 
   function commit(layout: MobileKeyboardLayout) {
+    const focused = document.activeElement instanceof HTMLElement && list?.contains(document.activeElement) ? document.activeElement : undefined;
+    const focusAttributes = focused ? [...focused.attributes].filter((attr) => attr.name.startsWith("data-mobile-key-") || attr.name === "data-direction") : [];
+    remember();
     options.setLayout(layout);
     options.setPreset("custom");
     options.save();
     options.changed();
     render();
+    if (focusAttributes.length) {
+      const selector = focusAttributes.map((attr) => `[${attr.name}="${CSS.escape(attr.value)}"]`).join("");
+      const replacement = list?.querySelector<HTMLElement>(selector);
+      if (replacement && !replacement.matches(":disabled")) replacement.focus({ preventScroll: true });
+      else undo?.focus({ preventScroll: true });
+    }
   }
 
   function render() {
+    if (undo) undo.disabled = !previous;
     if (preset) preset.value = options.preset();
     pageTabs?.querySelectorAll<HTMLButtonElement>("[data-mobile-layout-page-tab]").forEach((tab) => {
       const selected = tab.dataset.mobileLayoutPageTab === pageId;
@@ -67,13 +74,17 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
     list?.setAttribute("aria-labelledby", `mobileLayoutPageTab${pageId.charAt(0).toUpperCase()}${pageId.slice(1)}`);
     if (!list) return;
     const keys = currentLayout().pages.find((item) => item.id === pageId)?.keys ?? [];
+    if (preview) {
+      const visible = keys.filter((key) => !key.hidden);
+      preview.innerHTML = visible.length ? visible.map((key) => renderMobileKeyboardKey(key).replace("<button ", '<button tabindex="-1" aria-disabled="true" ')).join("") : `<p class="empty">${escapeHtml(options.tr("status.mobileKeyboardPageEmpty"))}</p>`;
+    }
     list.innerHTML = keys.length ? keys.map((key, index) => `
-      <div class="mobile-keyboard-key-row${key.hidden ? " is-hidden" : ""}" data-mobile-layout-key="${escapeAttr(key.id)}" data-mobile-key-width="${escapeAttr(key.width)}" draggable="true">
+      <div class="mobile-keyboard-key-row${key.hidden ? " is-hidden" : ""}" data-mobile-layout-key="${escapeAttr(key.id)}" data-mobile-key-width="${escapeAttr(key.width)}">
         <div class="mobile-keyboard-key-card">
           <div class="mobile-keyboard-key-card-head">
-            <span class="mobile-keyboard-drag-handle" aria-hidden="true"><i data-lucide="grip-vertical"></i></span>
+            <span class="mobile-keyboard-drag-handle" draggable="true" aria-hidden="true"><i data-lucide="grip-vertical"></i></span>
             <button type="button" class="mobile-keyboard-key-preview" data-mobile-key-visibility="${escapeAttr(key.id)}" aria-pressed="${!key.hidden}" aria-label="${escapeAttr(options.tr(key.hidden ? "action.show" : "action.hide"))}">
-              ${key.icon ? `<i data-lucide="${escapeAttr(key.icon)}"></i>` : ""}<span>${escapeHtml(key.label || key.value)}</span>${key.autoEnter ? '<small aria-hidden="true">↵</small>' : ""}
+              <i data-lucide="${key.hidden ? "eye-off" : "eye"}"></i>${key.icon ? `<i data-lucide="${escapeAttr(key.icon)}"></i>` : ""}<span>${escapeHtml(key.label || key.value)}</span>${key.autoEnter ? '<small aria-hidden="true">↵</small>' : ""}
             </button>
           </div>
           <span class="mobile-keyboard-key-meta">${escapeHtml(key.ariaLabel || key.label || key.value)}</span>
@@ -84,7 +95,7 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
           </select></label>
           <button type="button" class="icon-button" data-mobile-key-move="${escapeAttr(key.id)}" data-direction="-1" aria-label="${escapeAttr(options.tr("action.moveUp"))}"${index === 0 ? " disabled" : ""}><i data-lucide="chevron-up"></i></button>
           <button type="button" class="icon-button" data-mobile-key-move="${escapeAttr(key.id)}" data-direction="1" aria-label="${escapeAttr(options.tr("action.moveDown"))}"${index === keys.length - 1 ? " disabled" : ""}><i data-lucide="chevron-down"></i></button>
-          ${key.custom ? `<button type="button" class="icon-button danger" data-mobile-key-remove="${escapeAttr(key.id)}" aria-label="${escapeAttr(options.tr("action.remove"))}"><i data-lucide="trash-2"></i></button>` : ""}
+          ${key.custom ? `<button type="button" class="icon-button" data-mobile-key-edit="${escapeAttr(key.id)}" aria-label="${escapeAttr(options.tr("action.mobileKeyboardEditKey"))}"><i data-lucide="pencil"></i></button><button type="button" class="icon-button danger" data-mobile-key-remove="${escapeAttr(key.id)}" aria-label="${escapeAttr(options.tr("action.remove"))}"><i data-lucide="trash-2"></i></button>` : ""}
         </div>
       </div>
     `).join("") : `<p class="empty">${escapeHtml(options.tr("status.mobileKeyboardPageEmpty"))}</p>`;
@@ -92,27 +103,23 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
   }
 
   function bind() {
-    const refreshCustomKeyType = () => {
-      const selected = kind?.value ?? "text";
-      if (textField) textField.hidden = selected !== "text";
-      if (valueField) valueField.hidden = selected === "text";
-      if (enterField) enterField.hidden = selected !== "text";
-      if (enterHelp) enterHelp.hidden = selected !== "text";
-      if (!value || selected === "text") return;
-      const entries = selected === "action"
-        ? MOBILE_KEYBOARD_ACTIONS.map((item) => [item, actionLabel(item)] as const)
-        : [
-          ["escape", "Esc"], ["tab", "Tab"], ["enter", "Return"], ["home", "Home"], ["end", "End"],
-          ["pageUp", "PgUp"], ["pageDown", "PgDn"], ["insert", "Ins"], ["delete", "Del"], ["backspace", "Bksp"],
-          ["left", "Left"], ["down", "Down"], ["up", "Up"], ["right", "Right"],
-        ] as const;
-      value.innerHTML = entries.map(([entryValue, entryLabel]) => `<option value="${escapeAttr(entryValue)}">${escapeHtml(entryLabel)}</option>`).join("");
-    };
-    kind?.addEventListener("change", refreshCustomKeyType);
-    refreshCustomKeyType();
+    editor = createMobileKeyEditor({ root: options.root, layout: currentLayout, page: () => pageId, commit, tr: options.tr });
+    undo?.addEventListener("click", () => {
+      if (!previous) return;
+      const snapshot = previous;
+      previous = undefined;
+      editor?.reset();
+      options.setLayout(snapshot.layout);
+      options.setPreset(snapshot.preset);
+      options.save();
+      options.changed();
+      render();
+    });
     preset?.addEventListener("change", () => {
       const value = preset.value as MobileKeyboardPresetId;
       if (value !== "default" && value !== "operations" && value !== "editor" && value !== "custom") return;
+      remember();
+      editor?.reset();
       options.setPreset(value);
       options.save();
       options.changed();
@@ -122,6 +129,7 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
       const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-mobile-layout-page-tab]") : null;
       const nextPage = target?.dataset.mobileLayoutPageTab as MobileKeyboardPageId | undefined;
       if (nextPage && MOBILE_KEYBOARD_PAGE_IDS.includes(nextPage)) {
+        editor?.reset();
         pageId = nextPage;
         render();
       }
@@ -152,9 +160,17 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
         if (key) commit(updateMobileKeyboardKey(currentLayout(), pageId, id, { hidden: !key.hidden }));
         return;
       }
+      const edit = target?.closest<HTMLButtonElement>("[data-mobile-key-edit]");
+      if (edit) {
+        const key = currentLayout().pages.find((item) => item.id === pageId)?.keys.find((item) => item.id === edit.dataset.mobileKeyEdit);
+        if (key) editor?.edit(key);
+        return;
+      }
       const remove = target?.closest<HTMLButtonElement>("[data-mobile-key-remove]");
       if (remove) return commit(removeMobileKeyboardKey(currentLayout(), pageId, remove.dataset.mobileKeyRemove ?? ""));
       if (target?.closest("[data-mobile-layout-reset]")) {
+        remember();
+        editor?.reset();
         options.setLayout(mobileKeyboardPresetLayout("default"));
         options.setPreset("default");
         options.save();
@@ -162,36 +178,7 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
         render();
         return;
       }
-      if (!target?.closest("[data-mobile-key-add]")) return;
-      const keyCount = currentLayout().pages.find((item) => item.id === pageId)?.keys.length ?? 0;
-      if (keyCount >= MAX_MOBILE_KEYS_PER_PAGE) {
-        if (status) {
-          status.textContent = options.tr("validation.mobileKeyboardKeyLimit", { count: MAX_MOBILE_KEYS_PER_PAGE });
-          status.dataset.tone = "error";
-        }
-        return;
-      }
-      const keyKind = kind?.value === "shortcut" || kind?.value === "action" ? kind.value : "text";
-      const keyValue = keyKind === "text" ? text?.value ?? "" : value?.value ?? "";
-      if (!keyValue) {
-        if (status) {
-          status.textContent = options.tr("validation.mobileKeyboardKeyText");
-          status.dataset.tone = "error";
-        }
-        text?.focus();
-        return;
-      }
-      commit(addMobileKeyboardKey(currentLayout(), pageId, {
-        kind: keyKind,
-        label: label?.value ?? "",
-        value: keyValue,
-        width: width?.value === "sm" || width?.value === "lg" ? width.value : "md",
-        autoEnter: enter?.checked === true,
-      }));
-      if (label) label.value = "";
-      if (text) text.value = "";
-      if (enter) enter.checked = false;
-      if (status) status.textContent = "";
+
     });
     options.root.addEventListener("dragstart", (event) => {
       const row = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-mobile-layout-key]") : null;
@@ -220,11 +207,11 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
       const sourceId = event.dataTransfer?.getData("text/plain") ?? "";
       const targetId = row.dataset.mobileLayoutKey ?? "";
       const keys = currentLayout().pages.find((item) => item.id === pageId)?.keys ?? [];
-      const sourceIndex = keys.findIndex((item) => item.id === sourceId);
       const targetIndex = keys.findIndex((item) => item.id === targetId);
-      const insertIndex = sourceIndex >= 0 && sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+      const insertIndex = targetIndex;
       if (sourceId && targetIndex >= 0) commit(moveMobileKeyboardKeyToIndex(currentLayout(), pageId, sourceId, insertIndex));
     });
+    let pointerDragId: number | undefined;
     let pointerDragKeyId = "";
     let pointerDragTargetId = "";
     const clearPointerDrag = () => {
@@ -232,12 +219,14 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
       list?.querySelectorAll(".is-dragging, .is-drag-over").forEach((item) => item.classList.remove("is-dragging", "is-drag-over"));
       pointerDragKeyId = "";
       pointerDragTargetId = "";
+      pointerDragId = undefined;
     };
     options.root.addEventListener("pointerdown", (event) => {
-      if (event.pointerType === "mouse") return;
+      if (event.pointerType === "mouse" || !event.isPrimary || event.button !== 0 || pointerDragId !== undefined) return;
       const handle = event.target instanceof Element ? event.target.closest<HTMLElement>(".mobile-keyboard-drag-handle") : null;
       const row = handle?.closest<HTMLElement>("[data-mobile-layout-key]");
       if (!row?.dataset.mobileLayoutKey) return;
+      pointerDragId = event.pointerId;
       pointerDragKeyId = row.dataset.mobileLayoutKey;
       pointerDragTargetId = pointerDragKeyId;
       row.classList.add("is-dragging");
@@ -245,29 +234,25 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
       event.preventDefault();
     });
     options.root.addEventListener("pointermove", (event) => {
-      if (!pointerDragKeyId) return;
+      if (!pointerDragKeyId || event.pointerId !== pointerDragId) return;
       const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-mobile-layout-key]");
-      if (!target || target.dataset.mobileLayoutKey === pointerDragKeyId) return;
+      if (!target || !list?.contains(target)) return;
       list?.querySelectorAll(".is-drag-over").forEach((item) => item.classList.remove("is-drag-over"));
       target.classList.add("is-drag-over");
       pointerDragTargetId = target.dataset.mobileLayoutKey ?? pointerDragKeyId;
     });
-    options.root.addEventListener("pointerup", () => {
-      if (!pointerDragKeyId) return;
+    options.root.addEventListener("pointerup", (event) => {
+      if (!pointerDragKeyId || event.pointerId !== pointerDragId) return;
       const keys = currentLayout().pages.find((item) => item.id === pageId)?.keys ?? [];
-      const sourceIndex = keys.findIndex((item) => item.id === pointerDragKeyId);
       const targetIndex = keys.findIndex((item) => item.id === pointerDragTargetId);
-      const insertIndex = sourceIndex >= 0 && sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
-      if (targetIndex >= 0) commit(moveMobileKeyboardKeyToIndex(currentLayout(), pageId, pointerDragKeyId, insertIndex));
+      const insertIndex = targetIndex;
+      if (targetIndex >= 0 && pointerDragKeyId !== pointerDragTargetId) commit(moveMobileKeyboardKeyToIndex(currentLayout(), pageId, pointerDragKeyId, insertIndex));
       clearPointerDrag();
     });
     options.root.addEventListener("pointercancel", clearPointerDrag);
+    options.root.addEventListener("lostpointercapture", clearPointerDrag);
     render();
   }
 
   return { bind, render };
-}
-
-function actionLabel(value: string): string {
-  return value.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }

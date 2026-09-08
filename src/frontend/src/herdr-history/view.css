@@ -1,0 +1,23 @@
+.herdr-history-dialog {
+  padding: 0;
+  color: var(--text);
+  width: min(620px, calc(100vw - 24px));
+  max-height: calc(100dvh - 32px);
+}
+.herdr-history-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.herdr-history-dialog > header { grid-template-columns: minmax(0, 1fr) auto; }
+.herdr-history-dialog > header > span { min-width: 0; }
+.herdr-history-dialog [data-history-close] { flex: 0 0 auto; width: auto; white-space: nowrap; }
+.herdr-history-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.herdr-history-dialog [data-history-status],
+.herdr-history-dialog [data-history-count] { margin: 0; font-size: 13px; }
+.herdr-history-dialog pre {
+  margin: 0;
+  max-height: 30dvh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font-size: 13px;
+}
+.herdr-history-dialog select { min-width: 0; width: 100%; }

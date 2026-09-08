@@ -1,6 +1,5 @@
-export function mobileActionEventPhase(action: string): "pointerdown" | "pointerup" | "click" {
-  if (action === "toggle-system-keyboard") return "pointerup";
-  return action === "pane-menu" ? "click" : "pointerdown";
+export function mobileActionEventPhase(action: string): "pointerup" | "click" {
+  return action === "pane-menu" ? "click" : "pointerup";
 }
 
 export function mobileActionRestoresKeyboard(action: string): boolean {

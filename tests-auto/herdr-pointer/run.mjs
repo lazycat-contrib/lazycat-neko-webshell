@@ -52,8 +52,8 @@ export async function runHerdrPointerScenario() {
       timeoutMs: 5_000,
       maxOutputBytes: 64 * 1024,
     });
-    if (!/\bherdr 0\.8\.2\b/.test(herdrVersion)) {
-      throw new Error(`Herdr 0.8.2 is required; found ${herdrVersion || "unknown"}`);
+    if (!/\bherdr 0\.(?:8\.2|9\.0)\b/.test(herdrVersion)) {
+      throw new Error(`Herdr 0.8.2 or 0.9.0 is required; found ${herdrVersion || "unknown"}`);
     }
     const browserVersion = await runBounded("agent-browser", ["--version"], {
       timeoutMs: 5_000,
@@ -105,6 +105,10 @@ export async function runHerdrPointerScenario() {
     const initialFrame = await probeSnapshot(browser);
     assertFrameEvidence(initialFrame);
     const alphaPoint = await browser.evaluate("window.__herdrProbe.pointForAlpha()");
+    // Desktop runs first: restoring the old focus implementation must fail here,
+    // before the separate expected touch-without-release baseline is exercised.
+    metrics.phases.desktop = await runDesktopRegression({ browser, herdrBinary, herdrEnvironment, stateDirectory, alpha, alphaPoint, artifactDirectory });
+    await focusWorkspace(herdrBinary, herdrEnvironment, stateDirectory, beta);
     await clearProbe(browser);
     await touchTap(browser, alphaPoint);
     await browser.waitFor("window.__herdrProbe.snapshot().mouseReports.length >= 1");
@@ -158,6 +162,7 @@ export async function runHerdrPointerScenario() {
         button: "left",
         buttons: 1,
         clickCount: 1,
+        delayMs: 120,
       },
       {
         type: "mouseReleased",
@@ -172,7 +177,9 @@ export async function runHerdrPointerScenario() {
     const nativeMouseReports = (await probeSnapshot(browser)).mouseReports;
     assertClickPair(nativeMouseReports, "native mouse");
     await waitForWorkspaceFocus(herdrBinary, herdrEnvironment, stateDirectory, alpha);
-    metrics.phases.nativeMouse = { reports: nativeMouseReports.map(escapeReport) };
+    const nativeFocusReports = (await probeSnapshot(browser)).focusReports;
+    assert.ok(!nativeFocusReports.includes("\x1b[O"), "native mouse must not report internal focus loss");
+    metrics.phases.nativeMouse = { reports: nativeMouseReports.map(escapeReport), focusReports: nativeFocusReports.map(escapeReport) };
 
     await focusWorkspace(herdrBinary, herdrEnvironment, stateDirectory, beta);
     await clearProbe(browser);
@@ -263,6 +270,9 @@ export async function runHerdrPointerScenario() {
     assertFrameEvidence(finalFrame);
     assert.deepEqual(finalFrame.errors, [], "browser fixture reported runtime errors");
     metrics.frameEvidence = {
+      runtimeState: finalFrame.runtimeState,
+      focusReportingObserved: finalFrame.focusReportingObserved,
+      deliveredBytes: finalFrame.deliveredBytes,
       rendererBackend: finalFrame.rendererBackend,
       receivedBytes: finalFrame.receivedBytes,
       animationFrames: finalFrame.animationFrames,
@@ -406,7 +416,7 @@ async function startBridge({ pythonBinary, herdrBinary, stateDirectory }) {
     });
   } catch (error) {
     signalOwnedGroup(child.pid, "SIGTERM");
-    if (!(await waitForExit(child, 4_000))) {
+    if (!(await waitForExit(child, 12_000))) {
       signalOwnedGroup(child.pid, "SIGKILL");
       await waitForExit(child, 2_000);
     }
@@ -419,7 +429,7 @@ async function stopBridge(bridge) {
   if (bridge.stopped) return;
   bridge.stopped = true;
   signalOwnedGroup(bridge.child.pid, "SIGTERM");
-  if (!(await waitForExit(bridge.child, 4_000))) {
+  if (!(await waitForExit(bridge.child, 12_000))) {
     signalOwnedGroup(bridge.child.pid, "SIGKILL");
     await waitForExit(bridge.child, 2_000);
   }
@@ -600,6 +610,74 @@ async function waitForWorkspaceFocus(binary, environment, cwd, expected) {
   throw new Error(`workspace focus timed out: expected=${expected} actual=${actual}`);
 }
 
+async function runDesktopRegression({ browser, herdrBinary, herdrEnvironment, stateDirectory, alpha, alphaPoint, artifactDirectory }) {
+  await clearProbe(browser);
+  await desktopClick(browser, alphaPoint, 120);
+  await waitForWorkspaceFocus(herdrBinary, herdrEnvironment, stateDirectory, alpha);
+  const workspaceProbe = await probeSnapshot(browser);
+  assertClickPair(workspaceProbe.mouseReports, "desktop workspace");
+  assert.ok(workspaceProbe.focusReports.includes("\x1b[I"), "real PTY output must enable focus reporting");
+  assert.ok(!workspaceProbe.focusReports.includes("\x1b[O"), "canvas/IME transition must not report focus loss");
+  await captureScreenshot(browser, join(artifactDirectory, "desktop-workspace.png"));
+
+  const originalTabs = await tabsForWorkspace(herdrBinary, herdrEnvironment, stateDirectory, alpha);
+  assert.equal(originalTabs.length, 1, "desktop fixture starts with one tab");
+  await clearProbe(browser);
+  const plusPoint = await browser.evaluate("window.__herdrProbe.pointForNewTab()");
+  await desktopClick(browser, plusPoint, 80);
+  await browser.press("Enter");
+  await waitForTabCount(herdrBinary, herdrEnvironment, stateDirectory, alpha, 2);
+  const createdTabs = await tabsForWorkspace(herdrBinary, herdrEnvironment, stateDirectory, alpha);
+  const secondTab = createdTabs.find((tab) => tab.tab_id !== originalTabs[0].tab_id);
+  assert.ok(secondTab, "native new-tab prompt creates tab 2");
+  const tabSwitches = [];
+  for (const [number, expected] of [[1, originalTabs[0].tab_id], [2, secondTab.tab_id]]) {
+    await clearProbe(browser);
+    const point = await browser.evaluate(`window.__herdrProbe.pointForTab(${number})`);
+    await desktopClick(browser, point, 100);
+    await waitForFocusedTab(herdrBinary, herdrEnvironment, stateDirectory, alpha, expected);
+    const probe = await probeSnapshot(browser);
+    assertClickPair(probe.mouseReports, `desktop tab ${number}`);
+    assert.ok(!probe.focusReports.includes("\x1b[O"), `tab ${number} must not report internal focus loss`);
+    tabSwitches.push({ number, reports: probe.mouseReports.map(escapeReport), focusReports: probe.focusReports.map(escapeReport) });
+  }
+  await captureScreenshot(browser, join(artifactDirectory, "desktop-tabs.png"));
+  await clearProbe(browser);
+  await browser.evaluate("window.__herdrProbe.externalFocusRoundTrip()");
+  const externalFocusReports = (await probeSnapshot(browser)).focusReports;
+  assert.ok(externalFocusReports.includes("\x1b[O"), "real canvas-to-external focus loss must still be forwarded");
+  await browser.evaluate("window.__herdrProbe.focusTerminal()");
+  await herdrJson(herdrBinary, ["tab", "close", secondTab.tab_id], herdrEnvironment, stateDirectory);
+  await waitForTabCount(herdrBinary, herdrEnvironment, stateDirectory, alpha, 1);
+  return { workspaceReports: workspaceProbe.inputTimeline.map(escapeReport), tabSwitches,
+    externalFocusReports: externalFocusReports.map(escapeReport) };
+}
+
+async function desktopClick(browser, point, delayMs) {
+  await browser.dispatchMouse([
+    { type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount: 1, delayMs },
+    { type: "mouseReleased", x: point.x, y: point.y, button: "left", buttons: 0, clickCount: 1 },
+  ]);
+}
+
+async function tabsForWorkspace(binary, environment, cwd, workspace) {
+  const response = await herdrJson(binary, ["tab", "list", "--workspace", workspace], environment, cwd);
+  const tabs = (response?.result ?? response)?.tabs;
+  if (!Array.isArray(tabs)) throw new Error("Herdr tab list omitted tabs");
+  return tabs;
+}
+
+async function waitForFocusedTab(binary, environment, cwd, workspace, expected) {
+  const deadline = Date.now() + 3_000;
+  let actual;
+  while (Date.now() < deadline) {
+    actual = (await tabsForWorkspace(binary, environment, cwd, workspace)).find((tab) => tab.focused)?.tab_id;
+    if (actual === expected) return;
+    await delay(50);
+  }
+  throw new Error(`tab focus timed out: expected=${expected} actual=${actual}`);
+}
+
 async function tabCount(binary, environment, cwd, workspace) {
   const response = await herdrJson(
     binary,
@@ -696,6 +774,9 @@ function escapeReport(report) {
 }
 
 function assertFrameEvidence(frame) {
+  assert.equal(frame.runtimeState, "ready", "Restty must initialize before initial PTY output is consumed");
+  assert.equal(frame.focusReportingObserved, true, "transport output must enable Herdr focus reporting");
+  assert.equal(frame.deliveredBytes, frame.receivedBytes, "all initial PTY bytes must reach the output callback");
   assert.ok(frame.receivedBytes > 0, "fixture must receive real Herdr PTY bytes");
   assert.ok(frame.animationFrames > 0, "browser must present animation frames");
   assert.ok(["webgl2", "webgpu"].includes(frame.rendererBackend), "Restty renderer backend is unknown");

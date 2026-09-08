@@ -42,12 +42,37 @@ export type HerdrTerminalPreparation = {
   retry: boolean;
 };
 
+function hasEndpointMetadata(state: HerdrRuntimeGuardState): boolean {
+  return state.client_endpoint_protocol_generation !== undefined
+    || state.server_endpoint_protocol_generation !== undefined
+    || state.endpoint_compatible !== undefined;
+}
+
+function hasUnsupportedEndpointGeneration(state: HerdrRuntimeGuardState): boolean {
+  return [state.client_endpoint_protocol_generation, state.server_endpoint_protocol_generation]
+    .some((generation) => generation !== undefined && generation !== 1);
+}
+
+export function herdrRuntimeIsReady(state: HerdrRuntimeGuardState): boolean {
+  if (!Number.isSafeInteger(state.client_protocol) || state.client_protocol <= 0
+    || !Number.isSafeInteger(state.server_protocol) || (state.server_protocol ?? 0) <= 0) return false;
+  // Compatible old agents omit endpoint metadata; retain their existing classification.
+  if (!hasEndpointMetadata(state)) return state.state === "ready";
+  return state.endpoint_compatible === true
+    && state.client_endpoint_protocol_generation === 1
+    && state.server_endpoint_protocol_generation === 1;
+}
+
 function canLiveHandoff(state: HerdrRuntimeGuardState | undefined): state is HerdrRuntimeGuardState {
   return state?.state === "server_older"
-    && state.live_handoff_available
+    && !herdrRuntimeIsReady(state)
+    && !hasUnsupportedEndpointGeneration(state)
+    && (state.endpoint_compatible === undefined || state.endpoint_compatible === false)
+    && state.live_handoff_available === true
     && Number.isSafeInteger(state.client_protocol)
     && Number.isSafeInteger(state.server_protocol)
     && state.server_protocol !== undefined
+    && state.server_protocol > 0
     && state.client_protocol > state.server_protocol;
 }
 
@@ -55,7 +80,7 @@ export function herdrRuntimeGuardPresentation(
   state: HerdrRuntimeGuardState | undefined,
   tr: Translate,
 ): HerdrRuntimeGuardPresentation {
-  if (!state || state.state === "ready" || state.state === "not_running") {
+  if (!state || herdrRuntimeIsReady(state) || state.state === "not_running") {
     return { hidden: true, message: "", handoffVisible: false };
   }
   if (state.handoff_recent) {
@@ -76,7 +101,7 @@ export function herdrRuntimeGuardPresentation(
       handoffVisible: false,
     };
   }
-  if (state.state === "unknown") {
+  if (state.state === "unknown" || state.state === "ready" || hasUnsupportedEndpointGeneration(state)) {
     return {
       hidden: false,
       message: tr("status.herdrProtocolUnknown"),
@@ -148,7 +173,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
       runtimeState = state;
       render();
       if (uncertainHandoffs.has(requestSelector)) {
-        if (state.state === "ready" && uncertainHandoffs.delete(requestSelector)) {
+        if (herdrRuntimeIsReady(state) && uncertainHandoffs.delete(requestSelector)) {
           await options.onRecovered(requestSelector);
         } else if (state.state === "client_older" && uncertainHandoffs.delete(requestSelector)) {
           options.onHandoffFailed?.(requestSelector);
@@ -213,7 +238,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
       if (handoffStarted && !handoffCommitted) {
         try {
           const reconciled = await options.fetchStatus(requestSelector);
-          if (reconciled.state === "ready") {
+          if (herdrRuntimeIsReady(reconciled)) {
             handoffCommitted = true;
             uncertainHandoffs.delete(requestSelector);
             if (operation === operationGeneration && requestSelector === selector) {
@@ -265,7 +290,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
       options.onError(error instanceof Error ? error.message : String(error));
       return { ready: false, retry: true };
     }
-    if (state.state === "ready" || state.state === "not_running") {
+    if (herdrRuntimeIsReady(state) || state.state === "not_running") {
       return { ready: true, retry: false };
     }
     if (
@@ -304,7 +329,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
       if (operation !== operationGeneration || requestSelector !== selector) {
         return { ready: false, retry: true };
       }
-      if (validated.state === "ready" || validated.state === "not_running") {
+      if (herdrRuntimeIsReady(validated) || validated.state === "not_running") {
         return { ready: true, retry: false };
       }
       if (validated.handoff_recent) return { ready: false, retry: true };
@@ -322,7 +347,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
       options.onHandoffStart?.(requestSelector);
       const nextState = await options.handoff(requestSelector);
       publishTerminalRuntimeState(requestSelector, nextState);
-      if (nextState.state !== "ready") {
+      if (!herdrRuntimeIsReady(nextState)) {
         options.onHandoffFailed?.(requestSelector);
         return { ready: false, retry: true };
       }
@@ -333,7 +358,7 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
         try {
           const reconciled = await options.fetchStatus(requestSelector);
           publishTerminalRuntimeState(requestSelector, reconciled);
-          if (reconciled.state === "ready") {
+          if (herdrRuntimeIsReady(reconciled)) {
             await options.onRecovered(requestSelector);
             return { ready: true, retry: false };
           }
@@ -389,10 +414,10 @@ export function createHerdrRuntimeGuard(options: GuardOptions) {
           requestKey = "";
           render();
         }
-        if (state.state === "ready" || state.state === "client_older") {
+        if (herdrRuntimeIsReady(state) || state.state === "client_older") {
           if (!uncertainHandoffs.delete(requestSelector)) return;
           try {
-            if (state.state === "ready") {
+            if (herdrRuntimeIsReady(state)) {
               await options.onRecovered(requestSelector);
             } else {
               options.onHandoffFailed?.(requestSelector);

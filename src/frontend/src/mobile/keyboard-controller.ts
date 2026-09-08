@@ -1,3 +1,4 @@
+import { createMobileKeyGestureController } from "./key-gesture-controller";
 import type { MessageKey } from "../i18n";
 import {
   mobileActionEventPhase,
@@ -50,8 +51,8 @@ export type MobileKeyboardRenderInput = {
 
 export function createMobileKeyboardController(options: MobileKeyboardControllerOptions) {
   const sticky = createMobileStickyState();
-  let repeatTimer: number | undefined;
-  let repeatInterval: number | undefined;
+  let gestures: ReturnType<typeof createMobileKeyGestureController<HTMLButtonElement>> | undefined;
+  let disposed = false;
   let deferredActionTimer: number | undefined;
   const keyboardRestores = new WeakMap<HTMLButtonElement, () => void>();
 
@@ -72,159 +73,55 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     deferredActionTimer = undefined;
   }
 
-  function scheduleDeferredAction(action: string, button: HTMLButtonElement) {
-    clearDeferredAction();
-    deferredActionTimer = window.setTimeout(() => {
-      deferredActionTimer = undefined;
-      void runAction(action, takeKeyboardRestore(button));
-    }, 0);
+  function activateButton(button: HTMLButtonElement, repeating: boolean) {
+    const activation = mobileSyntheticActivation(button, 0);
+    if (!activation) return;
+    const restore = takeKeyboardRestore(button);
+    if (activation.kind === "shortcut") void runShortcut(activation.value, { keepModifiers: repeating }, restore);
+    else if (activation.kind === "chord") runChord(activation.value, restore);
+    else if (activation.kind === "page") activatePage(activation.value);
+    else if (activation.kind === "phrase") void runPhrase(activation.value, restore);
+    else if (activation.kind === "text") runText(activation.value, button.dataset.mobileAutoEnter === "true", restore);
+    else if (mobileActionEventPhase(activation.value) === "click") {
+      // Open the pane menu after the physical click has bubbled, matching its
+      // existing dismissal boundary. System-keyboard actions never defer.
+      clearDeferredAction();
+      deferredActionTimer = window.setTimeout(() => {
+        deferredActionTimer = undefined;
+        if (!disposed && options.root.contains(button)) void runAction(activation.value, restore);
+      }, 0);
+    } else void runAction(activation.value, restore);
   }
 
   function bind() {
-    options.root.addEventListener("pointerdown", (event) => {
-      const button = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("button")
-        : null;
-      if (button) captureKeyboardState(button);
-    }, true);
-
-    options.root.addEventListener("pointerdown", (event) => {
-      const button = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("[data-mobile-shortcut]")
-        : null;
-      if (!button || button.dataset.mobileRepeat === "true") return;
-      event.preventDefault();
-      void runShortcut(button.dataset.mobileShortcut ?? "", {}, takeKeyboardRestore(button));
+    if (disposed || gestures) return;
+    gestures = createMobileKeyGestureController<HTMLButtonElement>({
+      root: options.root, globalTarget: window, visibilityTarget: document,
+      button: (target) => {
+        const button = target instanceof Element ? target.closest<HTMLButtonElement>("button") : null;
+        return button && options.root.contains(button) && mobileSyntheticActivation(button, 0) ? button : undefined;
+      },
+      usable: (button) => options.root.contains(button) && !button.disabled && button.isConnected
+        && button.getClientRects().length > 0,
+      inside: (button, x, y) => {
+        const rect = button.getBoundingClientRect();
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      },
+      repeat: (button) => button.dataset.mobileRepeat === "true" && Boolean(button.dataset.mobileShortcut),
+      start: (button) => { clearDeferredAction(); captureKeyboardState(button); },
+      activate: activateButton,
+      finish: (button, repeated) => { keyboardRestores.delete(button); if (repeated) clearSticky(); },
+      capture: (button, id) => button.setPointerCapture?.(id),
+      release: (button, id) => { if (button.hasPointerCapture?.(id)) button.releasePointerCapture(id); },
+      setTimer: (callback, delay) => window.setTimeout(callback, delay),
+      clearTimer: (timer) => window.clearTimeout(timer),
     });
-
-    options.root.addEventListener("click", (event) => {
-      const button = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("button")
-        : null;
-      const actionButton = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("[data-mobile-action]")
-        : null;
-      if (
-        event.target instanceof Element
-        && event.target.closest("[data-mobile-shortcut], [data-mobile-action], [data-mobile-chord], [data-mobile-text], [data-mobile-page], [data-mobile-phrase]")
-      ) {
-        event.preventDefault();
-      }
-      const action = actionButton?.dataset.mobileAction ?? "";
-      if (mobileActionEventPhase(action) === "click") {
-        clearDeferredAction();
-        if (!actionButton) return;
-        const restore = takeKeyboardRestore(actionButton);
-        queueMicrotask(() => void runAction(action, restore));
-        return;
-      }
-      if (!button) return;
-      const activation = mobileSyntheticActivation(button, event.detail);
-      if (!activation) return;
-      const restore = takeKeyboardRestore(button);
-      if (activation.kind === "shortcut") void runShortcut(activation.value, {}, restore);
-      else if (activation.kind === "chord") runChord(activation.value, restore);
-      else if (activation.kind === "page") activatePage(activation.value);
-      else if (activation.kind === "phrase") void runPhrase(activation.value, restore);
-      else if (activation.kind === "action") void runAction(activation.value, restore);
-      else if (activation.kind === "text") runText(activation.value, button.dataset.mobileAutoEnter === "true", restore);
-    });
-
-    options.root.addEventListener("pointerdown", (event) => {
-      const button = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("[data-mobile-text]")
-        : null;
-      if (!button) return;
-      event.preventDefault();
-      runText(button.dataset.mobileText ?? "", button.dataset.mobileAutoEnter === "true", takeKeyboardRestore(button));
-    });
-
-    options.root.addEventListener("pointerdown", (event) => {
-      const chordButton = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("[data-mobile-chord]")
-        : null;
-      if (chordButton) {
-        event.preventDefault();
-        runChord(chordButton.dataset.mobileChord ?? "", takeKeyboardRestore(chordButton));
-        return;
-      }
-      const actionButton = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("[data-mobile-action]")
-        : null;
-      if (!actionButton) return;
-      event.preventDefault();
-      const action = actionButton.dataset.mobileAction ?? "";
-      if (mobileActionEventPhase(action) === "pointerdown") {
-        void runAction(action, takeKeyboardRestore(actionButton));
-      } else {
-        clearDeferredAction();
-      }
-    });
-
-    options.root.addEventListener("pointerup", (event) => {
-      const actionButton = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("[data-mobile-action]")
-        : null;
-      const action = actionButton?.dataset.mobileAction ?? "";
-      if (mobileActionEventPhase(action) === "pointerup") {
-        event.preventDefault();
-        clearDeferredAction();
-        if (actionButton) void runAction(action, takeKeyboardRestore(actionButton));
-        return;
-      }
-      if (mobileActionEventPhase(action) !== "click") return;
-      event.preventDefault();
-      if (actionButton) scheduleDeferredAction(action, actionButton);
-    });
-
-    options.root.addEventListener("pointerdown", (event) => {
-      const button = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("[data-mobile-phrase]")
-        : null;
-      if (!button) return;
-      event.preventDefault();
-      void runPhrase(button.dataset.mobilePhrase ?? "", takeKeyboardRestore(button));
-    });
-
-    options.root.addEventListener("pointerdown", (event) => {
-      const button = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("[data-mobile-page]")
-        : null;
-      if (!button) return;
-      event.preventDefault();
-      takeKeyboardRestore(button);
-      activatePage(button.dataset.mobilePage ?? "");
-    });
-
-    options.root.addEventListener("pointerdown", (event) => {
-      const button = event.target instanceof Element
-        ? event.target.closest<HTMLButtonElement>("[data-mobile-repeat='true']")
-        : null;
-      if (!button) return;
-      event.preventDefault();
-      button.setPointerCapture?.(event.pointerId);
-      const shortcut = button.dataset.mobileShortcut ?? "";
-      void runShortcut(shortcut, { keepModifiers: true }, takeKeyboardRestore(button));
-      window.clearTimeout(repeatTimer);
-      window.clearInterval(repeatInterval);
-      repeatTimer = window.setTimeout(() => {
-        repeatInterval = window.setInterval(() => {
-          void runShortcut(shortcut, { keepModifiers: true }, options.preserveSystemKeyboardState());
-        }, 86);
-      }, 360);
-    });
-    const stopRepeat = () => {
-      if (repeatTimer === undefined && repeatInterval === undefined) return;
-      stopRepeatInput();
-      clearSticky();
-    };
-    options.root.addEventListener("pointerup", stopRepeat);
-    options.root.addEventListener("pointercancel", stopRepeat);
-    options.root.addEventListener("lostpointercapture", stopRepeat);
     updateShortcutState();
   }
 
   function renderQuickInput(input: MobileKeyboardRenderInput): MobileQuickPhrase[] {
+    stopRepeatInput();
+    clearDeferredAction();
     const pages = options.root.querySelector<HTMLElement>(".mobile-keyboard-pages");
     const pageTabs = options.root.querySelector<HTMLElement>(".mobile-keyboard-page-tabs");
     const controls = options.root.querySelector<HTMLElement>(".mobile-keyboard-controls");
@@ -282,6 +179,7 @@ export function createMobileKeyboardController(options: MobileKeyboardController
 
     if (shortcut === "paste") {
       await options.onPasteShortcut();
+      if (disposed) return;
       clearSticky();
       restoreKeyboard();
       return;
@@ -314,20 +212,26 @@ export function createMobileKeyboardController(options: MobileKeyboardController
 
   async function runPhrase(id: string, restoreKeyboard: () => void) {
     await options.onPhrase(id);
-    restoreKeyboard();
+    if (!disposed) restoreKeyboard();
   }
 
   async function runAction(action: string, restoreKeyboard: () => void) {
     await options.onAction(action);
+    if (disposed) return;
     clearSticky();
     if (mobileActionRestoresKeyboard(action)) restoreKeyboard();
   }
 
   function stopRepeatInput() {
-    window.clearTimeout(repeatTimer);
-    window.clearInterval(repeatInterval);
-    repeatTimer = undefined;
-    repeatInterval = undefined;
+    gestures?.cancel();
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    clearDeferredAction();
+    gestures?.dispose();
+    gestures = undefined;
   }
 
   function encodeStickyInput(text: string, source: string): string | undefined {
@@ -358,6 +262,7 @@ export function createMobileKeyboardController(options: MobileKeyboardController
 
   return {
     bind,
+    dispose,
     renderQuickInput,
     activatePage,
     stopRepeatInput,

@@ -1615,7 +1615,7 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 
 .mobile-keyboard-key-list {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 8px;
   padding: 8px;
   border: 1px solid var(--line-soft);
@@ -1630,7 +1630,6 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   gap: 7px;
   min-width: 0;
   min-height: 126px;
-  grid-column: span 4;
   padding: 7px;
   border: 1px solid var(--component-border);
   border-radius: 8px;
@@ -1638,9 +1637,7 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
   transition: border-color 160ms ease-out, background-color 160ms ease-out, opacity 160ms ease-out, transform 160ms ease-out;
 }
 
-.mobile-keyboard-key-row[data-mobile-key-width="sm"] { grid-column: span 3; }
-.mobile-keyboard-key-row[data-mobile-key-width="md"] { grid-column: span 4; }
-.mobile-keyboard-key-row[data-mobile-key-width="lg"] { grid-column: span 6; }
+
 
 .mobile-keyboard-key-row.is-hidden {
   opacity: 0.58;
@@ -1665,7 +1662,7 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 
 .mobile-keyboard-key-card-head {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
   gap: 5px;
   min-width: 0;
@@ -1680,8 +1677,8 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 }
 
 .mobile-keyboard-key-controls {
-  display: grid;
-  grid-template-columns: repeat(2, 44px) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: end;
   gap: 5px;
   min-width: 0;
@@ -1689,8 +1686,8 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 
 .mobile-keyboard-key-width-control {
   display: grid;
-  grid-column: 1 / -1;
-  min-width: 0;
+  flex: 1 1 80px;
+  min-width: 80px;
   gap: 3px;
   color: var(--muted);
   font-size: 10px;
@@ -1748,6 +1745,12 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 }
 
 .mobile-keyboard-drag-handle {
+  min-width: 44px;
+  min-height: 44px;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
   display: grid;
   place-items: center;
   color: var(--muted);
@@ -1978,23 +1981,6 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 
   .mobile-keyboard-key-preview {
     flex-basis: 88px;
-  }
-
-  .mobile-keyboard-key-list {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-  }
-
-  .mobile-keyboard-key-row[data-mobile-key-width="sm"] { grid-column: span 2; }
-  .mobile-keyboard-key-row[data-mobile-key-width="md"] { grid-column: span 3; }
-  .mobile-keyboard-key-row[data-mobile-key-width="lg"] { grid-column: span 6; }
-
-  .mobile-keyboard-key-controls {
-    grid-template-columns: repeat(2, 44px);
-  }
-
-  .mobile-keyboard-key-controls .danger {
-    grid-column: 1 / -1;
-    width: 100%;
   }
 }
 
@@ -2417,5 +2403,36 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
     .herdr-workspace-menu:not([hidden]) {
       transform: none;
     }
+  }
+}
+
+.mobile-keyboard-layout-preview {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mobile-keyboard-layout-preview .mobile-keyboard-panel {
+  min-height: 56px;
+  padding: 4px 0;
+  scrollbar-width: thin;
+}
+
+.mobile-keyboard-layout-preview .mobile-keyboard-panel::-webkit-scrollbar {
+  display: block;
+  height: 4px;
+}
+
+.mobile-keyboard-layout-preview button[aria-disabled="true"] {
+  cursor: default;
+}
+
+.mobile-keyboard-key-width-control select {
+  min-height: 44px;
+}
+
+@media (max-width: 560px) {
+  .mobile-keyboard-layout-toolbar {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

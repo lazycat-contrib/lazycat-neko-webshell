@@ -32,6 +32,7 @@ const HERDR_RUNTIME_STATUS_TIMEOUT: Duration = Duration::from_secs(12);
 const HERDR_HANDOFF_TIMEOUT: Duration = Duration::from_secs(95);
 const HERDR_HANDOFF_TRACKING_WINDOW: Duration = Duration::from_mins(2);
 const HERDR_RUNTIME_SCHEMA_VERSION: u32 = 1;
+const SUPPORTED_HERDR_ENDPOINT_GENERATION: u32 = 1;
 const HERDR_LONG_REQUEST_TIMEOUT_MAX_MS: u64 = 300_000;
 const HERDR_REQUEST_TIMEOUT_OVERHEAD: Duration = Duration::from_secs(2);
 const HERDR_STREAM_INPUT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -144,6 +145,10 @@ struct HerdrCliRuntimeStatus {
 struct HerdrCliClientStatus {
     version: String,
     protocol: u32,
+    #[serde(default)]
+    endpoint_protocol_generation: Option<u32>,
+    #[serde(default)]
+    endpoint_capabilities: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -152,11 +157,17 @@ struct HerdrCliServerStatus {
     version: Option<String>,
     protocol: Option<u32>,
     capabilities: Option<HerdrCliRuntimeCapabilities>,
+    #[serde(default)]
+    endpoint_compatible: Option<bool>,
+    #[serde(default)]
+    server_binary_stale: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 struct HerdrCliRuntimeCapabilities {
     live_handoff: bool,
+    #[serde(default)]
+    endpoint_protocol_generation: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -171,6 +182,18 @@ pub struct HerdrRuntimeGuardState {
     server_protocol: Option<u32>,
     live_handoff_available: bool,
     handoff_recent: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_endpoint_protocol_generation: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_endpoint_capabilities: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_endpoint_protocol_generation: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    endpoint_compatible: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_binary_stale: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    private_protocol_matches: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -1132,10 +1155,42 @@ fn herdr_runtime_command_timeout(action: &str) -> Duration {
 fn classify_herdr_runtime(selector: &str, status: HerdrCliRuntimeStatus) -> HerdrRuntimeGuardState {
     let server_running = status.server.running;
     let server_protocol = status.server.protocol.filter(|_| server_running);
+    let client_endpoint_generation = status.client.endpoint_protocol_generation;
+    let server_endpoint_generation = status
+        .server
+        .capabilities
+        .as_ref()
+        .and_then(|capabilities| capabilities.endpoint_protocol_generation)
+        .filter(|_| server_running);
+    let endpoint_compatible = status.server.endpoint_compatible.filter(|_| server_running);
+    let endpoint_metadata = client_endpoint_generation.is_some()
+        || server_endpoint_generation.is_some()
+        || endpoint_compatible.is_some();
+    let unsupported_endpoint_generation = [client_endpoint_generation, server_endpoint_generation]
+        .into_iter()
+        .flatten()
+        .any(|generation| generation != SUPPORTED_HERDR_ENDPOINT_GENERATION);
+    // The TUI endpoint has its own compatibility lifecycle; private SockAPI/handoff
+    // protocol checks remain independent and are not relaxed by this readiness result.
+    let endpoint_ready = endpoint_compatible == Some(true)
+        && client_endpoint_generation == Some(SUPPORTED_HERDR_ENDPOINT_GENERATION)
+        && server_endpoint_generation == Some(SUPPORTED_HERDR_ENDPOINT_GENERATION);
     let state = match (server_running, server_protocol) {
         (false, _) => "not_running",
         (true, None) => "unknown",
-        (true, Some(protocol)) if protocol == status.client.protocol => "ready",
+        (true, Some(0)) => "unknown",
+        (true, Some(_)) if status.client.protocol == 0 || unsupported_endpoint_generation => {
+            "unknown"
+        }
+        (true, Some(_)) if endpoint_ready => "ready",
+        (true, Some(_)) if endpoint_compatible == Some(true) => "unknown",
+        (true, Some(protocol)) if protocol == status.client.protocol => {
+            if endpoint_metadata {
+                "unknown"
+            } else {
+                "ready"
+            }
+        }
         (true, Some(protocol)) if status.client.protocol < protocol => "client_older",
         (true, Some(_)) => "server_older",
     };
@@ -1154,6 +1209,13 @@ fn classify_herdr_runtime(selector: &str, status: HerdrCliRuntimeStatus) -> Herd
         server_protocol,
         live_handoff_available,
         handoff_recent: false,
+        client_endpoint_protocol_generation: client_endpoint_generation,
+        client_endpoint_capabilities: status.client.endpoint_capabilities,
+        server_endpoint_protocol_generation: server_endpoint_generation,
+        endpoint_compatible,
+        server_binary_stale: status.server.server_binary_stale.filter(|_| server_running),
+        private_protocol_matches: server_protocol
+            .map(|protocol| protocol == status.client.protocol),
     }
 }
 
@@ -2616,14 +2678,14 @@ mod tests {
         assert_eq!(MIN_SUPPORTED_HERDR_AGENT_VERSION, 9);
         assert!(MIN_SUPPORTED_HERDR_AGENT_VERSION <= crate::agent_protocol::AGENT_VERSION);
         assert_eq!(MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
-        assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 20);
+        assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 22);
         assert_eq!(HERDR_SOCKET_CONTRACT.schema_version, 1);
-        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.8.2");
+        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.9.0");
         assert_eq!(
             HERDR_SOCKET_CONTRACT.source_revision,
-            "9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c"
+            "b99002ac99b09e00b4ca692436cb15a6b0d676f1"
         );
-        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 92);
+        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 96);
         assert_eq!(
             HERDR_SOCKET_CONTRACT.stream_methods,
             ["events.subscribe", "pane.graphics.stream"]
@@ -2688,12 +2750,19 @@ mod tests {
             client: HerdrCliClientStatus {
                 version: "0.8.0".to_owned(),
                 protocol: client_protocol,
+                endpoint_protocol_generation: None,
+                endpoint_capabilities: None,
             },
             server: HerdrCliServerStatus {
                 running: true,
                 version: Some("0.8.0".to_owned()),
                 protocol: Some(server_protocol),
-                capabilities: Some(HerdrCliRuntimeCapabilities { live_handoff }),
+                capabilities: Some(HerdrCliRuntimeCapabilities {
+                    live_handoff,
+                    endpoint_protocol_generation: None,
+                }),
+                endpoint_compatible: None,
+                server_binary_stale: None,
             },
         };
 
@@ -2716,17 +2785,144 @@ mod tests {
                 client: HerdrCliClientStatus {
                     version: "0.8.0".to_owned(),
                     protocol: 20,
+                    endpoint_protocol_generation: None,
+                    endpoint_capabilities: None,
                 },
                 server: HerdrCliServerStatus {
                     running: true,
                     version: None,
                     protocol: None,
                     capabilities: None,
+                    endpoint_compatible: None,
+                    server_binary_stale: None,
                 },
             },
         );
         assert_eq!(unknown.state, "unknown");
         assert!(!unknown.live_handoff_available);
+    }
+
+    fn endpoint_runtime_fixture(
+        client: u32,
+        server: u32,
+        client_generation: Option<u32>,
+        server_generation: Option<u32>,
+        compatible: Option<bool>,
+    ) -> HerdrCliRuntimeStatus {
+        serde_json::from_value(json!({
+            "schema_version": 1,
+            "client": { "version": "0.9.0", "protocol": client, "endpoint_protocol_generation": client_generation,
+                "endpoint_capabilities": ["surface_interest", "health_check"] },
+            "server": { "running": true, "version": "0.8.2", "protocol": server,
+                "endpoint_compatible": compatible, "server_binary_stale": true,
+                "capabilities": { "live_handoff": true, "endpoint_protocol_generation": server_generation } }
+        })).unwrap()
+    }
+
+    #[test]
+    fn herdr_runtime_known_endpoint_compatibility_is_independent_of_private_protocol_and_binary_age()
+     {
+        for (client, server) in [(22, 22), (22, 23), (23, 22)] {
+            let state = classify_herdr_runtime(
+                "demo@owner",
+                endpoint_runtime_fixture(client, server, Some(1), Some(1), Some(true)),
+            );
+            assert_eq!(state.state, "ready");
+            assert!(
+                !state.live_handoff_available,
+                "compatible endpoint must not require a handoff"
+            );
+            assert_eq!(state.private_protocol_matches, Some(client == server));
+            assert_eq!(state.server_binary_stale, Some(true));
+            let value = serde_json::to_value(state).unwrap();
+            assert_eq!(value["client_endpoint_protocol_generation"], 1);
+            assert_eq!(value["server_endpoint_protocol_generation"], 1);
+            assert_eq!(value["endpoint_compatible"], true);
+            assert_eq!(
+                value["client_endpoint_capabilities"],
+                json!(["surface_interest", "health_check"])
+            );
+        }
+    }
+
+    #[test]
+    fn herdr_runtime_endpoint_claims_require_known_generations_and_positive_confirmation() {
+        for (client_generation, server_generation, compatible) in [
+            (Some(1), Some(1), Some(false)),
+            (Some(1), Some(1), None),
+            (Some(2), Some(2), Some(true)),
+            (Some(0), Some(1), Some(true)),
+            (Some(1), Some(2), Some(false)),
+            (Some(1), None, Some(true)),
+            (None, Some(1), Some(true)),
+            (None, None, Some(true)),
+        ] {
+            let state = classify_herdr_runtime(
+                "demo@owner",
+                endpoint_runtime_fixture(22, 22, client_generation, server_generation, compatible),
+            );
+            assert_eq!(
+                state.state, "unknown",
+                "private equality cannot prove endpoint compatibility"
+            );
+            assert!(!state.live_handoff_available);
+        }
+        for (client, server) in [(23, 22), (22, 23), (0, 22), (22, 0)] {
+            let state = classify_herdr_runtime(
+                "demo@owner",
+                endpoint_runtime_fixture(client, server, Some(2), Some(2), Some(true)),
+            );
+            assert_eq!(state.state, "unknown");
+            assert!(!state.live_handoff_available);
+        }
+    }
+
+    #[test]
+    fn herdr_runtime_legacy_endpoints_keep_directional_upgrade_rules() {
+        for (client, server, expected, handoff) in [
+            (22, 20, "server_older", true),
+            (20, 22, "client_older", false),
+        ] {
+            let state = classify_herdr_runtime(
+                "demo@owner",
+                endpoint_runtime_fixture(client, server, Some(1), None, None),
+            );
+            assert_eq!(state.state, expected);
+            assert_eq!(state.live_handoff_available, handoff);
+        }
+        let mut status = endpoint_runtime_fixture(22, 20, Some(1), None, Some(false));
+        status.server.capabilities.as_mut().unwrap().live_handoff = false;
+        assert!(!classify_herdr_runtime("demo@owner", status).live_handoff_available);
+        let mut status = endpoint_runtime_fixture(22, 22, Some(1), Some(1), Some(true));
+        status.server.running = false;
+        let state = classify_herdr_runtime("demo@owner", status);
+        assert_eq!(state.state, "not_running");
+        assert_eq!(state.server_endpoint_protocol_generation, None);
+        assert_eq!(state.endpoint_compatible, None);
+    }
+
+    #[test]
+    fn herdr_runtime_rejects_malformed_endpoint_fields_instead_of_falling_back_to_protocol_equality()
+     {
+        for (path, value) in [
+            ("/client/endpoint_protocol_generation", json!(-1)),
+            (
+                "/server/capabilities/endpoint_protocol_generation",
+                json!(-1),
+            ),
+            ("/client/endpoint_protocol_generation", json!("1")),
+            ("/server/endpoint_compatible", json!("true")),
+            ("/server/server_binary_stale", json!(1)),
+            ("/client/endpoint_capabilities", json!([1])),
+        ] {
+            let mut status = json!({"schema_version":1,"client":{"version":"0.9.0","protocol":22,"endpoint_protocol_generation":1,"endpoint_capabilities":[]},
+                "server":{"running":true,"protocol":22,"capabilities":{"live_handoff":true,"endpoint_protocol_generation":1},"endpoint_compatible":true,"server_binary_stale":false}});
+            *status.pointer_mut(path).unwrap() = value;
+            assert!(
+                serde_json::from_value::<HerdrCliRuntimeStatus>(status).is_err(),
+                "{path}"
+            );
+        }
     }
 
     #[test]
