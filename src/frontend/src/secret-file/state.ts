@@ -1,4 +1,4 @@
-import type { TerminalPane } from "../../types";
+import type { TerminalPane } from "../types";
 
 export const MAX_SECRET_BYTES = 1024 * 1024;
 export type SecretFileShortcut = "alt-v" | "alt-k" | "disabled";

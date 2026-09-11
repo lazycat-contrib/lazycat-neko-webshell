@@ -185,7 +185,6 @@ export function renderShell(app: HTMLElement): ShellElements {
           <button class="icon-button" id="fitTerminal" type="button" aria-label="Full screen" title="Full screen" data-i18n-aria="action.fullscreen" data-i18n-title="action.fullscreen">
             <i data-lucide="maximize"></i>
           </button>
-          <button class="icon-button desktop-secret-file-trigger" type="button" data-secret-file-open aria-label="Secret file" title="Secret file" data-i18n-aria="secret.title" data-i18n-title="secret.title"><i data-lucide="file-key" aria-hidden="true"></i></button>
           <div class="shortcut-help-shell" id="shortcutHelpShell">
             <button class="icon-button" id="shortcutHelpButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" data-i18n-aria="action.shortcutHelp" data-i18n-title="action.shortcutHelp">
               <i data-lucide="keyboard"></i>

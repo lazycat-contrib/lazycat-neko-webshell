@@ -1,4 +1,5 @@
 export const enMessages = {
+  "secret.filename": "File name: {name}",
   "secret.title": "Secret file",
   "secret.close": "Close",
   "secret.shortcut": "Keyboard shortcut",
@@ -31,7 +32,7 @@ export const enMessages = {
   "secret.savedClosed": "Secret file saved. Reopen Secret file in the original terminal to get its path.",
   "secret.retry": "Read clipboard again",
   "secret.failed": "Could not save. Check the target connection, then read or paste the text again.",
-  "secret.unavailable": "Connect a terminal and enable File transfer first.",
+  "secret.unavailable": "Connect a terminal first.",
   "secret.target": "Save to {target} · terminal login user",
   "secret.shortcutHelp": "Secret file (default; change in its panel)",
 

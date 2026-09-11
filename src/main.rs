@@ -35,6 +35,7 @@ mod pty_io;
 mod remote_program;
 mod restty_headless;
 mod router;
+mod secret_file;
 mod service;
 mod session_backend;
 mod session_manager;

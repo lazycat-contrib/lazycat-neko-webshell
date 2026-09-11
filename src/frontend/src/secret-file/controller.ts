@@ -1,19 +1,15 @@
-import type { Client } from "@connectrpc/connect";
-import type { CapabilityService } from "../../gen/lazycat/webshell/v1/capability_pb";
-import { legacyCopyText, writeSystemClipboardText } from "../../browser-clipboard";
-import type { TerminalPane, Tone } from "../../types";
-import { invokeFileTransferWithConnect } from "./connect-upload";
-import { createSecretFileView, secretElement as element, type SecretTranslate } from "./secret-file-view";
+import { legacyCopyText, writeSystemClipboardText } from "../browser-clipboard";
+import type { TerminalPane, Tone } from "../types";
+import { createSecretFile, deleteSecretFile } from "./api";
+import { createSecretFileView, secretElement as element, type SecretTranslate } from "./view";
 import {
   secretFilePathIsValid, secretFilePayload, secretFileShortcutMatches, secretFileTargetIsCurrent,
   type SecretFileResult, type SecretFileShortcut, type SecretFileTarget,
-} from "./secret-file-state.ts";
+} from "./state.ts";
 
 type Deps = {
-  client: Client<typeof CapabilityService>;
   activePane: () => TerminalPane | undefined;
   generation: () => number;
-  enabled: () => boolean;
   canWrite: (pane: TerminalPane) => boolean;
   prepare: () => void;
   paste: (pane: TerminalPane, text: string) => Promise<boolean> | boolean;
@@ -35,18 +31,20 @@ export function createSecretFileController(deps: Deps) {
   const files = new Map<string, SecretFileResult[]>();
   const key = (target: SecretFileTarget) => JSON.stringify([target.selector, target.sessionId]);
   const isCurrent = (target: SecretFileTarget) => secretFileTargetIsCurrent(target, deps.activePane(), deps.generation());
-  const writable = (target: SecretFileTarget) => isCurrent(target) && deps.enabled()
+  const writable = (target: SecretFileTarget) => isCurrent(target)
     && target.pane.connectionState === "connected" && !target.pane.replaying && deps.canWrite(target.pane);
   const message = (key: Parameters<SecretTranslate>[0]) => { if (view) view.status.textContent = deps.tr(key); };
 
-  function close() {
+  function close(instant = false) {
+    if (instant && view) view.dialog.dataset.instant = "true";
     epoch++;
     if (reading) { reading = false; busy = false; }
     // A pending create continues for its captured target and retains only its returned path.
     view?.dialog.close();
     const input = view?.content.querySelector("textarea");
     if (input) input.value = "";
-    restoreFocus?.focus({ preventScroll: true });
+    if (restoreFocus?.isConnected) restoreFocus.focus({ preventScroll: true });
+    else if (target && isCurrent(target)) deps.focus(target.pane);
   }
 
   function rows(...buttons: HTMLButtonElement[]) {
@@ -72,6 +70,7 @@ export function createSecretFileController(deps: Deps) {
       select.onchange = () => { current = history.find(file => file.path === select.value); showResult(); };
       view.content.append(select);
     }
+    view.content.append(element("p", deps.tr("secret.filename", { name: result.path.split("/").at(-1) ?? "" }), "secret-file-name"));
     const path = element("code", result.path, "secret-file-path");
     path.tabIndex = 0;
     view.content.append(path, element("p", deps.tr("secret.permissions"), "secret-file-help"));
@@ -116,7 +115,7 @@ export function createSecretFileController(deps: Deps) {
     message("secret.deleting");
     const version = epoch;
     try {
-      await invokeFileTransferWithConnect(deps.client, result.target.sessionId, "secret_delete", { selector: result.target.selector, path: result.path });
+      await deleteSecretFile(result.target, result.path);
       const remaining = (files.get(key(result.target)) ?? []).filter(file => file !== result);
       files.set(key(result.target), remaining);
       if (version !== epoch || !view?.dialog.open) return;
@@ -191,9 +190,9 @@ export function createSecretFileController(deps: Deps) {
     view.content.replaceChildren(element("p", deps.tr("secret.saving")));
     message("secret.bodyPrivate");
     try {
-      const response = await invokeFileTransferWithConnect(deps.client, captured.sessionId, "secret_create", { selector: captured.selector }, payload, "text/plain;charset=utf-8");
-      if (response.status !== "complete" || !secretFilePathIsValid(response.meta.path)) throw new Error("invalid response");
-      const result = { path: response.meta.path, target: captured };
+      const response = await createSecretFile(captured, payload);
+      if (!secretFilePathIsValid(response.path)) throw new Error("invalid response");
+      const result = { path: response.path, target: captured };
       files.set(key(captured), [...(files.get(key(captured)) ?? []), result]);
       if (version !== epoch || !view.dialog.open) { deps.status(deps.tr("secret.savedClosed"), "ok"); return; }
       current = result;
@@ -209,7 +208,7 @@ export function createSecretFileController(deps: Deps) {
 
   function open(pane = deps.activePane(), instant = false) {
     if (busy) { deps.status(deps.tr("secret.saving")); return; }
-    if (!deps.enabled() || !pane?.sessionId || pane.closing || pane.exited) { deps.status(deps.tr("secret.unavailable"), "error"); return; }
+    if (!pane?.sessionId || pane.closing || pane.exited) { deps.status(deps.tr("secret.unavailable"), "error"); return; }
     if (view?.dialog.open) return;
     target = { pane, sessionId: pane.sessionId, selector: pane.selector, generation: deps.generation() };
     restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
@@ -243,5 +242,5 @@ export function createSecretFileController(deps: Deps) {
     return true;
   }
 
-  return { open, handleShortcut, ownsEvent: (event: Event) => event.target instanceof Node && Boolean(view?.dialog.contains(event.target)) };
+  return { open, handleShortcut, ownsEvent: (event: Event) => event.target instanceof Node && Boolean(view?.dialog.open && view.dialog.contains(event.target)) };
 }

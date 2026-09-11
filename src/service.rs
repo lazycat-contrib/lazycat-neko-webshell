@@ -20,7 +20,7 @@ use crate::config::{
 use crate::database::{TunnelProviderProfile, TunnelProviderProfileUpsert};
 use crate::lightos;
 use crate::lightos_admin;
-use crate::plugins::{file_transfer, lightos_port_forward, secret_file, tunnel};
+use crate::plugins::{file_transfer, lightos_port_forward, tunnel};
 #[cfg(test)]
 use crate::proto::lazycat::webshell::v1::OwnedCreateSessionRequestView;
 use crate::proto::lazycat::webshell::v1::{
@@ -521,6 +521,40 @@ fn valid_profile_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+/// Resolve an existing or target-local session and authorize its exact target.
+/// Built-in file operations share terminal authorization, not plugin lifecycle.
+pub async fn authorize_file_session(
+    state: &AppState,
+    session_id: &str,
+    selector: &str,
+) -> Result<SessionRecord, ConnectError> {
+    if session_id.is_empty() || session_id.len() > 512 || selector.len() > 512 {
+        return Err(ConnectError::invalid_argument("invalid session target"));
+    }
+    validate_selector(selector)?;
+    let existing = state
+        .sessions
+        .read()
+        .map_err(|_| ConnectError::internal("session store lock poisoned"))?
+        .get(session_id)
+        .cloned();
+    let session = match existing {
+        Some(session) => session,
+        None => {
+            agent_session_record_from_metadata(
+                session_id,
+                &HashMap::from([("selector".to_owned(), selector.to_owned())]),
+            )
+            .await?
+        }
+    };
+    if session.selector != selector {
+        return Err(ConnectError::permission_denied("session target mismatch"));
+    }
+    authorize_session_target(state, &session, true).await?;
+    Ok(session)
 }
 
 async fn authorize_session_target(
@@ -1026,9 +1060,6 @@ async fn invoke_file_transfer_plugin(
             invoke_file_read(state, session, operation, content_type, metadata).await
         }
         "write" | "upload" => invoke_file_write(state, session, operation, payload, metadata).await,
-        "secret_create" | "secret_delete" => {
-            invoke_secret_file(state, session, operation, payload, metadata).await
-        }
         "upload_begin" => invoke_file_upload_begin(state, session, metadata),
         "upload_chunk" => invoke_file_upload_chunk(state, session, payload, metadata),
         "upload_finish" => invoke_file_upload_finish(state, session, metadata).await,
@@ -1038,66 +1069,6 @@ async fn invoke_file_transfer_plugin(
             "unsupported file-transfer operation: {operation}"
         ))),
     }
-}
-
-async fn invoke_secret_file(
-    state: &AppState,
-    session: &SessionRecord,
-    operation: &str,
-    payload: &[u8],
-    metadata: &HashMap<String, String>,
-) -> ServiceResult<InvokePluginResponse> {
-    let (path, script) = if operation == "secret_create" {
-        secret_file::validate_payload(payload)?;
-        let path = secret_file::new_path();
-        let script = secret_file::create_script(&path, payload.len())?;
-        (path, script)
-    } else {
-        if !payload.is_empty() {
-            return Err(ConnectError::invalid_argument(
-                "delete does not accept content",
-            ));
-        }
-        let path = required_metadata(metadata, "path")?.to_owned();
-        let script = secret_file::delete_script(&path)?;
-        (path, script)
-    };
-    let command = if ssh_backend::is_ssh_selector(&session.selector) {
-        let profile = ssh_backend::load_enabled_profile(&state.database(), &session.selector)?;
-        ssh_backend::profile_script_command(&profile, &script, false)
-    } else {
-        if !lightos_features_enabled() {
-            return Err(ConnectError::not_found("LightOS integration is disabled"));
-        }
-        let script = secret_file::script_as_user(
-            session
-                .metadata
-                .get(METADATA_LOGIN_USER)
-                .map(String::as_str)
-                .unwrap_or("root"),
-            &script,
-        );
-        let mut command = tokio::process::Command::new(LIGHTOSCTL);
-        command.args([
-            "exec",
-            "-i",
-            session.selector.as_str(),
-            "/bin/sh",
-            "-c",
-            &script,
-        ]);
-        command
-    };
-    // The provider generated this path; successful exit is the commit signal.
-    // Ignore bounded startup output rather than losing a successfully saved file
-    // when a remote shell emits a banner.
-    secret_file::run(command, payload).await?;
-    plugin_response(
-        "complete",
-        "text/plain",
-        Vec::new(),
-        plugin_path_metadata(operation, &path),
-    )
 }
 
 async fn invoke_file_list(

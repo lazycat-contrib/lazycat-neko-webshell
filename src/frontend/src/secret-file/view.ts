@@ -1,6 +1,6 @@
-import type { MessageKey } from "../../i18n";
-import { secretFileShortcutLabel, type SecretFileShortcut } from "./secret-file-state.ts";
-import "./secret-file.css";
+import type { MessageKey } from "../i18n";
+import { secretFileShortcutLabel, type SecretFileShortcut } from "./state.ts";
+import "./styles.css";
 
 export type SecretTranslate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
@@ -11,7 +11,7 @@ export function secretElement<K extends keyof HTMLElementTagNameMap>(tag: K, val
   return element;
 }
 
-export function createSecretFileView(tr: SecretTranslate, close: () => void, shortcutChanged: (value: SecretFileShortcut) => void) {
+export function createSecretFileView(tr: SecretTranslate, close: (instant?: boolean) => void, shortcutChanged: (value: SecretFileShortcut) => void) {
   const dialog = secretElement("dialog", "", "secret-file-dialog");
   dialog.setAttribute("aria-labelledby", "secret-file-title");
   const header = secretElement("div", "", "secret-file-head");
@@ -20,7 +20,7 @@ export function createSecretFileView(tr: SecretTranslate, close: () => void, sho
   const closeButton = secretElement("button", "×", "icon-button secret-file-close");
   closeButton.type = "button";
   closeButton.setAttribute("aria-label", tr("secret.close"));
-  closeButton.onclick = close;
+  closeButton.onclick = () => close();
   header.append(title, closeButton);
   const target = secretElement("p", "", "secret-file-target");
   const content = secretElement("div", "", "secret-file-content");
@@ -39,7 +39,7 @@ export function createSecretFileView(tr: SecretTranslate, close: () => void, sho
   select.onchange = () => shortcutChanged(select.value as SecretFileShortcut);
   settings.append(summary, select);
   dialog.append(header, target, status, content, settings);
-  dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+  dialog.addEventListener("cancel", event => { event.preventDefault(); close(true); });
   // Prevent app-wide terminal and Escape handlers from acting behind this modal.
   dialog.addEventListener("keydown", event => event.stopPropagation());
   dialog.addEventListener("paste", event => event.stopPropagation());

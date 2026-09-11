@@ -292,7 +292,7 @@ import { createAiVoiceSpeechTestController } from "./plugins/ai-chat/voice-speec
 import {
   newAiVoiceSpeechProviderProfile,
 } from "./plugins/ai-chat/voice-speech-profiles";
-import { createSecretFileController } from "./plugins/file-transfer/secret-file-controller";
+import { createSecretFileController } from "./secret-file/controller";
 import { createFileTransferController } from "./plugins/file-transfer/controller";
 import { setFileTransferOutput } from "./plugins/file-transfer/dom";
 import { renderFileTransferToolView } from "./plugins/file-transfer/tool-view";
@@ -1184,10 +1184,8 @@ const fileTransfer = createFileTransferController({
   onRender: renderPluginTools,
 });
 const secretFiles = createSecretFileController({
-  client: capabilityClient,
   activePane,
   generation: () => selectedSelectorGeneration,
-  enabled: () => pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID),
   canWrite: (pane) => terminalControl.canWrite(pane, { report: false }),
   prepare: prepareAppMobileOverlay,
   paste: (pane, text) => pane.sessionBackend === "herdr"
@@ -2521,7 +2519,6 @@ function bindActions() {
   });
   bindSettingsTabs();
   bindLifecycleEvents();
-  document.querySelector("[data-secret-file-open]")?.addEventListener("click", () => secretFiles.open());
   bindMobileShortcuts();
   document.addEventListener("keydown", handleGlobalShortcutCapture, true);
   document.addEventListener("keydown", handleTerminalImeFocusCapture, true);

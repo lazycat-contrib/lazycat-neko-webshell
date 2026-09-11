@@ -41,3 +41,5 @@
 }
 
 .secret-file-dialog[data-instant="true"], .secret-file-dialog[data-instant="true"]::backdrop { transition: none; }
+
+.secret-file-name { margin: 0 0 10px; font: 13px/1.6 var(--font-mono); overflow-wrap: anywhere; }

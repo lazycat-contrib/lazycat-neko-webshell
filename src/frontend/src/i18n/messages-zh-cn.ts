@@ -1,6 +1,7 @@
 import type { MessageKey } from "./messages-en";
 
 export const zhCNMessages = {
+  "secret.filename": "文件名：{name}",
   "secret.title": "机密文件",
   "secret.close": "关闭",
   "secret.shortcut": "PC 快捷键",
@@ -33,7 +34,7 @@ export const zhCNMessages = {
   "secret.savedClosed": "机密文件已保存，在原终端重新打开“机密文件”可取回路径。",
   "secret.retry": "重新读取剪贴板",
   "secret.failed": "保存失败，请检查目标连接后重新读取或粘贴文本。",
-  "secret.unavailable": "请先连接终端并启用文件传输。",
+  "secret.unavailable": "请先连接终端。",
   "secret.target": "保存到 {target} · 终端登录用户",
   "secret.shortcutHelp": "机密文件（默认，可在面板内改键）",
 

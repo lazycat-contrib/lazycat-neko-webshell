@@ -1,4 +1,6 @@
 //! Private clipboard files: contents travel only over stdin, never a PTY or argv.
+pub mod http;
+
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -126,6 +128,43 @@ fi
 exit 127
 "#
     )
+}
+
+pub async fn execute(
+    state: &crate::state::AppState,
+    session: &crate::state::SessionRecord,
+    script: &str,
+    payload: &[u8],
+) -> Result<(), ConnectError> {
+    let command = if crate::ssh_backend::is_ssh_selector(&session.selector) {
+        let profile =
+            crate::ssh_backend::load_enabled_profile(&state.database(), &session.selector)?;
+        crate::ssh_backend::profile_script_command(&profile, script, false)
+    } else {
+        if !crate::tty_init::lightos_features_enabled() {
+            return Err(ConnectError::not_found("LightOS integration is disabled"));
+        }
+        let script = script_as_user(
+            session
+                .metadata
+                .get(crate::state::METADATA_LOGIN_USER)
+                .map(String::as_str)
+                .unwrap_or("root"),
+            script,
+        );
+        let mut command = Command::new(crate::config::LIGHTOSCTL);
+        command.args([
+            "exec",
+            "-i",
+            session.selector.as_str(),
+            "/bin/sh",
+            "-c",
+            &script,
+        ]);
+        command
+    };
+    // Successful exit commits the generated path; ignore bounded startup banners.
+    run(command, payload).await.map(|_| ())
 }
 
 /// Bounds include stdin writes and both output streams. Dropping a timed-out

@@ -2455,7 +2455,6 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 .mobile-secret-file-button svg { width: 18px; height: 18px; }
 .mobile-secret-file-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 @media (max-width: 760px), (pointer: coarse) {
-  .desktop-secret-file-trigger { display: none; }
   dialog.secret-file-dialog {
     width: 100%; max-width: 100%; margin: auto 0 0;
     border-radius: 16px 16px 0 0;

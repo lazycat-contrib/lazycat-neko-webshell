@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_SECRET_BYTES, secretFilePayload, secretFilePathIsValid, secretFileShortcutMatches, secretFileTargetIsCurrent } from "./secret-file-state.ts";
-import { mobileActionEventPhase, mobileActionRestoresKeyboard } from "../../mobile/action-event-phase.ts";
+import { MAX_SECRET_BYTES, secretFilePayload, secretFilePathIsValid, secretFileShortcutMatches, secretFileTargetIsCurrent } from "./state.ts";
+import { mobileActionEventPhase, mobileActionRestoresKeyboard } from "../mobile/action-event-phase.ts";
 
 test("secret text preserves exact whitespace and enforces UTF-8 byte limits", () => {
   const text = "  test-only secret\n第二行\n\n";

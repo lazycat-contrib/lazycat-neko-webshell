@@ -4,8 +4,8 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
+    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
 };
 use rmcp::schemars::{JsonSchema, schema_for};
 use rmcp::service::RequestContext;
@@ -296,9 +296,9 @@ impl ServerHandler for TerminalMcpServer {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<CallToolResponse, ErrorData> {
         if !self.enabled() {
-            return Ok(tool_error(TerminalMcpError::disabled()));
+            return Ok(tool_error(TerminalMcpError::disabled()).into());
         }
         let principal = context
             .extensions
@@ -307,11 +307,12 @@ impl ServerHandler for TerminalMcpServer {
             .and_then(McpPrincipal::from_parts);
         let principal = match principal {
             Ok(principal) => principal,
-            Err(error) => return Ok(tool_error(error)),
+            Err(error) => return Ok(tool_error(error).into()),
         };
         Ok(self
             .dispatch(&request.name, request.arguments, &principal)
-            .await)
+            .await
+            .into())
     }
 }
 
@@ -323,7 +324,7 @@ pub fn streamable_http_service(
         move || Ok(TerminalMcpServer::new(Arc::clone(&factory_state))),
         Arc::default(),
         StreamableHttpServerConfig::default()
-            .with_stateful_mode(false)
+            .with_legacy_session_mode(false)
             .with_json_response(true)
             .with_sse_keep_alive(None)
             .with_allowed_hosts([PRODUCTION_HOST, "localhost", "127.0.0.1", "::1"]),

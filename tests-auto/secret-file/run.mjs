@@ -16,11 +16,15 @@ const server = await createServer({ configFile: path.join(root, "vite.config.ts"
     catch (error) { next(error); }
   });
 } }] });
-const browser = createBrowserDriver({ session: uniqueBrowserSession("neko-secret"), headed: false });
+const browser = createBrowserDriver({ session: uniqueBrowserSession("neko-secret"), headed: false, launchArgs: "--use-gl=angle,--use-angle=swiftshader,--enable-unsafe-swiftshader" });
 const evaluate = source => browser.evaluate(source);
 const clickText = text => browser.command(["find", "role", "button", "click", "--name", text, "--exact"]);
 const open = () => browser.command(["click", "#open"]);
-const close = async () => { await browser.press("Escape"); await browser.waitFor('!document.querySelector("dialog").open'); };
+const close = async () => {
+  await browser.press("Escape");
+  await browser.waitFor('!document.querySelector("dialog").open');
+  assert.equal(await evaluate('qa.manager.ownsEvent({target:document.querySelector(".secret-file-close")})'), false, 'closed dialogs do not own keyboard events');
+};
 const saved = () => browser.waitFor('Boolean(document.querySelector("dialog[open] .secret-file-path"))');
 const input = () => browser.waitFor('Boolean(document.querySelector("dialog[open] textarea"))');
 try {
@@ -28,11 +32,28 @@ try {
   await browser.open(`http://127.0.0.1:${server.httpServer.address().port}/__secret-file-fixture.html`);
   await browser.waitFor("qa.ready");
   await browser.command(["set", "viewport", "1280", "850"]);
+  // Like a fresh app load, the plugin list is unknown until tools/settings open.
+  for (const backend of ["webshell", "herdr"]) {
+    await evaluate(`qa.pane.sessionBackend=${JSON.stringify(backend)};qa.pane.sessionId=${JSON.stringify(`fresh-${backend}`)}`);
+    const point = await evaluate('(()=>{const r=document.querySelector("#qa-terminal-pane").getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()');
+    await browser.dispatchMouse([
+      {type:"mousePressed",...point,button:"right",buttons:2,clickCount:1},
+      {type:"mouseReleased",...point,button:"right",buttons:0,clickCount:1},
+    ]);
+    await browser.command(["find", "text", "机密文件", "click", "--exact"]);
+    assert.equal(await evaluate('qa.lastMenuAction'), 'secret-file', 'the native context-menu item must run');
+    const state = await evaluate('({open:Boolean(document.querySelector("dialog[open]")),known:qa.pluginEnabled!==undefined,backend:qa.pane.sessionBackend,status:document.querySelector("#notice").textContent,requests:qa.requests.length})');
+    assert.equal(state.open, true, `fresh-entry state: ${JSON.stringify(state)}`);
+    await saved();
+    await close();
+  }
+  await evaluate("qa.pane.sessionId='s';qa.pluginEnabled=false");
   await browser.press("Control+Alt+v");
   await saved();
   assert.equal(await evaluate('document.querySelector("dialog").dataset.instant'), "true");
   assert.equal(await evaluate('new TextDecoder().decode(new Uint8Array(qa.requests[0].payload))'), "  TEST-ONLY KEY\nsecond line\n");
   const firstPath = await evaluate('document.querySelector(".secret-file-path").textContent');
+  assert.equal(await evaluate('document.querySelector(".secret-file-name").textContent'), `文件名：${firstPath.split('/').at(-1)}`);
   await browser.command(["wait", "300"]);
   await browser.screenshot(path.join(artifacts, "desktop.png"));
   await clickText("复制路径");
@@ -91,9 +112,15 @@ try {
 
   // Old clipboard reads cannot save content or unlock a newer create.
   await evaluate("qa.mode='pending'"); await open(); await close();
-  await evaluate("qa.mode='ok';qa.delay=900"); await open();
+  await evaluate("qa.mode='ok';qa.delay=1500;document.querySelector('#notice').textContent=''"); await open();
+  const pendingCreateCount = await evaluate('qa.requests.length');
   await evaluate("qa.pendingReads.shift()('LATE TEST DATA')");
-  await browser.waitFor('document.querySelector(".secret-file-path") !== null');
+  await close();
+  await open();
+  assert.equal(await evaluate('Boolean(document.querySelector("dialog[open]"))'), false, 'late read cannot unlock an unfinished create');
+  assert.equal(await evaluate('qa.requests.length'), pendingCreateCount);
+  await browser.waitFor('document.querySelector("#notice").textContent.includes("取回路径")');
+  await open(); await saved();
   assert.equal(await evaluate('qa.requests.some(r=>new TextDecoder().decode(new Uint8Array(r.payload)).includes("LATE TEST DATA"))'), false);
   await close();
   await open(); await saved(); await clickText("删除文件");
@@ -103,7 +130,7 @@ try {
   await input(); // Three-second timeout, without waiting for permission promise.
   assert.match(await evaluate('document.querySelector(".secret-file-status").textContent'), /无法读取/);
   await close();
-  await evaluate("qa.mode='ok';qa.delay=600"); await open(); await close();
+  await evaluate("qa.mode='ok';qa.delay=600;document.querySelector('#notice').textContent=''"); await open(); await close();
   await browser.waitFor('document.querySelector("#notice").textContent.includes("取回路径")');
   await open(); await saved();
   assert.equal(await evaluate('document.querySelectorAll("dialog").length'), 1);
