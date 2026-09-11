@@ -64,7 +64,7 @@ export function createSystemClipboardWriter(defaultOptions: ClipboardWriteOption
 
 export const writeSystemClipboardText = createSystemClipboardWriter();
 
-export function legacyCopyText(text: string, ownerDocument = document): boolean {
+export function legacyCopyText(text: string, ownerDocument = document, parent: HTMLElement = ownerDocument.body): boolean {
   if (!text || typeof ownerDocument.execCommand !== "function") return false;
   const restoreFocus = ownerDocument.activeElement;
   const textarea = ownerDocument.createElement("textarea");
@@ -73,7 +73,7 @@ export function legacyCopyText(text: string, ownerDocument = document): boolean 
   textarea.style.position = "fixed";
   textarea.style.inset = "0 auto auto -9999px";
   textarea.style.opacity = "0";
-  ownerDocument.body.appendChild(textarea);
+  parent.appendChild(textarea);
   textarea.select();
   let copied = false;
   try {

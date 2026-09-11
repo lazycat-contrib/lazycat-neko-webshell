@@ -12,6 +12,7 @@ export function renderMobileKeyboardView(): string {
             <button type="button" data-mobile-page="fn" aria-pressed="false" aria-label="Function keys" title="Function keys" data-i18n-aria="label.mobileFnKeys" data-i18n-title="label.mobileFnKeys"><i data-lucide="hash"></i></button>
             <button type="button" data-mobile-page="sym" aria-pressed="false" aria-label="Symbols" title="Symbols" data-i18n-aria="label.mobileSymbolKeys" data-i18n-title="label.mobileSymbolKeys"><i data-lucide="braces"></i></button>
           </div>
+          <button type="button" class="mobile-secret-file-button" data-mobile-action="secret-file" aria-label="Secret file" title="Secret file" data-i18n-aria="secret.title" data-i18n-title="secret.title"><i data-lucide="file-key" aria-hidden="true"></i></button>
           <button type="button" class="mobile-system-keyboard-toggle" data-mobile-action="toggle-system-keyboard" aria-pressed="false" aria-label="Toggle system keyboard" title="Toggle system keyboard" data-i18n-aria="action.toggleSystemKeyboard" data-i18n-title="action.toggleSystemKeyboard"><i class="mobile-keyboard-hidden-icon" data-lucide="keyboard-off"></i><i class="mobile-keyboard-visible-icon" data-lucide="keyboard"></i></button>
           <span class="mobile-shortcut-clock" id="mobileShortcutClock" role="timer" aria-label="Current time" data-i18n-aria="label.currentTime"></span>
         </div>

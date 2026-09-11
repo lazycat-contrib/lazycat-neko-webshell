@@ -3,7 +3,7 @@ export function mobileActionEventPhase(action: string): "pointerup" | "click" {
 }
 
 export function mobileActionRestoresKeyboard(action: string): boolean {
-  return action !== "pane-menu" && action !== "toggle-system-keyboard" && action !== "workspace-overview";
+  return action !== "secret-file" && action !== "pane-menu" && action !== "toggle-system-keyboard" && action !== "workspace-overview";
 }
 
 export type MobileSyntheticActivation = {

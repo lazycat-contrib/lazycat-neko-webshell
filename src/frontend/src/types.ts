@@ -408,6 +408,7 @@ export type Settings = {
   cursorShape: CursorShape;
   copyOnSelect: boolean;
   useResttyClipboard: boolean;
+  secretFileShortcut: "alt-v" | "alt-k" | "disabled";
   touchSelectionMode: TouchSelectionMode;
   preventMobileKeyboardAutoOpen: boolean;
   mobileClockEnabled: boolean;

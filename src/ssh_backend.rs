@@ -546,15 +546,16 @@ pub fn terminal_command_for_profile(profile: &SshProfile) -> (String, Vec<String
     ("ssh".to_owned(), args)
 }
 
-pub async fn run_profile_script(
+pub fn profile_script_command(
     profile: &SshProfile,
     script: &str,
-    stdin: &[u8],
-) -> Result<Vec<u8>, ConnectError> {
+    login: bool,
+) -> tokio::process::Command {
     let mut args = ssh_base_args(profile);
+    args.push("-T".to_owned());
     args.push(profile.target());
     args.push("/bin/sh".to_owned());
-    args.push("-lc".to_owned());
+    args.push(if login { "-lc" } else { "-c" }.to_owned());
     args.push(shell_quote(script));
     let mut command = tokio::process::Command::new("ssh");
     command
@@ -562,6 +563,15 @@ pub async fn run_profile_script(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    command
+}
+
+pub async fn run_profile_script(
+    profile: &SshProfile,
+    script: &str,
+    stdin: &[u8],
+) -> Result<Vec<u8>, ConnectError> {
+    let mut command = profile_script_command(profile, script, true);
     let mut child = command
         .spawn()
         .map_err(|err| ConnectError::unavailable(format!("failed to run ssh: {err}")))?;

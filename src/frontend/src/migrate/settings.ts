@@ -59,6 +59,7 @@ export function migrateSettings(value: Partial<Settings>): Settings {
     cursorShape: value.cursorShape === "bar" || value.cursorShape === "underline" ? value.cursorShape : "block",
     copyOnSelect: value.copyOnSelect ?? DEFAULT_SETTINGS.copyOnSelect,
     useResttyClipboard: value.useResttyClipboard ?? DEFAULT_SETTINGS.useResttyClipboard,
+    secretFileShortcut: value.secretFileShortcut === "alt-k" || value.secretFileShortcut === "disabled" ? value.secretFileShortcut : "alt-v",
     touchSelectionMode: normalizeTouchSelectionMode(value.touchSelectionMode),
     preventMobileKeyboardAutoOpen: normalizePreventMobileKeyboardAutoOpen(
       value.preventMobileKeyboardAutoOpen,

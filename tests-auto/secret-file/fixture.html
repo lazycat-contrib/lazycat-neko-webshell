@@ -1,0 +1,20 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>机密文件交互验证</title><style>body{margin:0;padding:24px;background:var(--bg);color:var(--text);font-family:var(--font-sans)}header{display:flex;align-items:center;justify-content:space-between}#terminal-input{font:14px/1.8 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:44px}#mobile-host{position:fixed;bottom:0;left:0;right:0}#notice{color:var(--muted);font-size:13px}h1{font-size:16px}</style></head><body><header><h1>WebShell · workspace</h1><button id="open" class="command-button">机密文件</button></header><p id="notice">交互测试环境 · 所有凭据和文件操作均为模拟</p><div id="terminal-input">› </div><div id="mobile-host"></div><script type="module">
+import '/src/styles.css';
+import '/src/mobile/styles.css';
+import {createIcons,icons} from 'lucide';
+import {createSecretFileController} from '/src/plugins/file-transfer/secret-file-controller.ts';
+import {renderMobileKeyboardView} from '/src/mobile/keyboard-view.ts';
+import {createMobileKeyboardController} from '/src/mobile/keyboard-controller.ts';
+import {translate} from '/src/i18n.ts';
+window.qa={generation:1,mode:'ok',clipboard:'  TEST-ONLY KEY\nsecond line\n',requests:[],pastes:[],pendingReads:[],delay:0,restoredKeyboard:0,shortcut:'alt-v'};
+qa.pane={id:'p',sessionId:'s',selector:'workspace@owner',connectionState:'connected',replaying:false,closing:false,exited:false};
+Object.defineProperty(navigator,'clipboard',{configurable:true,value:{readText:()=>qa.mode==='deny'?Promise.reject(new Error('denied')):qa.mode==='pending'?new Promise(resolve=>qa.pendingReads.push(resolve)):Promise.resolve(qa.mode==='empty'?'':qa.clipboard),writeText:async text=>{if(qa.copyFail)throw new Error('denied');qa.copied=text;}}});
+const client={invokePlugin:async request=>{qa.requests.push({...request,payload:Array.from(request.payload)});if(qa.delay)await new Promise(resolve=>setTimeout(resolve,qa.delay));if(qa.fail)throw new Error('test failure');const path=request.operation==='secret_create'?'/tmp/lazycat-webshell-secret-'+crypto.randomUUID().replaceAll('-','')+'/key-'+crypto.randomUUID().replaceAll('-',''):request.metadata.path;return {status:'complete',contentType:'text/plain',payload:new Uint8Array(),metadata:{path}};}};
+const manager=createSecretFileController({client,activePane:()=>qa.pane,generation:()=>qa.generation,enabled:()=>true,canWrite:()=>!qa.readonly,prepare:()=>{},paste:(pane,text)=>{qa.pastes.push({selector:pane.selector,text});document.querySelector('#terminal-input').textContent+=text;return true;},focus:()=>{},shortcut:()=>qa.shortcut,setShortcut:value=>qa.shortcut=value,tr:(k,v)=>translate('zh-CN',k,v),status:message=>document.querySelector('#notice').textContent=message});
+qa.manager=manager;document.querySelector('#open').onclick=()=>manager.open();
+document.addEventListener('keydown',event=>{if(manager.ownsEvent(event)){event.stopImmediatePropagation();return;}manager.handleShortcut(event,qa.pane);},true);
+document.querySelector('#mobile-host').innerHTML=renderMobileKeyboardView();
+const mobile=createMobileKeyboardController({root:document.querySelector('#mobileShortcuts'),preserveSystemKeyboardState:()=>()=>qa.restoredKeyboard++,onKeyInput:()=>{},onPasteShortcut:async()=>{},onAction:async action=>{if(action==='secret-file')manager.open();},onPhrase:async()=>{}});mobile.bind();
+for(const node of document.querySelectorAll('[data-i18n-aria]'))node.setAttribute('aria-label',translate('zh-CN',node.dataset.i18nAria));
+createIcons({icons});qa.ready=true;
+</script></body></html>

@@ -25,6 +25,7 @@ export const MOBILE_KEYBOARD_ACTIONS = [
   "split-down",
   "copy-selection",
   "paste-clipboard",
+  "secret-file",
   "font-larger",
   "font-smaller",
   "pane-menu",

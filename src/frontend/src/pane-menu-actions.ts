@@ -13,6 +13,7 @@ export type PaneMenuAction =
   | "resize-right"
   | "copy-selection"
   | "paste-clipboard"
+  | "secret-file"
   | "toggle-pane-maximize"
   | "promote-session-to-tab"
   | "close-active-session";
@@ -44,6 +45,7 @@ const ACTION_LABELS: Record<PaneMenuAction, MessageKey> = {
   "resize-right": "action.resizeRight",
   "copy-selection": "action.copySelection",
   "paste-clipboard": "action.pasteClipboard",
+  "secret-file": "secret.title",
   "toggle-pane-maximize": "action.maximizePane",
   "promote-session-to-tab": "action.promoteSessionToTab",
   "close-active-session": "action.closeActiveSession",
@@ -52,7 +54,7 @@ const ACTION_LABELS: Record<PaneMenuAction, MessageKey> = {
 const ACTION_GROUPS: PaneMenuAction[][] = [
   ["split-up", "split-down", "split-left", "split-right"],
   ["resize-up", "resize-down", "resize-left", "resize-right"],
-  ["copy-selection", "paste-clipboard", "toggle-pane-maximize", "promote-session-to-tab"],
+  ["copy-selection", "paste-clipboard", "secret-file", "toggle-pane-maximize", "promote-session-to-tab"],
   ["close-active-session"],
 ];
 
@@ -97,6 +99,7 @@ export function paneMenuActionSupported(
   visiblePaneCount: (tab: TerminalTab) => number,
 ): boolean {
   if (!pane) return false;
+  if (action === "secret-file") return Boolean(pane.sessionId && !pane.closing && !pane.exited);
   if (tabHasBackend(tab, "herdr")) {
     return action === "split-right"
       || action === "split-down"

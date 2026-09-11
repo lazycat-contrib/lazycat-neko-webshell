@@ -292,6 +292,7 @@ import { createAiVoiceSpeechTestController } from "./plugins/ai-chat/voice-speec
 import {
   newAiVoiceSpeechProviderProfile,
 } from "./plugins/ai-chat/voice-speech-profiles";
+import { createSecretFileController } from "./plugins/file-transfer/secret-file-controller";
 import { createFileTransferController } from "./plugins/file-transfer/controller";
 import { setFileTransferOutput } from "./plugins/file-transfer/dom";
 import { renderFileTransferToolView } from "./plugins/file-transfer/tool-view";
@@ -1181,6 +1182,21 @@ const fileTransfer = createFileTransferController({
   onOutput: setFileTransferOutput,
   onStatus: setFileTransferStatus,
   onRender: renderPluginTools,
+});
+const secretFiles = createSecretFileController({
+  client: capabilityClient,
+  activePane,
+  generation: () => selectedSelectorGeneration,
+  enabled: () => pluginIsEnabled(FILE_TRANSFER_PLUGIN_ID),
+  canWrite: (pane) => terminalControl.canWrite(pane, { report: false }),
+  prepare: prepareAppMobileOverlay,
+  paste: (pane, text) => pane.sessionBackend === "herdr"
+    ? pasteTextIntoHerdrPane(pane, text, true) : pasteTextIntoPane(pane, text),
+  focus: focusPaneCanvas,
+  shortcut: () => settings.secretFileShortcut,
+  setShortcut: (shortcut) => { settings.secretFileShortcut = shortcut; saveSettings(); },
+  tr,
+  status: setGlobalStatus,
 });
 const publicTunnel = createPublicTunnelController({
   isEnabled: () => pluginIsEnabled(PUBLIC_TUNNEL_PLUGIN_ID),
@@ -2505,6 +2521,7 @@ function bindActions() {
   });
   bindSettingsTabs();
   bindLifecycleEvents();
+  document.querySelector("[data-secret-file-open]")?.addEventListener("click", () => secretFiles.open());
   bindMobileShortcuts();
   document.addEventListener("keydown", handleGlobalShortcutCapture, true);
   document.addEventListener("keydown", handleTerminalImeFocusCapture, true);
@@ -2513,7 +2530,7 @@ function bindActions() {
     if (!herdrMachines?.ownsEvent(event)) handleTerminalClipboardCapture(event);
   }, true);
   document.addEventListener("paste", event => {
-    if (!herdrMachines?.ownsEvent(event)) handleTerminalPasteEvent(event);
+    if (!herdrMachines?.ownsEvent(event) && !secretFiles.ownsEvent(event)) handleTerminalPasteEvent(event);
   }, true);
   elements.instanceButton.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -2747,6 +2764,8 @@ async function runMobileAction(action: string) {
     await splitActivePane("down");
   } else if (action === "copy-selection") {
     await copySelection(true);
+  } else if (action === "secret-file") {
+    secretFiles.open();
   } else if (action === "paste-clipboard") {
     await pasteIntoPane(activePane(), true);
   } else if (action === "font-larger") {
@@ -2898,6 +2917,7 @@ function hidePaneContextMenus() {
 async function runPaneActionForPane(pane: TerminalPane, action: PaneMenuAction | string) {
   const tab = tabForPane(pane);
   if (tab) activatePane(tab.id, pane.id);
+  if (action === "secret-file") { secretFiles.open(pane); return; }
   if (action === "toggle-pane-maximize" && tab) {
     togglePaneMaximize(tab, pane);
     return;
@@ -3193,7 +3213,9 @@ function setBackendActionFailed(pane: TerminalPane, message: string) {
 }
 
 function handleGlobalShortcutCapture(event: KeyboardEvent) {
+  if (secretFiles.ownsEvent(event)) { event.stopImmediatePropagation(); return; }
   if (herdrMachines?.ownsEvent(event)) return;
+  if (secretFiles.handleShortcut(event, paneForShortcutTarget(event.target))) return;
   if (event.defaultPrevented) return;
   if (handleFontZoomShortcut(event) || handleZellijTerminalShortcut(event)) {
     event.stopImmediatePropagation();

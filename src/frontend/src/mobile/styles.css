@@ -2436,3 +2436,38 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Private clipboard file action stays beside the keyboard toggle on every page. */
+.mobile-keyboard-pages > .mobile-secret-file-button {
+  display: inline-flex;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-inline: 4px;
+  padding: 0;
+  color: var(--text);
+  background: var(--component-bg, var(--surface));
+  border: 1px solid var(--component-border, var(--line));
+  border-radius: 6px;
+}
+.mobile-secret-file-button svg { width: 18px; height: 18px; }
+.mobile-secret-file-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@media (max-width: 760px), (pointer: coarse) {
+  .desktop-secret-file-trigger { display: none; }
+  dialog.secret-file-dialog {
+    width: 100%; max-width: 100%; margin: auto 0 0;
+    border-radius: 16px 16px 0 0;
+    padding: 16px 20px calc(20px + env(safe-area-inset-bottom));
+    max-height: min(90dvh, var(--secret-viewport-height, 90dvh));
+    bottom: var(--secret-viewport-bottom, 0px);
+  }
+  .secret-file-dialog .secret-file-actions button { min-height: 48px; }
+  .secret-file-shortcut { display: none; }
+}
+@media (max-width: 360px) { .secret-file-actions { flex-direction: column; } }
+
+.mobile-secret-file-button { transition: transform var(--motion-press) var(--ease-out); }
+.mobile-secret-file-button:active:not(:focus-visible) { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) { .mobile-secret-file-button:active { transform: none; } }

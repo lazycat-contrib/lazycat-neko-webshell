@@ -160,6 +160,7 @@ export const DEFAULT_SETTINGS: Settings = {
   cursorShape: "block",
   copyOnSelect: false,
   useResttyClipboard: true,
+  secretFileShortcut: "alt-v",
   touchSelectionMode: "long-press",
   preventMobileKeyboardAutoOpen: false,
   mobileClockEnabled: true,

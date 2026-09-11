@@ -165,6 +165,14 @@ unzip -o /tmp/sounds.zip -d /lzcapp/var
 
 The final files should look like `/lzcapp/var/sounds/noise/white-noise.wav`. Supported formats are `.mp3`, `.wav`, `.ogg`, `.flac`, `.m4a`, and `.webm`. To add custom sounds, place your own folders and audio files under `sounds/`, then refresh the tool.
 
+## Secret files
+
+To provide a key file to an AI or agent, press `Ctrl+Alt+V` on PC (`⌘⌥V` on Mac), or click the file-key icon in the top toolbar. On mobile, the same icon stays in the keyboard menu bar, outside the shortcut pages. The panel lets you switch the desktop shortcut to `Ctrl+Alt+K` (`⌘⌥K` on Mac) or disable it.
+
+WebShell saves clipboard text to a randomly named file inside a private directory under `/tmp` on the current terminal target. Files use mode `600`; directories use `700`. If the clipboard is empty, access is denied, or reading takes more than three seconds, a manual paste field appears. Line breaks and whitespace are preserved, up to 1 MiB.
+
+Insert the resulting path into the terminal or copy it. Inserting never presses Enter. The secret body does not enter terminal history, although an AI or agent that reads the file may include it in its context. Created paths remain available in the panel until the page reloads; you can select or delete them. Reloading clears this path list but leaves the target files in place. Delete files after use: closing the panel does not delete them, and system cleanup timing varies.
+
 ## Appearance And Settings
 
 Settings include:

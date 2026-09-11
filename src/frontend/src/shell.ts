@@ -185,6 +185,7 @@ export function renderShell(app: HTMLElement): ShellElements {
           <button class="icon-button" id="fitTerminal" type="button" aria-label="Full screen" title="Full screen" data-i18n-aria="action.fullscreen" data-i18n-title="action.fullscreen">
             <i data-lucide="maximize"></i>
           </button>
+          <button class="icon-button desktop-secret-file-trigger" type="button" data-secret-file-open aria-label="Secret file" title="Secret file" data-i18n-aria="secret.title" data-i18n-title="secret.title"><i data-lucide="file-key" aria-hidden="true"></i></button>
           <div class="shortcut-help-shell" id="shortcutHelpShell">
             <button class="icon-button" id="shortcutHelpButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Keyboard shortcuts" title="Keyboard shortcuts" data-i18n-aria="action.shortcutHelp" data-i18n-title="action.shortcutHelp">
               <i data-lucide="keyboard"></i>
@@ -207,6 +208,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                       <div><dt><kbd>Ctrl</kbd><kbd>+</kbd> / <kbd>Ctrl</kbd><kbd>-</kbd></dt><dd data-i18n="shortcut.zoomFont">Adjust terminal font</dd></div>
                       <div><dt><kbd>Ctrl</kbd><kbd>0</kbd></dt><dd data-i18n="shortcut.resetFont">Reset terminal font</dd></div>
                       <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>C/V</kbd></dt><dd data-i18n="shortcut.copyPaste">Copy or paste</dd></div>
+                      <div><dt><kbd>Ctrl/⌘</kbd><kbd>Alt/⌥</kbd><kbd>V</kbd></dt><dd data-i18n="secret.shortcutHelp">Secret file (default; change in its panel)</dd></div>
                     </dl>
                   </section>
                   <section>
