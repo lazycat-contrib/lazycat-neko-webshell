@@ -11,7 +11,7 @@ resolver = "3"
 
 [dependencies]
 anyhow = "1.0.100"
-async-openai = { version = "0.41.1", default-features = false, features = ["audio", "byot", "chat-completion", "model", "responses", "rustls"] }
+async-openai = { version = "0.42.0", default-features = false, features = ["audio", "byot", "chat-completion", "model", "responses", "rustls"] }
 axum = { version = "0.8.7", features = ["tokio", "http1", "json", "multipart", "ws"] }
 buffa = { version = "0.8.1", features = ["json"] }
 buffa-types = "0.9.1"
