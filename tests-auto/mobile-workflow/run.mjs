@@ -27,15 +27,27 @@ export async function runMobileWorkflowScenario(){
   assert.equal(await evaluate('document.querySelector(".desktop-secret-file-trigger")'),null);
   await tap('[data-mobile-action="toggle-system-keyboard"]');
   await tap('[data-mobile-page="nav"]');
-  assert.equal(await evaluate('document.querySelector("#mobileShortcuts").dataset.navigationOpen'),'true');
+  const navigation = () => evaluate('(()=>{const panel=document.querySelector("[data-mobile-panel=nav]"),controls=document.querySelector(".mobile-keyboard-controls"),tabs=document.querySelector(".mobile-keyboard-pages");const r=panel.getBoundingClientRect(),c=controls.getBoundingClientRect(),t=tabs.getBoundingClientRect();return {visible:!panel.hidden,inFlow:getComputedStyle(panel).position==="static",below:r.top>=t.bottom,inside:r.top>=c.top&&r.bottom<=c.bottom,rows:c.height}})()');
+  assert.deepEqual(await navigation(),{visible:true,inFlow:true,below:true,inside:true,rows:44},'navigation must stay inside the existing lower key area');
+  for(const direction of ['left','down','up','right'])assert.equal(await evaluate(`(()=>{const r=document.querySelector('[data-mobile-panel=nav] [data-mobile-shortcut=${direction}]').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth})()`),true,'arrows must be visible without scrolling');
   assert.equal(await evaluate('document.activeElement.id'),'qa-terminal-input','navigation must preserve keyboard focus');
   const arrows=await evaluate('[...document.querySelectorAll("[data-mobile-shortcut=left]")].filter(e=>e.getClientRects().length).length');assert.equal(arrows,1);
   await tap('[data-mobile-panel="nav"] [data-mobile-shortcut="left"]');assert.equal(await evaluate('qa.bytes.at(-1)'),'\x1b[D');
   await screenshot('navigation');
+  const beforePan = await evaluate('qa.bytes.length');
+  const pan = await evaluate('(()=>{const r=document.querySelector("[data-mobile-panel=nav]").getBoundingClientRect();return{x:r.left+r.width*.8,y:r.top+r.height/2}})()');
+  await browser.dispatchTouch([touch('touchStart',pan,4,30),touch('touchMove',{x:pan.x-80,y:pan.y},4,60),touch('touchMove',{x:pan.x-160,y:pan.y},4,60),touch('touchEnd',pan,4)]);
+  await wait('document.querySelector("[data-mobile-panel=nav]").scrollLeft>0');
+  assert.equal(await evaluate('qa.bytes.length'),beforePan,'scrolling navigation must not send the key under the finger');
+  await evaluate('document.querySelector("[data-mobile-panel=nav]").scrollLeft=0');
+
   const p=await evaluate('qa.point("[data-mobile-panel=nav] [data-mobile-shortcut=down]")');
   await evaluate('qa.bytes=[]');await browser.dispatchTouch([touch('touchStart',p,2,550),touch('touchCancel',p,2)]);
   const repeated=await evaluate('qa.bytes.length');assert(repeated>=2);await browser.command(['wait','200']);assert.equal(await evaluate('qa.bytes.length'),repeated);
-  await tap('[data-mobile-page="nav"]');assert.equal(await evaluate('document.querySelector("#mobileShortcuts").dataset.navigationOpen'),'false');
+  await tap('[data-mobile-page="nav"]');assert.equal((await navigation()).visible,true,'reselecting Navigation must not dismiss it');
+  await click('#qa-terminal-input');assert.equal((await navigation()).visible,true,'outside interaction must not reset the selected category');
+  await browser.press('Escape');assert.equal((await navigation()).visible,true,'Escape is a terminal key, not a navigation dismissal');
+  await tap('[data-mobile-page="main"]');assert.equal((await navigation()).visible,false);
   await evaluate('qa.bytes=[]');await composer();
   assert.equal(await evaluate('document.activeElement.id'),'mobile-composer-input');
   await browser.command(['fill','#mobile-composer-input','第一行\n  second line']);
@@ -68,7 +80,7 @@ export async function runMobileWorkflowScenario(){
   await browser.command(['set','viewport','390','360']);await browser.command(['wait','100']);
   assert.equal(await evaluate('(()=>{const r=document.querySelector(".mobile-composer-actions").getBoundingClientRect();return r.bottom<=innerHeight&&r.top>=0})()'),true,'composer actions remain visible above a short keyboard viewport');
   await screenshot('composer-keyboard');await browser.command(['set','viewport','320','560']);assert.equal(await evaluate('document.querySelector(".mobile-composer").scrollWidth<=document.querySelector(".mobile-composer").clientWidth'),true);await closeComposer();
-  await evaluate('qa.preset="custom";qa.layout.pages[0].keys.push({id:"custom-left",kind:"shortcut",value:"left",label:"My Left",ariaLabel:"My Left",width:"md",hidden:false,repeat:true,autoEnter:false,custom:true});qa.refresh()');assert.equal(await evaluate('document.querySelector("[data-mobile-panel=main] [data-mobile-shortcut=left]").textContent'),'My Left');await tap('[data-mobile-page="nav"]');assert.equal(await evaluate('document.querySelector("#mobileShortcuts").dataset.navigationOpen'),'false');
+  await evaluate('qa.preset="custom";qa.layout.pages[0].keys.push({id:"custom-left",kind:"shortcut",value:"left",label:"My Left",ariaLabel:"My Left",width:"md",hidden:false,repeat:true,autoEnter:false,custom:true});qa.refresh()');assert.equal(await evaluate('document.querySelector("[data-mobile-panel=main] [data-mobile-shortcut=left]").textContent'),'My Left');await tap('[data-mobile-page="nav"]');assert.equal(await evaluate('document.querySelector("[data-mobile-panel=nav]").hidden'),false);
   await evaluate(`(()=>{
     for(let i=0;i<26;i++){
       qa.switch('retired-'+i);qa.experience.openComposer();

@@ -66,6 +66,30 @@ export async function runMobileLayoutScenario() {
     assert.equal((await state()).preset, "default");
     await click("[data-mobile-layout-undo]");
     assert.equal((await state()).layout.pages.find((page) => page.id === "sym").keys.at(-1).id, added.id);
+    // Navigation preview and the live category must honor the exact saved customization.
+    await click('[data-mobile-layout-page-tab="nav"]');
+    await click('[data-mobile-key-move="nav-right"][data-direction="-1"]');
+    await browser.command(["select", 'select[data-mobile-key-width="nav-left"]', "lg"]);
+    await click('[data-mobile-key-visibility="nav-home"]');
+    if (!await browser.evaluate('document.querySelector("[data-mobile-key-editor-title]").closest("details").open')) await click('[data-mobile-key-editor-title]');
+    await fill('[data-mobile-key-label]', 'My navigation key');
+    await fill('[data-mobile-key-text]', 'pwd');
+    await click('[data-mobile-key-add]');
+    const configured = (await state()).layout.pages.find(page => page.id === "nav").keys;
+    assert.deepEqual(configured.slice(0,4).map(key => key.value), ["left","down","right","up"]);
+    assert.equal(configured.find(key => key.id === "nav-left").width, "lg");
+    assert.equal(configured.find(key => key.id === "nav-home").hidden, true);
+    const preview = await browser.evaluate('[...document.querySelectorAll("[data-mobile-layout-preview] button")].map(button=>({value:button.dataset.mobileShortcut||button.dataset.mobileText,width:button.dataset.mobileKeyWidth}))');
+    const live = await browser.evaluate(`(async()=>{
+      const {renderMobileKeyboardPanels}=await import('/src/frontend/src/mobile/keyboard-layout-view.ts');
+      const {normalizeMobileKeyboardLayout}=await import('/src/frontend/src/mobile/keyboard-layout.ts');
+      const saved=normalizeMobileKeyboardLayout(JSON.parse(JSON.stringify(window.layoutFixture.state().layout)));
+      const container=document.createElement('div');container.innerHTML=renderMobileKeyboardPanels(saved);
+      return [...container.querySelectorAll('[data-mobile-panel=nav] button')].map(button=>({value:button.dataset.mobileShortcut||button.dataset.mobileText,width:button.dataset.mobileKeyWidth}));
+    })()`);
+    assert.deepEqual(live,preview,'saved navigation order/width/hidden/custom text must render exactly like the preview');
+    assert.equal(live.some(key => key.value === "home"), false);
+    assert.equal(live.at(-1).value, "pwd");
     for (const [width, locale] of [[375, "en"], [375, "zh-CN"], [1024, "en"]]) {
       await browser.navigate(`http://127.0.0.1:${port}/tests-auto/mobile-layout/index.html?locale=${locale}`);
       await browser.command(["set", "viewport", String(width), "812"]);

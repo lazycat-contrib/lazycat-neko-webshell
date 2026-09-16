@@ -18,7 +18,7 @@ export function renderMobileKeyboardView(): string {
           <span class="mobile-shortcut-clock" id="mobileShortcutClock" role="timer" aria-label="Current time" data-i18n-aria="label.currentTime"></span>
         </div>
         <div class="mobile-keyboard-controls">
-          ${renderMobileKeyboardPanels(mobileKeyboardPresetLayout("default"), true)}
+          ${renderMobileKeyboardPanels(mobileKeyboardPresetLayout("default"))}
           <div class="mobile-keyboard-panel" data-mobile-panel="phrases" hidden></div>
         </div>
       </div>

@@ -22,7 +22,6 @@ type Options = {
   sendHerdrKeys: (selector: string, paneId: string, keys: string[]) => Promise<void>;
   sendHerdrRaw: (selector: string, paneId: string, text: string) => Promise<void>;
   prepare: () => void;
-  closeNavigation: () => void;
   cancelKeys: () => void;
   closeOverview: () => void;
   tr: (key: MessageKey, values?: Record<string, string | number>) => string;
@@ -31,7 +30,7 @@ type Options = {
 export function createMobileExperience(options: Options) {
   const isCurrent = (target: MobileInputTarget) => sameMobileInputTarget(target, options.target());
   const dispatch = createMobileInputDispatch({ ...options, isCurrent, multilineError: () => options.tr("mobileComposer.multilineUnsupported") });
-  const prepare = () => { options.closeNavigation(); options.cancelKeys(); options.closeOverview(); options.prepare(); };
+  const prepare = () => { options.cancelKeys(); options.closeOverview(); options.prepare(); };
   const composer = createMobileComposer({ target: options.target, isRetired: options.isRetired, isCurrent, send: dispatch.send, prepare, tr: options.tr });
 
   function keys() {
@@ -77,11 +76,11 @@ export function createMobileExperience(options: Options) {
   let lastTarget: MobileInputTarget | undefined;
   function sync() {
     const target = options.target();
-    if (lastTarget && !sameMobileInputTarget(lastTarget, target)) { options.closeNavigation(); options.cancelKeys(); }
+    if (lastTarget && !sameMobileInputTarget(lastTarget, target)) { options.cancelKeys(); }
     lastTarget = target;
     composer.sync(); palette.sync();
   }
-  function close() { composer.close(); palette.close(); options.closeNavigation(); options.cancelKeys(); }
+  function close() { composer.close(); palette.close(); options.cancelKeys(); }
   return {
     openComposer() { palette.close(); composer.open(); },
     openPalette() { composer.close(); palette.open(); },

@@ -169,7 +169,7 @@ The final files should look like `/lzcapp/var/sounds/noise/white-noise.wav`. Sup
 
 The edit icon opens a multiline draft composer. Drafts stay in page memory per terminal, including the actual Herdr pane, and survive closing the composer until the page reloads. Enter edits a new line; Insert adds no extra Enter, while Send + Enter explicitly submits. Failed sends retain the draft, and reopening a pending send cannot submit it twice. Multiline Insert is refused with an explanation for native terminals without bracketed paste, and for Herdr panes whose inner paste mode cannot be verified.
 
-The navigation icon opens a compact directional panel. Default main-row arrows are removed to avoid duplicate keys. Home, End, page and delete keys remain available, with hold-to-repeat. Tap the navigation icon again, tap outside or press Escape to dismiss. The panel preserves the system keyboard state and leaves custom layouts unchanged.
+Selecting Navigation shows the arrow keys first in the lower key rail, followed by Home, End, page and delete keys with horizontal scrolling and hold-to-repeat. Swiping the rail does not send the key under your finger. Default main-row arrows remain removed to avoid duplication. Navigation switches like the other categories, without a floating panel or changing the system keyboard state; custom layouts remain unchanged.
 
 The phrases icon opens a searchable Recent / All phrases / Keys panel, using existing quick phrases and their explicit Send Enter setting. The operations page also provides a session overview with pane counts, connection state and the current selection.
 

@@ -70,7 +70,7 @@ test("keeps built-in navigation keys in a single location", () => {
   const expectedIds = {
     main: ["main-ctrl", "main-alt", "main-shift", "main-tab", "main-enter", "main-copy", "main-paste", "main-menu", "main-ctrl-e", "main-ctrl-c", "main-swap", "main-shift-tab", "main-tilde", "main-slash", "main-hyphen", "main-dollar", "main-escape"],
     ops: ["ops-overview", "ops-prev-tab", "ops-next-tab", "ops-new-tab", "ops-close-tab", "ops-prev-pane", "ops-next-pane", "ops-split-right", "ops-split-down", "ops-copy", "ops-paste", "ops-font-up", "ops-font-down"],
-    nav: ["nav-home", "nav-end", "nav-page-up", "nav-page-down", "nav-insert", "nav-delete", "nav-backspace", "nav-left", "nav-down", "nav-up", "nav-right"],
+    nav: ["nav-left", "nav-down", "nav-up", "nav-right", "nav-home", "nav-end", "nav-page-up", "nav-page-down", "nav-insert", "nav-delete", "nav-backspace"],
     fn: Array.from({ length: 12 }, (_, index) => `fn-${index + 1}`),
     sym: Array.from({ length: 18 }, (_, index) => `sym-${index}`),
   };

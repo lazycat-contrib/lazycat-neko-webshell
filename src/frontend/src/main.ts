@@ -1214,7 +1214,6 @@ const mobileExperience = createMobileExperience({
   sendHerdrKeys: async (selector, paneId, keys) => { await runHerdrSocketRequest("pane.send_keys", { pane_id: paneId, keys }, { selector, mirrorNotification: false }); },
   sendHerdrRaw: async (selector, paneId, text) => { await runHerdrSocketRequest("pane.send_text", { pane_id: paneId, text }, { selector, mirrorNotification: false }); },
   prepare: prepareAppMobileOverlay,
-  closeNavigation: mobileKeyboard.closeNavigationPad,
   cancelKeys: mobileKeyboard.stopRepeatInput,
   closeOverview: () => { if (mobileWorkspaceOverview.isOpen()) mobileWorkspaceOverview.close(); },
   tr,

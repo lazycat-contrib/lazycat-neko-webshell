@@ -2470,3 +2470,11 @@ body.desktop-controls-enabled:not(.mobile-controls-enabled) .mobile-shortcuts {
 .mobile-secret-file-button { transition: transform var(--motion-press) var(--ease-out); }
 .mobile-secret-file-button:active:not(:focus-visible) { transform: scale(.97); }
 @media (prefers-reduced-motion: reduce) { .mobile-secret-file-button:active { transform: none; } }
+
+/* Category rails and the settings preview use the same native horizontal pan. */
+.mobile-keyboard-page-tabs,
+.mobile-keyboard-panel {
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pinch-zoom;
+}
