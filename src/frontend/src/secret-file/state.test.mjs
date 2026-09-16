@@ -44,7 +44,7 @@ test("desktop shortcut is exact, configurable and ignores repeats and compositio
   assert.equal(secretFileShortcutMatches({ ...event, ctrlKey: false, metaKey: true }, "alt-v", true), true);
 });
 
-test("mobile action runs in the gesture and does not restore the keyboard over the sheet", () => {
-  assert.equal(mobileActionEventPhase("secret-file"), "pointerup");
+test("mobile action opens on click and does not restore the keyboard over the sheet", () => {
+  assert.equal(mobileActionEventPhase("secret-file"), "click");
   assert.equal(mobileActionRestoresKeyboard("secret-file"), false);
 });

@@ -36,3 +36,5 @@ checks, not remote LightOS or physical-device certification; each scenario READM
 prerequisites and limits.
 
 The separate [Herdr API smoke](herdr-api/README.md) validates the new SockAPI methods against an isolated real Herdr 0.9 server.
+
+无桌面显示服务的环境可设置 `NEKO_BROWSER_HEADLESS=1` 运行浏览器回归，例如 `NEKO_BROWSER_HEADLESS=1 npm run test:browser -- mobile-keyboard mobile-layout mobile-workflow`。

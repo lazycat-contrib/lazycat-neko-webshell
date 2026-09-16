@@ -100,6 +100,7 @@ export function createMobileComposerView(tr: Translate, handlers: Handlers) {
   function syncViewport() {
     const viewport = window.visualViewport;
     if (!viewport || !dialog.open) return;
+    dialog.dataset.compact = String(viewport.height < 460);
     dialog.style.setProperty("--mobile-composer-viewport-height", `${Math.max(160, viewport.height)}px`);
     dialog.style.setProperty(
       "--mobile-composer-viewport-bottom",

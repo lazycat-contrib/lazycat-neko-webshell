@@ -35,6 +35,7 @@ export function createMobileCommandPalette(options: Options) {
   let disposed = false;
 
   function ensureView() {
+    if (view && view.dialog.querySelector("h2")?.textContent !== options.tr("mobilePalette.title")) { view.destroy(); view = undefined; }
     if (view) return view;
     view = createMobileCommandPaletteView(options.tr, {
       close,

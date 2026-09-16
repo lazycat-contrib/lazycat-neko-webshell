@@ -1,6 +1,4 @@
 .mobile-command-palette {
-  --mobile-palette-motion-in: 200ms;
-  --mobile-palette-motion-out: 150ms;
   position: fixed;
   inset: auto 0 var(--mobile-palette-viewport-bottom, 0px);
   width: min(100%, 560px);
@@ -22,10 +20,10 @@
   opacity: 0;
   transform: translateY(18px);
   transition:
-    opacity var(--mobile-palette-motion-out) var(--ease-out),
-    transform var(--mobile-palette-motion-out) var(--ease-out),
-    display var(--mobile-palette-motion-out) allow-discrete,
-    overlay var(--mobile-palette-motion-out) allow-discrete;
+    opacity var(--motion-dialog-out) var(--ease-out),
+    transform var(--motion-dialog-out) var(--ease-out),
+    display var(--motion-dialog-out) allow-discrete,
+    overlay var(--motion-dialog-out) allow-discrete;
   overscroll-behavior: contain;
 }
 
@@ -33,20 +31,20 @@
   background: var(--overlay-scrim);
   opacity: 0;
   transition:
-    opacity var(--mobile-palette-motion-out) var(--ease-out),
-    display var(--mobile-palette-motion-out) allow-discrete,
-    overlay var(--mobile-palette-motion-out) allow-discrete;
+    opacity var(--motion-dialog-out) var(--ease-out),
+    display var(--motion-dialog-out) allow-discrete,
+    overlay var(--motion-dialog-out) allow-discrete;
 }
 
 .mobile-command-palette[open] {
   opacity: 1;
   transform: translateY(0);
-  transition-duration: var(--mobile-palette-motion-in);
+  transition-duration: var(--motion-dialog-in);
 }
 
 .mobile-command-palette[open]::backdrop {
   opacity: 1;
-  transition-duration: var(--mobile-palette-motion-in);
+  transition-duration: var(--motion-dialog-in);
 }
 
 @starting-style {

@@ -165,6 +165,14 @@ unzip -o /tmp/sounds.zip -d /lzcapp/var
 
 The final files should look like `/lzcapp/var/sounds/noise/white-noise.wav`. Supported formats are `.mp3`, `.wav`, `.ogg`, `.flac`, `.m4a`, and `.webm`. To add custom sounds, place your own folders and audio files under `sounds/`, then refresh the tool.
 
+## Mobile input and navigation
+
+The edit icon opens a multiline draft composer. Drafts stay in page memory per terminal, including the actual Herdr pane, and survive closing the composer until the page reloads. Enter edits a new line; Insert adds no extra Enter, while Send + Enter explicitly submits. Failed sends retain the draft, and reopening a pending send cannot submit it twice. Native terminals that have not enabled multiline paste reject multiline Insert with an explanation.
+
+The navigation icon opens a compact directional panel. Default main-row arrows are removed to avoid duplicate keys. Home, End, page and delete keys remain available, with hold-to-repeat. Tap the navigation icon again, tap outside or press Escape to dismiss. The panel preserves the system keyboard state and leaves custom layouts unchanged.
+
+The phrases icon opens a searchable Recent / All phrases / Keys panel, using existing quick phrases and their explicit Send Enter setting. The operations page also provides a session overview with pane counts, connection state and the current selection.
+
 ## Secret files
 
 To provide a key file to an AI or agent, press `Ctrl+Alt+V` on PC (`⌘⌥V` on Mac), or choose Secret file in the terminal context menu. On mobile, the file-key icon stays in the keyboard menu bar, outside the shortcut pages. The panel lets you switch the desktop shortcut to `Ctrl+Alt+K` (`⌘⌥K` on Mac) or disable it.

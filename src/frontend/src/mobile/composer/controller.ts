@@ -20,6 +20,7 @@ export function createMobileComposer(options: Options) {
   let disposed = false;
 
   function ensureView() {
+    if (view && view.dialog.querySelector("h2")?.textContent !== options.tr("mobileComposer.title")) { view.destroy(); view = undefined; }
     if (view) return view;
     view = createMobileComposerView(options.tr, {
       close,
@@ -49,12 +50,11 @@ export function createMobileComposer(options: Options) {
     options.prepare();
     const currentView = ensureView();
     captured = next;
-    busy = false;
-    currentView.setBusy(false);
+    currentView.setBusy(busy);
     currentView.setAvailable(Boolean(next));
     currentView.target.textContent = next?.label ?? "";
     currentView.textarea.value = next ? model.open(next.key) : "";
-    message(next ? undefined : "mobileComposer.unavailable");
+    message(!next ? "mobileComposer.unavailable" : busy ? "mobileComposer.sending" : undefined);
     currentView.dialog.showModal();
     currentView.syncViewport();
     if (next) currentView.textarea.focus({ preventScroll: true });
@@ -65,7 +65,6 @@ export function createMobileComposer(options: Options) {
     if (!view?.dialog.open) return;
     model.close();
     captured = undefined;
-    busy = false;
     view.dialog.close();
     if (restore && restoreFocus?.isConnected) restoreFocus.focus({ preventScroll: true });
     restoreFocus = undefined;
@@ -122,8 +121,15 @@ export function createMobileComposer(options: Options) {
       succeeded = false;
     }
     const completion = model.completeSubmission(submission, succeeded);
-    if (!completion.ownsView || captured !== target || !view.dialog.open) return;
     busy = false;
+    if (!view || !view.dialog.open || disposed) return;
+    if (!completion.ownsView || captured !== target) {
+      view.setBusy(false);
+      view.setAvailable(Boolean(captured));
+      if (captured?.key === submission.key) view.textarea.value = model.draft(captured.key);
+      message();
+      return;
+    }
     view.setBusy(false);
     if (succeeded) close();
     else {

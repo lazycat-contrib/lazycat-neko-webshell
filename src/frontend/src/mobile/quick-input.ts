@@ -140,10 +140,8 @@ export function renderMobileSymbolKeyboardPanel(agent: MobileSymbolAgent): strin
   }).join("");
 }
 
-export function renderMobileQuickPhrasePageButton(phrases: MobileQuickPhrase[], tr: Translate): string {
-  return phrases.length
-    ? `<button type="button" data-mobile-page="phrases" aria-pressed="false" aria-label="${escapeAttr(tr("tab.quickPhrases"))}" title="${escapeAttr(tr("tab.quickPhrases"))}"><i data-lucide="message-square-text"></i></button>`
-    : "";
+export function renderMobileQuickPhrasePageButton(_phrases: MobileQuickPhrase[], tr: Translate): string {
+  return `<button type="button" data-mobile-action="command-palette" aria-label="${escapeAttr(tr("mobilePalette.title"))}" title="${escapeAttr(tr("mobilePalette.title"))}"><i data-lucide="list-filter" aria-hidden="true"></i></button>`;
 }
 
 export function renderMobileQuickPhraseKeyboardPanel(phrases: MobileQuickPhrase[]): string {

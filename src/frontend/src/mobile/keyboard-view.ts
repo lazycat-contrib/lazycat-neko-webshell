@@ -6,6 +6,7 @@ export function renderMobileKeyboardView(): string {
       <div class="mobile-shortcuts" id="mobileShortcuts" role="region" aria-label="Terminal shortcuts" data-i18n-aria="menu.mobileShortcuts">
         <div class="mobile-keyboard-pages">
           <div class="mobile-keyboard-page-tabs" role="toolbar" aria-label="Terminal shortcut pages" data-i18n-aria="menu.mobileShortcuts">
+            <button type="button" data-mobile-action="compose-text" aria-label="Draft input" title="Draft input" data-i18n-aria="mobileComposer.title" data-i18n-title="mobileComposer.title"><i data-lucide="square-pen" aria-hidden="true"></i></button>
             <button type="button" class="active" data-mobile-page="main" aria-pressed="true" aria-label="Main shortcuts" title="Main shortcuts" data-i18n-aria="label.mobileMainKeys" data-i18n-title="label.mobileMainKeys"><i data-lucide="command"></i></button>
             <button type="button" data-mobile-page="ops" aria-pressed="false" aria-label="Terminal actions" title="Terminal actions" data-i18n-aria="label.mobileOpsKeys" data-i18n-title="label.mobileOpsKeys"><i data-lucide="sliders-horizontal"></i></button>
             <button type="button" data-mobile-page="nav" aria-pressed="false" aria-label="Navigation keys" title="Navigation keys" data-i18n-aria="label.mobileNavKeys" data-i18n-title="label.mobileNavKeys"><i data-lucide="navigation"></i></button>
@@ -17,7 +18,7 @@ export function renderMobileKeyboardView(): string {
           <span class="mobile-shortcut-clock" id="mobileShortcutClock" role="timer" aria-label="Current time" data-i18n-aria="label.currentTime"></span>
         </div>
         <div class="mobile-keyboard-controls">
-          ${renderMobileKeyboardPanels(mobileKeyboardPresetLayout("default"))}
+          ${renderMobileKeyboardPanels(mobileKeyboardPresetLayout("default"), true)}
           <div class="mobile-keyboard-panel" data-mobile-panel="phrases" hidden></div>
         </div>
       </div>

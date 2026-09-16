@@ -8,6 +8,7 @@ type Options = {
   selectorLabel: (selector: string) => string;
   visiblePanes: (tab: TerminalTab) => TerminalPane[];
   backendLabel: (backend: SessionBackendId) => string;
+  statusLabel?: (pane: TerminalPane) => string;
 };
 
 export function buildMobileWorkspaceOverviewItems(options: Options): MobileWorkspaceOverviewTab[] {
@@ -21,6 +22,7 @@ export function buildMobileWorkspaceOverviewItems(options: Options): MobileWorks
       label: pane.title || pane.label,
       detail: options.backendLabel(pane.sessionBackend),
       backend: pane.sessionBackend,
+      status: options.statusLabel?.(pane),
       active: tab.id === options.activeTabId && pane.id === tab.activePaneId,
     })),
   }));

@@ -1,3 +1,5 @@
+import { createMobileExperience } from "./mobile/experience";
+import { captureMobileInputTarget } from "./mobile/input-target";
 import { createTerminalTrace } from "./diagnostics/terminal-trace";
 import { createTerminalDiagnosticsSettings } from "./diagnostics/settings-controller";
 import { createWorkspaceRequestController, workspaceActionChangesFocus, type WorkspaceRequest } from "./workspace-request-controller";
@@ -590,6 +592,7 @@ const mobileWorkspaceOverview = createMobileWorkspaceOverviewController({
     selectorLabel,
     visiblePanes,
     backendLabel: (backend) => tr(`backend.${backend}` as MessageKey),
+    statusLabel: (pane) => tr(`mobileOverview.${pane.connectionState}` as MessageKey),
   }),
   activate: (tabId, paneId) => activatePane(tabId, paneId, { focus: false }),
   prepare: () => prepareMobileOverlay(() => mobileSystemKeyboard.dismissForOverlay()),
@@ -1195,6 +1198,25 @@ const secretFiles = createSecretFileController({
   setShortcut: (shortcut) => { settings.secretFileShortcut = shortcut; saveSettings(); },
   tr,
   status: setGlobalStatus,
+});
+const mobileExperience = createMobileExperience({
+  target: () => captureMobileInputTarget(activePane(), selectedSelectorGeneration, herdrState),
+  phrases: () => settings.mobileQuickPhrases,
+  keys: () => resolveMobileKeyboardLayout(settings.mobileKeyboardPreset, settings.mobileKeyboardLayout).pages.flatMap(page => page.keys),
+  phraseUsed: (id) => { settings.mobileQuickPhrases = markMobileQuickPhraseUsed(settings.mobileQuickPhrases, id); saveSettings(); renderMobileQuickInput(); },
+  canWrite: (pane) => !providerRevisionStale && terminalControl.canWrite(pane, { report: false }),
+  sendBytes: sendPaneInput,
+  nativeKey: (pane, text) => pasteTextIntoPane(pane, text),
+  ensureHerdr: ensureHerdrSocketReady,
+  currentHerdrPane: currentHerdrPaneId,
+  sendHerdrInput: async (selector, paneId, text, enter) => { await runHerdrSocketRequest("pane.send_input", { pane_id: paneId, text, keys: enter ? ["enter"] : [] }, { selector, mirrorNotification: false }); },
+  sendHerdrKeys: async (selector, paneId, keys) => { await runHerdrSocketRequest("pane.send_keys", { pane_id: paneId, keys }, { selector, mirrorNotification: false }); },
+  sendHerdrRaw: async (selector, paneId, text) => { await runHerdrSocketRequest("pane.send_text", { pane_id: paneId, text }, { selector, mirrorNotification: false }); },
+  prepare: prepareAppMobileOverlay,
+  closeNavigation: mobileKeyboard.closeNavigationPad,
+  cancelKeys: mobileKeyboard.stopRepeatInput,
+  closeOverview: () => { if (mobileWorkspaceOverview.isOpen()) mobileWorkspaceOverview.close(); },
+  tr,
 });
 const publicTunnel = createPublicTunnelController({
   isEnabled: () => pluginIsEnabled(PUBLIC_TUNNEL_PLUGIN_ID),
@@ -2521,13 +2543,13 @@ function bindActions() {
   bindLifecycleEvents();
   bindMobileShortcuts();
   document.addEventListener("keydown", handleGlobalShortcutCapture, true);
-  document.addEventListener("keydown", handleTerminalImeFocusCapture, true);
-  document.addEventListener("keydown", handleTerminalInterruptCapture, true);
+  document.addEventListener("keydown", event => { if (!mobileExperience.ownsEvent(event)) handleTerminalImeFocusCapture(event); }, true);
+  document.addEventListener("keydown", event => { if (!mobileExperience.ownsEvent(event)) handleTerminalInterruptCapture(event); }, true);
   document.addEventListener("keydown", event => {
-    if (!herdrMachines?.ownsEvent(event)) handleTerminalClipboardCapture(event);
+    if (!herdrMachines?.ownsEvent(event) && !mobileExperience.ownsEvent(event)) handleTerminalClipboardCapture(event);
   }, true);
   document.addEventListener("paste", event => {
-    if (!herdrMachines?.ownsEvent(event) && !secretFiles.ownsEvent(event)) handleTerminalPasteEvent(event);
+    if (!herdrMachines?.ownsEvent(event) && !secretFiles.ownsEvent(event) && !mobileExperience.ownsEvent(event)) handleTerminalPasteEvent(event);
   }, true);
   elements.instanceButton.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -2664,6 +2686,7 @@ function bindLifecycleEvents() {
   bindWorkspacePassiveSync(workspacePassiveSync, window, document, () => {
     workspaceRequests.dispose();
     terminalDiagnosticsSettings.dispose();
+    mobileExperience.dispose();
     mobileKeyboard.dispose();
   });
   window.addEventListener("orientationchange", handleViewportChange);
@@ -2743,7 +2766,11 @@ async function runMobileQuickPhrase(id: string) {
 }
 
 async function runMobileAction(action: string) {
-  if (action === "previous-tab") {
+  if (action === "compose-text") {
+    mobileExperience.openComposer();
+  } else if (action === "command-palette") {
+    mobileExperience.openPalette();
+  } else if (action === "previous-tab") {
     activateAdjacentTab(-1, { focus: false });
   } else if (action === "next-tab") {
     activateAdjacentTab(1, { focus: false });
@@ -2762,6 +2789,7 @@ async function runMobileAction(action: string) {
   } else if (action === "copy-selection") {
     await copySelection(true);
   } else if (action === "secret-file") {
+    mobileExperience.close();
     secretFiles.open();
   } else if (action === "paste-clipboard") {
     await pasteIntoPane(activePane(), true);
@@ -2774,6 +2802,7 @@ async function runMobileAction(action: string) {
   } else if (action === "maximize-pane") {
     toggleActivePaneMaximize();
   } else if (action === "workspace-overview") {
+    mobileExperience.close();
     mobileWorkspaceOverview.open();
   } else if (action === "toggle-system-keyboard") {
     mobileSystemKeyboard.toggle();
@@ -3210,6 +3239,7 @@ function setBackendActionFailed(pane: TerminalPane, message: string) {
 }
 
 function handleGlobalShortcutCapture(event: KeyboardEvent) {
+  if (mobileExperience.ownsEvent(event)) return;
   if (secretFiles.ownsEvent(event)) { event.stopImmediatePropagation(); return; }
   if (herdrMachines?.ownsEvent(event)) return;
   if (secretFiles.handleShortcut(event, paneForShortcutTarget(event.target))) return;
@@ -5910,7 +5940,7 @@ async function mountTerminal(pane: TerminalPane) {
     transport,
     forwardTerminalReplies: pane.terminalReplyAuthority !== "server",
     beforeInput: ({ text, source }) => transformMobileStickyInput(text, source),
-    beforeRenderOutput: ({ text }) => remoteClipboard.beforeRenderOutput(text),
+    beforeRenderOutput: ({ text }) => { mobileExperience.observe(pane, text); return remoteClipboard.beforeRenderOutput(text); },
     contextMenuItems: () => nativePaneContextMenuItems({
       pane,
       tab: tabForPane(pane),
@@ -6962,6 +6992,8 @@ function updatePaneTitle(pane: TerminalPane, title: string) {
 }
 
 function updateActiveDetails() {
+  mobileExperience.sync();
+  if (mobileWorkspaceOverview.isOpen()) mobileWorkspaceOverview.render();
   const tab = activeTab();
   const pane = activePane(tab);
   discardInactiveRemoteClipboardRetries(allPanes(), pane?.id);

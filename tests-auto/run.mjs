@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { verifyBrowserDriverNavigation } from "./browser-driver.mjs";
 
 const scenarios = new Map([
+  ["mobile-workflow", { module: "./mobile-workflow/run.mjs", exportName: "runMobileWorkflowScenario" }],
   ["herdr-history", { module: "./herdr-history/run.mjs", exportName: "runHerdrHistoryScenario" }],
   ["mobile-keyboard", { module: "./mobile-keyboard/run.mjs", exportName: "runMobileKeyboardScenario" }],
   ["mobile-layout", { module: "./mobile-layout/run.mjs", exportName: "runMobileLayoutScenario" }],

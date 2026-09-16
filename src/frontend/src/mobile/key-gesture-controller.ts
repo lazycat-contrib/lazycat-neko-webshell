@@ -9,6 +9,7 @@ export function createMobileKeyGestureController<T>(options: {
   usable: (button: T) => boolean;
   inside: (button: T, x: number, y: number) => boolean;
   repeat: (button: T) => boolean;
+  activateOnClick?: (button: T) => boolean;
   start: (button: T) => void;
   activate: (button: T, repeating: boolean) => void;
   finish: (button: T, repeated: boolean) => void;
@@ -22,6 +23,7 @@ export function createMobileKeyGestureController<T>(options: {
   let current: { button: T; id: number; x: number; y: number; repeated: boolean } | undefined;
   let timer: number | undefined;
   let disposed = false;
+  let pendingClick: T | undefined;
   const blocked = new Set<number>();
   function stopTimer() {
     if (timer !== undefined) options.clearTimer(timer);
@@ -35,7 +37,7 @@ export function createMobileKeyGestureController<T>(options: {
     options.release?.(previous.button, previous.id);
     options.finish(previous.button, previous.repeated);
   }
-  function cancelAll() { finish(); blocked.clear(); }
+  function cancelAll() { pendingClick = undefined; finish(); blocked.clear(); }
   function startRepeat(delay: number) {
     const gesture = current;
     if (!gesture) return;
@@ -51,6 +53,7 @@ export function createMobileKeyGestureController<T>(options: {
   function onAdditionalPointer(source: Event) {
     const event = source as KeyPointer;
     if (current && event.pointerId !== current.id) {
+      pendingClick = undefined;
       blocked.add(current.id);
       blocked.add(event.pointerId);
       finish();
@@ -61,6 +64,7 @@ export function createMobileKeyGestureController<T>(options: {
     const button = options.button(event.target);
     if (disposed || event.button !== 0 || event.isPrimary === false || blocked.has(event.pointerId)
       || !button || !options.usable(button)) return;
+    pendingClick = undefined;
     finish();
     options.start(button);
     // Preserve IME focus. Native pan still delivers move/cancel according to touch-action.
@@ -86,14 +90,17 @@ export function createMobileKeyGestureController<T>(options: {
     if (valid) {
       event.preventDefault();
       // This call remains synchronous in pointerup for system-keyboard activation.
-      if (!gesture.repeated) options.activate(gesture.button, false);
+      if (!gesture.repeated) {
+        if (options.activateOnClick?.(gesture.button)) pendingClick = gesture.button;
+        else options.activate(gesture.button, false);
+      }
     }
     finish();
   }
   function onCancel(source: Event) {
     const event = source as KeyPointer;
     blocked.delete(event.pointerId);
-    if (current?.id === event.pointerId) finish();
+    if (current?.id === event.pointerId) { pendingClick = undefined; finish(); }
   }
   function onClick(source: Event) {
     const event = source as MouseEvent;
@@ -101,9 +108,12 @@ export function createMobileKeyGestureController<T>(options: {
     if (disposed || !button) return;
     event.preventDefault();
     event.stopPropagation();
-    // Physical clicks already committed on release (or were canceled). detail=0
-    // is keyboard/AT activation and must remain usable without pointer events.
-    if (event.detail === 0 && options.usable(button)) {
+    // Keys commit on release; modal actions commit on this same trusted click
+    // so the compatibility click cannot hit a newly opened submit button.
+    // detail=0 is keyboard/AT activation without pointer events.
+    const completesClick = pendingClick === button;
+    pendingClick = undefined;
+    if ((event.detail === 0 || completesClick) && options.usable(button)) {
       finish();
       options.start(button);
       options.activate(button, false);

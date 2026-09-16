@@ -1,10 +1,11 @@
+import { navigationPadKeys } from "./navigation-pad.ts";
 import type { MobileKeyboardKey, MobileKeyboardLayout } from "./keyboard-layout-types.ts";
 import { escapeAttr, escapeHtml } from "../utils.ts";
 
-export function renderMobileKeyboardPanels(layout: MobileKeyboardLayout): string {
+export function renderMobileKeyboardPanels(layout: MobileKeyboardLayout, navigationPad = false): string {
   return layout.pages.map((page, index) => `
-    <div class="mobile-keyboard-panel" data-mobile-panel="${escapeAttr(page.id)}"${index === 0 ? "" : " hidden"}>
-      ${page.keys.filter((key) => !key.hidden).map(renderMobileKeyboardKey).join("")}
+    <div class="mobile-keyboard-panel${navigationPad && page.id === "nav" ? " mobile-navigation-pad" : ""}" data-mobile-panel="${escapeAttr(page.id)}"${index === 0 ? "" : " hidden"}>
+      ${(navigationPad && page.id === "nav" ? navigationPadKeys(page.keys) : page.keys.filter((key) => !key.hidden)).map(renderMobileKeyboardKey).join("")}
     </div>
   `).join("");
 }

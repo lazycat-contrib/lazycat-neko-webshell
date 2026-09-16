@@ -26,6 +26,8 @@ export const MOBILE_KEYBOARD_ACTIONS = [
   "copy-selection",
   "paste-clipboard",
   "secret-file",
+  "compose-text",
+  "command-palette",
   "font-larger",
   "font-smaller",
   "pane-menu",
@@ -81,10 +83,6 @@ function defaultPages(): MobileKeyboardPage[] {
   return [
     { id: "main", keys: [
       shortcut("main-ctrl", "ctrl", "Ctrl"), shortcut("main-alt", "alt", "Alt"), shortcut("main-shift", "shift", "Shift"),
-      shortcut("main-left", "left", "", { icon: "arrow-left", ariaLabel: "Left", repeat: true }),
-      shortcut("main-down", "down", "", { icon: "arrow-down", ariaLabel: "Down", repeat: true }),
-      shortcut("main-up", "up", "", { icon: "arrow-up", ariaLabel: "Up", repeat: true }),
-      shortcut("main-right", "right", "", { icon: "arrow-right", ariaLabel: "Right", repeat: true }),
       shortcut("main-tab", "tab", "Tab"), shortcut("main-enter", "enter", "Return", { repeat: true }),
       action("main-copy", "copy-selection", "Copy"), shortcut("main-paste", "paste", "", { icon: "clipboard-paste", ariaLabel: "Paste" }),
       action("main-menu", "pane-menu", "Menu"), chord("main-ctrl-e", "ctrl-e", "Ctrl+E"), chord("main-ctrl-c", "ctrl-c", "Ctrl+C"),
@@ -93,6 +91,7 @@ function defaultPages(): MobileKeyboardPage[] {
       shortcut("main-dollar", "$", "$"), shortcut("main-escape", "escape", "Esc"),
     ] },
     { id: "ops", keys: [
+      action("ops-overview", "workspace-overview", "", "layout-grid", "Tabs and panes"),
       action("ops-prev-tab", "previous-tab", "Tab", "chevron-left", "Previous terminal tab"), action("ops-next-tab", "next-tab", "Tab", "chevron-right", "Next terminal tab"),
       action("ops-new-tab", "new-tab", "", "square-plus", "New terminal tab"), action("ops-close-tab", "close-tab", "", "square-x", "Close tab"),
       action("ops-prev-pane", "previous-pane", "Pane", "chevron-left", "Previous pane"), action("ops-next-pane", "next-pane", "Pane", "chevron-right", "Next pane"),
@@ -124,7 +123,6 @@ function operationsPages(): MobileKeyboardPage[] {
     main.keys.forEach((item) => { item.hidden = !wanted.has(item.id); });
   }
   ops?.keys.unshift(
-    action("ops-overview", "workspace-overview", "Overview", "layout-grid"),
     action("ops-maximize", "maximize-pane", "Maximize", "maximize-2"),
   );
   return pages;

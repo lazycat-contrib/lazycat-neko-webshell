@@ -1,6 +1,4 @@
 .mobile-composer {
-  --mobile-composer-motion-in: 200ms;
-  --mobile-composer-motion-out: 150ms;
   position: fixed;
   inset: auto 0 var(--mobile-composer-viewport-bottom, 0px);
   width: min(100%, 560px);
@@ -22,10 +20,10 @@
   opacity: 0;
   transform: translateY(18px);
   transition:
-    opacity var(--mobile-composer-motion-out) var(--ease-out),
-    transform var(--mobile-composer-motion-out) var(--ease-out),
-    display var(--mobile-composer-motion-out) allow-discrete,
-    overlay var(--mobile-composer-motion-out) allow-discrete;
+    opacity var(--motion-dialog-out) var(--ease-out),
+    transform var(--motion-dialog-out) var(--ease-out),
+    display var(--motion-dialog-out) allow-discrete,
+    overlay var(--motion-dialog-out) allow-discrete;
   overscroll-behavior: contain;
 }
 
@@ -33,20 +31,20 @@
   background: var(--overlay-scrim);
   opacity: 0;
   transition:
-    opacity var(--mobile-composer-motion-out) var(--ease-out),
-    display var(--mobile-composer-motion-out) allow-discrete,
-    overlay var(--mobile-composer-motion-out) allow-discrete;
+    opacity var(--motion-dialog-out) var(--ease-out),
+    display var(--motion-dialog-out) allow-discrete,
+    overlay var(--motion-dialog-out) allow-discrete;
 }
 
 .mobile-composer[open] {
   opacity: 1;
   transform: translateY(0);
-  transition-duration: var(--mobile-composer-motion-in);
+  transition-duration: var(--motion-dialog-in);
 }
 
 .mobile-composer[open]::backdrop {
   opacity: 1;
-  transition-duration: var(--mobile-composer-motion-in);
+  transition-duration: var(--motion-dialog-in);
 }
 
 @starting-style {
@@ -204,3 +202,13 @@
     }
   }
 }
+
+/* Keep the actions reachable when the system keyboard reduces the viewport. */
+.mobile-composer[open] { display: flex; flex-direction: column; }
+.mobile-composer-input { flex: 1 1 auto; min-height: 72px; height: min(30dvh, 230px); resize: none; }
+.mobile-composer-head, .mobile-composer-label, .mobile-composer-actions { flex-shrink: 0; }
+.mobile-composer-actions { position: sticky; bottom: 0; background: var(--dialog-bg); }
+.mobile-composer-status:empty { display: none; }
+.mobile-composer[data-compact="true"] .mobile-composer-hint { display: none; }
+.mobile-composer[data-compact="true"] .mobile-composer-head { margin-bottom: 8px; }
+.mobile-composer[data-compact="true"] .mobile-composer-actions { margin-top: 8px; }

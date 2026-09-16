@@ -4,12 +4,13 @@ import { createMobileKeyGestureController } from "./key-gesture-controller.ts";
 class Pointer extends Event {
   constructor(type, values = {}) { super(type, { cancelable: true }); Object.assign(this, { pointerId: 1, button: 0, clientX: 10, clientY: 10, isPrimary: true, ...values }); }
 }
-function setup(repeat = false) {
+function setup(repeat = false, activateOnClick = false) {
   const root = new EventTarget(), globalTarget = new EventTarget(), visibilityTarget = new EventTarget();
   const button = {}, sent = [], finished = [], timers = new Map(); let sequence = 0, usable = true;
   const controller = createMobileKeyGestureController({ root, globalTarget, visibilityTarget,
     button: target => target === root ? button : undefined, usable: () => usable,
     inside: (_button, x, y) => x >= 0 && x <= 100 && y >= 0 && y <= 50,
+    activateOnClick: () => activateOnClick,
     repeat: () => repeat, start() {}, activate: (_button, repeating) => sent.push(repeating),
     finish: (_button, repeated) => finished.push(repeated),
     setTimer: (callback, delay) => { timers.set(++sequence, { callback, delay }); return sequence; }, clearTimer: id => timers.delete(id),
@@ -82,4 +83,21 @@ test("scrolling the keyboard cancels a pending repeat without canceling for unre
   assert.equal(s.timers.size, 1, "unrelated scroll does not own the key gesture");
   s.root.dispatchEvent(new Event("scroll")); s.event("pointerup"); s.click(1);
   assert.equal(s.timers.size, 0); assert.deepEqual(s.sent, []); s.controller.dispose();
+});
+
+
+test("modal actions wait for the physical click and cannot activate on both release and click", () => {
+  const s = setup(false, true); s.down(); s.event("pointerup");
+  assert.deepEqual(s.sent, [], "do not open an overlay under an upcoming compatibility click");
+  s.click(1); assert.deepEqual(s.sent, [false]);
+  s.click(1); assert.deepEqual(s.sent, [false]);
+  s.click(0); assert.deepEqual(s.sent, [false, false], "keyboard activation stays synchronous");
+  s.controller.dispose();
+});
+
+test("cancelled or abandoned modal gestures never activate later", () => {
+  const s = setup(false, true); s.down(); s.event("pointermove", {clientX:40}); s.event("pointerup"); s.click(1);
+  assert.deepEqual(s.sent, []);
+  s.down(); s.event("pointerup"); s.globalTarget.dispatchEvent(new Event("blur")); s.click(1);
+  assert.deepEqual(s.sent, []); s.controller.dispose();
 });

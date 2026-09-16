@@ -1,9 +1,9 @@
 export function mobileActionEventPhase(action: string): "pointerup" | "click" {
-  return action === "pane-menu" ? "click" : "pointerup";
+  return ["pane-menu", "compose-text", "command-palette", "secret-file", "workspace-overview"].includes(action) ? "click" : "pointerup";
 }
 
 export function mobileActionRestoresKeyboard(action: string): boolean {
-  return action !== "secret-file" && action !== "pane-menu" && action !== "toggle-system-keyboard" && action !== "workspace-overview";
+  return action !== "compose-text" && action !== "command-palette" && action !== "secret-file" && action !== "pane-menu" && action !== "toggle-system-keyboard" && action !== "workspace-overview";
 }
 
 export type MobileSyntheticActivation = {

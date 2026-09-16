@@ -22,9 +22,13 @@ test("keeps the system keyboard toggle out of the scrollable shortcut rail", () 
   assert.ok(toggleIndex < clockIndex);
   assert.ok(clockIndex < controlsIndex);
   assert.ok(controlsIndex < mainPanelIndex);
-  assert.ok(mainPanelIndex < leftIndex);
-  assert.ok(leftIndex < downIndex);
-  assert.ok(downIndex < upIndex);
-  assert.ok(upIndex < rightIndex);
-  assert.ok(rightIndex < tabIndex);
+  const navIndex = html.indexOf('data-mobile-panel="nav"');
+  assert.ok(tabIndex < navIndex);
+  assert.ok(leftIndex > navIndex);
+  assert.ok(downIndex > navIndex);
+  assert.ok(upIndex > navIndex);
+  assert.ok(rightIndex > navIndex);
+  for (const key of ["left", "down", "up", "right"]) {
+    assert.equal(html.split(`data-mobile-shortcut="${key}"`).length - 1, 1);
+  }
 });

@@ -1,3 +1,4 @@
+import "./workspace-overview.css";
 import type { MessageKey } from "../i18n.ts";
 import { renderMobileWorkspaceOverview } from "./workspace-overview-view.ts";
 import type { MobileWorkspaceOverviewTab } from "./workspace-overview-types.ts";
@@ -19,14 +20,24 @@ export function createMobileWorkspaceOverviewController(options: Options) {
   const list = options.root.querySelector<HTMLElement>("[data-mobile-overview-list]");
   let restoreFocus: HTMLElement | null = null;
   let closeTimer: number | undefined;
+  let renderedHtml = "";
 
   function render() {
     if (!list) return;
-    list.innerHTML = renderMobileWorkspaceOverview(options.items(), {
+    const html = renderMobileWorkspaceOverview(options.items(), {
       empty: options.tr("status.workspaceOverviewEmpty"),
       active: options.tr("status.active"),
+      paneCount: count => options.tr("mobileOverview.panes", { count }),
     });
+    if (renderedHtml === html) return;
+    renderedHtml = html;
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement.closest<HTMLElement>("[data-mobile-overview-pane]") : null;
+    const scroll = list.scrollTop;
+    list.innerHTML = html;
     options.updateIcons();
+    if (active) [...list.querySelectorAll<HTMLElement>("[data-mobile-overview-pane]")]
+      .find(item => item.dataset.mobileOverviewPane === active.dataset.mobileOverviewPane && item.dataset.mobileOverviewTab === active.dataset.mobileOverviewTab)?.focus({ preventScroll: true });
+    list.scrollTop = scroll;
   }
 
   function open() {
@@ -61,7 +72,10 @@ export function createMobileWorkspaceOverviewController(options: Options) {
       if (target?.closest("[data-mobile-overview-close]")) return close();
       const pane = target?.closest<HTMLButtonElement>("[data-mobile-overview-pane]");
       if (!pane) return;
-      options.activate(pane.dataset.mobileOverviewTab ?? "", pane.dataset.mobileOverviewPane ?? "");
+      const tabId = pane.dataset.mobileOverviewTab ?? "";
+      const paneId = pane.dataset.mobileOverviewPane ?? "";
+      if (!options.items().some(tab => tab.id === tabId && tab.panes.some(item => item.id === paneId))) { render(); return; }
+      options.activate(tabId, paneId);
       close();
     });
     options.root.addEventListener("keydown", (event) => {

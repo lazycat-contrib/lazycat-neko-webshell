@@ -1,0 +1,11 @@
+.mobile-workspace-overview-sheet { background: var(--surface); }
+.mobile-overview-tab { border: 0; border-radius: 0; background: none; padding: 12px 0; }
+.mobile-overview-tab + .mobile-overview-tab { border-top: 1px solid var(--line); }
+.mobile-overview-tab-head { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; gap: 4px; padding: 4px 4px 12px; }
+.mobile-overview-tab-head > span { font-size: 15px; font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
+.mobile-overview-tab-head > small { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+.mobile-overview-pane-list { gap: 4px; }
+.mobile-overview-pane-list > button { min-height: 60px; background: none; border-color: transparent; }
+.mobile-overview-pane-list > button[aria-current="page"] { background: var(--surface-2); border-color: var(--line); color: var(--text); }
+.mobile-overview-pane-list strong, .mobile-overview-pane-list small { white-space: normal; overflow-wrap: anywhere; }
+.mobile-overview-pane-list > button > svg:last-child { width: 18px; flex-shrink: 0; color: var(--accent-strong); }

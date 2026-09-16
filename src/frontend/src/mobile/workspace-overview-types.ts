@@ -5,6 +5,7 @@ export type MobileWorkspaceOverviewPane = {
   label: string;
   detail: string;
   backend: SessionBackendId;
+  status?: string;
   active: boolean;
 };
 
@@ -19,4 +20,5 @@ export type MobileWorkspaceOverviewTab = {
 export type MobileWorkspaceOverviewLabels = {
   empty: string;
   active: string;
+  paneCount?: (count: number) => string;
 };

@@ -24,14 +24,14 @@ export function renderMobileWorkspaceOverview(
   return tabs.map((tab) => `
     <section class="mobile-overview-tab${tab.active ? " active" : ""}" aria-label="${escapeAttr(tab.label)}">
       <div class="mobile-overview-tab-head">
-        <span>${escapeHtml(tab.label)}</span><small>${escapeHtml(tab.detail)}</small>
+        <span>${escapeHtml(tab.label)}</span><small>${escapeHtml(tab.detail)} · ${escapeHtml(labels.paneCount?.(tab.panes.length) ?? String(tab.panes.length))}</small>
       </div>
       <div class="mobile-overview-pane-list">
         ${tab.panes.map((pane) => `
           <button type="button" data-mobile-overview-tab="${escapeAttr(tab.id)}" data-mobile-overview-pane="${escapeAttr(pane.id)}"${pane.active ? ' aria-current="page"' : ""}>
             <i data-lucide="${pane.backend === "herdr" ? "boxes" : "square-terminal"}"></i>
-            <span><strong>${escapeHtml(pane.label)}</strong><small>${escapeHtml(pane.detail)}</small></span>
-            ${pane.active ? `<em>${escapeHtml(labels.active)}</em>` : '<i data-lucide="chevron-right"></i>'}
+            <span><strong>${escapeHtml(pane.label)}</strong><small>${escapeHtml(pane.detail)}${pane.status ? ` · ${escapeHtml(pane.status)}` : ""}</small></span>
+            ${pane.active ? `<i data-lucide="check" aria-label="${escapeAttr(labels.active)}"></i>` : '<i data-lucide="chevron-right"></i>'}
           </button>
         `).join("")}
       </div>

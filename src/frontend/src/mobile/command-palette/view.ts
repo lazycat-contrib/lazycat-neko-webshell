@@ -112,6 +112,7 @@ export function createMobileCommandPaletteView(tr: Translate, handlers: Handlers
 
   let busy = false;
   let available = true;
+  let signature = "";
 
   function applyDisabledState() {
     search.readOnly = busy;
@@ -125,6 +126,7 @@ export function createMobileCommandPaletteView(tr: Translate, handlers: Handlers
   function choiceButton(choice: MobilePaletteChoice): HTMLButtonElement {
     const button = element("button", "", `mobile-command-palette-choice is-${choice.kind}`);
     button.type = "button";
+    button.dataset.paletteChoice = choice.id;
     button.addEventListener("click", () => handlers.activate(choice));
     const top = element("span", "", "mobile-command-palette-choice-top");
     if (choice.kind === "phrase") {
@@ -159,6 +161,11 @@ export function createMobileCommandPaletteView(tr: Translate, handlers: Handlers
     canActivate: boolean,
   ) {
     available = canActivate;
+    const nextSignature = JSON.stringify([choices, tab, emptyKey, canActivate]);
+    if (nextSignature === signature) { applyDisabledState(); return; }
+    signature = nextSignature;
+    const focused = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.paletteChoice : undefined;
+    const scroll = dialog.scrollTop;
     results.replaceChildren();
     results.setAttribute("aria-labelledby", `mobile-command-palette-tab-${tab}`);
     for (const [name, button] of tabButtons) {
@@ -174,6 +181,11 @@ export function createMobileCommandPaletteView(tr: Translate, handlers: Handlers
       results.append(list);
     }
     applyDisabledState();
+    if (focused) {
+      const replacement = [...results.querySelectorAll<HTMLButtonElement>("[data-palette-choice]")].find(button => button.dataset.paletteChoice === focused);
+      (replacement ?? results).focus({ preventScroll: true });
+    }
+    dialog.scrollTop = scroll;
   }
 
   function setBusy(next: boolean) {

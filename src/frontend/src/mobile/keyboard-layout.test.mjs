@@ -65,11 +65,11 @@ test("round-trips every built-in preset through the persisted layout normalizer"
   }
 });
 
-test("keeps the legacy shortcut layout until the user opts into customization", () => {
+test("keeps built-in navigation keys in a single location", () => {
   assert.equal(normalizeMobileKeyboardPreset(undefined), "default");
   const expectedIds = {
-    main: ["main-ctrl", "main-alt", "main-shift", "main-left", "main-down", "main-up", "main-right", "main-tab", "main-enter", "main-copy", "main-paste", "main-menu", "main-ctrl-e", "main-ctrl-c", "main-swap", "main-shift-tab", "main-tilde", "main-slash", "main-hyphen", "main-dollar", "main-escape"],
-    ops: ["ops-prev-tab", "ops-next-tab", "ops-new-tab", "ops-close-tab", "ops-prev-pane", "ops-next-pane", "ops-split-right", "ops-split-down", "ops-copy", "ops-paste", "ops-font-up", "ops-font-down"],
+    main: ["main-ctrl", "main-alt", "main-shift", "main-tab", "main-enter", "main-copy", "main-paste", "main-menu", "main-ctrl-e", "main-ctrl-c", "main-swap", "main-shift-tab", "main-tilde", "main-slash", "main-hyphen", "main-dollar", "main-escape"],
+    ops: ["ops-overview", "ops-prev-tab", "ops-next-tab", "ops-new-tab", "ops-close-tab", "ops-prev-pane", "ops-next-pane", "ops-split-right", "ops-split-down", "ops-copy", "ops-paste", "ops-font-up", "ops-font-down"],
     nav: ["nav-home", "nav-end", "nav-page-up", "nav-page-down", "nav-insert", "nav-delete", "nav-backspace", "nav-left", "nav-down", "nav-up", "nav-right"],
     fn: Array.from({ length: 12 }, (_, index) => `fn-${index + 1}`),
     sym: Array.from({ length: 18 }, (_, index) => `sym-${index}`),
@@ -77,7 +77,7 @@ test("keeps the legacy shortcut layout until the user opts into customization", 
   const legacy = resolveMobileKeyboardLayout("default", { pages: [] });
   assert.deepEqual(Object.fromEntries(legacy.pages.map((page) => [page.id, page.keys.map((key) => key.id)])), expectedIds);
   assert.ok(legacy.pages.every((page) => page.keys.every((key) => key.width === "md")));
-  assert.ok(!legacy.pages.some((page) => page.keys.some((key) => key.value === "maximize-pane" || key.value === "workspace-overview")));
+  assert.ok(!legacy.pages.some((page) => page.keys.some((key) => key.value === "maximize-pane")));
 
   const recovered = resolveMobileKeyboardLayout("custom", { pages: [] });
   assert.deepEqual(recovered.pages.map((page) => page.keys.map((key) => key.id)), legacy.pages.map((page) => page.keys.map((key) => key.id)));

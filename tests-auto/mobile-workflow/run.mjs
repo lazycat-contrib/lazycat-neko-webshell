@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict';
+import {mkdir} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
+import {createServer} from 'vite';
+import {createBrowserDriver,uniqueBrowserSession} from '../browser-driver.mjs';
+const root=fileURLToPath(new URL('../../',import.meta.url));
+export async function runMobileWorkflowScenario(){
+ const artifacts=path.join(root,'tests-auto/artifacts/mobile-workflow');await mkdir(artifacts,{recursive:true});
+ const server=await createServer({configFile:false,root,server:{host:'127.0.0.1',port:0},logLevel:'error'});
+ const browser=createBrowserDriver({session:uniqueBrowserSession('mobile-workflow'),headed:false});
+ const evaluate=s=>browser.evaluate(s);
+ const click=async selector=>{
+  await evaluate(`(async()=>{document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:"center",inline:"nearest",behavior:"instant"});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))})()`);
+  return browser.command(['click',selector]);
+ };
+ const wait=s=>browser.waitFor(s);
+ const screenshot=async name=>{await browser.command(['wait','240']);await browser.screenshot(path.join(artifacts,name+'.png'))};
+ const touch=(type,p,id=1,delayMs=0)=>({type,delayMs,touchPoints:type==='touchEnd'||type==='touchCancel'?[]:[{...p,id,radiusX:2,radiusY:2,force:1}]});
+ const tap=async selector=>{await wait('[...document.querySelectorAll("dialog:not([open])")].every(e=>getComputedStyle(e).display==="none")');const p=await evaluate(`qa.point(${JSON.stringify(selector)})`);await browser.dispatchTouch([touch('touchStart',p,1,25),touch('touchEnd',p)])};
+ const composer=async()=>{await tap('[data-mobile-action="compose-text"]');await wait('document.querySelector(".mobile-composer[open]")')};
+ const palette=async()=>{await tap('[data-mobile-action="command-palette"]');await wait('document.querySelector(".mobile-command-palette[open]")')};
+ const closeComposer=async()=>{await click('.mobile-composer-close');await wait('!document.querySelector(".mobile-composer").open')};
+ try{
+  await server.listen();await browser.open(`http://127.0.0.1:${server.httpServer.address().port}/tests-auto/mobile-workflow/fixture.html`);
+  await browser.command(['set','viewport','390','844']);await wait('window.qa?.ready');
+  assert.equal(await evaluate('document.querySelector(".desktop-secret-file-trigger")'),null);
+  await tap('[data-mobile-action="toggle-system-keyboard"]');
+  await tap('[data-mobile-page="nav"]');
+  assert.equal(await evaluate('document.querySelector("#mobileShortcuts").dataset.navigationOpen'),'true');
+  assert.equal(await evaluate('document.activeElement.id'),'qa-terminal-input','navigation must preserve keyboard focus');
+  const arrows=await evaluate('[...document.querySelectorAll("[data-mobile-shortcut=left]")].filter(e=>e.getClientRects().length).length');assert.equal(arrows,1);
+  await tap('[data-mobile-panel="nav"] [data-mobile-shortcut="left"]');assert.equal(await evaluate('qa.bytes.at(-1)'),'\x1b[D');
+  await screenshot('navigation');
+  const p=await evaluate('qa.point("[data-mobile-panel=nav] [data-mobile-shortcut=down]")');
+  await evaluate('qa.bytes=[]');await browser.dispatchTouch([touch('touchStart',p,2,550),touch('touchCancel',p,2)]);
+  const repeated=await evaluate('qa.bytes.length');assert(repeated>=2);await browser.command(['wait','200']);assert.equal(await evaluate('qa.bytes.length'),repeated);
+  await tap('[data-mobile-page="nav"]');assert.equal(await evaluate('document.querySelector("#mobileShortcuts").dataset.navigationOpen'),'false');
+  await evaluate('qa.bytes=[]');await composer();
+  assert.equal(await evaluate('document.activeElement.id'),'mobile-composer-input');
+  await browser.command(['fill','#mobile-composer-input','第一行\n  second line']);
+  await browser.press('Enter');assert.equal(await evaluate('qa.bytes.length'),0,'editing newlines must not send input');
+  await screenshot('composer');
+  await click('.mobile-composer-actions button:first-child');await wait('!document.querySelector(".mobile-composer").open');
+  assert.equal(await evaluate('qa.bytes.at(-1)'),'\x1b[200~第一行\n  second line\n\x1b[201~');
+  await composer();await browser.command(['fill','#mobile-composer-input','草稿 A']);await closeComposer();
+  await evaluate('qa.switch("b")');await composer();assert.equal(await evaluate('document.querySelector("#mobile-composer-input").value'),'');
+  await browser.command(['fill','#mobile-composer-input','草稿 B']);await closeComposer();await evaluate('qa.switch("a")');await composer();assert.equal(await evaluate('document.querySelector("#mobile-composer-input").value'),'草稿 A');
+  await evaluate('qa.fail=true');await click('.mobile-composer-actions button:first-child');await wait('document.querySelector(".mobile-composer-status").textContent.includes("失败")');assert.equal(await evaluate('document.querySelector("#mobile-composer-input").value'),'草稿 A');
+  await evaluate('qa.fail=false');await click('.mobile-composer-actions button:nth-child(2)');await wait('!document.querySelector(".mobile-composer").open');assert.equal(await evaluate('qa.bytes.at(-1)'),'\x1b[200~草稿 A\x1b[201~\r');
+  await composer();await browser.command(['fill','#mobile-composer-input','未提交']);await evaluate('qa.switch("b")');await wait('!document.querySelector(".mobile-composer").open');
+  await evaluate('qa.switch("h","herdr");qa.defer=true');await composer();await browser.command(['fill','#mobile-composer-input','remote draft']);await click('.mobile-composer-actions button:nth-child(2)');await wait('typeof qa.finish==="function"');
+  await closeComposer();await composer();assert.equal(await evaluate('document.querySelector(".mobile-composer-actions button").disabled'),true,'reopening cannot send duplicate pending text');
+  const count=await evaluate('qa.remote.length');await evaluate('qa.finish();qa.defer=false');await wait('!document.querySelector(".mobile-composer-actions button").disabled');assert.equal(await evaluate('qa.remote.length'),count);assert.equal(await evaluate('document.querySelector("#mobile-composer-input").value'),'');await closeComposer();
+  await evaluate('qa.switch("a");qa.bytes=[]');await palette();assert.notEqual(await evaluate('document.activeElement.id'),'mobile-command-palette-search');
+  await click('#mobile-command-palette-tab-all');
+  await evaluate('qa.focusedChoice=document.querySelector(".mobile-command-palette-choice");qa.focusedChoice.focus();qa.experience.sync()');
+  assert.equal(await evaluate('document.activeElement===qa.focusedChoice&&qa.focusedChoice.isConnected'),true,'unchanged refresh retains the exact focused result node');
+  await browser.command(['fill','#mobile-command-palette-search','目录']);assert.equal(await evaluate('document.querySelectorAll(".mobile-command-palette-choice").length'),1);await screenshot('palette');
+  await click('.mobile-command-palette-choice');await wait('!document.querySelector(".mobile-command-palette").open');assert.equal(await evaluate('qa.bytes.at(-1)'),'\x1b[200~ls -la\x1b[201~');
+  await palette();assert.match(await evaluate('document.querySelector(".mobile-command-palette-choice strong").textContent'),/查看目录/);
+  await click('#mobile-command-palette-tab-all');await browser.command(['fill','#mobile-command-palette-search','运行测试']);assert.match(await evaluate('document.querySelector(".mobile-command-palette-mode").textContent'),/自动回车/);await click('.mobile-command-palette-choice');await wait('!document.querySelector(".mobile-command-palette").open');assert.equal(await evaluate('qa.bytes.at(-1)'),'\x1b[200~npm test\x1b[201~\r');
+  await palette();await click('#mobile-command-palette-tab-all');await browser.command(['fill','#mobile-command-palette-search','目录']);await evaluate('qa.phrases[0].text="changed remotely"');const before=await evaluate('qa.bytes.length');await click('.mobile-command-palette-choice');assert.equal(await evaluate('qa.bytes.length'),before);assert.match(await evaluate('document.querySelector(".mobile-command-palette-status").textContent'),/变化/);
+  await click('#mobile-command-palette-tab-keys');await browser.command(['fill','#mobile-command-palette-search','F1']);assert(await evaluate('document.querySelectorAll(".mobile-command-palette-choice").length')>0);await click('.mobile-command-palette-close');
+  await tap('[data-mobile-page="ops"]');await tap('[data-mobile-action="workspace-overview"]');await wait('!document.querySelector("#mobileWorkspaceOverview").hidden');await screenshot('overview');
+  assert.match(await evaluate('document.querySelector(".mobile-workspace-overview-list").textContent'),/1 个窗格/);await click('[data-mobile-overview-pane="b"]');assert.equal(await evaluate('qa.selected'),'b');await browser.command(['wait','180']);
+  await browser.command(['set','viewport','320','560']);await composer();await browser.command(['fill','#mobile-composer-input','窄屏输入\n第二行']);await screenshot('composer-narrow');
+  await browser.command(['set','viewport','390','360']);await browser.command(['wait','100']);
+  assert.equal(await evaluate('(()=>{const r=document.querySelector(".mobile-composer-actions").getBoundingClientRect();return r.bottom<=innerHeight&&r.top>=0})()'),true,'composer actions remain visible above a short keyboard viewport');
+  await screenshot('composer-keyboard');await browser.command(['set','viewport','320','560']);assert.equal(await evaluate('document.querySelector(".mobile-composer").scrollWidth<=document.querySelector(".mobile-composer").clientWidth'),true);await closeComposer();
+  await evaluate('qa.preset="custom";qa.layout.pages[0].keys.push({id:"custom-left",kind:"shortcut",value:"left",label:"My Left",ariaLabel:"My Left",width:"md",hidden:false,repeat:true,autoEnter:false,custom:true});qa.refresh()');assert.equal(await evaluate('document.querySelector("[data-mobile-panel=main] [data-mobile-shortcut=left]").textContent'),'My Left');await tap('[data-mobile-page="nav"]');assert.equal(await evaluate('document.querySelector("#mobileShortcuts").dataset.navigationOpen'),'false');
+  const errors=JSON.parse(await browser.command(['errors','--json']));assert.deepEqual(errors.data.errors,[]);
+  return {status:'passed',name:'mobile-workflow',artifacts};
+ }catch(error){
+  console.error(await evaluate('({actions:qa.actions,point:qa.lastPoint,focus:document.activeElement?.outerHTML.slice(0,120),dialogs:[...document.querySelectorAll("dialog")].map(d=>({open:d.open,style:getComputedStyle(d).display,cls:d.className})),root:document.querySelector("#mobileShortcuts").getBoundingClientRect().toJSON()})'));
+  await browser.screenshot(path.join(artifacts,'failure.png'));
+  throw error;
+ }finally{await browser.close().catch(()=>{});await server.close();}
+}
+if(process.argv[1]===fileURLToPath(import.meta.url)){runMobileWorkflowScenario().then(r=>console.log(JSON.stringify(r))).catch(e=>{console.error(e);process.exitCode=1})}

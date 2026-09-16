@@ -12,7 +12,10 @@ export async function runMobileLayoutScenario() {
   const server = await createServer({ configFile: false, root, logLevel: "error", server: { host: "127.0.0.1", port: 0 } });
   const browser = createBrowserDriver({ session: uniqueBrowserSession("mobile-layout"), headed: true });
   const state = () => browser.evaluate("window.layoutFixture.state()");
-  const click = (selector) => browser.command(["click", selector]);
+  const click = async (selector) => {
+    await browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:"center",inline:"nearest",behavior:"instant"})`);
+    return browser.command(["click", selector]);
+  };
   const fill = (selector, value) => browser.command(["fill", selector, value]);
   try {
     await server.listen();

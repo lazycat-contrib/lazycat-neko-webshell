@@ -1,3 +1,4 @@
+import "./navigation-pad.css";
 import { createMobileKeyGestureController } from "./key-gesture-controller";
 import type { MessageKey } from "../i18n";
 import {
@@ -53,6 +54,8 @@ export function createMobileKeyboardController(options: MobileKeyboardController
   const sticky = createMobileStickyState();
   let gestures: ReturnType<typeof createMobileKeyGestureController<HTMLButtonElement>> | undefined;
   let disposed = false;
+  let navigationPadEnabled = true;
+  let previousPage = "main";
   let deferredActionTimer: number | undefined;
   const keyboardRestores = new WeakMap<HTMLButtonElement, () => void>();
 
@@ -79,10 +82,10 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     const restore = takeKeyboardRestore(button);
     if (activation.kind === "shortcut") void runShortcut(activation.value, { keepModifiers: repeating }, restore);
     else if (activation.kind === "chord") runChord(activation.value, restore);
-    else if (activation.kind === "page") activatePage(activation.value);
+    else if (activation.kind === "page") activatePage(activation.value, true);
     else if (activation.kind === "phrase") void runPhrase(activation.value, restore);
     else if (activation.kind === "text") runText(activation.value, button.dataset.mobileAutoEnter === "true", restore);
-    else if (mobileActionEventPhase(activation.value) === "click") {
+    else if (activation.value === "pane-menu") {
       // Open the pane menu after the physical click has bubbled, matching its
       // existing dismissal boundary. System-keyboard actions never defer.
       clearDeferredAction();
@@ -107,6 +110,7 @@ export function createMobileKeyboardController(options: MobileKeyboardController
         const rect = button.getBoundingClientRect();
         return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
       },
+      activateOnClick: (button) => button.dataset.mobileAction !== "pane-menu" && mobileActionEventPhase(button.dataset.mobileAction ?? "") === "click",
       repeat: (button) => button.dataset.mobileRepeat === "true" && Boolean(button.dataset.mobileShortcut),
       start: (button) => { clearDeferredAction(); captureKeyboardState(button); },
       activate: activateButton,
@@ -116,6 +120,8 @@ export function createMobileKeyboardController(options: MobileKeyboardController
       setTimer: (callback, delay) => window.setTimeout(callback, delay),
       clearTimer: (timer) => window.clearTimeout(timer),
     });
+    window.addEventListener("pointerdown", closePadOutside, true);
+    window.addEventListener("keydown", closePadOnEscape, true);
     updateShortcutState();
   }
 
@@ -127,13 +133,14 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     const controls = options.root.querySelector<HTMLElement>(".mobile-keyboard-controls");
     if (!pages || !pageTabs || !controls) return input.phrases;
     const currentPage = activePage();
-    controls.innerHTML = `${renderMobileKeyboardPanels(input.layout)}<div class="mobile-keyboard-panel" data-mobile-panel="phrases" hidden></div>`;
+    navigationPadEnabled = input.preset !== "custom";
+    controls.innerHTML = `${renderMobileKeyboardPanels(input.layout, navigationPadEnabled)}<div class="mobile-keyboard-panel" data-mobile-panel="phrases" hidden></div>`;
     updateShortcutState();
     const symPanel = controls.querySelector<HTMLElement>("[data-mobile-panel='sym']");
     const phrasePanel = controls.querySelector<HTMLElement>("[data-mobile-panel='phrases']");
     if (!symPanel || !phrasePanel) return input.phrases;
 
-    const phraseButton = pages.querySelector<HTMLElement>("[data-mobile-page='phrases']");
+    const phraseButton = pages.querySelector<HTMLElement>("[data-mobile-action='command-palette']");
     phraseButton?.remove();
     const phrases = normalizeMobileQuickPhrases(input.phrases);
     const phraseButtonHtml = renderMobileQuickPhrasePageButton(phrases, input.tr);
@@ -149,16 +156,35 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     return phrases;
   }
 
-  function activatePage(page: string) {
+  function activatePage(page: string, toggle = false) {
     if (!page) return;
+    if (page === "nav" && navigationPadEnabled && toggle && activePage() === "nav") page = previousPage;
+    if (page !== "nav") previousPage = page;
+    if (page !== activePage()) stopRepeatInput();
+    options.root.dataset.navigationOpen = String(navigationPadEnabled && page === "nav");
     options.root.querySelectorAll<HTMLButtonElement>("[data-mobile-page]").forEach((button) => {
       const active = button.dataset.mobilePage === page;
       button.classList.toggle("active", active);
       button.setAttribute("aria-pressed", String(active));
+      if (button.dataset.mobilePage === "nav") button.setAttribute("aria-expanded", String(active && navigationPadEnabled));
     });
     options.root.querySelectorAll<HTMLElement>("[data-mobile-panel]").forEach((panel) => {
       panel.hidden = panel.dataset.mobilePanel !== page;
     });
+  }
+
+  function closeNavigationPad() {
+    if (navigationPadEnabled && activePage() === "nav") activatePage(previousPage);
+  }
+
+  function closePadOutside(event: PointerEvent) {
+    if (event.target instanceof Node && !options.root.contains(event.target)) closeNavigationPad();
+  }
+
+  function closePadOnEscape(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !navigationPadEnabled || activePage() !== "nav") return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    closeNavigationPad();
   }
 
   function activePage(): string {
@@ -230,6 +256,8 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     if (disposed) return;
     disposed = true;
     clearDeferredAction();
+    window.removeEventListener("pointerdown", closePadOutside, true);
+    window.removeEventListener("keydown", closePadOnEscape, true);
     gestures?.dispose();
     gestures = undefined;
   }
@@ -266,6 +294,7 @@ export function createMobileKeyboardController(options: MobileKeyboardController
     renderQuickInput,
     activatePage,
     stopRepeatInput,
+    closeNavigationPad,
     encodeStickyInput,
     clearSticky,
     updateShortcutState,

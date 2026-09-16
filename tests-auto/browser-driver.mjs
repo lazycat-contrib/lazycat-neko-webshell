@@ -64,7 +64,7 @@ export function createBrowserDriver({
     async open(url) {
       if (opened) throw new Error(`browser session ${session} is already open`);
       const args = [];
-      if (headed) args.push("--headed");
+      if (headed && process.env.NEKO_BROWSER_HEADLESS !== "1") args.push("--headed");
       if (launchArgs) args.push("--args", launchArgs);
       args.push("open", url);
       const output = await command(args);
