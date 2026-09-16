@@ -1,6 +1,9 @@
 name: Build and publish LazyCat application
 
 on:
+  # Daily auto-update; GitHub Actions cron is UTC (CST = UTC+8)
+  schedule:
+    - cron: "29 6 * * *"
   push:
     tags:
       - "v*"
