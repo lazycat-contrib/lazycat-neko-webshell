@@ -18,3 +18,16 @@ test('tracks split mode sequences and sends Enter outside the paste envelope onl
 test('Herdr target changes during readiness check never send to newly focused pane',async()=>{
  const {target,sent,dispatch}=setup();target.herdrPaneId='remote';assert.equal(await dispatch.send(target,'private draft',true),false);assert.deepEqual(sent,[]);
 });
+
+test('Herdr multiline Insert refuses unverified inner paste mode even when the outer terminal enables it',async()=>{
+ const {pane,target,sent,dispatch}=setup();target.herdrPaneId='remote';dispatch.observe(pane,'\x1b[?2004h');
+ await assert.rejects(dispatch.send(target,'echo one\necho two\n',false),/multiline unsupported/);assert.deepEqual(sent,[]);
+});
+
+test('a replaced session or socket cannot reuse the previous terminal paste mode',async()=>{
+ const {pane,target,dispatch}=setup();pane.sessionId='old';target.sessionId='old';pane.socket={};dispatch.observe(pane,'\x1b[?2004h');
+ pane.sessionId='new';target.sessionId='new';
+ await assert.rejects(dispatch.send(target,'one\ntwo',false),/multiline unsupported/);
+ dispatch.observe(pane,'\x1b[?2004h');pane.socket={};
+ await assert.rejects(dispatch.send(target,'one\ntwo',false),/multiline unsupported/);
+});

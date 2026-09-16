@@ -49,7 +49,7 @@ export async function runMobileWorkflowScenario(){
   await evaluate('qa.fail=true');await click('.mobile-composer-actions button:first-child');await wait('document.querySelector(".mobile-composer-status").textContent.includes("失败")');assert.equal(await evaluate('document.querySelector("#mobile-composer-input").value'),'草稿 A');
   await evaluate('qa.fail=false');await click('.mobile-composer-actions button:nth-child(2)');await wait('!document.querySelector(".mobile-composer").open');assert.equal(await evaluate('qa.bytes.at(-1)'),'\x1b[200~草稿 A\x1b[201~\r');
   await composer();await browser.command(['fill','#mobile-composer-input','未提交']);await evaluate('qa.switch("b")');await wait('!document.querySelector(".mobile-composer").open');
-  await evaluate('qa.switch("h","herdr");qa.defer=true');await composer();await browser.command(['fill','#mobile-composer-input','remote draft']);await click('.mobile-composer-actions button:nth-child(2)');await wait('typeof qa.finish==="function"');
+  await evaluate('qa.switch("h","herdr");qa.defer=true');await composer();await browser.command(['fill','#mobile-composer-input','remote\nprompt']);await click('.mobile-composer-actions button:first-child');await wait('document.querySelector(".mobile-composer-status").textContent.includes("无法确认")');assert.equal(await evaluate('qa.remote.length'),0);await click('.mobile-composer-actions button:nth-child(2)');await wait('typeof qa.finish==="function"');
   await closeComposer();await composer();assert.equal(await evaluate('document.querySelector(".mobile-composer-actions button").disabled'),true,'reopening cannot send duplicate pending text');
   const count=await evaluate('qa.remote.length');await evaluate('qa.finish();qa.defer=false');await wait('!document.querySelector(".mobile-composer-actions button").disabled');assert.equal(await evaluate('qa.remote.length'),count);assert.equal(await evaluate('document.querySelector("#mobile-composer-input").value'),'');await closeComposer();
   await evaluate('qa.switch("a");qa.bytes=[]');await palette();assert.notEqual(await evaluate('document.activeElement.id'),'mobile-command-palette-search');
@@ -69,6 +69,17 @@ export async function runMobileWorkflowScenario(){
   assert.equal(await evaluate('(()=>{const r=document.querySelector(".mobile-composer-actions").getBoundingClientRect();return r.bottom<=innerHeight&&r.top>=0})()'),true,'composer actions remain visible above a short keyboard viewport');
   await screenshot('composer-keyboard');await browser.command(['set','viewport','320','560']);assert.equal(await evaluate('document.querySelector(".mobile-composer").scrollWidth<=document.querySelector(".mobile-composer").clientWidth'),true);await closeComposer();
   await evaluate('qa.preset="custom";qa.layout.pages[0].keys.push({id:"custom-left",kind:"shortcut",value:"left",label:"My Left",ariaLabel:"My Left",width:"md",hidden:false,repeat:true,autoEnter:false,custom:true});qa.refresh()');assert.equal(await evaluate('document.querySelector("[data-mobile-panel=main] [data-mobile-shortcut=left]").textContent'),'My Left');await tap('[data-mobile-page="nav"]');assert.equal(await evaluate('document.querySelector("#mobileShortcuts").dataset.navigationOpen'),'false');
+  await evaluate(`(()=>{
+    for(let i=0;i<26;i++){
+      qa.switch('retired-'+i);qa.experience.openComposer();
+      const input=document.querySelector('#mobile-composer-input');input.value='old draft '+i;input.dispatchEvent(new Event('input',{bubbles:true}));
+      qa.experience.close();qa.panes.delete(qa.pane.id);qa.experience.sync();
+    }
+    qa.switch('after-retirement');qa.experience.openComposer();
+    const input=document.querySelector('#mobile-composer-input');input.value='still editable';input.dispatchEvent(new Event('input',{bubbles:true}));
+    qa.experience.close();qa.experience.openComposer();
+  })()`);
+  assert.equal(await evaluate('document.querySelector("#mobile-composer-input").value'),'still editable','retired targets must not permanently fill draft slots');
   const errors=JSON.parse(await browser.command(['errors','--json']));assert.deepEqual(errors.data.errors,[]);
   return {status:'passed',name:'mobile-workflow',artifacts};
  }catch(error){

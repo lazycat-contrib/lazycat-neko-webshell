@@ -1,7 +1,8 @@
 import type { MessageKey } from "./messages-en";
 
 export const zhCNMessages = {
-  "mobileComposer.multilineUnsupported": "当前终端未启用多行粘贴。可插入单行内容，或明确选择“发送并回车”执行文本。",
+  "mobileComposer.multilineUnsupported": "无法确认此终端支持安全的多行插入。可插入单行，或明确选择“发送并回车”。",
+  "mobileComposer.capacity": "已有 24 份未发送草稿，请先发送或清空另一终端的草稿，再重试。",
   "mobileComposer.title": "编辑输入",
   "mobileComposer.input": "输入内容",
   "mobileComposer.hint": "回车用于换行。草稿仅在本页面保留，每个终端分别保存。",

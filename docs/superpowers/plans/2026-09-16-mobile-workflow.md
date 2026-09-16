@@ -26,11 +26,11 @@ type Options = {
  tr: (key: MessageKey, values?: Record<string,string|number>) => string;
 };
 ```
-- [ ] Implement memory-only drafts keyed by target.key, 64 KiB UTF-8 limit, preserved whitespace and newlines, clear on success only. Draft survives close, cleared by explicit discard. Avoid unbounded orphan drafts; bound total draft size or number and do not silently evict text in an active session.
-- [ ] Native dialog/bottom sheet with title, target label, labeled textarea and Insert / Send+Enter / Discard actions. Autofocus textarea synchronously from user open gesture, preserve native IME. No Enter shortcut that submits while composing. Busy prevents duplicate sends; failure is inline and retains text.
-- [ ] Close when target becomes stale via sync(), retaining original draft. Old responses cannot close/change a newly opened target's view. Exact send callback is provided by parent; never append raw Enter internally.
-- [ ] Use keys mobileComposer.title, .input, .hint, .insert, .send, .discard, .empty, .tooLarge, .unavailable, .failed, .sending, .close. Parent adds messages, so report desired wording. Use local view/status DOM nodes, no unsafe HTML. Import owned stylesheet from controller/view. Mobile viewport and focus handling, 200/150ms token transitions, reduced motion; no separate animation library.
-- [ ] Meaningful unit tests for draft isolation, size limit, preservation/failure/success and stale pending completion; test pure model as necessary. Run focused tests; commit owned files only and report commit, checks and requested translations.
+- [x] Implement memory-only drafts keyed by target.key, 64 KiB UTF-8 limit, preserved whitespace and newlines, clear on success only. Draft survives close, cleared by explicit discard. Avoid unbounded orphan drafts; bound total draft size or number and do not silently evict text in an active session.
+- [x] Native dialog/bottom sheet with title, target label, labeled textarea and Insert / Send+Enter / Discard actions. Autofocus textarea synchronously from user open gesture, preserve native IME. No Enter shortcut that submits while composing. Busy prevents duplicate sends; failure is inline and retains text.
+- [x] Close when target becomes stale via sync(), retaining original draft. Old responses cannot close/change a newly opened target's view. Exact send callback is provided by parent; never append raw Enter internally.
+- [x] Use keys mobileComposer.title, .input, .hint, .insert, .send, .discard, .empty, .tooLarge, .unavailable, .failed, .sending, .close. Parent adds messages, so report desired wording. Use local view/status DOM nodes, no unsafe HTML. Import owned stylesheet from controller/view. Mobile viewport and focus handling, 200/150ms token transitions, reduced motion; no separate animation library.
+- [x] Meaningful unit tests for draft isolation, size limit, preservation/failure/success and stale pending completion; test pure model as necessary. Run focused tests; commit owned files only and report commit, checks and requested translations.
 
 ### Task 2: Searchable phrase and key palette
 **Owner:** fresh implementer; files only src/frontend/src/mobile/command-palette/.
@@ -48,19 +48,19 @@ type Options = {
  tr: (key: MessageKey, values?: Record<string,string|number>) => string;
 };
 ```
-- [ ] Recent/All/Keys tabs, case-insensitive search of phrase label/text/group and key label/value; recent sorts lastUsedAt >0, all respects current group/order. Query is not persisted. No built-in agent commands or fake recents. Stable choice identity and exact target checked on activation.
-- [ ] Native dialog/bottom sheet, explicit search label and clear control, empty states, full multiline phrase preview, Enter indicator only when sendEnter true. Don't autofocus search/open system keyboard on open. Close/sync safe and double activation locked. Inline failure, modal stays when send failed. Revalidate phrase/key against current configuration (removed or changed while open must not run stale payload).
-- [ ] Keys list only safe terminal shortcut/chord items and explicit user-defined text keys, never destructive workspace actions. Parent callback decides transport/modifiers. Preserve custom key identity and autoEnter indicator.
-- [ ] i18n keys prefix mobilePalette (title,search,clear,recent,all,keys,empty,noRecent,noMatches,enter,insert,sending,failed,unavailable,close). Parent owns messages. Local CSS tokens and accessibility. Reuse infrastructure only via narrow imports.
-- [ ] Unit tests search/order/recency/XSS rendering/changed choices and target validity as appropriate; run focused tests, commit owned files only and report.
+- [x] Recent/All/Keys tabs, case-insensitive search of phrase label/text/group and key label/value; recent sorts lastUsedAt >0, all respects current group/order. Query is not persisted. No built-in agent commands or fake recents. Stable choice identity and exact target checked on activation.
+- [x] Native dialog/bottom sheet, explicit search label and clear control, empty states, full multiline phrase preview, Enter indicator only when sendEnter true. Don't autofocus search/open system keyboard on open. Close/sync safe and double activation locked. Inline failure, modal stays when send failed. Revalidate phrase/key against current configuration (removed or changed while open must not run stale payload).
+- [x] Keys list only safe terminal shortcut/chord items and explicit user-defined text keys, never destructive workspace actions. Parent callback decides transport/modifiers. Preserve custom key identity and autoEnter indicator.
+- [x] i18n keys prefix mobilePalette (title,search,clear,recent,all,keys,empty,noRecent,noMatches,enter,insert,sending,failed,unavailable,close). Parent owns messages. Local CSS tokens and accessibility. Reuse infrastructure only via narrow imports.
+- [x] Unit tests search/order/recency/XSS rendering/changed choices and target validity as appropriate; run focused tests, commit owned files only and report.
 
 ### Task 3: Parent integration, navigation panel and overview
 **Owner:** parent. Files input-target.ts + tests; mobile/navigation-pad.ts/css; keyboard-view/controller/layout-view/action-event-phase and targeted tests; existing workspace-overview modules; i18n; main.ts call-throughs.
-- [ ] Snapshot actual focused Herdr pane and validate generation, session, pane identity. Explicit scoped Herdr send verifies remote current pane before sending to captured id. Plain PTY uses existing paste + separate Enter; check writable/replay/socket states.
-- [ ] New draft icon in scrollable toolbar; existing phrase icon becomes palette entry even if phrases empty. Overview accessible from operations page for all presets without clobbering custom layouts. Keep secret and keyboard fixed controls.
-- [ ] Existing nav page opens nonmodal grid above toolbar for built-in presets; custom nav page stays as configured. Retain all original navigation keys, hold repeat and modifiers. Remove main-left/down/up/right from built-in defaults; do not copy Tab/Enter/Ctrl/Esc into navigation. Opening remembers prior page; second tap/outside/Escape close, cancel held gestures, no keyboard pop or simultaneous rail. Latest user guidance requires exactly one default arrow set, in navigation.
-- [ ] Overview adds status and count, checkmark, stable ordering; closes only on valid current item activation. Improve readable flat hierarchy and opaque sheet using scoped CSS.
-- [ ] Coordinate overlay exclusivity and global keyboard/paste capture so composer and palette input never reaches terminal. Close input surfaces on target changes, preserve memory draft. Register sync at existing updateActiveDetails and dispose on lifecycle teardown.
+- [x] Snapshot actual focused Herdr pane and validate generation, session, pane identity. Explicit scoped Herdr send verifies remote current pane before sending to captured id. Plain PTY uses existing paste + separate Enter; check writable/replay/socket states.
+- [x] New draft icon in scrollable toolbar; existing phrase icon becomes palette entry even if phrases empty. Overview accessible from operations page for all presets without clobbering custom layouts. Keep secret and keyboard fixed controls.
+- [x] Existing nav page opens nonmodal grid above toolbar for built-in presets; custom nav page stays as configured. Retain all original navigation keys, hold repeat and modifiers. Remove main-left/down/up/right from built-in defaults; do not copy Tab/Enter/Ctrl/Esc into navigation. Opening remembers prior page; second tap/outside/Escape close, cancel held gestures, no keyboard pop or simultaneous rail. Latest user guidance requires exactly one default arrow set, in navigation.
+- [x] Overview adds status and count, checkmark, stable ordering; closes only on valid current item activation. Improve readable flat hierarchy and opaque sheet using scoped CSS.
+- [x] Coordinate overlay exclusivity and global keyboard/paste capture so composer and palette input never reaches terminal. Close input surfaces on target changes, preserve memory draft. Register sync at existing updateActiveDetails and dispose on lifecycle teardown.
 
 ### Task 4: Verification and patch release
 **Owner:** parent with independent review.

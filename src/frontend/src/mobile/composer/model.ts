@@ -71,6 +71,8 @@ export class MobileComposerModel {
     return { ok: true, bytes };
   }
 
+  remove(key: string): void { this.#drafts.delete(key); }
+
   discard(): void {
     if (this.#activeKey) this.#drafts.delete(this.#activeKey);
   }

@@ -1,11 +1,12 @@
 import type { MessageKey } from "../../i18n.ts";
-import type { MobileInputTarget } from "../input-target.ts";
+import { mobileInputTargetRetired, type MobileInputTarget } from "../input-target.ts";
 import { MobileComposerModel } from "./model.ts";
 import { createMobileComposerView } from "./view.ts";
 
 type Options = {
   target: () => MobileInputTarget | undefined;
   isCurrent: (target: MobileInputTarget) => boolean;
+  isRetired?: (target: MobileInputTarget) => boolean;
   send: (target: MobileInputTarget, text: string, enter: boolean) => Promise<boolean>;
   prepare: () => void;
   tr: (key: MessageKey, values?: Record<string, string | number>) => string;
@@ -13,6 +14,7 @@ type Options = {
 
 export function createMobileComposer(options: Options) {
   const model = new MobileComposerModel();
+  const draftTargets = new Map<string, MobileInputTarget>();
   let view: ReturnType<typeof createMobileComposerView> | undefined;
   let captured: MobileInputTarget | undefined;
   let restoreFocus: HTMLElement | undefined;
@@ -42,8 +44,15 @@ export function createMobileComposer(options: Options) {
       : options.tr("mobileComposer.failed");
   }
 
+  function pruneRetiredDrafts() {
+    for (const [key, target] of draftTargets) {
+      if ((options.isRetired ?? mobileInputTargetRetired)(target)) { model.remove(key); draftTargets.delete(key); }
+    }
+  }
+
   function open() {
     if (disposed) return;
+    pruneRetiredDrafts();
     const next = options.target();
     if (view?.dialog.open) close(false);
     restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
@@ -54,6 +63,7 @@ export function createMobileComposer(options: Options) {
     currentView.setAvailable(Boolean(next));
     currentView.target.textContent = next?.label ?? "";
     currentView.textarea.value = next ? model.open(next.key) : "";
+    if (next && currentView.textarea.value) draftTargets.set(next.key, next);
     message(!next ? "mobileComposer.unavailable" : busy ? "mobileComposer.sending" : undefined);
     currentView.dialog.showModal();
     currentView.syncViewport();
@@ -76,17 +86,20 @@ export function createMobileComposer(options: Options) {
     const selection = view.textarea.selectionStart;
     const update = model.update(view.textarea.value);
     if (update.ok) {
+      if (view.textarea.value) draftTargets.set(captured.key, captured);
+      else draftTargets.delete(captured.key);
       message();
       return;
     }
     view.textarea.value = previous;
     const cursor = Math.min(selection ?? previous.length, previous.length);
     view.textarea.setSelectionRange(cursor, cursor);
-    message("mobileComposer.tooLarge");
+    message(update.reason === "capacity" ? "mobileComposer.capacity" : "mobileComposer.tooLarge");
   }
 
   function discard() {
     if (!view || busy) return;
+    if (captured) draftTargets.delete(captured.key);
     model.discard();
     view.textarea.value = "";
     close();
@@ -121,6 +134,7 @@ export function createMobileComposer(options: Options) {
       succeeded = false;
     }
     const completion = model.completeSubmission(submission, succeeded);
+    if (!model.draft(submission.key)) draftTargets.delete(submission.key);
     busy = false;
     if (!view || !view.dialog.open || disposed) return;
     if (!completion.ownsView || captured !== target) {
@@ -139,6 +153,7 @@ export function createMobileComposer(options: Options) {
   }
 
   function sync() {
+    pruneRetiredDrafts();
     if (!view?.dialog.open || !captured) return;
     if (!options.isCurrent(captured)) close();
   }

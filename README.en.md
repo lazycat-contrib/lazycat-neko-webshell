@@ -167,7 +167,7 @@ The final files should look like `/lzcapp/var/sounds/noise/white-noise.wav`. Sup
 
 ## Mobile input and navigation
 
-The edit icon opens a multiline draft composer. Drafts stay in page memory per terminal, including the actual Herdr pane, and survive closing the composer until the page reloads. Enter edits a new line; Insert adds no extra Enter, while Send + Enter explicitly submits. Failed sends retain the draft, and reopening a pending send cannot submit it twice. Native terminals that have not enabled multiline paste reject multiline Insert with an explanation.
+The edit icon opens a multiline draft composer. Drafts stay in page memory per terminal, including the actual Herdr pane, and survive closing the composer until the page reloads. Enter edits a new line; Insert adds no extra Enter, while Send + Enter explicitly submits. Failed sends retain the draft, and reopening a pending send cannot submit it twice. Multiline Insert is refused with an explanation for native terminals without bracketed paste, and for Herdr panes whose inner paste mode cannot be verified.
 
 The navigation icon opens a compact directional panel. Default main-row arrows are removed to avoid duplicate keys. Home, End, page and delete keys remain available, with hold-to-repeat. Tap the navigation icon again, tap outside or press Escape to dismiss. The panel preserves the system keyboard state and leaves custom layouts unchanged.
 

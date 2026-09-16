@@ -94,3 +94,9 @@ test("bounds retained targets without silently evicting existing drafts", () => 
   model.open("pane-c");
   assert.equal(model.update("gamma").ok, true);
 });
+
+test('removing retired target drafts frees capacity without evicting live text',()=>{
+ const model=new MobileComposerModel(2);model.open('retired');model.update('old');model.open('live');model.update('keep');
+ model.open('new');assert.equal(model.update('new text').ok,false);
+ model.remove('retired');assert.equal(model.update('new text').ok,true);assert.equal(model.draft('live'),'keep');
+});

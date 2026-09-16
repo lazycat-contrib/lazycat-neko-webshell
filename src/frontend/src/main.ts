@@ -1,5 +1,5 @@
 import { createMobileExperience } from "./mobile/experience";
-import { captureMobileInputTarget } from "./mobile/input-target";
+import { captureMobileInputTarget, mobileInputTargetRetired } from "./mobile/input-target";
 import { createTerminalTrace } from "./diagnostics/terminal-trace";
 import { createTerminalDiagnosticsSettings } from "./diagnostics/settings-controller";
 import { createWorkspaceRequestController, workspaceActionChangesFocus, type WorkspaceRequest } from "./workspace-request-controller";
@@ -1201,6 +1201,7 @@ const secretFiles = createSecretFileController({
 });
 const mobileExperience = createMobileExperience({
   target: () => captureMobileInputTarget(activePane(), selectedSelectorGeneration, herdrState),
+  isRetired: (target) => mobileInputTargetRetired(target, allPanes(), herdrState),
   phrases: () => settings.mobileQuickPhrases,
   keys: () => resolveMobileKeyboardLayout(settings.mobileKeyboardPreset, settings.mobileKeyboardLayout).pages.flatMap(page => page.keys),
   phraseUsed: (id) => { settings.mobileQuickPhrases = markMobileQuickPhraseUsed(settings.mobileQuickPhrases, id); saveSettings(); renderMobileQuickInput(); },

@@ -1,5 +1,6 @@
 export const enMessages = {
-  "mobileComposer.multilineUnsupported": "This terminal has not enabled multiline paste. Insert one line, or choose Send + Enter to execute the text.",
+  "mobileComposer.multilineUnsupported": "Safe multiline insertion cannot be confirmed for this terminal. Insert one line, or explicitly choose Send + Enter.",
+  "mobileComposer.capacity": "There are 24 unsent drafts. Send or discard a draft in another open terminal, then try again.",
   "mobileComposer.title": "Draft input",
   "mobileComposer.input": "Text to insert",
   "mobileComposer.hint": "Enter adds a new line. Drafts stay in this page, separately for each pane.",

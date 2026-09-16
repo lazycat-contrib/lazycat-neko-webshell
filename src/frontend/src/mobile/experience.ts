@@ -9,6 +9,7 @@ import { createMobileStickyState, encodeMobileShortcutInput, mobileChordInput } 
 
 type Options = {
   target: () => MobileInputTarget | undefined;
+  isRetired?: (target: MobileInputTarget) => boolean;
   phrases: () => MobileQuickPhrase[];
   keys: () => MobileKeyboardKey[];
   phraseUsed: (id: string) => void;
@@ -31,7 +32,7 @@ export function createMobileExperience(options: Options) {
   const isCurrent = (target: MobileInputTarget) => sameMobileInputTarget(target, options.target());
   const dispatch = createMobileInputDispatch({ ...options, isCurrent, multilineError: () => options.tr("mobileComposer.multilineUnsupported") });
   const prepare = () => { options.closeNavigation(); options.cancelKeys(); options.closeOverview(); options.prepare(); };
-  const composer = createMobileComposer({ target: options.target, isCurrent, send: dispatch.send, prepare, tr: options.tr });
+  const composer = createMobileComposer({ target: options.target, isRetired: options.isRetired, isCurrent, send: dispatch.send, prepare, tr: options.tr });
 
   function keys() {
     const seen = new Set<string>();
