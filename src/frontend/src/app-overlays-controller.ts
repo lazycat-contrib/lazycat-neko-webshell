@@ -232,7 +232,7 @@ export function createAppOverlaysController(options: {
   }
 
   function toggleInstanceMenu() {
-    const open = elements.instanceMenu.hidden;
+    const open = Boolean(elements.instanceMenu.hidden);
     if (open) {
       options.prepareMobileOverlay();
     }

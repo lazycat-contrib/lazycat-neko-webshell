@@ -109,7 +109,7 @@ export function createSshNewTabMenuController(options: SshNewTabMenuControllerOp
     }
     lastRender = renderOptions;
     if (renderOptions.context.sshAvailable) {
-      refreshData(renderOptions.context, { force: options.root.hidden });
+      refreshData(renderOptions.context, { force: Boolean(options.root.hidden) });
     }
     options.root.innerHTML = renderSshNewTabMenu({
       ...renderOptions,

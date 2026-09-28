@@ -197,7 +197,7 @@ import {
   tabForPane as tabForPaneInTabs,
   visibleTabPanes,
 } from "./pane-selection";
-import { createPaneTransport } from "./pane-transport";
+import { createPaneTransport, paneSocketOpenOrConnecting } from "./pane-transport";
 import { createPerformanceMeter } from "./performance-meter";
 import {
   clearPanePendingInput,
@@ -2543,7 +2543,8 @@ function bindActions() {
   bindLifecycleEvents();
   bindMobileShortcuts();
   document.addEventListener("keydown", handleGlobalShortcutCapture, true);
-  document.addEventListener("keydown", event => { if (!mobileExperience.ownsEvent(event)) handleTerminalImeFocusCapture(event); }, true);
+  document.addEventListener("keydown", event => { if (!mobileExperience.ownsEvent(event)) handleTerminalImeKeyCapture(event); }, true);
+  document.addEventListener("keyup", event => { if (!mobileExperience.ownsEvent(event)) handleTerminalImeKeyCapture(event); }, true);
   document.addEventListener("keydown", event => { if (!mobileExperience.ownsEvent(event)) handleTerminalInterruptCapture(event); }, true);
   document.addEventListener("keydown", event => {
     if (!herdrMachines?.ownsEvent(event) && !mobileExperience.ownsEvent(event)) handleTerminalClipboardCapture(event);
@@ -6104,7 +6105,7 @@ function paneConnectionPriority(pane: TerminalPane): number {
 async function openSocketPrepared(pane: TerminalPane) {
   if (providerRevisionStale || pane.workspaceRefreshPending || pane.closing) return;
   if (!pane.sessionId) return;
-  if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
+  if (paneSocketOpenOrConnecting(pane)) return;
   if (pendingPaneSocketOpens.has(pane.id)) return;
   paneConnectionLifecycle.beginConnection(pane);
   pendingPaneSocketOpens.add(pane.id);
@@ -6135,7 +6136,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     || pane.closing
     || !pane.sessionId
   ) return;
-  if (pane.socket?.readyState === WebSocket.OPEN || pane.socket?.readyState === WebSocket.CONNECTING) return;
+  if (paneSocketOpenOrConnecting(pane)) return;
   const replayAfter = paneReplayAfter(pane);
   pane.lastReplayAfter = replayAfter;
   const url = webshellTerminalSocketUrl({
@@ -7093,7 +7094,7 @@ function focusPaneSystemKeyboard(pane: TerminalPane): boolean {
   return focused;
 }
 
-function handleTerminalImeFocusCapture(event: KeyboardEvent) {
+function handleTerminalImeKeyCapture(event: KeyboardEvent) {
   const pane = paneForEventTarget(event.target);
   if (!pane) return;
   preparePaneImeForKeyboardEvent(pane, event);
@@ -7146,7 +7147,7 @@ function sendPaneBytes(pane: TerminalPane, bytes: Uint8Array): boolean {
   if (!pane || !canConnectPanePty(pane)) return false;
   if (!terminalControl.canWrite(pane)) return false;
   if (pane.socket?.readyState !== WebSocket.OPEN || pane.replaying || pane.closing) return false;
-  pane.socket.send(bytes);
+  pane.socket.send(new Uint8Array(bytes));
   return true;
 }
 

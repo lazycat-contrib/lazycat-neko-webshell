@@ -1,5 +1,8 @@
 import type { TerminalPane } from "./types";
-import { paneImeInput } from "./terminal-viewport";
+import {
+  paneTerminalCanvas,
+  paneTerminalImeInput as paneImeInput,
+} from "./terminal-dom.ts";
 
 export function focusPaneImeInput(pane: TerminalPane | undefined): boolean {
   if (!pane) return false;
@@ -15,8 +18,23 @@ export function preparePaneImeForKeyboardEvent(
   pane: TerminalPane | undefined,
   event: KeyboardEvent,
 ): boolean {
-  if (!pane || !isPlainPrintableKeyEvent(event)) return false;
+  if (!pane || (event.target !== paneTerminalCanvas(pane) && event.target !== paneImeInput(pane))) {
+    return false;
+  }
+  if (isImeProcessKeyEvent(event)) {
+    // Restty's kitty key encoder can turn a Windows IME "Process" event's
+    // physical KeyW code into a literal w before the composition commits.
+    if (event.type === "keydown") focusPaneImeInput(pane);
+    event.stopPropagation();
+    return true;
+  }
+  if (event.type === "keyup" || !isPlainPrintableKeyEvent(event)) return false;
   return focusPaneImeInput(pane);
+}
+
+function isImeProcessKeyEvent(event: KeyboardEvent): boolean {
+  const legacyEvent = event as KeyboardEvent & { which?: number };
+  return event.key === "Process" || event.keyCode === 229 || legacyEvent.which === 229;
 }
 
 function isPlainPrintableKeyEvent(event: KeyboardEvent): boolean {

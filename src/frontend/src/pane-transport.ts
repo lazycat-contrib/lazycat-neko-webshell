@@ -7,6 +7,11 @@ export type PaneTransportHandlers = {
   resize: (pane: TerminalPane, cols: number, rows: number) => boolean;
 };
 
+export function paneSocketOpenOrConnecting(pane: TerminalPane): boolean {
+  return pane.socket?.readyState === WebSocket.OPEN
+    || pane.socket?.readyState === WebSocket.CONNECTING;
+}
+
 export function createPaneTransport(
   pane: TerminalPane,
   handlers: PaneTransportHandlers,
