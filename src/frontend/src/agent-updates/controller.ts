@@ -44,11 +44,13 @@ export function createAgentUpdateController(options: Options) {
   return {
     async refresh() {
       const target = options.target();
-      if (target && activeTarget?.selector === target.selector && activeTarget.generation === target.generation && state?.busy && state.status) return;
+      const sameTarget = target && activeTarget?.selector === target.selector && activeTarget.generation === target.generation;
+      if (sameTarget && state?.busy && state.status) return;
+      const previousStatus = sameTarget ? state?.status : undefined;
       activeTarget = target;
       const requestEpoch = ++epoch;
       if (!target) { state = undefined; render(); return; }
-      state = { busy: true }; render();
+      state = { status: previousStatus, busy: true }; render();
       try {
         const status = await inspect(target.selector);
         if (!current(target, requestEpoch) || status.selector !== target.selector) return;

@@ -2,16 +2,21 @@ import assert from 'node:assert/strict';
 import {createServer} from 'vite';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
-import {mkdir} from 'node:fs/promises';
+import {mkdir,readdir} from 'node:fs/promises';
 import {createBrowserDriver,uniqueBrowserSession} from '../browser-driver.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url));
 export async function runHerdrActivityScenario(){
+ const bundledStyles=(await readdir(path.join(root,'src/frontend/dist/assets'))).filter(name=>/^index-.*\.css$/.test(name));
+ assert.equal(bundledStyles.length,1,'Run npm run build before the activity scenario');
+ const stylesheet='/src/frontend/dist/assets/'+bundledStyles[0];
  const server=await createServer({configFile:false,root,server:{host:'127.0.0.1',port:0},logLevel:'error'});
  const browser=createBrowserDriver({session:uniqueBrowserSession('herdr-activity'),headed:false});
  const artifacts=path.join(root,'tests-auto/artifacts/herdr-activity');await mkdir(artifacts,{recursive:true});
  try{
-  await server.listen();await browser.open(`http://127.0.0.1:${server.httpServer.address().port}/tests-auto/herdr-activity/fixture.html`);
+  await server.listen();await browser.open(`http://127.0.0.1:${server.httpServer.address().port}/tests-auto/herdr-activity/fixture.html?styles=${encodeURIComponent(stylesheet)}`);
   await browser.waitFor('window.fixtureReady');
+  const headerAligned='(()=>{const r=[...document.querySelector(".herdr-jump-head").children].filter(e=>getComputedStyle(e).display!=="none").map(e=>e.getBoundingClientRect());return Math.max(...r.map(v=>v.top))-Math.min(...r.map(v=>v.top))<20})()';
+  assert.equal(await browser.evaluate(headerAligned),true,'Desktop switch header fits one row with bundled styles');
   assert.equal(await browser.evaluate('document.querySelectorAll(".herdr-target-chip").length'),4);
   assert.equal(await browser.evaluate('document.querySelector(".herdr-jump-workspace").dataset.status'),'blocked');
   const colors=await browser.evaluate('[...document.querySelectorAll(".herdr-target-chip .herdr-jump-status")].map(element=>getComputedStyle(element).color)');

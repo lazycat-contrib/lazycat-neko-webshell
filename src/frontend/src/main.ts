@@ -1,6 +1,4 @@
-import "./herdr-activity.css";
 import { createAgentUpdateController, bindAgentUpdateView, syncAgentUpdateView, agentUpdateDeferral } from "./agent-updates/controller";
-import "./agent-updates/styles.css";
 import { createMobileExperience } from "./mobile/experience";
 import { captureMobileInputTarget, mobileInputTargetRetired } from "./mobile/input-target";
 import { createTerminalTrace } from "./diagnostics/terminal-trace";
@@ -14,6 +12,8 @@ import "./plugin-tools.css";
 import "./webshell-themes.css";
 import "./terminal-themes.css";
 import "./mobile/styles.css";
+import "./herdr-activity.css";
+import "./agent-updates/styles.css";
 import "./settings/settings.css";
 import "./plugins/ai-chat/composer-layout.css";
 import "./mobile/settings.css";

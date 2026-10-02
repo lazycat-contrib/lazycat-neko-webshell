@@ -1,8 +1,14 @@
 <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><main class="webshell" id="webshell"><div id="fixture"></div></main><script type="module">
-import '/src/frontend/src/styles.css';
-import '/src/frontend/src/mobile/styles.css';
-import '/src/frontend/src/herdr-activity.css';
-import '/src/frontend/src/mobile/settings.css';
+const stylesheet=new URLSearchParams(location.search).get('styles');
+if(stylesheet){
+ const link=document.createElement('link');link.rel='stylesheet';link.href=stylesheet;
+ await new Promise((resolve,reject)=>{link.onload=resolve;link.onerror=reject;document.head.append(link)});
+}else{
+ await import('/src/frontend/src/styles.css');
+ await import('/src/frontend/src/mobile/styles.css');
+ await import('/src/frontend/src/herdr-activity.css');
+ await import('/src/frontend/src/mobile/settings.css');
+}
 import {createIcons,icons} from 'lucide';
 import {renderHerdrJumpShell} from '/src/frontend/src/herdr-jump-shell.ts';
 import {buildHerdrJumpModel} from '/src/frontend/src/herdr-jump-model.ts';

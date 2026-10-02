@@ -76,3 +76,15 @@ test("target readiness can supersede an inspection started before the agent was 
   assert.equal(rendered.at(-1).notice, true);
   assert.equal(updates.length, 0);
 });
+
+
+test("background checks preserve a known optional update entry", async () => {
+  const delayed = promise(); let checks = 0;
+  const { controller, rendered } = setup({ inspect: () => ++checks === 1 ? Promise.resolve(status()) : delayed.pending });
+  await controller.refresh();
+  const checking = controller.refresh();
+  assert.equal(rendered.at(-1).notice, true);
+  assert.equal(rendered.at(-1).state.busy, true);
+  delayed.resolve(status()); await checking;
+  assert.equal(rendered.at(-1).notice, true);
+});

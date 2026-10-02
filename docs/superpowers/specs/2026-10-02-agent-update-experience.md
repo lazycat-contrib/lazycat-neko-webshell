@@ -1,6 +1,6 @@
 # Agent update experience
 
-Implement in the pending 0.8.7 release alongside the settings and tools improvements.
+Implement in the pending 0.8.8 release alongside the settings and tools improvements.
 
 - Inspect the selected authorized LightOS target without starting an agent or creating a PTY. Compare protocol first, then minimum agent version. A newer protocol is never downgraded.
 - Required compatibility updates run automatically under the existing selector and target locks. Revalidate the readable incompatible running identity immediately before restart and preserve newer installed payloads. They do not ask for a decision. Inspection, network or installation failures show a retry action; unknown status never starts an automatic replacement.
