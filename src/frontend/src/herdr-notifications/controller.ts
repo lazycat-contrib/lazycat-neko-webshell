@@ -1,5 +1,6 @@
 import type { MessageKey } from "../i18n";
 import type { HerdrBridgeState, JsonRecord } from "../types";
+import { herdrAgentCompletionSupported } from "../herdr-socket-api.ts";
 import {
   postHerdrLazycatNotification,
   type HerdrLazycatNotificationPayload,
@@ -25,15 +26,25 @@ export function createHerdrLazycatNotificationController(
   const policy = createHerdrNotificationPolicy();
   const send = deps.send ?? postHerdrLazycatNotification;
 
+  function deliver(transition: HerdrNotificationTransition) {
+    if (!deps.enabled()) return;
+    void send(notificationPayload(transition, deps.state(), deps.tr)).catch(deps.onError);
+  }
+
   return {
     seed() {
-      policy.seed(deps.state()?.panes ?? []);
+      const state = deps.state();
+      policy.seed(state?.panes ?? [], state?.agents ?? [],
+        herdrAgentCompletionSupported(state?.herdr_version ?? ""));
     },
 
     handle(event: string, data: JsonRecord) {
       const transition = policy.handle(event, data);
-      if (!transition || !deps.enabled()) return;
-      void send(notificationPayload(transition, deps.state(), deps.tr)).catch(deps.onError);
+      if (transition) deliver(transition);
+    },
+
+    reconcile() {
+      for (const transition of policy.reconcile(deps.state()?.agents ?? [])) deliver(transition);
     },
 
     reset() {

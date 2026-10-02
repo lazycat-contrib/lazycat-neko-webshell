@@ -121,6 +121,7 @@ export type HerdrPaneInfo = {
   tab_id: string;
   focused: boolean;
   title?: string;
+  restore_error?: string;
   terminal_title?: string;
   terminal_title_stripped?: string;
   display_agent?: string;
@@ -143,6 +144,7 @@ export type HerdrAgentInfo = {
   launch_pending: boolean;
   interactive_ready: boolean;
   state_change_seq: number;
+  completion_seq?: number;
   title?: string;
   terminal_title?: string;
   terminal_title_stripped?: string;

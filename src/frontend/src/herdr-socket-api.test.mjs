@@ -18,6 +18,7 @@ import {
   isHerdrSocketRequestMethod,
   isHerdrSocketStreamMethod,
   isHerdrSocketSubscription,
+  herdrAgentCompletionSupported,
 } from "./herdr-socket-api.ts";
 
 test("normalizes Herdr 0.8.2 wire event names to the subscribed dot notation", () => {
@@ -44,18 +45,37 @@ test("normalizes Herdr 0.8.2 wire event names to the subscribed dot notation", (
   );
 });
 
-test("tracks Herdr 0.9.0 source metadata without expanding the understood allowlist", () => {
+test("retains recovery diagnostics and real completion sequences from authoritative resources", () => {
+  const pane = herdrPaneInfoFromEvent({
+    pane_id: "w1:p1", workspace_id: "w1", tab_id: "w1:t1", focused: true,
+    agent_status: "unknown", tokens: {}, restore_error: "saved directory is missing",
+  });
+  assert.equal(pane?.restore_error, "saved directory is missing");
+  const input = {
+    terminal_id: "term-1", pane_id: "w1:p1", workspace_id: "w1", tab_id: "w1:t1",
+    focused: true, agent_status: "idle", revision: 1, tokens: {}, completion_seq: 9,
+  };
+  assert.equal(herdrAgentInfo(input)?.completion_seq, 9);
+  assert.equal(herdrAgentInfo({ ...input, completion_seq: undefined })?.completion_seq, undefined);
+  assert.equal(herdrAgentInfo({ ...input, completion_seq: -1 }), undefined);
+  assert.equal(herdrAgentCompletionSupported("0.9.1"), false);
+  assert.equal(herdrAgentCompletionSupported("0.9.2"), true);
+  assert.equal(herdrAgentCompletionSupported("0.9.3-preview"), true);
+  assert.equal(herdrAgentCompletionSupported("unknown"), false);
+});
+
+test("tracks Herdr 0.9.3 source metadata without expanding the understood allowlist", () => {
   assert.equal(HERDR_SOCKET_PROTOCOL, 22);
   assert.equal(HERDR_SOCKET_SCHEMA_VERSION, 1);
-  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.9.0");
-  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "b99002ac99b09e00b4ca692436cb15a6b0d676f1");
+  assert.equal(HERDR_SOCKET_SOURCE_VERSION, "0.9.3");
+  assert.equal(HERDR_SOCKET_SOURCE_REVISION, "d6b40d4edd550ccea081f089605a64314f8c8b27");
   assert.equal(isHerdrSocketMethod("workspace.move_block"), true);
   assert.equal(isHerdrSocketMethod("workspace.report_metadata"), true);
-  assert.equal(isHerdrSocketMethod("pane.graphics.set"), true);
-  assert.equal(isHerdrSocketMethod("pane.graphics.stream"), true);
-  assert.equal(isHerdrSocketStreamMethod("pane.graphics.stream"), true);
+  assert.equal(isHerdrSocketMethod("pane.clear"), true);
+  assert.equal(isHerdrSocketMethod("pane.link.resolve"), true);
+  assert.equal(isHerdrSocketStreamMethod("pane.graphics.stream"), false);
   assert.equal(isHerdrSocketRequestMethod("pane.graphics.stream"), false);
-  assert.equal(isHerdrSocketRequestMethod("pane.graphics.set"), true);
+  assert.equal(isHerdrSocketRequestMethod("pane.graphics.set"), false);
   assert.equal(isHerdrSocketStreamMethod("events.subscribe"), true);
   assert.equal(isHerdrSocketRequestMethod("events.subscribe"), false);
   assert.equal(isHerdrSocketMethod("pane.input.set"), true);
@@ -65,6 +85,8 @@ test("tracks Herdr 0.9.0 source metadata without expanding the understood allowl
   assert.equal(isHerdrSocketMethod("agent.wait"), true);
   assert.equal(isHerdrSocketMethod("agent.view.set"), true);
   assert.equal(isHerdrSocketMethod("agent.view.clear"), true);
+  assert.equal(isHerdrSocketMethod("server.ssh_agent.register"), false);
+  assert.equal(isHerdrSocketMethod("pane.graphics.info"), false);
   assert.equal(isHerdrSocketMethod("agent.send"), false);
   assert.equal(isHerdrSocketSubscription("workspace.reordered"), true);
   assert.equal(isHerdrSocketSubscription("workspace.metadata_updated"), true);

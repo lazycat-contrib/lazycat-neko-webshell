@@ -1,6 +1,6 @@
 {
-  "source_version": "0.9.0",
-  "source_revision": "b99002ac99b09e00b4ca692436cb15a6b0d676f1",
+  "source_version": "0.9.3",
+  "source_revision": "d6b40d4edd550ccea081f089605a64314f8c8b27",
   "protocol": 22,
   "schema_version": 1,
   "methods": [
@@ -51,6 +51,7 @@
     "pane.move",
     "pane.zoom",
     "pane.layout",
+    "pane.clear",
     "pane.process_info",
     "layout.export",
     "layout.apply",
@@ -64,15 +65,12 @@
     "pane.get",
     "pane.focus",
     "pane.input.set",
+    "pane.link.resolve",
     "pane.rename",
     "pane.send_text",
     "pane.send_keys",
     "pane.send_input",
     "pane.read",
-    "pane.graphics.set",
-    "pane.graphics.clear",
-    "pane.graphics.info",
-    "pane.graphics.stream",
     "pane.report_agent",
     "pane.report_agent_session",
     "pane.report_metadata",
@@ -102,8 +100,7 @@
     "integration.list"
   ],
   "stream_methods": [
-    "events.subscribe",
-    "pane.graphics.stream"
+    "events.subscribe"
   ],
   "subscriptions": [
     "workspace.created",

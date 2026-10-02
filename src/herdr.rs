@@ -443,6 +443,8 @@ pub struct HerdrPaneInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    restore_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     terminal_title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     terminal_title_stripped: Option<String>,
@@ -472,6 +474,8 @@ pub struct HerdrAgentInfo {
     launch_pending: bool,
     interactive_ready: bool,
     state_change_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completion_seq: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2045,6 +2049,7 @@ fn parse_panes(response: &Value) -> Vec<HerdrPaneInfo> {
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
                 title: json_optional_string(value, "title"),
+                restore_error: json_optional_string(value, "restore_error"),
                 terminal_title: json_optional_string(value, "terminal_title"),
                 terminal_title_stripped: json_optional_string(value, "terminal_title_stripped"),
                 display_agent: json_optional_string(value, "display_agent"),
@@ -2079,6 +2084,7 @@ fn parse_agents(response: &Value) -> Vec<HerdrAgentInfo> {
                 launch_pending: json_optional_bool(value, "launch_pending", false)?,
                 interactive_ready: json_optional_bool(value, "interactive_ready", false)?,
                 state_change_seq: json_optional_u64(value, "state_change_seq", 0)?,
+                completion_seq: value.get("completion_seq").and_then(Value::as_u64),
                 title: json_optional_string(value, "title"),
                 terminal_title: json_optional_string(value, "terminal_title"),
                 terminal_title_stripped: json_optional_string(value, "terminal_title_stripped"),
@@ -2467,6 +2473,7 @@ mod tests {
                         "tab_id": "w1:t1",
                         "focused": true,
                         "title": "Refactor auth",
+                        "restore_error": "saved directory is missing",
                         "terminal_title": "⠋ Codex",
                         "terminal_title_stripped": "Codex",
                         "display_agent": "Codex auth",
@@ -2489,6 +2496,7 @@ mod tests {
                         "launch_pending": false,
                         "interactive_ready": true,
                         "state_change_seq": 12,
+                        "completion_seq": 10,
                         "title": "Review auth",
                         "tokens": { "model": "gpt-5" }
                     }]
@@ -2511,6 +2519,10 @@ mod tests {
         assert_eq!(panes.len(), 1);
         assert_eq!(panes[0].pane_id, "w1:p1");
         assert_eq!(panes[0].terminal_title_stripped.as_deref(), Some("Codex"));
+        assert_eq!(
+            panes[0].restore_error.as_deref(),
+            Some("saved directory is missing")
+        );
         assert_eq!(panes[0].agent_status, "working");
         assert_eq!(
             panes[0].tokens.get("model").and_then(Value::as_str),
@@ -2522,6 +2534,11 @@ mod tests {
         assert!(agents[0].interactive_ready);
         assert!(!agents[0].launch_pending);
         assert_eq!(agents[0].state_change_seq, 12);
+        assert_eq!(agents[0].completion_seq, Some(10));
+        assert_eq!(
+            serde_json::to_value(&agents[0]).unwrap()["completion_seq"],
+            10
+        );
     }
 
     #[test]
@@ -2682,25 +2699,20 @@ mod tests {
         assert_eq!(MIN_SUPPORTED_HERDR_PROTOCOL_VERSION, 14);
         assert_eq!(HERDR_SOCKET_CONTRACT.protocol, 22);
         assert_eq!(HERDR_SOCKET_CONTRACT.schema_version, 1);
-        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.9.0");
+        assert_eq!(HERDR_SOCKET_CONTRACT.source_version, "0.9.3");
         assert_eq!(
             HERDR_SOCKET_CONTRACT.source_revision,
-            "b99002ac99b09e00b4ca692436cb15a6b0d676f1"
+            "d6b40d4edd550ccea081f089605a64314f8c8b27"
         );
-        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 96);
-        assert_eq!(
-            HERDR_SOCKET_CONTRACT.stream_methods,
-            ["events.subscribe", "pane.graphics.stream"]
-        );
+        assert_eq!(HERDR_SOCKET_CONTRACT.methods.len(), 94);
+        assert_eq!(HERDR_SOCKET_CONTRACT.stream_methods, ["events.subscribe"]);
         assert_eq!(HERDR_SOCKET_CONTRACT.subscriptions.len(), 27);
         for method in [
             "session.snapshot",
             "workspace.move_block",
             "workspace.report_metadata",
-            "pane.graphics.set",
-            "pane.graphics.clear",
-            "pane.graphics.info",
-            "pane.graphics.stream",
+            "pane.clear",
+            "pane.link.resolve",
             "pane.input.set",
             "popup.close",
             "agent.send_keys",
@@ -2721,9 +2733,9 @@ mod tests {
             );
         }
         assert!(!is_allowed_herdr_method("agent.send"));
-        assert!(is_allowed_herdr_method("pane.graphics.stream"));
-        assert!(is_allowed_herdr_stream_method("pane.graphics.stream"));
-        assert!(validate_herdr_request_method("pane.graphics.info").is_ok());
+        assert!(!is_allowed_herdr_method("pane.graphics.stream"));
+        assert!(!is_allowed_herdr_stream_method("pane.graphics.stream"));
+        assert!(validate_herdr_request_method("pane.link.resolve").is_ok());
         assert!(validate_herdr_request_method("pane.graphics.stream").is_err());
         assert!(validate_herdr_request_method("events.subscribe").is_err());
         assert!(!is_allowed_herdr_method("workspace.delete"));
@@ -3040,47 +3052,21 @@ mod tests {
     }
 
     #[test]
-    fn graphics_stream_requires_a_dedicated_websocket() {
-        let mut subscribed = HerdrSocketStreamState::default();
-        prepare_herdr_socket_request(
-            r#"{"id":"events","method":"events.subscribe","params":{"subscriptions":[]}}"#,
-            &mut subscribed,
-        )
-        .unwrap();
-        let error = prepare_herdr_socket_request(
-            r#"{"id":"stream","method":"pane.graphics.stream","params":{"pane_id":"w1:p1"}}"#,
-            &mut subscribed,
-        )
-        .unwrap_err();
-        assert!(error.contains("socket_request_already_sent"));
-
-        let mut stream = HerdrSocketStreamState::default();
-        prepare_herdr_socket_request(
-            r#"{"id":"stream","method":"pane.graphics.stream","params":{"pane_id":"w1:p1"}}"#,
-            &mut stream,
-        )
-        .unwrap();
-        assert_eq!(stream.graphics_pending_id.as_deref(), Some("stream"));
-
-        let mut spaced_id = HerdrSocketStreamState::default();
-        prepare_herdr_socket_request(
-            r#"{"id":" stream ","method":"pane.graphics.stream","params":{"pane_id":"w1:p1"}}"#,
-            &mut spaced_id,
-        )
-        .unwrap();
-        assert_eq!(spaced_id.graphics_pending_id.as_deref(), Some(" stream "));
-        assert!(herdr_stream_response_opens(
-            r#"{"id":" stream ","result":{"type":"ok"}}"#,
-            " stream ",
-        ));
-
-        let mut missing_id = HerdrSocketStreamState::default();
-        let error = prepare_herdr_socket_request(
-            r#"{"method":"pane.graphics.stream","params":{"pane_id":"w1:p1"}}"#,
-            &mut missing_id,
-        )
-        .unwrap_err();
-        assert!(error.contains("invalid_request_id"));
+    fn retired_graphics_requests_cannot_open_a_stream() {
+        for method in [
+            "pane.graphics.set",
+            "pane.graphics.clear",
+            "pane.graphics.info",
+            "pane.graphics.stream",
+        ] {
+            let mut state = HerdrSocketStreamState::default();
+            let request =
+                json!({ "id": "retired", "method": method, "params": { "pane_id": "w1:p1" } });
+            let error = prepare_herdr_socket_request(&request.to_string(), &mut state).unwrap_err();
+            assert!(error.contains("method_not_allowed"));
+            assert!(!state.application_request_sent);
+            assert!(state.graphics_pending_id.is_none());
+        }
     }
 
     #[test]

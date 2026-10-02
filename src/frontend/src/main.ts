@@ -109,6 +109,7 @@ import { createHerdrEventRefreshLoop } from "./herdr-event-refresh-loop";
 import {
   createHerdrEventStreamPolicy,
   herdrEventBridgeShouldSubscribe,
+  recoverHerdrEventStream,
 } from "./herdr-event-stream-policy";
 import { createHerdrRefreshCoordinator, type HerdrRefreshMode } from "./herdr-refresh-coordinator";
 import { createHerdrRuntimeGuard } from "./herdr-runtime-guard";
@@ -937,6 +938,7 @@ const herdrNavigation = createHerdrNavigationController({
   runSerial: (task) => herdrInteractionQueue.run(task),
   applyState: (state) => {
     herdrState = state;
+    herdrLazycatNotifications.reconcile();
     renderTabs();
     renderHerdrDock();
   },
@@ -4842,6 +4844,7 @@ async function performHerdrStateRefresh(
     const stateChanged = !herdrBridgeStatesEqual(herdrState, state);
     advanceHerdrStateRevision();
     herdrState = state;
+    herdrLazycatNotifications.reconcile();
     if (stateChanged) {
       renderTabs();
       renderHerdrDock();
@@ -4902,6 +4905,7 @@ async function runHerdrAction(
       }
       invalidatePendingHerdrStateRefresh();
       herdrState = state;
+      herdrLazycatNotifications.reconcile();
       renderTabs();
       renderHerdrDock();
       refreshHerdrTerminalAfterAction(selector, action);
@@ -5116,6 +5120,7 @@ function handleHerdrEventMessage(raw: unknown) {
     return;
   }
   if (envelope.error) {
+    recoverHerdrEventStream(envelope, () => scheduleHerdrActionRefresh(selectedSelector, [0, 900, 1800]));
     if (settings.debugMode) {
       setGlobalStatus(tr("status.herdrActionFailed", { message: envelope.error.message || envelope.error.code || "" }), "error");
     }

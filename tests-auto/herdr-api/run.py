@@ -1,8 +1,8 @@
-"""Exercise the allowlisted Herdr 0.9 APIs in an owned temporary server/repository."""
+"""Exercise the allowlisted Herdr 0.9.3 APIs in an owned temporary server/repository."""
 import json, os, socket, subprocess, tempfile, time, pathlib, shutil
 binary = os.environ.get("HERDR_TEST_BINARY")
 if not binary or not pathlib.Path(binary).is_file():
- raise SystemExit("Set HERDR_TEST_BINARY to an explicit Herdr 0.9.0+ binary")
+ raise SystemExit("Set HERDR_TEST_BINARY to an explicit Herdr 0.9.3+ binary")
 binary = str(pathlib.Path(binary).resolve())
 artifacts = pathlib.Path(__file__).resolve().parents[1] / "artifacts" / "herdr-api" / f"{time.time_ns()}-{os.getpid()}"
 artifacts.mkdir(parents=True)
@@ -51,6 +51,13 @@ try:
  selected=call('pane.selection.read',pane_id=pane,anchor=hit['start'],cursor=hit['end'],content_revision=revision)
  assert selected['result']['text']=='neko-history-smoke',selected
  print('integration.list + copy_motion -> copy_search -> selection.read: PASS')
+ resolved=call('pane.link.resolve',pane_id=pane,viewport_row=0,col=0)
+ assert isinstance(resolved.get('result',{}).get('regions'),list),resolved
+ cleared=call('pane.clear',pane_id=pane);assert cleared.get('result',{}).get('type')=='ok',cleared
+ for method in ['pane.graphics.set','pane.graphics.clear','pane.graphics.info','pane.graphics.stream']:
+  retired=call(method,pane_id=pane)
+  assert retired.get('error',{}).get('code')=='unknown_method',retired
+ print('pane.link.resolve + pane.clear; retired graphics APIs rejected: PASS')
  repo=root/'repo';repo.mkdir();subprocess.run(['git','init','-q',str(repo)],check=True,timeout=8)
  (repo/'test.txt').write_text('isolated test\n');subprocess.run(['git','-C',str(repo),'add','test.txt'],check=True,timeout=8);subprocess.run(['git','-C',str(repo),'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','test'],check=True,timeout=8)
  parent=call('workspace.create',cwd=str(repo),label='group-parent',focus=True);parentid=parent['result']['workspace']['workspace_id']

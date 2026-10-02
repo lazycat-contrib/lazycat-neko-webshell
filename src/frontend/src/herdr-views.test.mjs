@@ -73,3 +73,11 @@ test("prefers the focused pane and ignores panes from another tab", () => {
     pane({ pane_id: "w1:p4", tab_id: "w1:t2", focused: true, title: "other tab" }),
   ]), "focused");
 });
+
+test("includes restore errors in a tab tooltip without replacing its label", () => {
+  const presentation = herdrTabPresentation(tab({ label: "tests" }), [pane({
+    title: "shell", restore_error: "saved directory is missing",
+  })]);
+  assert.equal(presentation.label, "tests");
+  assert.match(presentation.title, /saved directory is missing/);
+});

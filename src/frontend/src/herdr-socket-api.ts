@@ -116,6 +116,10 @@ export function herdrEventSubscriptions(
   return subscriptions;
 }
 
+export function herdrAgentCompletionSupported(version: string): boolean {
+  return herdrVersionAtLeast(version, [0, 9, 2]);
+}
+
 function herdrVersionAtLeast(
   version: string,
   minimum: readonly [number, number, number],
@@ -201,6 +205,7 @@ export function herdrPaneInfoFromEvent(data: JsonRecord): HerdrPaneInfo | undefi
     focused,
     ...optionalStringFields(pane, [
       "title",
+      "restore_error",
       "terminal_title",
       "terminal_title_stripped",
       "display_agent",
@@ -224,6 +229,8 @@ export function herdrAgentInfo(value: JsonRecord | undefined): HerdrAgentInfo | 
   const launchPending = optionalBooleanField(agent, "launch_pending", false);
   const interactiveReady = optionalBooleanField(agent, "interactive_ready", false);
   const stateChangeSeq = optionalNonNegativeInteger(agent?.state_change_seq, 0);
+  const completionSeq = agent.completion_seq === undefined
+    ? undefined : nonNegativeInteger(agent.completion_seq);
   const tokens = metadataTokens(agent?.tokens);
   if (
     !terminalId
@@ -236,6 +243,7 @@ export function herdrAgentInfo(value: JsonRecord | undefined): HerdrAgentInfo | 
     || launchPending === undefined
     || interactiveReady === undefined
     || stateChangeSeq === undefined
+    || (agent.completion_seq !== undefined && completionSeq === undefined)
     || tokens === undefined
   ) {
     return undefined;
@@ -256,6 +264,7 @@ export function herdrAgentInfo(value: JsonRecord | undefined): HerdrAgentInfo | 
     launch_pending: launchPending,
     interactive_ready: interactiveReady,
     state_change_seq: stateChangeSeq,
+    ...(completionSeq !== undefined ? { completion_seq: completionSeq } : {}),
     ...optionalStringFields(agent, [
       "title",
       "terminal_title",

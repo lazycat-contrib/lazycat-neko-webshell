@@ -28,6 +28,12 @@ export function herdrEventBridgeShouldSubscribe(selector: string, available: boo
   return Boolean(selector && available);
 }
 
+export function recoverHerdrEventStream(envelope: HerdrSocketEnvelope, recover: () => void): boolean {
+  if (envelope.error?.code !== "events_lost" && envelope.error?.code !== "pane_not_found") return false;
+  recover();
+  return true;
+}
+
 export function createHerdrEventStreamPolicy() {
   let active = false;
   let token = 0;

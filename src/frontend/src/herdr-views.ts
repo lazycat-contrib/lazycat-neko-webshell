@@ -81,7 +81,9 @@ export function herdrTabPresentation(
   const explicitLabel = herdrTabLabelIsGeneric(rawLabel, number) ? "" : compactLabel;
   const detail = herdrPaneDetailForTab(tab, panes);
   const label = explicitLabel || detail;
-  const title = uniqueNonEmpty([explicitLabel || rawLabel, detail, tab.tab_id]).join(" · ");
+  const restoreErrors = panes.filter((pane) => pane.tab_id === tab.tab_id)
+    .map((pane) => pane.restore_error?.trim() ?? "");
+  const title = uniqueNonEmpty([explicitLabel || rawLabel, detail, ...restoreErrors, tab.tab_id]).join(" · ");
   return { label, title };
 }
 

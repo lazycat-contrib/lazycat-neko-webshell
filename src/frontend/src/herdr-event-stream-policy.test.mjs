@@ -4,12 +4,25 @@ import test from "node:test";
 import {
   createHerdrEventStreamPolicy,
   herdrEventBridgeShouldSubscribe,
+  recoverHerdrEventStream,
 } from "./herdr-event-stream-policy.ts";
 
 test("subscribes to an available external Herdr runtime without a WebShell Herdr pane", () => {
   assert.equal(herdrEventBridgeShouldSubscribe("demo@owner", true), true);
   assert.equal(herdrEventBridgeShouldSubscribe("", true), false);
   assert.equal(herdrEventBridgeShouldSubscribe("demo@owner", false), false);
+});
+
+test("lost events request independent recovery even when the stream immediately resets", () => {
+  const policy = createHerdrEventStreamPolicy();
+  policy.beginSubscription(["w1:p1"]);
+  const recovery = [];
+  assert.equal(recoverHerdrEventStream({ error: { code: "events_lost", message: "resync" } },
+    () => recovery.push("authoritative snapshot")), true);
+  policy.reset();
+  assert.deepEqual(recovery, ["authoritative snapshot"]);
+  assert.equal(recoverHerdrEventStream({ error: { code: "invalid_request" } },
+    () => recovery.push("unexpected")), false);
 });
 
 test("keeps delayed Herdr history on the authoritative reconciliation path", () => {
