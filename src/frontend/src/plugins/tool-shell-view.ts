@@ -7,9 +7,9 @@ type Translate = (key: MessageKey, values?: Record<string, string | number>) => 
 
 export function renderPluginToolTabs(tools: PluginDescriptor[], activePluginToolId: string, tr: Translate): string {
   return tools.map((plugin) => `
-    <button type="button" role="tab" data-plugin-tool="${escapeAttr(plugin.id)}" aria-selected="${plugin.id === activePluginToolId}" aria-label="${escapeAttr(pluginDisplayName(plugin, tr))}" title="${escapeAttr(pluginDisplayName(plugin, tr))}">
-      <i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i>
-      <span class="tool-tip">${escapeHtml(pluginDisplayName(plugin, tr))}</span>
+    <button type="button" role="tab" data-plugin-tool="${escapeAttr(plugin.id)}" tabindex="${plugin.id === activePluginToolId ? 0 : -1}" aria-selected="${plugin.id === activePluginToolId}" aria-label="${escapeAttr(pluginDisplayName(plugin, tr))}" title="${escapeAttr(pluginDisplayName(plugin, tr))}">
+      <i data-lucide="${escapeAttr(pluginIcon(plugin.id))}" aria-hidden="true"></i>
+      <span class="plugin-tool-tab-label">${escapeHtml(pluginDisplayName(plugin, tr))}</span>
     </button>
   `).join("");
 }
@@ -70,10 +70,11 @@ function patchPluginToolTabButton(button: HTMLButtonElement | undefined, item: P
   if (!button) return;
   button.dataset.pluginTool = item.id;
   setAttribute(button, "aria-selected", String(item.active));
+  button.tabIndex = item.active ? 0 : -1;
   setAttribute(button, "aria-label", item.label);
   setAttribute(button, "title", item.label);
 
-  const tooltip = button.querySelector<HTMLElement>(".tool-tip");
+  const tooltip = button.querySelector<HTMLElement>(".plugin-tool-tab-label");
   if (tooltip && tooltip.textContent !== item.label) {
     tooltip.textContent = item.label;
   }

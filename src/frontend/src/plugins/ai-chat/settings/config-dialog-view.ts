@@ -23,7 +23,7 @@ export function renderAIConfigDialog(state: AIAccessSettingsRenderState): string
       <section class="ai-config-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}" data-ai-config-modal>
         <header class="ai-config-modal-head">
           <strong>${escapeHtml(title)}</strong>
-          <button class="icon-button" type="button" data-ai-config-close aria-label="${escapeAttr(state.tr("action.close"))}" title="${escapeAttr(state.tr("action.close"))}">
+          <button class="icon-button" type="button" data-ai-config-close data-overlay-dismiss aria-label="${escapeAttr(state.tr("action.close"))}" title="${escapeAttr(state.tr("action.close"))}">
             <i data-lucide="x"></i>
           </button>
         </header>

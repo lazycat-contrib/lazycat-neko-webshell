@@ -65,3 +65,9 @@ then the provider's minimum supported agent version.
   protocol-compatible agent that meets the minimum supported version.
 - Keep `/usr/local/bin/lazycat-neko-webshell-agent` as the stable launch symlink
   to the active content-addressed lightweight agent payload.
+
+- Agent inspection errors must not be classified as required upgrades. Automatic
+  repair requires a readable incompatible status and identity revalidation under
+  the selector and target locks immediately before restarting the process.
+- Optional agent upgrades prepare the next launch payload without restarting the
+  live agent, closing its PTYs, or pruning its running payload.

@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><main class="webshell" id="webshell"><div id="fixture"></div></main><script type="module">
+import '/src/frontend/src/styles.css';
+import '/src/frontend/src/mobile/styles.css';
+import '/src/frontend/src/herdr-activity.css';
+import '/src/frontend/src/mobile/settings.css';
+import {createIcons,icons} from 'lucide';
+import {renderHerdrJumpShell} from '/src/frontend/src/herdr-jump-shell.ts';
+import {buildHerdrJumpModel} from '/src/frontend/src/herdr-jump-model.ts';
+import {renderHerdrJumpGroups} from '/src/frontend/src/herdr-jump-view.ts';
+import {bindHerdrActivityHelp} from '/src/frontend/src/herdr-activity-help.ts';
+const root=document.querySelector('#fixture');root.innerHTML=renderHerdrJumpShell();
+const labels={workspace:n=>`Workspace ${n}`,workspaceDefault:'Workspace',tab:n=>`Tab ${n}`,tabDefault:'Tab',terminal:'Terminal'};
+const state={workspaces:[{workspace_id:'w',label:'Project',number:1,focused:true}],tabs:[{tab_id:'t',workspace_id:'w',label:'Build',number:1,focused:true}],panes:['working','blocked','done','idle'].map((status,i)=>({pane_id:'p'+i,workspace_id:'w',tab_id:'t',agent:'codex',display_agent:'Codex '+i,agent_status:status,focused:i===0}))};
+const model=buildHerdrJumpModel(state,labels);
+const menu=document.querySelector('#herdrWorkspaceMenu');menu.hidden=false;menu.style.left='16px';menu.style.top='16px';document.querySelector('#herdrDock').hidden=false;
+document.querySelector('#herdrWorkspaceMenuList').innerHTML=renderHerdrJumpGroups(model,'normal',{current:'Current',focusWorkspace:'Workspace',focusTab:'Tab',focusPane:'Pane',empty:'Empty',activity:s=>s});
+bindHerdrActivityHelp(menu);createIcons({icons});window.fixtureReady=true;
+</script></body></html>

@@ -1,0 +1,61 @@
+@media (max-width: 760px) {
+  .herdr-jump-head { grid-template-columns: minmax(0, 1fr) auto auto 44px; gap: 8px; }
+  .herdr-jump-head > strong { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .herdr-activity-info { width: 44px; height: 44px; }
+  .agent-update-entry { width: 44px; min-width: 44px; padding: 0; }
+  .agent-update-entry span { display: none; }
+  .settings-dialog { width: 100%; height: 100%; max-height: 100%; padding: 0; }
+  .settings-header { min-height: 76px; padding: 12px 16px; gap: 8px; }
+  .settings-header h2 { font-size: 19px; }
+  .settings-header p { font-size: 12px; }
+  .settings-layout { display: flex; flex-direction: column; }
+  .settings-main-tabs {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 8px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-soft);
+    scrollbar-width: none;
+    scroll-padding-inline: 12px;
+  }
+  .settings-main-tabs button { flex: 0 0 auto; min-height: 44px; padding: 10px 12px; white-space: nowrap; }
+  .settings-main-tabs::-webkit-scrollbar { display: none; }
+  .settings-panels { min-height: 0; padding: 20px 16px 28px; scroll-padding-block: 16px; }
+  .settings-panel-intro { margin-bottom: 18px; }
+  .settings-panel-intro h3 { font-size: 18px; }
+  .settings-section > .field { grid-template-columns: 1fr; align-items: start; gap: 8px; padding: 14px 0; }
+  .settings-section > .field > :is(input, select, textarea) { min-height: 44px; }
+  .settings-dialog .switch, .settings-dialog .command-button, .settings-dialog .icon-button { min-height: 44px; }
+  .settings-dialog .icon-button { width: 44px; height: 44px; min-width: 44px; }
+  .settings-dialog .file-button { min-height: 44px; }
+  .plugin-content { padding: 16px 12px 14px; }
+  .plugin-item { position: relative; grid-template-columns: minmax(0, 1fr); }
+  .plugin-title-row { min-height: 32px; padding-right: 96px; }
+  .plugin-switch { position: absolute; top: 8px; right: 0; min-width: 84px; min-height: 44px; margin: 0; padding-right: 12px; gap: 6px; }
+  .plugin-switch > span { max-width: 44px; font-size: 12px; }
+  .plugin-configuration summary { padding-inline: 14px; min-height: 48px; }
+  .plugin-configuration-body { padding: 0 12px 16px; }
+  .settings-dialog .ai-config-tabs button { min-width: 0; padding-inline: 4px; }
+  .plugin-sidebar { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  .plugin-sidebar-header { grid-row: 1; }
+  .plugin-tool-tabs {
+    grid-column: 1;
+    grid-row: 2;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 4px;
+    padding: 6px 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-soft);
+    scrollbar-width: none;
+    scroll-padding-inline: 8px;
+  }
+  .plugin-tool-tabs button { flex: 0 0 72px; width: 72px; min-height: 66px; padding: 6px 4px; }
+  .plugin-tool-tab-label { display: block; font-size: 12px; }
+  .plugin-tool-body { grid-column: 1; grid-row: 3; padding: 12px; }
+  .plugin-sidebar > .field-status { grid-column: 1; grid-row: 4; }
+}

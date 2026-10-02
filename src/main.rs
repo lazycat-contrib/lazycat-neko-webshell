@@ -11,6 +11,7 @@ mod agent_daemon;
 mod agent_history;
 mod agent_protocol;
 mod agent_pty;
+mod agent_updates;
 mod agent_workspace;
 mod ai_chat;
 mod assets;

@@ -4,6 +4,7 @@ import type { HerdrJumpPlatform, HerdrJumpPlatformFactory } from "./herdr-jump-p
 import { renderHerdrCurrentTargets, renderHerdrJumpGroups, type HerdrJumpLabels } from "./herdr-jump-view.ts";
 import type { HerdrConsoleAction } from "./herdr-console-actions.ts";
 import type { HerdrBridgeState } from "./types.ts";
+import { bindHerdrActivityHelp } from "./herdr-activity-help.ts";
 
 type HerdrJumpElements = {
   dock: HTMLElement;
@@ -49,6 +50,7 @@ const DENSITY_KEYS: Record<HerdrJumpDevice, string> = {
 };
 export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
   const { elements } = deps;
+  bindHerdrActivityHelp(elements.menu);
   let state: HerdrBridgeState | undefined;
   let model: HerdrJumpModel = { groups: [] };
   let platform: HerdrJumpPlatform;
@@ -65,6 +67,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     focusWorkspace: deps.tr("action.focusHerdrSpace"),
     focusTab: deps.tr("action.focusHerdrTab"),
     focusPane: deps.tr("action.focusHerdrPane"),
+    activity: (status) => deps.tr(`herdr.activity.${status}`),
   });
 
   const render = (nextState: HerdrBridgeState | undefined) => {
@@ -90,7 +93,6 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     elements.trigger.setAttribute("aria-label", viewLabels.jumpTo);
     elements.trigger.title = viewLabels.jumpTo;
     syncMoreActions();
-    syncTargetTooltips(mode);
     deps.updateIcons();
     restoreJumpControlFocus(focusedControl);
     if (!elements.menu.hidden) requestAnimationFrame(positionPopover);
@@ -103,7 +105,6 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     elements.menu.hidden = false;
     elements.trigger.setAttribute("aria-expanded", "true");
     positionPopover();
-    syncTargetTooltips(density());
     platform.onOpen();
     if (keyboard) {
       requestAnimationFrame(() => firstJumpControl()?.focus());
@@ -116,6 +117,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     closeMore();
     if (elements.menu.hidden) return;
     elements.menu.hidden = true;
+    elements.menu.querySelector<HTMLDialogElement>(".herdr-activity-help[open]")?.close();
     elements.menu.style.removeProperty("left");
     elements.menu.style.removeProperty("top");
     elements.menu.style.removeProperty("bottom");
@@ -307,16 +309,6 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     elements.menu.style.bottom = placeAbove ? `${window.innerHeight - trigger.top + margin}px` : "auto";
     const originX = Math.min(Math.max(trigger.left + trigger.width / 2 - left, 24), Math.max(24, menu.width - 24));
     elements.menu.style.setProperty("--herdr-popover-origin", `${originX}px ${placeAbove ? "100%" : "0%"}`);
-  }
-
-  function syncTargetTooltips(mode: HerdrJumpDensity) {
-    requestAnimationFrame(() => {
-      elements.dock.querySelectorAll<HTMLButtonElement>(".herdr-target-chip").forEach((button) => {
-        if (mode === "compact") return;
-        const label = button.querySelector<HTMLElement>(".herdr-target-name");
-        if (label && label.scrollWidth <= label.clientWidth) button.removeAttribute("title");
-      });
-    });
   }
 
   function jumpControls(): HTMLButtonElement[] {

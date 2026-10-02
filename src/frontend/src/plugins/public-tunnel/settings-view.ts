@@ -76,7 +76,7 @@ function renderTunnelProfileDialog(
       <section class="ai-config-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}" data-tunnel-profile-modal>
         <header class="ai-config-modal-head">
           <strong>${escapeHtml(title)}</strong>
-          <button class="icon-button" type="button" data-tunnel-profile-close aria-label="${escapeAttr(state.tr("action.close"))}" title="${escapeAttr(state.tr("action.close"))}">
+          <button class="icon-button" type="button" data-tunnel-profile-close data-overlay-dismiss aria-label="${escapeAttr(state.tr("action.close"))}" title="${escapeAttr(state.tr("action.close"))}">
             <i data-lucide="x"></i>
           </button>
         </header>

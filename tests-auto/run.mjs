@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { verifyBrowserDriverNavigation } from "./browser-driver.mjs";
 
 const scenarios = new Map([
+  ["herdr-activity", { module: "./herdr-activity/run.mjs", exportName: "runHerdrActivityScenario" }],
+  ["agent-updates", { module: "./agent-updates/run.mjs", exportName: "runAgentUpdateScenario" }],
+  ["settings-ui", { module: "./settings-ui/run.mjs", exportName: "runSettingsUiScenario" }],
   ["mobile-workflow", { module: "./mobile-workflow/run.mjs", exportName: "runMobileWorkflowScenario" }],
   ["herdr-history", { module: "./herdr-history/run.mjs", exportName: "runHerdrHistoryScenario" }],
   ["mobile-keyboard", { module: "./mobile-keyboard/run.mjs", exportName: "runMobileKeyboardScenario" }],

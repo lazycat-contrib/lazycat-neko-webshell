@@ -1,0 +1,6 @@
+.agent-update-entry { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 0 10px; border: 1px solid var(--accent-border); border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent-fg); font-size: 12px; cursor: pointer; }
+.agent-update-entry[hidden], .agent-update-settings[hidden] { display: none; }
+.agent-update-entry svg { width: 16px; height: 16px; }
+.agent-update-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.agent-update-version { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.agent-update-entry:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }

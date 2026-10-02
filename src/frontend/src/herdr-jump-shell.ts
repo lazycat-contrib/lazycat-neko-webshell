@@ -3,6 +3,7 @@ import {
   renderHerdrJumpMobileCloseButton,
   renderHerdrJumpMobileDragRegion,
 } from "./mobile/herdr-jump-sheet.ts";
+import { renderHerdrActivityHelp } from "./herdr-activity-help.ts";
 
 export function renderHerdrJumpShell(): string {
   return `
@@ -16,6 +17,7 @@ export function renderHerdrJumpShell(): string {
           ${renderHerdrJumpMobileDragRegion()}
           <div class="herdr-jump-head">
             <strong data-i18n="action.herdrJumpTo">Jump to…</strong>
+            ${renderHerdrActivityHelp()}
             <div class="herdr-density-switch" role="group" aria-label="Display density" data-i18n-aria="field.herdrDisplayDensity">
               <button type="button" data-herdr-density="compact" aria-pressed="false" data-i18n="option.compact">Compact</button>
               <button type="button" data-herdr-density="normal" aria-pressed="false" data-i18n="option.normal">Normal</button>

@@ -1,3 +1,4 @@
+import { renderSettingsNavigation, renderSettingsSectionIntro } from "./settings/navigation-view";
 import "./diagnostics/settings.css";
 import { renderTerminalDiagnosticsSettings } from "./diagnostics/settings-view";
 import { qs } from "./utils";
@@ -74,6 +75,8 @@ export type ShellElements = {
   whiteNoiseFloatingControls: HTMLDivElement;
   closeSettings: HTMLButtonElement;
   settingsPage: HTMLElement;
+  agentUpdateSettings: HTMLElement;
+  agentUpdateButton: HTMLButtonElement;
   settingsTabs: HTMLDivElement;
   fontTabs: HTMLDivElement;
   pluginList: HTMLDivElement;
@@ -235,6 +238,7 @@ export function renderShell(app: HTMLElement): ShellElements {
               <div class="notification-list" id="notificationList" role="list" aria-live="polite"></div>
             </div>
           </div>
+          <button class="agent-update-entry" id="agentUpdateButton" type="button" hidden aria-label="Update available" data-i18n-aria="agentUpdate.available"><i data-lucide="download" aria-hidden="true"></i><span data-i18n="agentUpdate.available">Update available</span></button>
           <button class="icon-button" id="pluginsButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="Tools" title="Tools" data-i18n-aria="section.plugins" data-i18n-title="section.plugins">
             <i data-lucide="plug"></i>
           </button>
@@ -316,45 +320,19 @@ export function renderShell(app: HTMLElement): ShellElements {
           <header class="settings-header">
             <div>
               <h2 id="settingsTitle" data-i18n="action.settings">Settings</h2>
+              <p data-i18n="settings.intro"></p>
             </div>
             <button class="icon-button" id="closeSettings" type="button" aria-label="Close settings" title="Close settings" data-i18n-aria="action.closeSettings" data-i18n-title="action.closeSettings">
               <i data-lucide="x"></i>
             </button>
           </header>
 
-          <div class="settings-tabs settings-main-tabs" id="settingsTabs" role="tablist" aria-label="Settings" data-i18n-aria="action.settings">
-            <button type="button" role="tab" aria-selected="true" aria-controls="appearanceSettingsPanel" data-settings-tab="appearance">
-              <i data-lucide="monitor-cog"></i>
-              <span data-i18n="tab.appearance">Appearance</span>
-            </button>
-            <button type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanel" data-settings-tab="terminal">
-              <i data-lucide="terminal"></i>
-              <span data-i18n="tab.terminal">Terminal</span>
-            </button>
-            <button type="button" role="tab" aria-selected="false" aria-controls="remoteHostsSettingsPanel" data-settings-tab="remote-hosts">
-              <i data-lucide="server-cog"></i>
-              <span data-i18n="tab.remoteHosts">Remote hosts</span>
-            </button>
-            <button type="button" role="tab" aria-selected="false" aria-controls="fontSettingsRootPanel" data-settings-tab="fonts">
-              <i data-lucide="type"></i>
-              <span data-i18n="tab.fonts">Fonts</span>
-            </button>
-            <button type="button" role="tab" aria-selected="false" aria-controls="themeSettingsPanel" data-settings-tab="themes">
-              <i data-lucide="palette"></i>
-              <span data-i18n="tab.themes">Themes</span>
-            </button>
-            <button type="button" role="tab" aria-selected="false" aria-controls="mobileSettingsPanel" data-settings-tab="mobile">
-              <i data-lucide="smartphone"></i>
-              <span data-i18n="tab.mobile">Mobile</span>
-            </button>
-            <button type="button" role="tab" aria-selected="false" aria-controls="pluginSettingsPanel" data-settings-tab="plugins">
-              <i data-lucide="plug"></i>
-              <span data-i18n="tab.plugins">Tools</span>
-            </button>
-          </div>
+          <div class="settings-layout">
+            ${renderSettingsNavigation()}
 
           <div class="settings-panels">
-            <section class="settings-section" id="appearanceSettingsPanel" data-settings-panel="appearance" role="tabpanel">
+            <section class="settings-section" id="appearanceSettingsPanel" data-settings-panel="appearance" role="tabpanel" aria-labelledby="settings-tab-appearance">
+              ${renderSettingsSectionIntro("appearance")}
               <label class="field">
                 <span data-i18n="field.language">Language</span>
                 <select id="localeSelect">
@@ -399,7 +377,8 @@ export function renderShell(app: HTMLElement): ShellElements {
               </div>
             </section>
 
-            <section class="settings-section" id="terminalSettingsPanel" data-settings-panel="terminal" role="tabpanel" hidden>
+            <section class="settings-section" id="terminalSettingsPanel" data-settings-panel="terminal" role="tabpanel" aria-labelledby="settings-tab-terminal" hidden>
+              ${renderSettingsSectionIntro("terminal")}
               <div class="settings-group" id="sessionBackendSettings" hidden>
                 <div class="settings-group-title" data-i18n="section.sessionBackend">Session backend</div>
                 <label class="field">
@@ -427,6 +406,7 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <span data-i18n="field.outputBuffer">Output buffer</span>
                 <input id="outputBufferLimit" type="number" min="128" max="20000" step="128" />
               </label>
+              <div class="settings-group agent-update-settings" id="agentUpdateSettings" hidden></div>
               <div id="terminalControlSettings">${renderTerminalControlSettingsView()}</div>
               ${renderHerdrNotificationSettingsView()}
               <div class="settings-group terminal-background-settings">
@@ -483,13 +463,15 @@ export function renderShell(app: HTMLElement): ShellElements {
               </label>
             </section>
 
-            <section class="settings-section" id="remoteHostsSettingsPanel" data-settings-panel="remote-hosts" role="tabpanel" hidden>
+            <section class="settings-section" id="remoteHostsSettingsPanel" data-settings-panel="remote-hosts" role="tabpanel" aria-labelledby="settings-tab-remote-hosts" hidden>
+              ${renderSettingsSectionIntro("remote-hosts")}
               <div class="settings-group ssh-profile-settings" id="sshProfileSettings"></div>
             </section>
 
             ${renderMobileSettingsView()}
 
-            <section class="settings-section" id="fontSettingsRootPanel" data-settings-panel="fonts" role="tabpanel" hidden>
+            <section class="settings-section" id="fontSettingsRootPanel" data-settings-panel="fonts" role="tabpanel" aria-labelledby="settings-tab-fonts" hidden>
+              ${renderSettingsSectionIntro("fonts")}
               <div class="settings-tabs settings-sub-tabs" id="fontTabs" role="tablist" aria-label="Fonts" data-i18n-aria="section.fonts">
                 <button type="button" role="tab" aria-selected="true" aria-controls="fontSettingsPanel" data-font-tab="font-settings" data-i18n="tab.fontSettings">Font settings</button>
                 <button type="button" role="tab" aria-selected="false" aria-controls="fontUploadPanel" data-font-tab="font-upload" data-i18n="tab.fontUpload">Font upload</button>
@@ -527,7 +509,8 @@ export function renderShell(app: HTMLElement): ShellElements {
               </div>
             </section>
 
-            <section class="settings-section" id="themeSettingsPanel" data-settings-panel="themes" role="tabpanel" hidden>
+            <section class="settings-section" id="themeSettingsPanel" data-settings-panel="themes" role="tabpanel" aria-labelledby="settings-tab-themes" hidden>
+              ${renderSettingsSectionIntro("themes")}
               <label class="field">
                 <span data-i18n="field.theme">Terminal theme</span>
                 <select id="themeSelect"></select>
@@ -557,16 +540,18 @@ export function renderShell(app: HTMLElement): ShellElements {
               <p id="themeStatus" class="field-status"></p>
             </section>
 
-            <section class="settings-section" id="pluginSettingsPanel" data-settings-panel="plugins" role="tabpanel" hidden>
+            <section class="settings-section" id="pluginSettingsPanel" data-settings-panel="plugins" role="tabpanel" aria-labelledby="settings-tab-plugins" hidden>
+              ${renderSettingsSectionIntro("plugins")}
               <div class="settings-section-head">
                 <div class="settings-group-title" data-i18n="section.plugins">Tools</div>
                 <button class="icon-button" id="refreshPlugins" type="button" aria-label="Refresh tools" title="Refresh tools" data-i18n-aria="action.refreshPlugins" data-i18n-title="action.refreshPlugins">
                   <i data-lucide="refresh-cw"></i>
                 </button>
               </div>
-              <div class="plugin-list" id="pluginList" role="list" aria-live="polite"></div>
-              <p id="pluginStatus" class="field-status"></p>
+              <div class="plugin-list" id="pluginList" role="list"></div>
+              <p id="pluginStatus" class="field-status" role="status" aria-live="polite"></p>
             </section>
+          </div>
           </div>
         </div>
       </section>
@@ -639,6 +624,8 @@ export function renderShell(app: HTMLElement): ShellElements {
     whiteNoiseFloatingControls: qs<HTMLDivElement>("#whiteNoiseFloatingControls"),
     closeSettings: qs<HTMLButtonElement>("#closeSettings"),
     settingsPage: qs<HTMLElement>("#settingsPage"),
+    agentUpdateSettings: qs<HTMLElement>("#agentUpdateSettings"),
+    agentUpdateButton: qs<HTMLButtonElement>("#agentUpdateButton"),
     settingsTabs: qs<HTMLDivElement>("#settingsTabs"),
     fontTabs: qs<HTMLDivElement>("#fontTabs"),
     pluginList: qs<HTMLDivElement>("#pluginList"),

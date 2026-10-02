@@ -47,16 +47,18 @@ export type PluginSettingsViewState = {
   tr: Translate;
 };
 
-export function renderPluginSettingsView(state: PluginSettingsViewState): string {
+export function renderPluginSettingsView(state: PluginSettingsViewState, expanded: ReadonlySet<string> = new Set()): string {
   if (!state.plugins.length) {
     return `<div class="empty">${escapeHtml(state.tr(state.pluginsLoading ? "status.pluginsLoading" : "status.noPlugins"))}</div>`;
   }
-  return state.plugins.map((plugin) => renderPluginSetting(plugin, state)).join("");
+  return state.plugins.map((plugin) => renderPluginSetting(plugin, state, expanded.has(plugin.id))).join("");
 }
 
-function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsViewState): string {
+function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsViewState, expanded: boolean): string {
   const saving = state.savingPluginIds.has(plugin.id);
-  const status = plugin.enabled ? state.tr("setting.pluginEnabled") : state.tr("setting.pluginDisabled");
+  const status = saving ? state.tr("settings.pluginSaving")
+    : plugin.enabled ? state.tr("setting.pluginEnabled") : state.tr("setting.pluginDisabled");
+  const name = pluginDisplayName(plugin, state.tr);
   const meta = Array.from(new Set([plugin.kind, ...plugin.scopes].filter(Boolean)))
     .map((item) => pluginMetaLabel(item, state.tr));
   const settingsTool = plugin.id === AI_CHAT_PLUGIN_ID
@@ -91,12 +93,14 @@ function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsView
             tr: state.tr,
           })
           : "";
+  const open = expanded || Boolean((plugin.id === AI_CHAT_PLUGIN_ID && state.aiAccess.dialog)
+    || (plugin.id === PUBLIC_TUNNEL_PLUGIN_ID && state.publicTunnel.dialog));
   return `
-    <div class="plugin-item" role="listitem">
+    <div class="plugin-item" role="listitem" data-enabled="${plugin.enabled}" aria-busy="${saving}">
       <div class="plugin-content">
         <div class="plugin-title-row">
-          <span class="plugin-icon"><i data-lucide="${escapeAttr(pluginIcon(plugin.id))}"></i></span>
-          <span class="plugin-name">${escapeHtml(pluginDisplayName(plugin, state.tr))}</span>
+          <span class="plugin-icon"><i data-lucide="${escapeAttr(pluginIcon(plugin.id))}" aria-hidden="true"></i></span>
+          <span class="plugin-name">${escapeHtml(name)}</span>
         </div>
         <p class="plugin-description">${escapeHtml(pluginDescription(plugin, state.tr))}</p>
         <div class="plugin-meta">
@@ -107,12 +111,16 @@ function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsView
         <input
           type="checkbox"
           data-plugin-toggle="${escapeAttr(plugin.id)}"
+          aria-label="${escapeAttr(`${name}: ${status}`)}"
           ${plugin.enabled ? "checked" : ""}
           ${saving || state.pluginsLoading ? "disabled" : ""}
         />
         <span>${escapeHtml(status)}</span>
       </label>
-      ${settingsTool}
+      ${settingsTool ? `<details class="plugin-configuration" data-plugin-settings="${escapeAttr(plugin.id)}" ${open ? "open" : ""}>
+        <summary role="button" data-plugin-config-toggle="${escapeAttr(plugin.id)}" aria-expanded="${open}" aria-label="${escapeAttr(`${name}: ${state.tr("settings.pluginConfigure")}`)}"><span>${escapeHtml(state.tr("settings.pluginConfigure"))}</span><i data-lucide="chevron-down" aria-hidden="true"></i></summary>
+        <div class="plugin-configuration-body">${settingsTool}</div>
+      </details>` : ""}
     </div>
   `;
 }

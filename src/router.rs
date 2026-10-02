@@ -70,6 +70,7 @@ pub fn build_app(state: Arc<AppState>) -> Router {
         .route("/sounds/{*path}", get(sound_file))
         .route("/api/instances", get(list_instances))
         .route("/api/runtime", get(runtime_info))
+        .route("/api/agent/update", get(crate::agent_updates::get_update).post(crate::agent_updates::post_update))
         .route("/api/sounds", get(list_sounds))
         .route("/api/sounds/package", post(install_sound_package))
         .route("/api/lightos-admin-info", get(lightos_admin_info))

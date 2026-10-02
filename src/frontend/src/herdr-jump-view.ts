@@ -1,5 +1,6 @@
 import type { HerdrJumpDensity, HerdrJumpGroup, HerdrJumpModel, HerdrJumpTarget } from "./herdr-jump-model.ts";
 import { escapeAttr, escapeHtml } from "./utils.ts";
+import { herdrActivityGlyph, type HerdrActivity } from "./herdr-activity.ts";
 
 export type HerdrJumpLabels = {
   jumpTo: string;
@@ -11,6 +12,7 @@ export type HerdrJumpLabels = {
   focusWorkspace: string;
   focusTab: string;
   focusPane: string;
+  activity?: (status: HerdrActivity) => string;
 };
 
 export function renderHerdrJumpGroups(
@@ -35,9 +37,10 @@ function renderGroup(group: HerdrJumpGroup, density: HerdrJumpDensity, labels: H
   const workspaceLabel = group.current ? `${group.label} · ${labels.current}` : group.label;
   return `
     <section class="herdr-jump-group" data-current="${group.current}">
-      <button class="herdr-jump-workspace" type="button" data-herdr-jump-workspace="${escapeAttr(group.workspaceId)}" aria-label="${escapeAttr(`${labels.focusWorkspace}: ${group.label}`)}">
+      <button class="herdr-jump-workspace" type="button" data-status="${escapeAttr(group.status)}" data-herdr-jump-workspace="${escapeAttr(group.workspaceId)}" aria-label="${escapeAttr(`${labels.focusWorkspace}: ${group.label} · ${activityLabel(group.status, labels)}`)}" title="${escapeAttr(activityLabel(group.status, labels))}">
         <span class="herdr-jump-workspace-number">${escapeHtml(group.number)}</span>
         <strong>${escapeHtml(group.label)}</strong>
+        <span class="herdr-jump-status" aria-hidden="true">${herdrActivityGlyph(group.status)}</span>
         ${group.current ? `<span class="herdr-current-badge">${escapeHtml(labels.current)}</span>` : ""}
       </button>
       <div class="herdr-jump-targets" role="group" aria-label="${escapeAttr(workspaceLabel)}">
@@ -50,7 +53,8 @@ function renderGroup(group: HerdrJumpGroup, density: HerdrJumpDensity, labels: H
 }
 
 function renderTarget(target: HerdrJumpTarget, density: HerdrJumpDensity, labels: HerdrJumpLabels): string {
-  const accessibleLabel = `${target.paneId ? labels.focusPane : labels.focusTab}: ${target.label} · ${target.sequence}`;
+  const statusLabel = activityLabel(target.status, labels);
+  const accessibleLabel = `${target.paneId ? labels.focusPane : labels.focusTab}: ${target.label} · ${target.sequence} · ${statusLabel}`;
   const targetAttribute = target.paneId
     ? `data-herdr-jump-pane="${escapeAttr(target.paneId)}"`
     : `data-herdr-jump-tab="${escapeAttr(target.tabId)}"`;
@@ -58,13 +62,18 @@ function renderTarget(target: HerdrJumpTarget, density: HerdrJumpDensity, labels
     ? `<span class="herdr-target-name">${escapeHtml(target.label)}</span><small class="herdr-target-sequence">${escapeHtml(target.sequence)}</small>`
     : `<span class="herdr-target-name">${escapeHtml(target.label)}</span>`;
   return `
-    <button class="herdr-target-chip" type="button" ${targetAttribute} data-status="${escapeAttr(target.status)}" data-current="${target.current}" data-density="${density}" aria-current="${target.current ? "true" : "false"}" aria-label="${escapeAttr(accessibleLabel)}" title="${escapeAttr(target.title)}">
+    <button class="herdr-target-chip" type="button" ${targetAttribute} data-status="${escapeAttr(target.status)}" data-current="${target.current}" data-density="${density}" aria-current="${target.current ? "true" : "false"}" aria-label="${escapeAttr(accessibleLabel)}" title="${escapeAttr(`${target.title} · ${statusLabel}`)}">
       ${renderAgentIcon(target.icon)}
+      <span class="herdr-jump-status" aria-hidden="true">${herdrActivityGlyph(target.status)}</span>
       ${normalLabel}
       ${density === "compact" ? `<span class="herdr-target-compact-sequence">${escapeHtml(target.sequence)}</span>` : ""}
       ${target.current ? `<i class="herdr-target-check" data-lucide="check"></i>` : ""}
     </button>
   `;
+}
+
+function activityLabel(status: string, labels: HerdrJumpLabels): string {
+  return labels.activity?.(status as HerdrActivity) ?? status;
 }
 
 function renderAgentIcon(icon: HerdrJumpTarget["icon"]): string {

@@ -1,5 +1,6 @@
 import type { HerdrBridgeState, HerdrPaneInfo, HerdrTabInfo, HerdrWorkspaceInfo } from "./types.ts";
 import { herdrAgentIconKey, type HerdrAgentIconKey } from "./herdr-agent-icons.ts";
+import { aggregateHerdrActivity, normalizeHerdrActivity } from "./herdr-activity.ts";
 
 const MAX_HERDR_DISPLAY_TEXT_LENGTH = 160;
 
@@ -25,6 +26,7 @@ export type HerdrJumpGroup = {
   number: string;
   current: boolean;
   targets: HerdrJumpTarget[];
+  status: string;
 };
 
 export type HerdrJumpModel = {
@@ -53,12 +55,15 @@ export function normalizeHerdrJumpDensity(
 }
 
 export function buildHerdrJumpModel(
-  state: Pick<HerdrBridgeState, "workspaces" | "tabs" | "panes"> | undefined,
+  state: (Pick<HerdrBridgeState, "workspaces" | "tabs" | "panes"> & Partial<Pick<HerdrBridgeState, "agents">>) | undefined,
   labels: HerdrJumpModelLabels,
 ): HerdrJumpModel {
   const workspaces = state?.workspaces ?? [];
   const tabs = state?.tabs ?? [];
-  const panes = state?.panes ?? [];
+  const agents = new Map((state?.agents ?? []).map((agent) => [agent.pane_id, agent]));
+  const panes = (state?.panes ?? []).map((pane) => ({ ...pane,
+    agent_status: pane.restore_error ? "error" : agents.get(pane.pane_id)?.agent_status ?? pane.agent_status,
+  }));
   const groups = workspaces.map((workspace) => groupForWorkspace(workspace, tabs, panes, labels));
   const currentWorkspace = groups.find((group) => group.current) ?? groups[0];
   const currentTarget = currentWorkspace?.targets.find((target) => target.current);
@@ -107,6 +112,7 @@ function groupForWorkspace(
     label: displayText(workspace.label) || fallbackLabel(number, labels.workspace, labels.workspaceDefault),
     current: workspace.focused,
     targets,
+    status: aggregateHerdrActivity(targets.map((target) => target.status)),
   };
 }
 
@@ -153,7 +159,7 @@ function targetsForTab(
       label,
       title,
       icon: herdrAgentIconKey(pane.agent, [pane.display_agent, pane.title, pane.terminal_title_stripped]),
-      status: displayText(pane.agent_status, 32) || "unknown",
+      status: normalizeHerdrActivity(pane.agent_status),
       current: workspace.focused && tab.focused && pane.focused,
       duplicate: false,
     };

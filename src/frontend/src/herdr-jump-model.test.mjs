@@ -190,7 +190,7 @@ test("bounds untrusted socket labels before rendering and accessibility duplicat
 
   assert.equal(model.currentWorkspace?.label.length, 160);
   assert.equal(model.currentTarget?.label.length, 160);
-  assert.equal(model.currentTarget?.status.length, 32);
+  assert.equal(model.currentTarget?.status, "unknown");
 });
 
 test("renders compact icon sequences and normal duplicate suffixes as density choices", () => {

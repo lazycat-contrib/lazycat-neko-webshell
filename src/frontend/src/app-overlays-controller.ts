@@ -1,5 +1,7 @@
 import type { ShellElements } from "./shell";
 import { isMobileOverlayMode } from "./mobile/overlay";
+import { bindOverlayAccessibility } from "./overlay-accessibility";
+import { bindTabListKeyboard } from "./settings-tabs";
 
 type AppOverlayElements = Pick<
   ShellElements,
@@ -60,6 +62,16 @@ export function createAppOverlaysController(options: {
   prepareMobileOverlay: () => void;
 }): AppOverlaysController {
   const { elements } = options;
+  bindOverlayAccessibility(elements.webshell, elements.settingsPage);
+  const toolTabs = elements.pluginSidebar.querySelector<HTMLElement>("[role=tablist]");
+  if (toolTabs) {
+    const compact = window.matchMedia("(max-width: 760px)");
+    const updateOrientation = () => toolTabs.setAttribute("aria-orientation", compact.matches ? "horizontal" : "vertical");
+    updateOrientation();
+    compact.addEventListener("change", updateOrientation);
+    bindTabListKeyboard(toolTabs, "[data-plugin-tool]");
+  }
+  let settingsFocusReturn: HTMLElement | undefined;
 
   function setAppBackgroundInert(inert: boolean) {
     for (const element of [elements.topbar, elements.terminalStage]) {
@@ -77,12 +89,18 @@ export function createAppOverlaysController(options: {
   }
 
   function closeSettings(closeOptions: CloseOptions = {}) {
+    if (elements.settingsPage.hidden) return;
     elements.settingsPage.hidden = true;
     elements.webshell.classList.remove("settings-open");
     setAppBackgroundInert(false);
     if (closeOptions.restoreFocus !== false) {
-      restoreTerminalFocusAfterOverlay();
+      if (settingsFocusReturn?.isConnected && !settingsFocusReturn.closest("[hidden], [inert]")) {
+        settingsFocusReturn.focus({ preventScroll: true });
+      } else {
+        elements.settingsButton.focus({ preventScroll: true });
+      }
     }
+    settingsFocusReturn = undefined;
   }
 
   function closeSettingsMenu() {
@@ -106,6 +124,7 @@ export function createAppOverlaysController(options: {
   }
 
   function closePluginSidebar(closeOptions: CloseOptions = {}) {
+    if (elements.pluginSidebar.hidden) return;
     elements.pluginSidebar.hidden = true;
     elements.webshell.classList.remove("plugins-open");
     elements.pluginsButton.setAttribute("aria-expanded", "false");
@@ -115,7 +134,17 @@ export function createAppOverlaysController(options: {
   }
 
   function openSettings(tabId?: string) {
+    if (!elements.settingsPage.hidden) {
+      if (tabId && !elements.settingsPage.querySelector('[aria-modal="true"] [aria-modal="true"]')) {
+        options.activateSettingsTab(tabId);
+      }
+      return;
+    }
+    if (elements.settingsPage.hidden) {
+      settingsFocusReturn = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    }
     options.prepareMobileOverlay();
+    closePluginSidebar({ restoreFocus: false });
     elements.settingsPage.hidden = false;
     elements.webshell.classList.add("settings-open");
     setAppBackgroundInert(true);
@@ -127,7 +156,11 @@ export function createAppOverlaysController(options: {
     if (!options.pluginsLoaded() && !options.pluginsLoading()) {
       options.loadPlugins();
     }
-    requestAnimationFrame(() => elements.closeSettings.focus());
+    requestAnimationFrame(() => {
+      if (!elements.settingsPage.hidden && !elements.settingsPage.querySelector('[aria-modal="true"] [aria-modal="true"]')) {
+        elements.closeSettings.focus();
+      }
+    });
   }
 
   function toggleSettingsMenu() {

@@ -1,3 +1,6 @@
+import "./herdr-activity.css";
+import { createAgentUpdateController, bindAgentUpdateView, syncAgentUpdateView, agentUpdateDeferral } from "./agent-updates/controller";
+import "./agent-updates/styles.css";
 import { createMobileExperience } from "./mobile/experience";
 import { captureMobileInputTarget, mobileInputTargetRetired } from "./mobile/input-target";
 import { createTerminalTrace } from "./diagnostics/terminal-trace";
@@ -11,6 +14,9 @@ import "./plugin-tools.css";
 import "./webshell-themes.css";
 import "./terminal-themes.css";
 import "./mobile/styles.css";
+import "./settings/settings.css";
+import "./plugins/ai-chat/composer-layout.css";
+import "./mobile/settings.css";
 
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
@@ -446,7 +452,7 @@ import { createTerminalResizeScheduler } from "./terminal-resize-scheduler";
 import { terminalThemeSocketColors } from "./terminal-theme-wire";
 import { createUploadProgressController } from "./upload-progress";
 import { CUSTOM_THEME_PREFIX } from "./theme-registry";
-import { renderPluginSettingsView } from "./plugin-views";
+import { syncPluginSettingsView } from "./plugins/settings/sync-view";
 import type {
   AIChatTerminalTarget,
   AiMcpServerSettings,
@@ -781,6 +787,16 @@ const paneConnectionScheduler = createPaneConnectionScheduler({ capacity: 3 });
 let instances: Instance[] = [];
 let selectedSelector = initialSelector;
 let selectedSelectorGeneration = 0;
+const agentUpdates = createAgentUpdateController({
+  target: () => runtimeInfo.lightosFeaturesEnabled && selectedSelector && !isRemoteClientSelector(selectedSelector) && !isSshSelector(selectedSelector)
+    ? { selector: selectedSelector, generation: selectedSelectorGeneration } : undefined,
+  isCurrent: (target) => isCurrentSelectorRequest(target.selector, target.generation),
+  tr,
+  deferred: agentUpdateDeferral,
+  render: (state, notice) => syncAgentUpdateView(elements.agentUpdateSettings, elements.agentUpdateButton, state, notice, tr),
+});
+bindAgentUpdateView(elements.agentUpdateSettings, elements.agentUpdateButton, agentUpdates, () => openSettings("terminal"));
+
 let selectedSelectorExplicit = initialSelectorExplicit;
 let herdrState: HerdrBridgeState | undefined;
 let herdrStateGeneration = 0;
@@ -1534,6 +1550,7 @@ function setSelectedSelector(
     workspaceRequests.invalidate(selectedSelector);
     selectedSelector = normalized;
     selectedSelectorGeneration += 1;
+    void agentUpdates.refresh();
   }
   if (options.updateLocation !== false && selectedSelector) {
     const selectedTab = activeTab();
@@ -2739,6 +2756,7 @@ function bindSettingsTabs() {
 }
 
 function activateSettingsTab(tabId: string) {
+  if (tabId === "terminal") void agentUpdates.refresh();
   if (!activateSettingsPanel(elements, tabId)) return;
   if (tabId === "plugins") {
     if (!pluginsLoaded && !pluginsLoading) {
@@ -2922,6 +2940,7 @@ async function navigateLightOSHome() {
 }
 
 function applyRuntimeChrome() {
+  void agentUpdates.refresh();
   elements.webshell.dataset.runtimeMode = runtimeInfo.mode;
   elements.homeButton.hidden = !runtimeInfo.lightosFeaturesEnabled;
   if (!runtimeInfo.lightosFeaturesEnabled) {
@@ -3807,7 +3826,7 @@ function renderPluginSettings() {
   elements.refreshPlugins.disabled = pluginsLoading;
   const mcpServers = parseAiMcpServers(settings.aiMcpServers);
   const tunnelProfiles = publicTunnelProfiles();
-  elements.pluginList.innerHTML = renderPluginSettingsView({
+  syncPluginSettingsView(elements.pluginList, {
     plugins,
     pluginsLoading,
     savingPluginIds: pluginSaveInFlight,
@@ -4614,6 +4633,7 @@ async function loadWorkspace(selector: string, options: LoadWorkspaceOptions = {
       }
       syncWorkspacePresence(requestSelector, workspace.tabs.length);
       if (activateSelector) {
+        if (!options.passive) void agentUpdates.refresh();
         const activeGeneration = selectedSelectorGeneration;
         void refreshSessionBackends(requestSelector, activeGeneration);
         void refreshHerdrState(requestSelector, activeGeneration);

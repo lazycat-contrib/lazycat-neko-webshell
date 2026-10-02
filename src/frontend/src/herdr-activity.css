@@ -1,0 +1,26 @@
+.herdr-jump-status { flex: 0 0 auto; display: inline-block; width: 12px; color: var(--herdr-status-color); font: 650 12px/1 var(--font-mono); text-align: center; }
+.herdr-target-chip:not([data-status="unknown"]) { border-color: color-mix(in srgb, var(--herdr-status-color) 50%, var(--component-border)); }
+.herdr-jump-workspace .herdr-jump-workspace-number { color: var(--herdr-status-color); background: color-mix(in srgb, var(--herdr-status-color) 12%, var(--surface-2)); }
+
+:root { --herdr-activity-working: #f9e2af; --herdr-activity-blocked: #f38ba8; --herdr-activity-done: #94e2d5; --herdr-activity-idle: #a6e3a1; --herdr-activity-unknown: #6c7086; }
+.herdr-jump-workspace[data-status="working"], .herdr-target-chip[data-status="working"], .herdr-activity-help [data-status="working"] { --herdr-status-color: var(--herdr-activity-working); }
+.herdr-jump-workspace[data-status="blocked"], .herdr-target-chip[data-status="blocked"], .herdr-activity-help [data-status="blocked"], .herdr-target-chip[data-status="error"], .herdr-jump-workspace[data-status="error"] { --herdr-status-color: var(--herdr-activity-blocked); }
+.herdr-jump-workspace[data-status="done"], .herdr-target-chip[data-status="done"], .herdr-activity-help [data-status="done"] { --herdr-status-color: var(--herdr-activity-done); }
+.herdr-jump-workspace[data-status="idle"], .herdr-target-chip[data-status="idle"], .herdr-activity-help [data-status="idle"] { --herdr-status-color: var(--herdr-activity-idle); }
+.herdr-jump-workspace, .herdr-target-chip, .herdr-activity-help [data-status="unknown"] { --herdr-status-color: var(--herdr-activity-unknown); }
+.herdr-jump-head { grid-template-columns: minmax(0, 1fr) auto auto; }
+.herdr-activity-info { width: 32px; height: 32px; flex: 0 0 auto; }
+.herdr-activity-help { width: min(300px, calc(100vw - 32px)); padding: 0; color: var(--text); background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-deep); }
+.herdr-activity-help::backdrop { background: var(--overlay-scrim); }
+.herdr-activity-help-content { padding: 16px; }
+.herdr-activity-help header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.herdr-activity-help h3 { margin: 0; font-size: 15px; }
+.herdr-activity-help .icon-button { width: 44px; height: 44px; }
+.herdr-activity-help dl { display: grid; gap: 12px; margin: 12px 0 4px; }
+.herdr-activity-help dl > div { display: flex; align-items: center; gap: 12px; min-height: 24px; }
+.herdr-activity-help dt { width: 24px; font: 700 17px/1 var(--font-mono); color: var(--herdr-status-color); text-align: center; }
+.herdr-activity-help dd { margin: 0; font-size: 13px; }
+.webshell:is([data-interface-style="porcelain"], [data-interface-style="frost"], [data-interface-style="champagne"], [data-interface-style="candy"], [data-interface-style="lab"]) {
+  --herdr-activity-working: #df8e1d; --herdr-activity-blocked: #d20f39;
+  --herdr-activity-done: #179299; --herdr-activity-idle: #40a02b; --herdr-activity-unknown: #9ca0b0;
+}
