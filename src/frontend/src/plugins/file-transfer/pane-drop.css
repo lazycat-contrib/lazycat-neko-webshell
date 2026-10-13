@@ -1,0 +1,16 @@
+.pane-file-drop-overlay {
+  position: absolute;
+  z-index: 10;
+  inset: 6px;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  border: 2px dashed var(--accent-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--term-bg, #050a12) 82%, var(--accent-soft));
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}

@@ -1,4 +1,6 @@
 @media (max-width: 760px) {
+  .mobile-keyboard-key-list { touch-action: none; }
+  .mobile-keyboard-key-row { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .herdr-jump-head { grid-template-columns: minmax(0, 1fr) auto auto 44px; gap: 8px; }
   .herdr-jump-head > strong { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .herdr-activity-info { width: 44px; height: 44px; }

@@ -45,8 +45,7 @@ const TEMP_UPLOAD_ROOT = "/tmp/lazycat-webshell-uploads";
 export function createFileTransferController(deps: FileTransferControllerDeps) {
   const store = new FileBrowserStore();
 
-  function activeSessionTarget(): { sessionId: string; selector?: string } | undefined {
-    const pane = deps.activePane();
+  function activeSessionTarget(pane = deps.activePane()): { sessionId: string; selector?: string } | undefined {
     if (!pane?.sessionId) return undefined;
     return {
       sessionId: pane.sessionId,
@@ -274,9 +273,12 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
         store.path === targetDirectory || store.loadedPath === targetDirectory,
       );
     },
-    async uploadToTemporaryDirectory(files: File[]): Promise<string[]> {
+    async uploadToTemporaryDirectory(
+      files: File[], pane?: FileTransferPane,
+      onProgress?: (meta: Record<string, unknown>, fileIndex: number) => void,
+    ): Promise<string[]> {
       if (!files.length) return [];
-      const target = activeSessionTarget();
+      const target = activeSessionTarget(pane);
       if (!target) {
         output(deps.tr("status.pluginFileNoSession"), "error");
         return [];
@@ -290,7 +292,10 @@ export function createFileTransferController(deps: FileTransferControllerDeps) {
           const targetPath = paths[index] ?? uploadTargetPath(directory, file.name);
           const done = await uploadFileWithConnect(deps.capabilityClient, file, target.sessionId, targetPath, {
             sessionSelector: target.selector,
-            onProgress: reportProgress,
+            onProgress: (meta) => {
+              reportProgress(meta);
+              onProgress?.(meta, index);
+            },
           });
           const message = metaString(done.meta, "content") || transferProgressText(done.meta);
           output(message, "ok");

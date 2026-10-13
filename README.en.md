@@ -87,9 +87,13 @@ Mobile keyboards miss many keys that terminal work needs, so Neko Webshell inclu
 
 You can tap Ctrl in the shortcut bar, then press a letter on the system keyboard to enter combinations such as Ctrl+C, Ctrl+A, or Ctrl+E. Double tap the terminal to open the system keyboard. Swipe left or right to switch tabs.
 
+In settings, hold any mobile shortcut card to drag it into a new position. Drag near the list edge to keep scrolling, or use another finger to scroll while holding the card.
+
 ## Files, Images, And Upload Progress
 
 The file panel follows the current terminal directory when possible. You can enter folders, go up one level, refresh the list, upload local files, download remote files, view text files, and inspect file details.
+
+On desktop, drop local files onto a native WebShell terminal pane. The status bar shows upload progress, then inserts the file paths into that pane without executing them. In a split layout, the drop location selects the target pane. Use the upload menu for Herdr panes.
 
 When you paste an image, Neko Webshell saves it on the target instance first, then sends the saved path to the terminal. This lets you pass screenshots, clipboard images, or mobile photos to commands and tools running in the terminal.
 

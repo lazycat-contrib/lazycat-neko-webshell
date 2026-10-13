@@ -1,6 +1,7 @@
 import type { MessageKey } from "./i18n";
 import type { Settings, TerminalPane, Tone } from "./types";
 import { IMAGE_FILE_ACCEPT } from "./clipboard-image";
+import { shellQuotePath } from "./shell-quote-path";
 import { aiVoiceProfileConfigured } from "./plugins/ai-chat/voice-profiles";
 import { errorMessage, escapeAttr, escapeHtml } from "./utils";
 import {
@@ -619,10 +620,4 @@ function extensionForMime(mimeType: string): string {
   if (normalized === "audio/wav" || normalized === "audio/wave" || normalized === "audio/x-wav") return "wav";
   if (normalized === "audio/mpeg" || normalized === "audio/mp3") return "mp3";
   return "webm";
-}
-
-function shellQuotePath(path: string): string {
-  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(path)) return path;
-  const escaped = path.replace(/'/g, "'\\''");
-  return `'${escaped}'`;
 }

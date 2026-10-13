@@ -12,6 +12,7 @@ import {
 } from "./keyboard-layout.ts";
 
 import { createMobileKeyEditor } from "./settings/key-editor.ts";
+import { installMobileKeyboardReorderGesture } from "./settings/keyboard-reorder-gesture.ts";
 import { renderMobileKeyboardKey } from "./keyboard-layout-view.ts";
 
 type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
@@ -37,6 +38,7 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
   const undo = options.root.querySelector<HTMLButtonElement>("[data-mobile-layout-undo]");
   let previous: { preset: MobileKeyboardPresetId; layout: MobileKeyboardLayout } | undefined;
   let editor: ReturnType<typeof createMobileKeyEditor> | undefined;
+  let reorderGesture: ReturnType<typeof installMobileKeyboardReorderGesture> | undefined;
 
   function remember() {
     previous = { preset: options.preset(), layout: structuredClone(options.layout()) };
@@ -64,6 +66,7 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
   }
 
   function render() {
+    reorderGesture?.cancel();
     if (undo) undo.disabled = !previous;
     if (preset) preset.value = options.preset();
     pageTabs?.querySelectorAll<HTMLButtonElement>("[data-mobile-layout-page-tab]").forEach((tab) => {
@@ -211,46 +214,16 @@ export function createMobileKeyboardLayoutSettingsController(options: Options) {
       const insertIndex = targetIndex;
       if (sourceId && targetIndex >= 0) commit(moveMobileKeyboardKeyToIndex(currentLayout(), pageId, sourceId, insertIndex));
     });
-    let pointerDragId: number | undefined;
-    let pointerDragKeyId = "";
-    let pointerDragTargetId = "";
-    const clearPointerDrag = () => {
-      if (!pointerDragKeyId) return;
-      list?.querySelectorAll(".is-dragging, .is-drag-over").forEach((item) => item.classList.remove("is-dragging", "is-drag-over"));
-      pointerDragKeyId = "";
-      pointerDragTargetId = "";
-      pointerDragId = undefined;
-    };
-    options.root.addEventListener("pointerdown", (event) => {
-      if (event.pointerType === "mouse" || !event.isPrimary || event.button !== 0 || pointerDragId !== undefined) return;
-      const handle = event.target instanceof Element ? event.target.closest<HTMLElement>(".mobile-keyboard-drag-handle") : null;
-      const row = handle?.closest<HTMLElement>("[data-mobile-layout-key]");
-      if (!row?.dataset.mobileLayoutKey) return;
-      pointerDragId = event.pointerId;
-      pointerDragKeyId = row.dataset.mobileLayoutKey;
-      pointerDragTargetId = pointerDragKeyId;
-      row.classList.add("is-dragging");
-      row.setPointerCapture?.(event.pointerId);
-      event.preventDefault();
+    if (list) reorderGesture = installMobileKeyboardReorderGesture({
+      root: options.root,
+      list,
+      scrollHost: list.closest<HTMLElement>(".settings-panels"),
+      move: (sourceId, targetId) => {
+        const keys = currentLayout().pages.find((item) => item.id === pageId)?.keys ?? [];
+        const targetIndex = keys.findIndex((item) => item.id === targetId);
+        if (targetIndex >= 0) commit(moveMobileKeyboardKeyToIndex(currentLayout(), pageId, sourceId, targetIndex));
+      },
     });
-    options.root.addEventListener("pointermove", (event) => {
-      if (!pointerDragKeyId || event.pointerId !== pointerDragId) return;
-      const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-mobile-layout-key]");
-      if (!target || !list?.contains(target)) return;
-      list?.querySelectorAll(".is-drag-over").forEach((item) => item.classList.remove("is-drag-over"));
-      target.classList.add("is-drag-over");
-      pointerDragTargetId = target.dataset.mobileLayoutKey ?? pointerDragKeyId;
-    });
-    options.root.addEventListener("pointerup", (event) => {
-      if (!pointerDragKeyId || event.pointerId !== pointerDragId) return;
-      const keys = currentLayout().pages.find((item) => item.id === pageId)?.keys ?? [];
-      const targetIndex = keys.findIndex((item) => item.id === pointerDragTargetId);
-      const insertIndex = targetIndex;
-      if (targetIndex >= 0 && pointerDragKeyId !== pointerDragTargetId) commit(moveMobileKeyboardKeyToIndex(currentLayout(), pageId, pointerDragKeyId, insertIndex));
-      clearPointerDrag();
-    });
-    options.root.addEventListener("pointercancel", clearPointerDrag);
-    options.root.addEventListener("lostpointercapture", clearPointerDrag);
     render();
   }
 

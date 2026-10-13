@@ -17,6 +17,7 @@ import "./agent-updates/styles.css";
 import "./settings/settings.css";
 import "./plugins/ai-chat/composer-layout.css";
 import "./mobile/settings.css";
+import "./plugins/file-transfer/pane-drop.css";
 
 import { createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
@@ -303,6 +304,7 @@ import {
 } from "./plugins/ai-chat/voice-speech-profiles";
 import { createSecretFileController } from "./secret-file/controller";
 import { createFileTransferController } from "./plugins/file-transfer/controller";
+import { createPaneFileDropController, paneAcceptsFileDrop } from "./plugins/file-transfer/pane-drop";
 import { setFileTransferOutput } from "./plugins/file-transfer/dom";
 import { renderFileTransferToolView } from "./plugins/file-transfer/tool-view";
 import { createPluginJsonInvoker } from "./plugins/invoke-json";
@@ -1203,6 +1205,19 @@ const fileTransfer = createFileTransferController({
   onOutput: setFileTransferOutput,
   onStatus: setFileTransferStatus,
   onRender: renderPluginTools,
+});
+createPaneFileDropController({
+  root: document,
+  window,
+  paneForTarget: paneForEventTarget,
+  canUpload: paneAcceptsFileDrop,
+  isCurrent: (pane, sessionId, selector) => allPanes().includes(pane)
+    && pane.sessionId === sessionId && pane.selector === selector && paneAcceptsFileDrop(pane),
+  upload: (files, pane, onProgress) => fileTransfer.uploadToTemporaryDirectory(files, pane, onProgress),
+  sendText: sendTextToPane,
+  focus: focusPaneCanvas,
+  tr,
+  onStatus: setGlobalStatus,
 });
 const secretFiles = createSecretFileController({
   activePane,
