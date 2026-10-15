@@ -2195,6 +2195,8 @@ textarea:focus-visible {
 }
 
 .herdr-agent-icon[data-agent-icon="pi"] { --herdr-agent-mask: url("@lobehub/icons-static-svg/icons/pi.svg"); }
+.herdr-agent-icon[data-agent-icon="qwen"] { --herdr-agent-mask: url("@lobehub/icons-static-svg/icons/qwen.svg"); }
+.herdr-agent-icon[data-agent-icon="goose"] { --herdr-agent-mask: url("@lobehub/icons-static-svg/icons/goose.svg"); }
 .herdr-agent-icon[data-agent-icon="claudecode"] { --herdr-agent-mask: url("@lobehub/icons-static-svg/icons/claudecode.svg"); }
 .herdr-agent-icon[data-agent-icon="codex"] { --herdr-agent-mask: url("@lobehub/icons-static-svg/icons/codex.svg"); }
 .herdr-agent-icon[data-agent-icon="geminicli"] { --herdr-agent-mask: url("@lobehub/icons-static-svg/icons/geminicli.svg"); }

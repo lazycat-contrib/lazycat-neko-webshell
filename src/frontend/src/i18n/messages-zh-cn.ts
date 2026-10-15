@@ -1,6 +1,9 @@
 import type { MessageKey } from "./messages-en";
 
 export const zhCNMessages = {
+  "programStatus.permission": "等待授权",
+  "programStatus.question": "等待回答",
+  "programStatus.auth": "等待登录",
   "herdr.activity.help": "状态颜色",
   "herdr.activity.working": "工作中",
   "herdr.activity.blocked": "等待确认",

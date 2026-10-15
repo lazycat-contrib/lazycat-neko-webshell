@@ -1,5 +1,7 @@
 import type { SessionBackendId, Tone } from "./types";
 import { escapeAttr, escapeHtml } from "./utils.ts";
+import type { ProgramStatusPresentation } from "./program-status.ts";
+import { renderProgramStatusView, syncProgramStatusView } from "./program-status-view.ts";
 
 export type NewTabMenuItem = {
   id: SessionBackendId;
@@ -8,6 +10,7 @@ export type NewTabMenuItem = {
 };
 
 export type TabViewItem = {
+  programStatus?: ProgramStatusPresentation;
   id: string;
   active: boolean;
   renaming: boolean;
@@ -88,8 +91,9 @@ function renderTabView(tab: TabViewItem, labels: TabViewLabels): string {
   const pinLabel = tab.pinned ? labels.unpin : labels.pin;
   return `
       <div class="tab ${tab.active ? "active" : ""} ${tab.named ? "named" : ""} ${tab.pinned ? "pinned" : ""} ${tab.iconOnly ? "icon-only" : ""}" data-tab-view-id="${escapeAttr(tab.id)}" data-tab-structure="${escapeAttr(tabStructureSignature(tab))}">
-        <div class="tab-main" id="tab-${escapeAttr(tab.id)}" role="tab" tabindex="0" aria-selected="${tab.active}" aria-label="${escapeAttr(tab.title)}" data-tab-id="${escapeAttr(tab.id)}" title="${escapeAttr(tab.title)}">
-          <span class="tab-status" data-tone="${tab.tone}"></span>
+        <div class="tab-main" id="tab-${escapeAttr(tab.id)}" role="tab" tabindex="0" aria-selected="${tab.active}" aria-label="${escapeAttr(tab.title)}" data-tab-id="${escapeAttr(tab.id)}" data-program-status-pane="${escapeAttr(tab.programStatus?.paneId ?? "")}" title="${escapeAttr(tab.title)}">
+          <span class="tab-status" data-tone="${tab.tone}" ${tab.programStatus ? "hidden" : ""}></span>
+          ${renderProgramStatusView(tab.programStatus)}
           ${label}
         </div>
         <div class="tab-pin-actions" aria-label="${escapeAttr(pinLabel)}">
@@ -141,10 +145,12 @@ function patchTabElement(element: HTMLElement | undefined, tab: TabViewItem, lab
     setAttribute(main, "aria-label", tab.title);
     setAttribute(main, "title", tab.title);
     main.dataset.tabId = tab.id;
+    main.dataset.programStatusPane = tab.programStatus?.paneId ?? "";
   }
 
   const status = element.querySelector<HTMLElement>(".tab-status");
-  if (status) status.dataset.tone = tab.tone;
+  if (status) { status.dataset.tone = tab.tone; status.hidden = Boolean(tab.programStatus); }
+  syncProgramStatusView(element, tab.programStatus);
 
   const title = element.querySelector<HTMLElement>(".tab-title");
   if (title && title.textContent !== tab.displayName) title.textContent = tab.displayName;

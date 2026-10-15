@@ -133,6 +133,9 @@ enum TerminalServerMessage<'a> {
     OutputSequence {
         sequence: u64,
     },
+    ProgramStatus {
+        records: &'a [neko_program_status::ProgramRecord],
+    },
     ReplayStart {
         session_id: &'a str,
         selector: &'a str,
@@ -781,8 +784,15 @@ async fn serve_open_terminal(
         heartbeat.tick().await;
     }
     let mut client_last_seen = Instant::now();
+    let mut program_status_revision = None;
+    send_managed_program_status(&mut sender, &terminal, &mut program_status_revision).await?;
+    let mut program_status_poll = interval(Duration::from_millis(500));
+    program_status_poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         tokio::select! {
+            _ = program_status_poll.tick() => {
+                send_managed_program_status(&mut sender, &terminal, &mut program_status_revision).await?;
+            }
             event = event_rx.recv() => {
                 if !handle_terminal_event(
                     &mut sender,
@@ -794,6 +804,7 @@ async fn serve_open_terminal(
                 ).await? {
                     break;
                 }
+                send_managed_program_status(&mut sender, &terminal, &mut program_status_revision).await?;
             }
             update = recv_terminal_control_update(&mut control_rx) => {
                 match update {
@@ -1702,6 +1713,22 @@ async fn handle_terminal_client_message(
         }
         Message::Pong(_) => Ok(true),
     }
+}
+
+async fn send_managed_program_status(
+    sender: &mut TerminalSender,
+    terminal: &ManagedTerminal,
+    revision: &mut Option<u64>,
+) -> anyhow::Result<()> {
+    if let Some((next, records)) = terminal.program_status_since(*revision) {
+        send_control(
+            sender,
+            &TerminalServerMessage::ProgramStatus { records: &records },
+        )
+        .await?;
+        *revision = Some(next);
+    }
+    Ok(())
 }
 
 async fn handle_terminal_event(

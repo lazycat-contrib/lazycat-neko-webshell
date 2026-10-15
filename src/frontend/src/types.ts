@@ -1,6 +1,7 @@
 import type { ResttyFontInput } from "restty";
 import type { Terminal } from "restty/xterm";
 import type { TerminalReplyAuthority } from "./terminal-reply-authority";
+import type { ProgramStatusRecord } from "./program-status";
 import type { MobileKeyboardLayout, MobileKeyboardPresetId } from "./mobile/keyboard-layout-types";
 
 export type Tone = "ok" | "error" | "neutral";
@@ -452,6 +453,7 @@ export type Settings = {
 };
 
 export type TerminalPane = {
+  programStatus?: ProgramStatusRecord[];
   id: string;
   workspacePaneId: string;
   programKind?: RemoteProgramKind;

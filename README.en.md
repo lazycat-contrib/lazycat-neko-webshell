@@ -75,6 +75,14 @@ You can scroll back through terminal history. Desktop uses the mouse wheel. Mobi
 
 You can also adjust the terminal theme, font, font size, line height, cursor style, background image, opacity, and blur. The app theme and terminal theme are separate, so you can mix light and dark preferences.
 
+## Agent status in standard WebShell
+
+Standard WebShell detects foreground coding agents such as Codex, Claude Code, OpenCode, and Gemini, including Node/npx wrappers. Tabs reuse Herdr's Agent icons, activity colors, and glyphs; selecting a tab jumps to the relevant pane. The tab tooltip shows progress, a blocked reason, and a summary.
+
+Native OSC 7501 reports and output from commands such as `w1 codex` take precedence over screen inference. Working, blocked (permission/question/auth), done, error, and clear records are supported. Returning to the shell clears the previous process's status. Reconnection restores the current table without answering historical probes. Screen rules can depend on the Agent CLI version; native reports are more precise.
+
+The replaceable `crates/program-status` adapter contains `w1 = "0.3"`. The target agent implementation version is 18; the compatible minimum remains 11. Existing compatible agents keep running. Prepare an optional upgrade through the update entry to enable this feature on the next agent launch.
+
 ## Mobile Use
 
 The bottom toolbar keeps the arrow keys and Ctrl+C/V/Z within reach and scrolls horizontally. Tap the arrow to expand the touch keyboard, then switch among typing, function keys, and your existing editable shortcut pages. You can also swipe between the typing and function pages. The keyboard icon opens the system IME; the draft icon opens a separate input dock for Chinese or multiline text, with Insert and Send + Enter actions. On tablets, the dock spans the terminal area and leaves a vertical tab rail accessible; its keys stay centered at a comfortable width.

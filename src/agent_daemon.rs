@@ -23,9 +23,9 @@ use sha2::{Digest as _, Sha256};
 use crate::agent_protocol::{
     AGENT_PROTOCOL_VERSION, AGENT_VERSION, MAX_AGENT_MESSAGE_BYTES, MIN_SUPPORTED_AGENT_VERSION,
     attach_request, binary_frame_with_sequence, error_response, ok_response, process_exit_frame,
-    read_agent_frame, read_agent_request, read_agent_response, replay_complete_frame,
-    replay_start_frame_with_metadata, state_response, write_agent_frame, write_agent_request,
-    write_agent_response,
+    program_status_frame, read_agent_frame, read_agent_request, read_agent_response,
+    replay_complete_frame, replay_start_frame_with_metadata, state_response, write_agent_frame,
+    write_agent_request, write_agent_response,
 };
 use crate::agent_workspace::{AgentPane, AgentPaneEvent, AgentWorkspace};
 use crate::config::{
@@ -893,6 +893,18 @@ impl AgentDaemon {
     }
 }
 
+fn send_program_status(
+    stream: &mut UnixStream,
+    pane: &AgentPane,
+    revision: &mut Option<u64>,
+) -> anyhow::Result<()> {
+    if let Some((next, records)) = pane.program_status_since(*revision) {
+        write_agent_frame(stream, &program_status_frame(&records))?;
+        *revision = Some(next);
+    }
+    Ok(())
+}
+
 fn serve_attach_stream(
     stream: &mut UnixStream,
     pane: &Arc<AgentPane>,
@@ -948,6 +960,8 @@ fn serve_attach_stream(
         &mut *stream,
         &replay_complete_frame(pane.session_id(), pane.selector(), pane.id(), last_sequence),
     )?;
+    let mut program_status_revision = None;
+    send_program_status(stream, pane, &mut program_status_revision)?;
     stream.flush()?;
 
     loop {
@@ -963,6 +977,7 @@ fn serve_attach_stream(
                     &mut *stream,
                     &binary_frame_with_sequence(frame.data.to_vec(), frame.sequence),
                 )?;
+                send_program_status(stream, pane, &mut program_status_revision)?;
                 stream.flush()?;
             }
             Ok(AgentPaneEvent::Exit(exit)) => {
@@ -978,7 +993,10 @@ fn serve_attach_stream(
                 stream.flush()?;
                 break;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                send_program_status(stream, pane, &mut program_status_revision)?;
+                stream.flush()?;
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
@@ -1241,7 +1259,7 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 17);
+        assert_eq!(AGENT_VERSION, 18);
         assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 11);
     }
 

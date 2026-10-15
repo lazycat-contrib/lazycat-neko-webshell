@@ -13,6 +13,7 @@ on:
       - .github/workflows/lazycat.yml
       - Cargo.lock
       - Cargo.toml
+      - crates/**
       - rust-toolchain.toml
       - build.rs
       - package-lock.json
@@ -22,6 +23,7 @@ on:
       - scripts/**
       - src/**
       - vendor/restty/**
+      - vendor/w1/**
       - lzc-build.yml
       - lzc-manifest.yml
       - package.yml

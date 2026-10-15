@@ -15,6 +15,7 @@ mkdir -p "${content_dir}"
 } > "${content_dir}/.env"
 mkdir -p "${content_dir}/licenses"
 cp vendor/restty/0.3.0/LICENSE "${content_dir}/licenses/restty-0.3.0-LICENSE"
+cp vendor/w1/0.3.0/LICENSE-MIT "${content_dir}/licenses/w1-0.3.0-LICENSE-MIT"
 
 npm ci
 node scripts/export-restty-wasm.mjs
@@ -42,8 +43,8 @@ fi
 export PROTOC="${protoc_bin}"
 "${PROTOC}" --version
 
-cargo fmt --check
-cargo test --locked
+cargo fmt --all --check
+cargo test --workspace --locked
 
 missing_packages=()
 command -v musl-gcc >/dev/null || missing_packages+=(musl-tools)

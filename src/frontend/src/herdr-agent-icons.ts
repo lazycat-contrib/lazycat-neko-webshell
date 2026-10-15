@@ -1,5 +1,7 @@
 const HERDR_AGENT_ICON_ALIASES = {
   pi: "pi",
+  qwen: "qwen",
+  goose: "goose",
   claude: "claudecode",
   codex: "codex",
   gemini: "geminicli",
@@ -48,6 +50,8 @@ function normalizeAgentKey(value: string | undefined): keyof typeof HERDR_AGENT_
     kilocode: "kilo",
     mastracode: "mastracode",
     qoder: "qodercli",
+    omp: "pi",
+    grokbuild: "grok",
   };
   const key = aliases[normalized] ?? normalized;
   return key in HERDR_AGENT_ICON_ALIASES ? key as keyof typeof HERDR_AGENT_ICON_ALIASES : undefined;

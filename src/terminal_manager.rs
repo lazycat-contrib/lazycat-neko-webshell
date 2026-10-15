@@ -305,7 +305,7 @@ pub struct ManagedTerminal {
     selector: String,
     cols: u16,
     rows: u16,
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     writer: Arc<PtyWriter>,
     reply_authority: Arc<TerminalReplyAuthority>,
     event_tx: broadcast::Sender<TerminalEvent>,
@@ -318,6 +318,20 @@ pub struct ManagedTerminal {
 }
 
 impl ManagedTerminal {
+    pub fn program_status_since(
+        &self,
+        previous: Option<u64>,
+    ) -> Option<(u64, Vec<neko_program_status::ProgramRecord>)> {
+        let foreground = self
+            .master
+            .lock()
+            .ok()
+            .and_then(|master| master.process_group_leader())
+            .and_then(|pid| u32::try_from(pid).ok());
+        self.reply_authority.observe_foreground(foreground);
+        self.reply_authority.program_status_since(previous)
+    }
+
     pub(crate) fn spawn_connection_scoped(spec: TerminalSpec) -> anyhow::Result<Arc<Self>> {
         let output = Arc::new(OutputBuffer::new_with_byte_limit(
             spec.output_frame_limit,
@@ -335,6 +349,7 @@ impl ManagedTerminal {
         Self::spawn_with_capacities(spec, output, EVENT_CAPACITY, PTY_INPUT_CHANNEL_CAPACITY)
     }
 
+    #[allow(clippy::too_many_lines)] // Keep PTY startup and reply/output wiring in one auditable flow.
     fn spawn_with_capacities(
         spec: TerminalSpec,
         output: Arc<OutputBuffer>,
@@ -382,6 +397,7 @@ impl ManagedTerminal {
         let killer = child.clone_killer();
         let mut output_failure_killer = child.clone_killer();
         drop(pair.slave);
+        let master = Arc::new(Mutex::new(pair.master));
 
         let (event_tx, _) = broadcast::channel::<TerminalEvent>(event_capacity);
         let exit = Arc::new(Mutex::new(None));
@@ -392,25 +408,34 @@ impl ManagedTerminal {
             let output = Arc::clone(&output);
             let writer = Arc::clone(&writer);
             let reply_authority = Arc::clone(&reply_authority);
+            let master = Arc::clone(&master);
             move |event| match event {
-                PtyOutputEvent::Output(data) => match reply_authority.process_output(
-                    data,
-                    |reply| writer.send_reply(reply).map_err(anyhow::Error::new),
-                    |data| {
-                        let frame = output.push(data);
-                        let _ = event_tx.send(TerminalEvent::Output(frame));
-                        true
-                    },
-                ) {
-                    Ok(keep_reading) => keep_reading,
-                    Err(error) => {
-                        let _ = event_tx.send(TerminalEvent::Error(format!(
-                            "terminal reply authority failed: {error:#}"
-                        )));
-                        let _ = output_failure_killer.kill();
-                        false
+                PtyOutputEvent::Output(data) => {
+                    let foreground = master
+                        .lock()
+                        .ok()
+                        .and_then(|master| master.process_group_leader())
+                        .and_then(|pid| u32::try_from(pid).ok());
+                    reply_authority.observe_foreground(foreground);
+                    match reply_authority.process_output(
+                        data,
+                        |reply| writer.send_reply(reply).map_err(anyhow::Error::new),
+                        |data| {
+                            let frame = output.push(data);
+                            let _ = event_tx.send(TerminalEvent::Output(frame));
+                            true
+                        },
+                    ) {
+                        Ok(keep_reading) => keep_reading,
+                        Err(error) => {
+                            let _ = event_tx.send(TerminalEvent::Error(format!(
+                                "terminal reply authority failed: {error:#}"
+                            )));
+                            let _ = output_failure_killer.kill();
+                            false
+                        }
                     }
-                },
+                }
                 PtyOutputEvent::Error(message) => {
                     let _ = event_tx.send(TerminalEvent::Error(message));
                     let _ = output_failure_killer.kill();
@@ -430,7 +455,7 @@ impl ManagedTerminal {
             selector: spec.selector,
             cols: spec.cols,
             rows: spec.rows,
-            master: Mutex::new(pair.master),
+            master,
             writer,
             reply_authority,
             event_tx,
@@ -472,6 +497,7 @@ impl ManagedTerminal {
     }
 
     pub fn write_input(&self, data: Vec<u8>) -> anyhow::Result<()> {
+        self.reply_authority.observe_input(&data);
         self.writer.send(data).map_err(anyhow::Error::new)
     }
 

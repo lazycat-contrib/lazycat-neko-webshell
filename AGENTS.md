@@ -1,5 +1,18 @@
 # Agent Rules
 
+## Keep Program Status Replaceable
+
+- OSC 7501 parsing and automatic Agent detection belong in `crates/program-status`.
+  Keep `w1` and its types private to that crate; callers use app-owned records.
+- Inspect live PTY output once at the server reply authority. Replay must not
+  answer probes or rerun detection. Send a current replacement status table after
+  replay and only changed tables during live output.
+- Automatic detection must stay inside the PTY's foreground process group and a
+  bounded same-user/session/TTY child tree, with process-start identity checks.
+  Do not change process-wide HOME/cwd or borrow another terminal's session store.
+- Native OSC 7501 reports take precedence over inferred status. Reuse Herdr's
+  Agent icons, activity colors and jump behavior for ordinary WebShell tabs.
+
 ## Keep `main.ts` Thin
 
 Do not put new frontend code into `src/frontend/src/main.ts` by default.

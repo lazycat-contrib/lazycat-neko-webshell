@@ -104,6 +104,13 @@ impl AgentPane {
         self.pty.write_input(data)
     }
 
+    pub fn program_status_since(
+        &self,
+        previous: Option<u64>,
+    ) -> Option<(u64, Vec<neko_program_status::ProgramRecord>)> {
+        self.pty.program_status_since(previous)
+    }
+
     pub fn resize(&self, cols: u16, rows: u16) -> anyhow::Result<()> {
         validate_size(cols, rows)?;
         self.pty.resize(cols, rows)?;

@@ -14,6 +14,8 @@ import "./terminal-themes.css";
 import "./mobile/styles.css";
 import "./mobile/keyboard-dock.css";
 import "./herdr-activity.css";
+import "./program-status.css";
+import { applyProgramStatus, programStatusForTab } from "./program-status";
 import "./agent-updates/styles.css";
 import "./settings/settings.css";
 import "./plugins/ai-chat/composer-layout.css";
@@ -2441,7 +2443,8 @@ function bindActions() {
     if (target instanceof HTMLInputElement) return;
     const tabButton = target?.closest<HTMLElement>(".tab-main[data-tab-id]");
     if (!tabButton || !elements.tabList.contains(tabButton)) return;
-    activateTab(tabButton.dataset.tabId ?? "");
+    if (tabButton.dataset.programStatusPane) activatePane(tabButton.dataset.tabId ?? "", tabButton.dataset.programStatusPane);
+    else activateTab(tabButton.dataset.tabId ?? "");
   });
   elements.tabList.addEventListener("dblclick", (event) => {
     const target = event.target instanceof Element ? event.target : null;
@@ -2457,7 +2460,8 @@ function bindActions() {
     if (!tabButton || !elements.tabList.contains(tabButton) || target instanceof HTMLInputElement) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      activateTab(tabButton.dataset.tabId ?? "");
+      if (tabButton.dataset.programStatusPane) activatePane(tabButton.dataset.tabId ?? "", tabButton.dataset.programStatusPane);
+      else activateTab(tabButton.dataset.tabId ?? "");
     } else if (event.key === "F2") {
       event.preventDefault();
       startRenamingTab(tabButton.dataset.tabId ?? "");
@@ -6366,7 +6370,9 @@ function handleServerText(pane: TerminalPane, text: string) {
     writeTerminalText(pane, text);
     return;
   }
-  if (event.type === "ready") {
+  if (event.type === "program-status") {
+    if (applyProgramStatus(pane, event.records)) { renderTabs(); updateActiveDetails(); }
+  } else if (event.type === "ready") {
     pane.sessionStatus = "running";
     pane.exited = false;
     pane.processExitObserved = false;
@@ -6725,6 +6731,7 @@ function tabViewItems(): TabViewItem[] {
       terminalHasText: tabHasDisplayTextTitle(tab, terminalDisplayName),
     });
     const pinnedIndex = tab.pinned ? pinned.findIndex((item) => item.id === tab.id) : -1;
+    const programStatus = programStatusForTab(tab, tr);
     return {
       id: tab.id,
       active,
@@ -6736,6 +6743,8 @@ function tabViewItems(): TabViewItem[] {
       tone: tabTone(tab),
       icon: remote ? "monitor-smartphone" : undefined,
       ...presentation,
+      programStatus,
+      title: programStatus ? `${presentation.title} · ${programStatus.label}` : presentation.title,
     };
   });
 }

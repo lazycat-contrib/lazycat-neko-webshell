@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { verifyBrowserDriverNavigation } from "./browser-driver.mjs";
 
 const scenarios = new Map([
+  ["program-status", { module: "./program-status/run.mjs", exportName: "runProgramStatusScenario" }],
   ["herdr-activity", { module: "./herdr-activity/run.mjs", exportName: "runHerdrActivityScenario" }],
   ["agent-updates", { module: "./agent-updates/run.mjs", exportName: "runAgentUpdateScenario" }],
   ["settings-ui", { module: "./settings-ui/run.mjs", exportName: "runSettingsUiScenario" }],

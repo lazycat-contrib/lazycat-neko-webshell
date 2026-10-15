@@ -15,6 +15,7 @@ export type TerminalServerEvent =
   | { type: "agent-preparing" }
   | { type: "pong" }
   | { type: "output-sequence"; sequence?: number }
+  | { type: "program-status"; records: unknown }
   | {
     type: "control-state";
     session_id?: string;

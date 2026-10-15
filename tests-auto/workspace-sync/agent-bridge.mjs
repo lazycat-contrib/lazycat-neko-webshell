@@ -4,22 +4,24 @@ import { readFile, writeFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import ts from 'typescript';
 import { create, toBinary, fromBinary } from '@bufbuild/protobuf';
 import { WebSocketServer } from 'ws';
+import { transformWithOxc } from 'vite';
 
 const FRAME_LIMIT = 32 * 1024 * 1024;
 
-export async function startAgentBridge({ root, directory, runtimeDirectory, selector, binary }) {
-  const source = await readFile(join(root, 'src/frontend/src/gen/lazycat/webshell/v1/capability_pb.ts'), 'utf8');
+export async function startAgentBridge({ root, directory, runtimeDirectory, selector, binary, home }) {
+  const sourceFile = join(root, 'src/frontend/src/gen/lazycat/webshell/v1/capability_pb.ts');
+  const source = await readFile(sourceFile, 'utf8');
   const moduleFile = join(directory, 'capability.mjs');
-  await writeFile(moduleFile, ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText);
+  await writeFile(moduleFile, (await transformWithOxc(source, sourceFile)).code);
   const schema = await import(pathToFileURL(moduleFile));
   const { AgentRequestSchema, AgentResponseSchema, AgentFrameSchema,
     AgentRequestType: R, AgentWorkspaceActionType: A, AgentFrameType: F, AgentControlType: C } = schema;
   const socketPath = join(runtimeDirectory, 'agent.sock');
   const env = Object.fromEntries(['HOME','USER','LOGNAME','LANG','PATH'].filter(k => process.env[k]).map(k => [k,process.env[k]]));
   Object.assign(env, { SHELL:'/bin/sh', TERM:'xterm-256color', NEKO_WEBSHELL_TTY_INIT:'generic' });
+  if(home)Object.assign(env,{HOME:home,XDG_CONFIG_HOME:join(home,'.config'),XDG_DATA_HOME:join(home,'.local/share'),XDG_CACHE_HOME:join(home,'.cache')});
   const child = spawn(binary, ['daemon','--socket',socketPath,'--selector',selector], { cwd: runtimeDirectory, env, stdio:['ignore','ignore','pipe'] });
   let stderr = '';
   child.stderr.on('data', b => { stderr = (stderr + b.toString()).slice(-4096); });
@@ -119,6 +121,7 @@ export async function startAgentBridge({ root, directory, runtimeDirectory, sele
         else if(frame.control?.type===C.REPLAY_COMPLETE)ws.send(JSON.stringify({type:'replay-complete'}));
         else if(frame.control?.type===C.PROCESS_EXIT)ws.send(JSON.stringify({type:'process-exit'}));
         else if(frame.control?.type===C.REPLAY_START)ws.send(JSON.stringify({type:'replay-start'}));
+        else if(frame.type===F.TEXT&&!frame.control)ws.send(new TextDecoder().decode(frame.payload));
       });
       ws.on('message',(data)=>send(stream,AgentFrameSchema,{type:F.INPUT,payload:new Uint8Array(data)}));
       ws.on('close',()=>{if(!stream.destroyed)send(stream,AgentFrameSchema,{type:F.DETACH});stream.destroy();});
@@ -143,6 +146,6 @@ export async function startAgentBridge({ root, directory, runtimeDirectory, sele
     const deadline=Date.now()+8000;
     while(true){if(spawnError)throw spawnError;try{await request(R.PING);break;}catch(error){if(Date.now()>deadline||child.exitCode!==null)throw new Error(`agent startup failed: ${stderr||error.message}`);await new Promise(r=>setTimeout(r,30));}}
     await request(R.STATE);await action('create_tab');
-    return { middleware,upgrade,snapshot,action,close,selector };
+    return { middleware,upgrade,snapshot,action,close,selector, debug:()=>stderr };
   } catch(error) {await close();throw error;}
 }

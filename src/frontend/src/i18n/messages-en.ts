@@ -1,4 +1,7 @@
 export const enMessages = {
+  "programStatus.permission": "Approval required",
+  "programStatus.question": "Answer required",
+  "programStatus.auth": "Sign-in required",
   "herdr.activity.help": "Status colors",
   "herdr.activity.working": "Working",
   "herdr.activity.blocked": "Needs input",

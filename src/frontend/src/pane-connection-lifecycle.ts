@@ -32,6 +32,7 @@ export function createPaneConnectionLifecycle(options: PaneConnectionLifecycleOp
   const clearTimer = options.clearTimer ?? window.clearTimeout.bind(window);
 
   function beginConnection(pane: TerminalPane): void {
+    pane.programStatus = undefined;
     options.trace?.(pane, "connect-requested");
     clearReconnect(pane);
     pane.connectionState = pane.hasConnected ? "reconnecting" : "connecting";

@@ -14,6 +14,9 @@ pub struct TerminalReplyAuthority {
 struct ReplyAuthorityState {
     terminal: ResttyHeadlessTerminal,
     filter: ReplyOnlyInputFilter,
+    program_status: neko_program_status::Tracker,
+    cols: u16,
+    rows: u16,
 }
 
 #[derive(Default)]
@@ -45,6 +48,9 @@ impl TerminalReplyAuthority {
             state: Mutex::new(ReplyAuthorityState {
                 terminal: ResttyHeadlessTerminal::new(cols, rows)?,
                 filter: ReplyOnlyInputFilter::default(),
+                program_status: neko_program_status::Tracker::default(),
+                cols,
+                rows,
             }),
         })
     }
@@ -60,16 +66,43 @@ impl TerminalReplyAuthority {
                 .state
                 .lock()
                 .map_err(|_| anyhow!("Restty headless terminal lock poisoned"))?;
+            let mut replies = state.program_status.observe(&data);
             let filtered = state.filter.filter(&data);
-            state
+            let terminal_replies = state
                 .terminal
                 .write_output(&filtered)
-                .context("failed to parse PTY output with Restty headless")?
+                .context("failed to parse PTY output with Restty headless")?;
+            replies.extend_from_slice(&terminal_replies);
+            replies
         };
         for chunk in replies.chunks(PTY_INPUT_MESSAGE_BYTES) {
             write_reply(chunk.to_vec()).context("failed to write Restty terminal reply")?;
         }
         Ok(publish_output(data))
+    }
+
+    pub fn program_status_since(
+        &self,
+        previous: Option<u64>,
+    ) -> Option<(u64, Vec<neko_program_status::ProgramRecord>)> {
+        self.state
+            .lock()
+            .ok()?
+            .program_status
+            .snapshot_since(previous)
+    }
+
+    pub fn observe_foreground(&self, process_group: Option<u32>) {
+        if let Ok(mut state) = self.state.lock() {
+            let (cols, rows) = (state.cols, state.rows);
+            state.program_status.foreground(process_group, cols, rows);
+        }
+    }
+
+    pub fn observe_input(&self, data: &[u8]) {
+        if let Ok(mut state) = self.state.lock() {
+            state.program_status.input(data);
+        }
     }
 
     pub fn resize_with(
@@ -84,7 +117,11 @@ impl TerminalReplyAuthority {
             .lock()
             .map_err(|_| anyhow!("Restty headless terminal lock poisoned"))?;
         resize_pty()?;
-        state.terminal.resize(cols, rows)
+        state.terminal.resize(cols, rows)?;
+        state.cols = cols;
+        state.rows = rows;
+        state.program_status.resize(cols, rows);
+        Ok(())
     }
 }
 
@@ -237,6 +274,39 @@ mod tests {
     enum Event {
         Reply(Vec<u8>),
         Output(Vec<u8>),
+    }
+
+    #[test]
+    fn program_status_probe_is_answered_once_before_raw_output_and_snapshots_do_not_reply() {
+        let authority = TerminalReplyAuthority::new(80, 24).unwrap();
+        let events = RefCell::new(Vec::new());
+        let data =
+            b"text\x1b]7501;?\x07\x1b]7501;state=working:app=codex:progress=17\x1b\\tail".to_vec();
+        authority
+            .process_output(
+                data.clone(),
+                |reply| {
+                    events.borrow_mut().push(Event::Reply(reply));
+                    Ok(())
+                },
+                |raw| events.borrow_mut().push(Event::Output(raw)),
+            )
+            .unwrap();
+        assert_eq!(
+            events.into_inner(),
+            [
+                Event::Reply(b"\x1b]7501;?\x07".to_vec()),
+                Event::Output(data)
+            ]
+        );
+        let (revision, first) = authority.program_status_since(None).unwrap();
+        let (_, second) = authority.program_status_since(None).unwrap();
+        assert_eq!(
+            first, second,
+            "attachments see the same authoritative table"
+        );
+        assert_eq!(first[0].progress, Some(17));
+        assert!(authority.program_status_since(Some(revision)).is_none());
     }
 
     #[test]

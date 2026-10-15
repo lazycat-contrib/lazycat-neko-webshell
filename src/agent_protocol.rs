@@ -12,7 +12,7 @@ pub const AGENT_PROTOCOL_VERSION: &str = "lazycat-neko-webshell-agent-v4";
 // Bump when target-local agent code or one of its runtime dependencies changes.
 // Existing targets may keep an older agent until the provider raises its
 // minimum supported version.
-pub const AGENT_VERSION: u64 = 17;
+pub const AGENT_VERSION: u64 = 18;
 // Bump only when the provider can no longer safely use an older agent. Protocol
 // compatibility is checked before this version floor.
 pub const MIN_SUPPORTED_AGENT_VERSION: u64 = 11;
@@ -251,6 +251,15 @@ pub fn binary_frame_with_sequence(payload: impl Into<Vec<u8>>, sequence: u64) ->
     let mut frame = payload_frame(AgentFrameType::AGENT_FRAME_TYPE_BINARY, payload.into());
     frame.sequence = Some(clamped_i64(sequence));
     frame
+}
+
+pub fn program_status_frame(records: &[neko_program_status::ProgramRecord]) -> AgentFrame {
+    payload_frame(
+        AgentFrameType::AGENT_FRAME_TYPE_TEXT,
+        serde_json::json!({ "type": "program-status", "records": records })
+            .to_string()
+            .into_bytes(),
+    )
 }
 
 pub fn input_frame(payload: impl Into<Vec<u8>>) -> AgentFrame {
