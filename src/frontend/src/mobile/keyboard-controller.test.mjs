@@ -11,6 +11,7 @@ import { updateSystemKeyboardToggleState } from "./system-keyboard-state.ts";
 test("uses one user-activation event for mobile actions", () => {
   assert.equal(mobileActionEventPhase("pane-menu"), "click");
   assert.equal(mobileActionEventPhase("toggle-system-keyboard"), "pointerup");
+  assert.equal(mobileActionEventPhase("toggle-expanded-keyboard"), "click");
   assert.equal(mobileActionEventPhase("split-right"), "pointerup");
   assert.equal(mobileActionEventPhase("copy-selection"), "pointerup");
 });
@@ -18,6 +19,7 @@ test("uses one user-activation event for mobile actions", () => {
 test("keeps overlay and keyboard toggle actions in charge of their own focus", () => {
   assert.equal(mobileActionRestoresKeyboard("pane-menu"), false);
   assert.equal(mobileActionRestoresKeyboard("toggle-system-keyboard"), false);
+  assert.equal(mobileActionRestoresKeyboard("toggle-expanded-keyboard"), false);
   assert.equal(mobileActionRestoresKeyboard("workspace-overview"), false);
   assert.equal(mobileActionRestoresKeyboard("split-right"), true);
 });
@@ -36,6 +38,15 @@ test("keeps keyboard activation for the system keyboard toggle without replaying
   assert.deepEqual(mobileSyntheticActivation(button, 0), {
     kind: "action",
     value: "toggle-system-keyboard",
+  });
+  assert.equal(mobileSyntheticActivation(button, 1), undefined);
+});
+
+test("expands the touch keyboard once for a trusted click or keyboard activation", () => {
+  const button = { dataset: { mobileAction: "toggle-expanded-keyboard" } };
+  assert.deepEqual(mobileSyntheticActivation(button, 0), {
+    kind: "action",
+    value: "toggle-expanded-keyboard",
   });
   assert.equal(mobileSyntheticActivation(button, 1), undefined);
 });

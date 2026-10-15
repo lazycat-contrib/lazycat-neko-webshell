@@ -1,119 +1,104 @@
 .mobile-composer {
   position: fixed;
-  inset: auto 0 var(--mobile-composer-viewport-bottom, 0px);
-  width: min(100%, 560px);
-  max-width: 100%;
-  max-height: min(calc(var(--mobile-composer-viewport-height, 100dvh) - 12px), 720px);
-  margin: 0 auto;
+  inset: auto auto max(
+    calc(var(--mobile-composer-viewport-bottom, 0px) + 8px),
+    calc(var(--lzc-safe-area-inset-bottom, 0px) + 8px)
+  ) calc(var(--app-viewport-offset-left, 0px) + var(--app-viewport-width, 100vw) / 2);
+  z-index: 96;
+  box-sizing: border-box;
+  width: min(calc(var(--app-viewport-width, 100vw) - 16px), 560px);
+  max-width: none;
+  max-height: max(0px, calc(var(--mobile-composer-viewport-height, 100dvh) - 16px));
+  margin: 0;
   overflow: auto;
   border: 1px solid var(--dialog-border);
-  border-bottom: 0;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  background: var(--dialog-material), var(--dialog-bg);
+  border-radius: 20px;
+  background: var(--dialog-bg);
   box-shadow: var(--shadow-deep);
   color: var(--text);
-  padding:
-    16px max(16px, var(--lzc-safe-area-inset-right))
-    max(16px, var(--lzc-safe-area-inset-bottom))
-    max(16px, var(--lzc-safe-area-inset-left));
+  padding: 8px 10px 10px;
   font-family: var(--font-sans);
-  opacity: 0;
-  transform: translateY(18px);
-  transition:
-    opacity var(--motion-dialog-out) var(--ease-out),
-    transform var(--motion-dialog-out) var(--ease-out),
-    display var(--motion-dialog-out) allow-discrete,
-    overlay var(--motion-dialog-out) allow-discrete;
+  transform: translateX(-50%);
   overscroll-behavior: contain;
 }
 
-.mobile-composer::backdrop {
-  background: var(--overlay-scrim);
-  opacity: 0;
-  transition:
-    opacity var(--motion-dialog-out) var(--ease-out),
-    display var(--motion-dialog-out) allow-discrete,
-    overlay var(--motion-dialog-out) allow-discrete;
-}
-
 .mobile-composer[open] {
-  opacity: 1;
-  transform: translateY(0);
-  transition-duration: var(--motion-dialog-in);
-}
-
-.mobile-composer[open]::backdrop {
-  opacity: 1;
-  transition-duration: var(--motion-dialog-in);
-}
-
-@starting-style {
-  .mobile-composer[open] {
-    opacity: 0;
-    transform: translateY(18px);
-  }
-
-  .mobile-composer[open]::backdrop {
-    opacity: 0;
-  }
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .mobile-composer-head {
   display: flex;
-  align-items: flex-start;
+  flex: 0 0 auto;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 8px;
+  min-height: 40px;
 }
 
 .mobile-composer-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
 }
 
 .mobile-composer-heading h2 {
+  flex: 0 0 auto;
   margin: 0;
-  font-size: 18px;
-  line-height: 1.25;
-  letter-spacing: -0.01em;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.3;
 }
 
 .mobile-composer-target {
-  margin: 4px 0 0;
+  min-width: 0;
+  margin: 0;
   overflow: hidden;
   color: var(--muted);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .mobile-composer-close {
   flex: 0 0 44px;
+  width: 44px;
   min-width: 44px;
+  height: 44px;
   min-height: 44px;
+  border-radius: 12px;
   font-size: 24px;
 }
 
-.mobile-composer-label {
-  display: block;
-  margin-bottom: 8px;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
+.mobile-composer-label,
+.mobile-composer-hint {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .mobile-composer-input {
   display: block;
+  flex: 0 1 auto;
+  box-sizing: border-box;
   width: 100%;
-  min-height: 148px;
-  max-height: min(42dvh, 360px);
-  resize: vertical;
+  min-height: 44px;
+  max-height: min(108px, max(44px, calc(var(--mobile-composer-viewport-height, 100dvh) - 132px)));
+  resize: none;
+  overflow-y: auto;
   border: 1px solid var(--component-border);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   background: var(--bg);
   color: var(--text);
-  padding: 12px;
-  font: 16px/1.55 var(--font-mono);
+  padding: 9px 11px;
+  font: 16px/1.35 var(--font-mono);
   tab-size: 4;
   white-space: pre-wrap;
 }
@@ -122,93 +107,74 @@
   color: var(--muted);
 }
 
-.mobile-composer-hint,
 .mobile-composer-status {
-  margin: 8px 0 0;
-  color: var(--muted);
+  flex: 0 0 auto;
+  margin: 0;
+  color: var(--warning);
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
-.mobile-composer-status {
-  min-height: 1.45em;
-  color: var(--warning);
+.mobile-composer-status:empty {
+  display: none;
 }
 
 .mobile-composer-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 14px;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .mobile-composer-actions button {
-  min-height: 46px;
-  justify-content: center;
-  transition:
-    transform var(--motion-press) var(--ease-out),
-    background-color var(--motion-press) var(--ease-out);
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  overflow: hidden;
+  border-radius: 10px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mobile-composer-actions .mobile-composer-discard {
-  grid-column: 1 / -1;
-  color: var(--danger);
-}
-
-.mobile-composer-actions button:active:not(:disabled):not(:focus-visible),
-.mobile-composer-close:active:not(:focus-visible) {
-  transform: scale(0.97);
+  flex: 0 1 auto;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
 }
 
 .mobile-composer :focus-visible {
   outline: 2px solid var(--focus-ring);
-  outline-offset: 3px;
+  outline-offset: 2px;
 }
 
-@media (max-height: 520px) {
-  .mobile-composer {
-    max-height: var(--mobile-composer-viewport-height, 100dvh);
-    padding-top: 12px;
+@media (max-width: 360px) {
+  .mobile-composer-heading h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
 
-  .mobile-composer-head {
-    margin-bottom: 10px;
-  }
-
-  .mobile-composer-input {
-    min-height: 96px;
-    max-height: 32dvh;
+  .mobile-composer-actions button {
+    padding-inline: 6px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mobile-composer,
-  .mobile-composer[open] {
-    transform: none;
-    transition:
-      opacity var(--motion-press) var(--ease-out),
-      display var(--motion-press) allow-discrete,
-      overlay var(--motion-press) allow-discrete;
+  .mobile-composer-actions button,
+  .mobile-composer-close {
+    transition: none;
   }
 
   .mobile-composer-actions button:active,
   .mobile-composer-close:active {
     transform: none;
   }
-
-  @starting-style {
-    .mobile-composer[open] {
-      transform: none;
-    }
-  }
 }
-
-/* Keep the actions reachable when the system keyboard reduces the viewport. */
-.mobile-composer[open] { display: flex; flex-direction: column; }
-.mobile-composer-input { flex: 1 1 auto; min-height: 72px; height: min(30dvh, 230px); resize: none; }
-.mobile-composer-head, .mobile-composer-label, .mobile-composer-actions { flex-shrink: 0; }
-.mobile-composer-actions { position: sticky; bottom: 0; background: var(--dialog-bg); }
-.mobile-composer-status:empty { display: none; }
-.mobile-composer[data-compact="true"] .mobile-composer-hint { display: none; }
-.mobile-composer[data-compact="true"] .mobile-composer-head { margin-bottom: 8px; }
-.mobile-composer[data-compact="true"] .mobile-composer-actions { margin-top: 8px; }

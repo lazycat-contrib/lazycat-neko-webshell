@@ -77,15 +77,17 @@ You can also adjust the terminal theme, font, font size, line height, cursor sty
 
 ## Mobile Use
 
-Mobile keyboards miss many keys that terminal work needs, so Neko Webshell includes a shortcut bar.
+The bottom toolbar keeps the arrow keys and Ctrl+C/V/Z within reach and scrolls horizontally. Tap the arrow to expand the touch keyboard, then switch among typing, function keys, and your existing editable shortcut pages. You can also swipe between the typing and function pages. The keyboard icon opens the system IME; the draft icon opens a separate input dock for Chinese or multiline text, with Insert and Send + Enter actions. On tablets, the dock spans the terminal area and leaves a vertical tab rail accessible; its keys stay centered at a comfortable width.
 
-- `Main` has common modifier and action keys, including Ctrl, Alt, Shift, Tab, Return, arrows, copy, and paste.
+The expanded shortcut page still has customizable categories:
+
+- `Main` has common modifier and action keys, including Ctrl, Alt, Shift, Esc, Tab, Return, copy, and paste.
 - `Ops` has tab, pane, and font size actions.
 - `Nav` has Home, End, PageUp, PageDown, Delete, and Backspace.
 - `Fn` has F1-F12.
 - `Sym` has common shell symbols.
 
-You can tap Ctrl in the shortcut bar, then press a letter on the system keyboard to enter combinations such as Ctrl+C, Ctrl+A, or Ctrl+E. Double tap the terminal to open the system keyboard. Swipe left or right to switch tabs.
+You can scroll to Ctrl in the bottom bar, then press a letter on the system keyboard to enter combinations such as Ctrl+C, Ctrl+A, or Ctrl+E. You can also tap Ctrl on the expanded Shortcuts page before switching to the system keyboard. Double tap the terminal to open the system keyboard. Swipe left or right to switch tabs.
 
 In settings, hold any mobile shortcut card to drag it into a new position. Drag near the list edge to keep scrolling, or use another finger to scroll while holding the card.
 
@@ -173,13 +175,13 @@ The final files should look like `/lzcapp/var/sounds/noise/white-noise.wav`. Sup
 
 The edit icon opens a multiline draft composer. Drafts stay in page memory per terminal, including the actual Herdr pane, and survive closing the composer until the page reloads. Enter edits a new line; Insert adds no extra Enter, while Send + Enter explicitly submits. Failed sends retain the draft, and reopening a pending send cannot submit it twice. Multiline Insert is refused with an explanation for native terminals without bracketed paste, and for Herdr panes whose inner paste mode cannot be verified.
 
-Selecting Navigation shows the arrow keys first in the lower key rail, followed by Home, End, page and delete keys with horizontal scrolling and hold-to-repeat. Swiping the rail does not send the key under your finger. Default main-row arrows remain removed to avoid duplication. Navigation switches like the other categories, without a floating panel or changing the system keyboard state; custom layouts remain unchanged.
+The collapsed bar always offers arrow keys and Ctrl+C/V/Z. It scrolls horizontally when needed; holding an arrow repeats it, while swiping does not send the key under your finger. The expanded Shortcuts page retains editable Main, Actions, Navigation, Function, and Symbols categories. Navigation includes Home, End, page, and delete keys.
 
 The phrases icon opens a searchable Recent / All phrases / Keys panel, using existing quick phrases and their explicit Send Enter setting. The operations page also provides a session overview with pane counts, connection state and the current selection.
 
 ## Secret files
 
-To provide a key file to an AI or agent, press `Ctrl+Alt+V` on PC (`⌘⌥V` on Mac), or choose Secret file in the terminal context menu. On mobile, the file-key icon stays in the keyboard menu bar, outside the shortcut pages. The panel lets you switch the desktop shortcut to `Ctrl+Alt+K` (`⌘⌥K` on Mac) or disable it.
+To provide a key file to an AI or agent, press `Ctrl+Alt+V` on PC (`⌘⌥V` on Mac), or choose Secret file in the terminal context menu. On mobile, use the file-key icon in the bottom bar; at widths of 360px or less, it moves beside the expanded keyboard page tabs. The panel lets you switch the desktop shortcut to `Ctrl+Alt+K` (`⌘⌥K` on Mac) or disable it.
 
 Secret files are built in and do not depend on opening the tools panel or enabling the file-transfer plugin. WebShell saves clipboard text to a randomly named file inside a private directory under `/tmp` on the current terminal target. Files use mode `600`; directories use `700`. If the clipboard is empty, access is denied, or reading takes more than three seconds, a manual paste field appears. Line breaks and whitespace are preserved, up to 1 MiB.
 

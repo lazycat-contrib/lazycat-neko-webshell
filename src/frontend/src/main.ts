@@ -12,6 +12,7 @@ import "./plugin-tools.css";
 import "./webshell-themes.css";
 import "./terminal-themes.css";
 import "./mobile/styles.css";
+import "./mobile/keyboard-dock.css";
 import "./herdr-activity.css";
 import "./agent-updates/styles.css";
 import "./settings/settings.css";
@@ -580,6 +581,8 @@ const mobileKeyboard = createMobileKeyboardController({
   },
   onAction: runMobileAction,
   onPhrase: runMobileQuickPhrase,
+  onLayoutChange: scheduleTerminalSizeRefresh,
+  tr,
 });
 mobileSystemKeyboard = createMobileSystemKeyboardController({
   activePane,
@@ -610,6 +613,7 @@ const mobileWorkspaceOverview = createMobileWorkspaceOverviewController({
   tr,
 });
 const prepareAppMobileOverlay = () => {
+  mobileKeyboard.setExpanded(false);
   prepareMobileOverlay(() => mobileSystemKeyboard.dismissForOverlay());
 };
 const mobileQuickPhraseSettings = createMobileQuickPhraseSettingsController({
@@ -2750,6 +2754,7 @@ function updateViewportMetrics() {
 
 function handleViewportChange() {
   updateViewportMetrics();
+  if (!document.body.classList.contains("mobile-controls-enabled")) mobileKeyboard.setExpanded(false);
   mobileSystemKeyboard.sync(
     document.body.classList.contains("mobile-keyboard-visible"),
     document.body.classList.contains("mobile-controls-enabled"),
@@ -2842,6 +2847,9 @@ async function runMobileAction(action: string) {
     mobileWorkspaceOverview.open();
   } else if (action === "toggle-system-keyboard") {
     mobileSystemKeyboard.toggle();
+  } else if (action === "toggle-expanded-keyboard") {
+    if (!mobileKeyboard.isExpanded()) mobileSystemKeyboard.dismissForOverlay();
+    mobileKeyboard.toggleExpanded();
   }
 }
 

@@ -83,12 +83,13 @@ function defaultPages(): MobileKeyboardPage[] {
   return [
     { id: "main", keys: [
       shortcut("main-ctrl", "ctrl", "Ctrl"), shortcut("main-alt", "alt", "Alt"), shortcut("main-shift", "shift", "Shift"),
+      shortcut("main-escape", "escape", "Esc"),
       shortcut("main-tab", "tab", "Tab"), shortcut("main-enter", "enter", "Return", { repeat: true }),
       action("main-copy", "copy-selection", "Copy"), shortcut("main-paste", "paste", "", { icon: "clipboard-paste", ariaLabel: "Paste" }),
       action("main-menu", "pane-menu", "Menu"), chord("main-ctrl-e", "ctrl-e", "Ctrl+E"), chord("main-ctrl-c", "ctrl-c", "Ctrl+C"),
       action("main-swap", "swap-pane", "Swap"), chord("main-shift-tab", "shift-tab", "Shift+Tab"),
       shortcut("main-tilde", "~", "~"), shortcut("main-slash", "/", "/"), shortcut("main-hyphen", "-", "-"),
-      shortcut("main-dollar", "$", "$"), shortcut("main-escape", "escape", "Esc"),
+      shortcut("main-dollar", "$", "$"),
     ] },
     { id: "ops", keys: [
       action("ops-overview", "workspace-overview", "", "layout-grid", "Tabs and panes"),

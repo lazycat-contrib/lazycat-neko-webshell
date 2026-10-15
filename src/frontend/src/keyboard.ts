@@ -180,7 +180,7 @@ export function encodeMobileShortcutKeyInput(inputKey: string, modifiers: Termin
   const key = MOBILE_SHORTCUT_KEYS[inputKey] ?? (inputKey.length === 1 ? inputKey : "");
   if (!key) return undefined;
   return keyEventToTerminalSequence({
-    key,
+    key: key.length === 1 && modifiers.shift ? shiftedTextInput(key) : key,
     ctrlKey: Boolean(modifiers.ctrl),
     altKey: Boolean(modifiers.alt),
     shiftKey: Boolean(modifiers.shift),

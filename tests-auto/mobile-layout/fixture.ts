@@ -2,6 +2,7 @@ import "../../src/frontend/src/styles.css";
 import "../../src/frontend/src/plugin-tools.css";
 import "../../src/frontend/src/webshell-themes.css";
 import "../../src/frontend/src/mobile/styles.css";
+import "../../src/frontend/src/mobile/settings.css";
 import { createIcons, icons } from "lucide";
 import { renderMobileKeyboardLayoutSettingsView } from "../../src/frontend/src/mobile/settings/keyboard-layout-view.ts";
 import { createMobileKeyboardLayoutSettingsController } from "../../src/frontend/src/mobile/keyboard-layout-settings-controller.ts";

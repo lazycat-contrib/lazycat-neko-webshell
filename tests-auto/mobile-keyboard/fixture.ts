@@ -13,6 +13,7 @@ const controller = createMobileKeyboardController({ root,
   preserveSystemKeyboardState: () => () => {},
   onKeyInput: value => record("key", value), onPasteShortcut: async () => record("paste", ""),
   onAction: async value => record("action", value), onPhrase: async value => record("phrase", value),
+  onLayoutChange: () => {}, tr: key => key,
 });
 controller.bind();
 Object.assign(window, { keyboardProbe: {

@@ -65,17 +65,20 @@ export function createMobileComposer(options: Options) {
     currentView.textarea.value = next ? model.open(next.key) : "";
     if (next && currentView.textarea.value) draftTargets.set(next.key, next);
     message(!next ? "mobileComposer.unavailable" : busy ? "mobileComposer.sending" : undefined);
-    currentView.dialog.showModal();
+    currentView.dialog.show();
+    document.body.classList.add("mobile-composer-open");
     currentView.syncViewport();
     if (next) currentView.textarea.focus({ preventScroll: true });
     else currentView.close.focus({ preventScroll: true });
   }
 
   function close(restore = true) {
+    document.body.classList.remove("mobile-composer-open");
     if (!view?.dialog.open) return;
     model.close();
     captured = undefined;
     view.dialog.close();
+    view.clearReservedHeight();
     if (restore && restoreFocus?.isConnected) restoreFocus.focus({ preventScroll: true });
     restoreFocus = undefined;
   }

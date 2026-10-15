@@ -1,9 +1,9 @@
 import type { MobileKeyboardKey, MobileKeyboardLayout } from "./keyboard-layout-types.ts";
 import { escapeAttr, escapeHtml } from "../utils.ts";
 
-export function renderMobileKeyboardPanels(layout: MobileKeyboardLayout): string {
-  return layout.pages.map((page, index) => `
-    <div class="mobile-keyboard-panel" data-mobile-panel="${escapeAttr(page.id)}"${index === 0 ? "" : " hidden"}>
+export function renderMobileKeyboardPanels(layout: MobileKeyboardLayout, activePage = "main"): string {
+  return layout.pages.map((page) => `
+    <div class="mobile-keyboard-panel" data-mobile-panel="${escapeAttr(page.id)}"${page.id === activePage ? "" : " hidden"}>
       ${page.keys.filter((key) => !key.hidden).map(renderMobileKeyboardKey).join("")}
     </div>
   `).join("");

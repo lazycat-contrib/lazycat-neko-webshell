@@ -33,11 +33,11 @@ export async function runMobileLayoutScenario() {
     await click('[data-mobile-key-visibility="main-ctrl"]');
     assert.equal(await browser.evaluate('document.querySelectorAll("[data-mobile-layout-preview] button").length'), baseline.layout.pages[0].keys.length - 1);
     await click("[data-mobile-layout-undo]");
-    // Trusted pointer drag: dropping on the next key must actually move one place.
+    // A whole-row long press, followed by a drag, moves the key one place.
     await browser.command(["scroll", "down", "550"]);
     await browser.evaluate('document.querySelector("[data-mobile-layout-key=main-ctrl]").scrollIntoView({block:"start"})');
-    const points = await browser.evaluate(`(() => { const rect = s => { const r = document.querySelector(s).getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; }; return [rect('[data-mobile-layout-key="main-ctrl"] .mobile-keyboard-drag-handle'),rect('[data-mobile-layout-key="main-alt"]')]; })()`);
-    await browser.dispatchTouch([{ type: "touchStart", touchPoints: [{ ...points[0], id: 1 }], delayMs: 80 }, { type: "touchMove", touchPoints: [{ ...points[1], id: 1 }], delayMs: 80 }, { type: "touchEnd", touchPoints: [] }]);
+    const points = await browser.evaluate(`(() => { const rect = s => { const r = document.querySelector(s).getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+r.height/2}; }; return [rect('[data-mobile-layout-key="main-ctrl"] .mobile-keyboard-key-card'),rect('[data-mobile-layout-key="main-alt"]')]; })()`);
+    await browser.dispatchTouch([{ type: "touchStart", touchPoints: [{ ...points[0], id: 1 }], delayMs: 420 }, { type: "touchMove", touchPoints: [{ ...points[1], id: 1 }], delayMs: 80 }, { type: "touchEnd", touchPoints: [] }]);
     assert.equal((await state()).layout.pages[0].keys[1].id, "main-ctrl");
     await click("[data-mobile-layout-undo]");
     await click('[data-mobile-layout-page-tab="sym"]');

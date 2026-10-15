@@ -2,7 +2,7 @@ export function renderMobileKeyboardLayoutSettingsView(): string {
   return `
     <div class="settings-group mobile-keyboard-layout-settings" id="mobileKeyboardLayoutSettings">
       <div class="settings-group-title" data-i18n="section.mobileKeyboardLayout">Shortcut layout</div>
-      <p class="settings-help" data-i18n="setting.mobileKeyboardLayoutHelp">Choose a preset, switch categories, and arrange the keys as they should appear on the mobile shortcut bar. Editing a preset saves it as Custom.</p>
+      <p class="settings-help" data-i18n="setting.mobileKeyboardLayoutHelp">Choose a preset and arrange the keys on the expanded Shortcuts page. The collapsed quick bar has fixed arrow and Ctrl keys. Editing a preset saves it as Custom.</p>
       <div class="mobile-keyboard-layout-toolbar">
         <label class="field">
           <span data-i18n="field.mobileKeyboardPreset">Preset</span>
@@ -26,7 +26,7 @@ export function renderMobileKeyboardLayoutSettingsView(): string {
       </div>
       <div class="mobile-keyboard-layout-preview">
         <strong data-i18n="label.mobileKeyboardPreview">Shortcut preview</strong>
-        <p class="settings-help" data-i18n="setting.mobileKeyboardPreviewHelp">Preview only; these keys do not send input. Place your most-used keys first to reduce scrolling.</p>
+        <p class="settings-help" data-i18n="setting.mobileKeyboardPreviewHelp">Preview only; these keys do not send input. Keys appear in this order on the expanded Shortcuts page.</p>
         <div class="mobile-keyboard-panel" data-mobile-layout-preview></div>
       </div>
       <div class="mobile-keyboard-width-legend" role="group" aria-label="Key width legend" data-i18n-aria="setting.mobileKeyboardWidthHelp">

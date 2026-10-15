@@ -1,5 +1,6 @@
 import '/src/frontend/src/styles.css';
 import '/src/frontend/src/mobile/styles.css';
+import '/src/frontend/src/mobile/keyboard-dock.css';
 import {createIcons, icons} from 'lucide';
 import {renderShell} from '/src/frontend/src/shell.ts';
 import {translate} from '/src/frontend/src/i18n.ts';
@@ -20,8 +21,8 @@ const pane=(id,backend='webshell')=>({id,sessionId:`session-${id}`,selector:'dev
 window.qa={pane:pane('a'),generation:1,bytes:[],remote:[],fail:false,defer:false,phrases:[{id:'one',label:'查看目录',text:'ls -la',group:'日常',sendEnter:false,lastUsedAt:0,useCount:0,order:0},{id:'two',label:'运行测试',text:'npm test',group:'开发',sendEnter:true,lastUsedAt:100,useCount:1,order:1}],layout:mobileKeyboardPresetLayout('default'),preset:'default',herdr:{selector:'dev@owner',available:true,focused_pane_id:'remote-a',panes:[]},remotePane:'remote-a'};
 const qa=window.qa;qa.panes=new Map([[qa.pane.id,qa.pane]]);
 const keyboard=createMobileKeyboardController({root:el.mobileShortcuts,preserveSystemKeyboardState:()=>system.preserveState(),onKeyInput:text=>qa.bytes.push(text),onPasteShortcut:async()=>{},onAction:async action=>{qa.actions??=[];qa.actions.push({action,pane:qa.pane.id,time:performance.now()});
- if(action==='compose-text')experience.openComposer();else if(action==='command-palette')experience.openPalette();else if(action==='workspace-overview'){experience.close();overview.open();}else if(action==='toggle-system-keyboard')system.toggle();
-},onPhrase:async()=>{}});
+ if(action==='compose-text')experience.openComposer();else if(action==='command-palette')experience.openPalette();else if(action==='workspace-overview'){experience.close();overview.open();}else if(action==='toggle-system-keyboard')system.toggle();else if(action==='toggle-expanded-keyboard'){if(!keyboard.isExpanded())system.dismissForOverlay();keyboard.toggleExpanded()}
+},onPhrase:async()=>{},onLayoutChange:()=>{},tr});
 const system=createMobileSystemKeyboardController({activePane:()=>qa.pane,dismissPane:()=>terminalInput.blur(),enableAllPanes:()=>{},focusHardwarePane:()=>terminalInput.blur(),focusPane:()=>{terminalInput.focus();return true},isPaneKeyboardFocused:()=>document.activeElement===terminalInput,updateToggle:keyboard.updateSystemKeyboardState});
 const items=()=>[{id:'tab-a',label:'开发工作区',detail:'dev@owner',active:qa.pane.id==='a',panes:[{id:'a',label:'终端 a',detail:'WebShell',status:'已连接',backend:'webshell',active:qa.pane.id==='a'}]},{id:'tab-b',label:'后台构建',detail:'dev@owner',active:qa.pane.id==='b',panes:[{id:'b',label:'终端 b',detail:'Herdr',status:'重连中',backend:'herdr',active:qa.pane.id==='b'}]}];
 const overview=createMobileWorkspaceOverviewController({root:el.mobileWorkspaceOverview,items,activate:(_,id)=>{qa.switch(id);qa.selected=id},prepare:()=>prepareMobileOverlay(()=>system.dismissForOverlay()),restoreFallback:()=>{},updateIcons:()=>createIcons({icons}),tr});overview.bind();

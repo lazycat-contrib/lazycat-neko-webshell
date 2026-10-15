@@ -30,6 +30,7 @@ export function encodeMobileShortcutInput(
 export function mobileChordInput(chord: string): string | undefined {
   if (chord === "ctrl-c") return "\x03";
   if (chord === "ctrl-e") return "\x05";
+  if (chord === "ctrl-z") return "\x1a";
   if (chord === "shift-tab") return "\x1b[Z";
   return undefined;
 }
