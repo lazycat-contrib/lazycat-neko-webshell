@@ -86,6 +86,7 @@ export type ShellElements = {
   interfaceStyleSelect: HTMLSelectElement;
   sessionBackendSettings: HTMLDivElement;
   defaultSessionBackend: HTMLSelectElement;
+  instanceTabDisplay: HTMLSelectElement;
   sessionBackendHelp: HTMLParagraphElement;
   sshProfileSettings: HTMLDivElement;
   herdrHighlightSettings: HTMLDivElement;
@@ -390,6 +391,13 @@ export function renderShell(app: HTMLElement): ShellElements {
                 <p id="sessionBackendHelp" class="settings-help" data-i18n="setting.defaultSessionBackendHelp">The + button uses this backend. If Herdr already has an engine pane, + creates a new Herdr workspace inside that session.</p>
               </div>
               <label class="field">
+                <span data-i18n="field.instanceTabDisplay">Instance tabs</span>
+                <select id="instanceTabDisplay">
+                  <option value="combined" data-i18n="instanceTabDisplay.combined">Show all instances together</option>
+                  <option value="by-instance" data-i18n="instanceTabDisplay.byInstance">Show selected instance only</option>
+                </select>
+              </label>
+              <label class="field">
                 <span data-i18n="field.cursor">Cursor</span>
                 <select id="cursorShape">
                   <option value="block" data-i18n="cursor.block">Block</option>
@@ -635,6 +643,7 @@ export function renderShell(app: HTMLElement): ShellElements {
     interfaceStyleSelect: qs<HTMLSelectElement>("#interfaceStyleSelect"),
     sessionBackendSettings: qs<HTMLDivElement>("#sessionBackendSettings"),
     defaultSessionBackend: qs<HTMLSelectElement>("#defaultSessionBackend"),
+    instanceTabDisplay: qs<HTMLSelectElement>("#instanceTabDisplay"),
     sessionBackendHelp: qs<HTMLParagraphElement>("#sessionBackendHelp"),
     sshProfileSettings: qs<HTMLDivElement>("#sshProfileSettings"),
     herdrHighlightSettings: qs<HTMLDivElement>("#herdrHighlightSettings"),

@@ -175,6 +175,7 @@ export const DEFAULT_SETTINGS: Settings = {
   outputBufferLimit: 4096,
   sshConfigBackupLimit: 10,
   defaultSessionBackend: "webshell",
+  instanceTabDisplay: "combined",
   terminalSingleControllerMode: false,
   terminalBlurObservers: false,
   herdrLazycatNotifications: false,

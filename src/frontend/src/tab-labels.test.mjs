@@ -34,6 +34,20 @@ test("keeps inactive remote tabs icon-only with contextual accessibility text", 
   });
 });
 
+test("shows the instance name on inactive tabs in combined multi-instance mode", () => {
+  const presentation = tabLabelPresentation({
+    active: false,
+    remote: false,
+    pinned: false,
+    showSource: true,
+    sourceName: "Alpha",
+    terminalName: "Herdr",
+    terminalHasText: true,
+  });
+  assert.equal(presentation.displayName, "Alpha · Herdr");
+  assert.equal(presentation.named, true);
+});
+
 test("shows remote source context on the active tab", () => {
   assert.deepEqual(tabLabelPresentation({
     active: true,

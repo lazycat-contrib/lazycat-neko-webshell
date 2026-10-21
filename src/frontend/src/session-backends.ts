@@ -36,6 +36,13 @@ export function sessionBackendIsSelectable(
   return selectableSessionBackends(state).some((backend) => backend.id === mode);
 }
 
+export function preferredAvailableBackend(
+  state: SessionBackendsState | undefined,
+  preferred: SessionMode,
+): SessionMode {
+  return sessionBackendIsSelectable(state, preferred) ? preferred : "webshell";
+}
+
 export function sessionBackendLabel(id: SessionBackendId, fallback: string, tr: Translate): string {
   if (id === "webshell") return tr("backend.webshell");
   if (id === "herdr") return tr("backend.herdr");

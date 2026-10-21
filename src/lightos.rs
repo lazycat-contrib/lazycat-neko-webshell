@@ -82,7 +82,16 @@ pub async fn target_command_available(
         .await
         .map_err(|_| ConnectError::deadline_exceeded("lightosctl exec timed out"))?
         .map_err(|err| ConnectError::unavailable(format!("failed to run lightosctl: {err}")))?;
-    Ok(output.status.success())
+    if !output.status.success() {
+        return Err(ConnectError::failed_precondition(
+            "lightosctl command probe failed",
+        ));
+    }
+    Ok(command_probe_available(&output.stdout))
+}
+
+fn command_probe_available(stdout: &[u8]) -> bool {
+    stdout == b"NEKO_COMMAND_AVAILABLE\n"
 }
 
 pub async fn read_target_ssh_config(selector: &str) -> Result<Option<String>, ConnectError> {
@@ -258,8 +267,8 @@ pub async fn write_target_ssh_key_file(
 
 fn target_command_probe_script(command_name: &str) -> String {
     let version_check = match command_name {
-        "zellij" => "\n[ -n \"$target_command\" ] && \"$target_command\" --version >/dev/null 2>&1",
-        _ => "\n[ -n \"$target_command\" ]",
+        "zellij" => "[ -n \"$target_command\" ] && \"$target_command\" --version >/dev/null 2>&1",
+        _ => "[ -n \"$target_command\" ]",
     };
     format!(
         r#"if [ -n "${{HOME:-}}" ]; then
@@ -269,7 +278,10 @@ export PATH
 target_command="$(command -v {command_name} 2>/dev/null || true)"
 if [ -z "$target_command" ] && [ -n "${{HOME:-}}" ] && [ -x "$HOME/.local/bin/{command_name}" ]; then
   target_command="$HOME/.local/bin/{command_name}"
-fi{version_check}"#
+fi
+if {version_check}; then
+  printf 'NEKO_COMMAND_AVAILABLE\n'
+fi"#
     )
 }
 
@@ -561,7 +573,7 @@ async fn run_lightosctl<const N: usize>(args: [&str; N]) -> Result<Vec<u8>, Conn
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_admin_info, parse_lightos_instances, selector_for_instance,
+        command_probe_available, parse_admin_info, parse_lightos_instances, selector_for_instance,
         target_command_probe_bootstrap_script, target_command_probe_script,
     };
 
@@ -623,6 +635,32 @@ mod tests {
         ));
         assert!(script.contains("exec su -s /bin/sh \"$user\" -c \"$probe_script\""));
         assert!(script.contains("PATH=\"$home/.local/bin:$home/bin:$PATH\""));
+    }
+
+    #[test]
+    fn command_probe_requires_explicit_success_marker() {
+        assert!(command_probe_available(b"NEKO_COMMAND_AVAILABLE\n"));
+        assert!(!command_probe_available(b""));
+        assert!(!command_probe_available(b"command not found\n"));
+    }
+
+    #[test]
+    fn missing_target_command_emits_no_success_marker() {
+        let script = target_command_probe_script("neko_missing_command_7501");
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-c", &script])
+            .output()
+            .expect("run probe script");
+        assert!(output.status.success());
+        assert!(!command_probe_available(&output.stdout));
+
+        let script = target_command_probe_script("sh");
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-c", &script])
+            .output()
+            .expect("run available command probe");
+        assert!(output.status.success());
+        assert!(command_probe_available(&output.stdout));
     }
 
     #[test]

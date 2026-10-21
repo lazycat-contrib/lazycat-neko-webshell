@@ -141,6 +141,7 @@ import { createHerdrWheelInputBatcher } from "./herdr-wheel-input-batcher";
 import { translate, type MessageKey } from "./i18n";
 import { createInstanceLoadCoordinator } from "./instance-loader";
 import { renderInstanceListView } from "./instance-views";
+import { visibleInstanceTabs } from "./tab-visibility";
 import {
   boolField,
   metaString,
@@ -362,6 +363,7 @@ import { renderFontFamilyOptions, renderThemeSelectOptions } from "./settings-op
 import { activateFontPanel, activateSettingsPanel, bindSettingsTabControls } from "./settings-tabs";
 import {
   normalizeSessionMode,
+  preferredAvailableBackend,
   renderSessionBackendSelectOptions,
   selectableSessionBackends,
   sessionBackendInstalled,
@@ -1653,6 +1655,11 @@ function bindSettings() {
     settings.defaultSessionBackend = sessionBackendIsSelectable(sessionBackendsState, backend) ? backend : "webshell";
     saveSettings();
     applySettings();
+  });
+  elements.instanceTabDisplay.addEventListener("change", () => {
+    settings.instanceTabDisplay = elements.instanceTabDisplay.value === "by-instance" ? "by-instance" : "combined";
+    saveSettings();
+    renderTabs();
   });
   elements.herdrActiveBackgroundDark.addEventListener("input", () => {
     settings.herdrActiveBackgroundDark = normalizeHexColorInput(
@@ -3365,6 +3372,7 @@ function applySettings(options: { resizeTerminals?: boolean } = {}) {
   elements.fontPreview.style.fontSize = `${settings.fontSize}px`;
   elements.fontRenderingSettings.innerHTML = renderTerminalFontRenderingSettings({ settings, tr });
   elements.tabLayout.value = settings.tabLayout;
+  elements.instanceTabDisplay.value = settings.instanceTabDisplay;
   applyWebshellStyle(elements.webshell, settings);
   elements.removeFont.disabled = !font.custom;
   settings.themeId = theme.id;
@@ -3443,19 +3451,13 @@ function updateSessionBackendSettings() {
     DEFAULT_SETTINGS.herdrActiveBackgroundLight,
   );
   if (!hasOptionalBackend) {
-    settings.defaultSessionBackend = "webshell";
     elements.defaultSessionBackend.innerHTML = renderSessionBackendSelectOptions(selectable, tr);
     elements.defaultSessionBackend.value = "webshell";
     renderNewTabMenu();
     updateHerdrWorkspaceEntry();
     return;
   }
-  const selected = selectable.some((backend) => backend.id === settings.defaultSessionBackend)
-    ? settings.defaultSessionBackend
-    : selectable[0]?.id ?? "webshell";
-  if (settings.defaultSessionBackend !== selected) {
-    settings.defaultSessionBackend = selected;
-  }
+  const selected = preferredAvailableBackend(sessionBackendsState, settings.defaultSessionBackend);
   elements.defaultSessionBackend.innerHTML = renderSessionBackendSelectOptions(selectable, tr);
   elements.defaultSessionBackend.value = selected;
   renderNewTabMenu();
@@ -4808,6 +4810,10 @@ async function refreshSessionBackends(
       return false;
     }
     sessionBackendsState = state;
+    if (!activePane() && settings.defaultSessionBackend === "herdr"
+      && !sessionBackendInstalled(state, "herdr")) {
+      setGlobalStatus(tr("status.herdrMissingInstance"));
+    }
     renderHerdrDock();
     return true;
   } catch (error) {
@@ -5729,8 +5735,7 @@ function preferredBackendForNewTab(): SessionMode {
     return "ssh";
   }
   const preferred = normalizeSessionMode(settings.defaultSessionBackend);
-  if (!sessionBackendIsSelectable(sessionBackendsState, preferred)) return "webshell";
-  return preferred;
+  return preferredAvailableBackend(sessionBackendsState, preferred);
 }
 
 function makeTab(selector: string, restoredId?: string): TerminalTab {
@@ -6173,7 +6178,9 @@ async function openSocketPrepared(pane: TerminalPane) {
         normalizeSelector(pane.selector) === normalizeSelector(selectedSelector),
       );
       if (!preparation.ready) {
-        setPaneStatus(pane, tr("status.herdrUnavailable"), "error");
+        const message = tr("status.herdrMissingInstance");
+        pane.transport?.notifyError(message);
+        setPaneStatus(pane, message, "error");
         if (preparation.retry) scheduleReconnect(pane);
         return;
       }
@@ -6624,9 +6631,10 @@ function followActiveTabSelector(tab: TerminalTab) {
 }
 
 function activateAdjacentTab(direction: -1 | 1, options: { focus?: boolean } = {}) {
-  if (!tabs.length || !activeTabId) return;
-  const index = Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId));
-  const next = tabs[(index + direction + tabs.length) % tabs.length];
+  const visibleTabs = visibleInstanceTabs(tabs, selectedSelector, settings.instanceTabDisplay);
+  if (!visibleTabs.length || !activeTabId) return;
+  const index = Math.max(0, visibleTabs.findIndex((tab) => tab.id === activeTabId));
+  const next = visibleTabs[(index + direction + visibleTabs.length) % visibleTabs.length];
   if (next) {
     activateTab(next.id, { focus: options.focus });
   }
@@ -6712,7 +6720,10 @@ function renderTabs() {
 
 function tabViewItems(): TabViewItem[] {
   const pinned = sortedPinnedTabs();
-  return tabs.map((tab) => {
+  const multipleLightOsInstances = new Set(tabs
+    .filter((tab) => !isRemoteClientSelector(tab.selector) && !isSshSelector(tab.selector))
+    .map((tab) => normalizeSelector(tab.selector))).size > 1;
+  return visibleInstanceTabs(tabs, selectedSelector, settings.instanceTabDisplay).map((tab) => {
     const remote = isRemoteClientSelector(tab.selector);
     const active = tab.id === activeTabId;
     const renaming = renamingTabId === tab.id;
@@ -6729,6 +6740,7 @@ function tabViewItems(): TabViewItem[] {
         ? remoteTabDetail(tab, pane, terminalDisplayName)
         : terminalDisplayName,
       terminalHasText: tabHasDisplayTextTitle(tab, terminalDisplayName),
+      showSource: settings.instanceTabDisplay === "combined" && multipleLightOsInstances && !remote,
     });
     const pinnedIndex = tab.pinned ? pinned.findIndex((item) => item.id === tab.id) : -1;
     const programStatus = programStatusForTab(tab, tr);
@@ -6751,7 +6763,7 @@ function tabViewItems(): TabViewItem[] {
 
 function updateTabChrome(items: TabViewItem[]) {
   elements.webshell.classList.toggle("has-named-tabs", items.some((tab) => tab.named));
-  elements.webshell.classList.toggle("has-pinned-tabs", tabs.some((tab) => tab.pinned));
+  elements.webshell.classList.toggle("has-pinned-tabs", items.some((tab) => tab.pinned));
 }
 
 function tabDisplayName(tab: TerminalTab): string {

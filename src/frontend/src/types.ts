@@ -426,6 +426,7 @@ export type Settings = {
   outputBufferLimit: number;
   sshConfigBackupLimit: number;
   defaultSessionBackend: SessionBackendId;
+  instanceTabDisplay: "combined" | "by-instance";
   terminalSingleControllerMode: boolean;
   terminalBlurObservers: boolean;
   herdrLazycatNotifications: boolean;

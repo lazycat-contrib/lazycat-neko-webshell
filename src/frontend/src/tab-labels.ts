@@ -11,6 +11,7 @@ export type TabLabelPresentationInput = {
   sourceName: string;
   terminalName: string;
   terminalHasText: boolean;
+  showSource?: boolean;
 };
 
 export type TabLabelPresentation = {
@@ -84,14 +85,14 @@ export function tabLabelPresentation(input: TabLabelPresentationInput): TabLabel
   const terminalName = input.terminalName.trim();
   const title = contextualTabLabel(input.sourceName, terminalName);
   const iconOnly = input.remote && !input.active && !input.renaming;
-  const showContext = input.active && !input.pinned && !input.renaming;
+  const showContext = (input.active || input.showSource) && !input.pinned && !input.renaming;
   return {
     displayName: showContext ? title : terminalName || title,
     title,
     iconOnly,
     named: !input.pinned
       && !iconOnly
-      && (input.renaming || (input.active ? Boolean(title) : input.terminalHasText)),
+      && (input.renaming || ((input.active || input.showSource) ? Boolean(title) : input.terminalHasText)),
   };
 }
 

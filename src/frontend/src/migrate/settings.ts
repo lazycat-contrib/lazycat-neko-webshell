@@ -92,6 +92,7 @@ export function migrateSettings(value: Partial<Settings>): Settings {
       clampNumber(value.sshConfigBackupLimit, 1, 100, DEFAULT_SETTINGS.sshConfigBackupLimit),
     ),
     defaultSessionBackend: normalizeSessionBackendId(value.defaultSessionBackend),
+    instanceTabDisplay: value.instanceTabDisplay === "by-instance" ? "by-instance" : "combined",
     terminalSingleControllerMode: value.terminalSingleControllerMode ?? DEFAULT_SETTINGS.terminalSingleControllerMode,
     terminalBlurObservers: value.terminalBlurObservers ?? DEFAULT_SETTINGS.terminalBlurObservers,
     herdrLazycatNotifications: value.herdrLazycatNotifications ?? DEFAULT_SETTINGS.herdrLazycatNotifications,
