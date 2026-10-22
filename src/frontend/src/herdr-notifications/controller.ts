@@ -1,5 +1,5 @@
 import type { MessageKey } from "../i18n";
-import type { HerdrBridgeState, JsonRecord } from "../types";
+import type { HerdrBridgeState } from "../types";
 import { herdrAgentCompletionSupported } from "../herdr-socket-api.ts";
 import {
   postHerdrLazycatNotification,
@@ -18,6 +18,7 @@ type HerdrLazycatNotificationControllerDeps = {
   tr: Translate;
   send?: (payload: HerdrLazycatNotificationPayload) => Promise<void>;
   onError: (error: unknown) => void;
+  onTransition?: (transition: HerdrNotificationTransition) => void;
 };
 
 export function createHerdrLazycatNotificationController(
@@ -27,6 +28,7 @@ export function createHerdrLazycatNotificationController(
   const send = deps.send ?? postHerdrLazycatNotification;
 
   function deliver(transition: HerdrNotificationTransition) {
+    deps.onTransition?.(transition);
     if (!deps.enabled()) return;
     void send(notificationPayload(transition, deps.state(), deps.tr)).catch(deps.onError);
   }
@@ -38,13 +40,9 @@ export function createHerdrLazycatNotificationController(
         herdrAgentCompletionSupported(state?.herdr_version ?? ""));
     },
 
-    handle(event: string, data: JsonRecord) {
-      const transition = policy.handle(event, data);
-      if (transition) deliver(transition);
-    },
-
     reconcile() {
-      for (const transition of policy.reconcile(deps.state()?.agents ?? [])) deliver(transition);
+      const state = deps.state();
+      for (const transition of policy.reconcile(state?.agents ?? [], state?.panes ?? [])) deliver(transition);
     },
 
     reset() {

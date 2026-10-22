@@ -823,6 +823,11 @@ const herdrLazycatNotifications = createHerdrLazycatNotificationController({
   enabled: () => settings.herdrLazycatNotifications,
   state: () => herdrState,
   tr,
+  onTransition: (transition) => {
+    const data = { agent_status: transition.kind, agent: transition.agent, display_agent: transition.displayAgent };
+    setGlobalStatus(herdrEventMessage("pane.agent_status_changed", data, tr),
+      herdrEventTone("pane.agent_status_changed", data));
+  },
   onError: (error) => setGlobalStatus(
     tr("status.herdrLazycatNotificationFailed", { message: errorMessage(error) }),
     "error",
@@ -5190,14 +5195,6 @@ function handleHerdrEventMessage(raw: unknown) {
     return;
   }
   const streamDecision = herdrEventStreamPolicy.handle(envelope);
-  if (envelope.event) {
-    herdrLazycatNotifications.handle(envelope.event, envelope.data ?? {});
-  }
-  if (streamDecision.presentEvent && envelope.event) {
-    const data = envelope.data ?? {};
-    const message = herdrEventMessage(envelope.event, data, tr);
-    if (message) setGlobalStatus(message, herdrEventTone(envelope.event, data));
-  }
   if (streamDecision.requestReconcile) {
     herdrEventRefreshLoop.request(streamDecision.token);
   }

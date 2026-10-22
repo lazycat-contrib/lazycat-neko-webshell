@@ -63,7 +63,6 @@ test("keeps delayed Herdr history on the authoritative reconciliation path", () 
     data: { workspace_id: "w1", tab_id: "w1:t3" },
   });
   assert.equal(delayedFocus.requestReconcile, true);
-  assert.equal(delayedFocus.presentEvent, false);
   assert.equal(policy.retryDelay(delayedFocus.token, 0), 300);
   assert.equal(policy.retryDelay(delayedFocus.token, 20), 5000);
 
@@ -71,18 +70,16 @@ test("keeps delayed Herdr history on the authoritative reconciliation path", () 
   assert.equal(policy.retryDelay(delayedFocus.token, 0), undefined);
 });
 
-test("presents only pane status events whose Herdr subscription starts at the current sequence", () => {
+test("status history only requests reconciliation, including after a new tab subscription", () => {
   const policy = createHerdrEventStreamPolicy();
-  policy.beginSubscription(["w1:p1"]);
-
-  assert.equal(policy.handle({
-    event: "pane.agent_detected",
-    data: { pane_id: "w1:p1", released: true, final_status: "blocked" },
-  }).presentEvent, false);
-  assert.equal(policy.handle({
-    event: "pane.agent_status_changed",
-    data: { pane_id: "w1:p1", agent_status: "blocked" },
-  }).presentEvent, true);
+  const completed = { event: "pane.agent_status_changed", data: { pane_id: "w1:p1", agent_status: "done" } };
+  for (const paneIds of [["w1:p1"], ["w1:p1", "w1:p2"]]) {
+    policy.reset();
+    policy.beginSubscription(paneIds);
+    const decision = policy.handle(completed);
+    assert.deepEqual(Object.keys(decision).sort(), ["requestReconcile", "token"]);
+    assert.equal(decision.requestReconcile, true);
+  }
 });
 
 test("resubscribes only when an authoritative snapshot changes the pane set", () => {

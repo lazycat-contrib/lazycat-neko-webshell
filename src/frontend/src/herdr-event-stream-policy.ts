@@ -1,7 +1,6 @@
 import type { HerdrSocketEnvelope } from "./types";
 
 export type HerdrEventStreamDecision = {
-  presentEvent: boolean;
   requestReconcile: boolean;
   token: number;
 };
@@ -46,21 +45,17 @@ export function createHerdrEventStreamPolicy() {
       token += 1;
     },
 
-    // Herdr 0.7.x subscriptions replay each event kind independently and do
-    // not expose a replay cursor or completion marker. Treating the stream as
-    // an invalidation feed keeps delayed history from mutating visible state.
-    handle(envelope: HerdrSocketEnvelope): HerdrEventStreamDecision {
+    // Retained history and repeated status/presentation events are invalidations,
+    // not new notifications. Reconcile the authoritative snapshot before alerting.
+    handle(_envelope: HerdrSocketEnvelope): HerdrEventStreamDecision {
       token += 1;
-      const presentEvent = envelope.event === "pane.agent_status_changed";
       if (!active) {
         return {
-          presentEvent: false,
           requestReconcile: false,
           token,
         };
       }
       return {
-        presentEvent,
         requestReconcile: true,
         token,
       };
