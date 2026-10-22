@@ -23,9 +23,15 @@ const open = () => browser.command(["click", "#open"]);
 const close = async () => {
   await browser.press("Escape");
   await browser.waitFor('!document.querySelector("dialog").open');
+  assert.equal(await evaluate('document.querySelector("dialog textarea")?.value ?? ""'), "", "closing clears confirmation contents");
   assert.equal(await evaluate('qa.manager.ownsEvent({target:document.querySelector(".secret-file-close")})'), false, 'closed dialogs do not own keyboard events');
 };
 const saved = () => browser.waitFor('Boolean(document.querySelector("dialog[open] .secret-file-path"))');
+const confirmSaved = async () => {
+  await browser.waitFor('Boolean(document.querySelector("dialog[open] .secret-file-path, dialog[open] textarea"))');
+  if (await evaluate('Boolean(document.querySelector("dialog[open] textarea"))')) await clickText("确认并生成文件");
+  await saved();
+};
 const input = () => browser.waitFor('Boolean(document.querySelector("dialog[open] textarea"))');
 try {
   await server.listen();
@@ -44,14 +50,42 @@ try {
     assert.equal(await evaluate('qa.lastMenuAction'), 'secret-file', 'the native context-menu item must run');
     const state = await evaluate('({open:Boolean(document.querySelector("dialog[open]")),known:qa.pluginEnabled!==undefined,backend:qa.pane.sessionBackend,status:document.querySelector("#notice").textContent,requests:qa.requests.length})');
     assert.equal(state.open, true, `fresh-entry state: ${JSON.stringify(state)}`);
-    await saved();
+    await input();
+    assert.equal(await evaluate('qa.requests.length'), backend === "webshell" ? 0 : 1, "opening must never create a file");
+    assert.equal(await evaluate('document.querySelector("#secret-file-input").readOnly'), true);
+    assert.equal(await evaluate('document.querySelector("#secret-file-input").value.includes("TEST-ONLY")'), false);
+    if (backend === "webshell") {
+      await clickText("完全显示");
+      assert.equal(await evaluate('document.querySelector("#secret-file-input").value'), "  TEST-ONLY KEY\nsecond line\n");
+      await browser.command(["fill", "#secret-file-input", "  EDITED SECRET\nkeep space "]);
+      await clickText("隐藏内容");
+      assert.equal(await evaluate('document.querySelector("#secret-file-input").value.includes("EDITED")'), false);
+      await evaluate("qa.mode='deny'");
+      await clickText("重新读取剪贴板");
+      await browser.waitFor('document.querySelector(".secret-file-status").textContent.includes("无法读取")');
+      await clickText("完全显示");
+      assert.equal(await evaluate('document.querySelector("#secret-file-input").value'), "  EDITED SECRET\nkeep space ", "failed reads preserve edits");
+      await evaluate("qa.mode='ok';qa.clipboard='REPLACED SECRET'");
+      await clickText("重新读取剪贴板");
+      await browser.waitFor('document.querySelector("#secret-file-input").readOnly');
+      await clickText("完全显示");
+      assert.equal(await evaluate('document.querySelector("#secret-file-input").value'), "REPLACED SECRET");
+      await browser.command(["fill", "#secret-file-input", "  FINAL EDIT\nexact bytes "]);
+      await clickText("隐藏内容");
+      await browser.screenshot(path.join(artifacts, "desktop-confirmation.png"));
+    }
+    await confirmSaved();
+    if (backend === "webshell") {
+      assert.equal(await evaluate('new TextDecoder().decode(new Uint8Array(qa.requests.at(-1).payload))'), "  FINAL EDIT\nexact bytes ");
+      await evaluate(`qa.clipboard=${JSON.stringify("  TEST-ONLY KEY\nsecond line\n")}`);
+    }
     await close();
   }
   await evaluate("qa.pane.sessionId='s';qa.pluginEnabled=false");
   await browser.press("Control+Alt+v");
-  await saved();
+  await confirmSaved();
   assert.equal(await evaluate('document.querySelector("dialog").dataset.instant'), "true");
-  assert.equal(await evaluate('new TextDecoder().decode(new Uint8Array(qa.requests[0].payload))'), "  TEST-ONLY KEY\nsecond line\n");
+  assert.equal(await evaluate('new TextDecoder().decode(new Uint8Array(qa.requests.at(-1).payload))'), "  TEST-ONLY KEY\nsecond line\n");
   const firstPath = await evaluate('document.querySelector(".secret-file-path").textContent');
   assert.equal(await evaluate('document.querySelector(".secret-file-name").textContent'), `文件名：${firstPath.split('/').at(-1)}`);
   await browser.command(["wait", "300"]);
@@ -62,7 +96,7 @@ try {
   assert.equal(await evaluate("qa.pastes[0].text"), firstPath);
   assert.equal(await evaluate("qa.pastes[0].text.includes('\\n')"), false);
   await evaluate("qa.generation++");
-  await open(); await saved();
+  await open(); await confirmSaved();
   assert.equal(await evaluate('document.querySelector(".secret-file-actions button").disabled'), false, "explicit reopen rebinds generation");
   await evaluate("qa.generation++");
   await clickText("插入终端");
@@ -70,7 +104,7 @@ try {
   await close();
 
   // Denied native copy falls back to a selected textarea inside the modal.
-  await open(); await saved();
+  await open(); await confirmSaved();
   await evaluate("qa.copyFail=true; qa.originalExec=document.execCommand.bind(document); document.execCommand=(command)=>{qa.copyParent=document.activeElement?.parentElement?.tagName;return qa.originalExec(command)}");
   await clickText("复制路径");
   await browser.waitFor('document.querySelector(".secret-file-status").textContent.includes("已复制")');
@@ -81,10 +115,10 @@ try {
   // A permanent icon, not an operations-page shortcut, opens the mobile sheet.
   await browser.command(["set", "viewport", "390", "844"]);
   await browser.command(["click", ".mobile-secret-file-button"]);
-  await saved();
+  await confirmSaved();
   assert.equal(await evaluate("qa.restoredKeyboard"), 0);
   assert.equal(await evaluate('document.querySelector(".mobile-secret-file-button").textContent.trim()'), "");
-  assert.equal(await evaluate('document.querySelector(".mobile-secret-file-button").getBoundingClientRect().width >= 44'), true);
+  assert.equal(await evaluate('document.querySelector(".mobile-secret-file-button").offsetWidth >= 40'), true);
   await browser.command(["wait", "300"]);
   await browser.screenshot(path.join(artifacts, "mobile.png"));
   await clickText("删除文件");
@@ -95,8 +129,17 @@ try {
   assert.equal(await evaluate('document.activeElement.tagName === "TEXTAREA"'), false);
   await browser.command(["wait", "300"]);
   await browser.screenshot(path.join(artifacts, "mobile-manual.png"));
+  await evaluate(`document.querySelector("#secret-file-input").dispatchEvent(new ClipboardEvent("paste", {bubbles:true, cancelable:true, clipboardData:(()=>{const data=new DataTransfer();data.setData("text/plain",${JSON.stringify("  PASTED SECRET\nline 2\n")});return data})()}))`);
+  await clickText("完全显示");
+  assert.equal(await evaluate('document.querySelector("#secret-file-input").value'), "  PASTED SECRET\nline 2\n");
   await browser.command(["fill", "#secret-file-input", "  MANUAL TEST\nline 2\n"]);
-  await clickText("生成文件"); await saved();
+  assert.match(await evaluate('document.querySelector(".secret-file-status").textContent'), /核对/);
+  await browser.screenshot(path.join(artifacts, "mobile-confirmation-visible.png"));
+  await clickText("隐藏内容");
+  await browser.command(["set", "viewport", "320", "560"]);
+  await browser.screenshot(path.join(artifacts, "mobile-confirmation-masked-narrow.png"));
+  assert.equal(await evaluate('document.querySelector("dialog").scrollWidth <= document.querySelector("dialog").clientWidth'), true);
+  await clickText("确认并生成文件"); await confirmSaved();
   assert.equal(await evaluate('new TextDecoder().decode(new Uint8Array(qa.requests.at(-1).payload))'), "  MANUAL TEST\nline 2\n");
   await browser.command(["set", "viewport", "320", "560"]);
   await browser.command(["wait", "300"]);
@@ -112,7 +155,7 @@ try {
 
   // Old clipboard reads cannot save content or unlock a newer create.
   await evaluate("qa.mode='pending'"); await open(); await close();
-  await evaluate("qa.mode='ok';qa.delay=1500;document.querySelector('#notice').textContent=''"); await open();
+  await evaluate("qa.mode='ok';qa.delay=1500;document.querySelector('#notice').textContent=''"); await open(); await input(); await clickText("确认并生成文件");
   const pendingCreateCount = await evaluate('qa.requests.length');
   await evaluate("qa.pendingReads.shift()('LATE TEST DATA')");
   await close();
@@ -120,23 +163,35 @@ try {
   assert.equal(await evaluate('Boolean(document.querySelector("dialog[open]"))'), false, 'late read cannot unlock an unfinished create');
   assert.equal(await evaluate('qa.requests.length'), pendingCreateCount);
   await browser.waitFor('document.querySelector("#notice").textContent.includes("取回路径")');
-  await open(); await saved();
+  await open(); await confirmSaved();
   assert.equal(await evaluate('qa.requests.some(r=>new TextDecoder().decode(new Uint8Array(r.payload)).includes("LATE TEST DATA"))'), false);
   await close();
-  await open(); await saved(); await clickText("删除文件");
+  await open(); await confirmSaved(); await clickText("删除文件");
   await browser.waitFor('document.querySelector(".secret-file-status").textContent === "文件已删除"');
   await close();
   await evaluate("qa.mode='pending';qa.delay=0"); await open();
   await input(); // Three-second timeout, without waiting for permission promise.
   assert.match(await evaluate('document.querySelector(".secret-file-status").textContent'), /无法读取/);
   await close();
-  await evaluate("qa.mode='ok';qa.delay=600;document.querySelector('#notice').textContent=''"); await open(); await close();
+  await evaluate("qa.mode='ok';qa.delay=600;document.querySelector('#notice').textContent=''"); await open(); await input(); await clickText("确认并生成文件"); await close();
   await browser.waitFor('document.querySelector("#notice").textContent.includes("取回路径")');
-  await open(); await saved();
+  await open(); await confirmSaved();
   assert.equal(await evaluate('document.querySelectorAll("dialog").length'), 1);
+  await close();
+  await evaluate("qa.pane.sessionId='confirm-cancel';qa.mode='ok';qa.delay=0");
+  const beforeCancel = await evaluate('qa.requests.length');
+  await open(); await input();
+  await evaluate("qa.generation++");
+  await clickText("确认并生成文件");
+  assert.match(await evaluate('document.querySelector(".secret-file-status").textContent'), /目标|终端/);
+  assert.equal(await evaluate('qa.requests.length'), beforeCancel, "changed targets cannot receive confirmed text");
+  await close();
+  await open(); await input();
+  await close();
+  assert.equal(await evaluate('qa.requests.length'), beforeCancel, "cancelled confirmations never create files");
   const errors = JSON.parse(await browser.command(["errors", "--json"]));
   assert.deepEqual(errors.data.errors, []);
-  console.log("Secret file browser checks passed: shortcut, exact text, copy fallback, no Enter, target isolation/reopen, permanent mobile icon, manual fallback, timeout, late reads and saves, 320px layout.");
+  console.log("Secret file browser checks passed: explicit confirmation, masked/revealed edits, reread/failure preservation, native paste, cancellation and changed-target guards, shortcut, exact bytes, copy fallback, no Enter, mobile entry, timeout, late reads/saves, 320px layout.");
 } finally {
   await browser.close().catch(() => {});
   await server.close();

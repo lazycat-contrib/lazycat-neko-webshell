@@ -1,6 +1,7 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>机密文件交互验证</title><style>body{margin:0;padding:24px;background:var(--bg);color:var(--text);font-family:var(--font-sans)}header{display:flex;align-items:center;justify-content:space-between}#terminal-input{font:14px/1.8 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:44px}#mobile-host{position:fixed;bottom:0;left:0;right:0}#notice{color:var(--muted);font-size:13px}h1{font-size:16px}</style></head><body><header><h1>WebShell · workspace</h1><button id="open" class="command-button">打开面板（测试）</button></header><p id="notice">交互测试环境 · 所有凭据和文件操作均为模拟</p><div id="terminal-input">› </div><div id="terminal-mount" style="height:180px;margin-top:16px"></div><div id="mobile-host"></div><script type="module">
 import '/src/styles.css';
 import '/src/mobile/styles.css';
+import '/src/mobile/keyboard-dock.css';
 import {createIcons,icons} from 'lucide';
 import {createSecretFileController} from '/src/secret-file/controller.ts';
 import {createTerminalPaneMount} from '/src/pane-dom.ts';

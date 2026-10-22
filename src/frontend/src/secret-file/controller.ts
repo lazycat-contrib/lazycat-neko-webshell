@@ -1,6 +1,7 @@
 import { legacyCopyText, writeSystemClipboardText } from "../browser-clipboard";
 import type { TerminalPane, Tone } from "../types";
 import { createSecretFile, deleteSecretFile } from "./api";
+import { createSecretFileEditor } from "./editor";
 import { createSecretFileView, secretElement as element, type SecretTranslate } from "./view";
 import {
   secretFilePathIsValid, secretFilePayload, secretFileShortcutMatches, secretFileTargetIsCurrent,
@@ -22,6 +23,7 @@ type Deps = {
 
 export function createSecretFileController(deps: Deps) {
   let view: ReturnType<typeof createSecretFileView> | undefined;
+  let editor: ReturnType<typeof createSecretFileEditor> | undefined;
   let target: SecretFileTarget | undefined;
   let current: SecretFileResult | undefined;
   let busy = false;
@@ -40,6 +42,8 @@ export function createSecretFileController(deps: Deps) {
     epoch++;
     if (reading) { reading = false; busy = false; }
     // A pending create continues for its captured target and retains only its returned path.
+    editor?.clear();
+    editor = undefined;
     view?.dialog.close();
     const input = view?.content.querySelector("textarea");
     if (input) input.value = "";
@@ -127,27 +131,25 @@ export function createSecretFileController(deps: Deps) {
     finally { busy = false; }
   }
 
-  function manualInput() {
+  function manualInput(value = "") {
     if (!view) return;
-    view.content.replaceChildren();
-    const label = element("label", deps.tr("secret.manual"));
-    const input = element("textarea", "", "secret-file-input");
-    input.id = "secret-file-input";
-    label.htmlFor = input.id;
-    input.spellcheck = false;
-    input.autocomplete = "off";
-    input.setAttribute("autocorrect", "off");
-    input.setAttribute("autocapitalize", "off");
-    input.setAttribute("aria-describedby", "secret-file-manual-hint");
-    const hint = element("p", deps.tr("secret.manualHint"), "secret-file-help");
-    hint.id = "secret-file-manual-hint";
-    view.content.append(label, input, hint, rows(view.button("secret.generate", () => {
-      const payload = secretFilePayload(input.value);
-      if (!payload) { message("secret.invalidText"); return; }
-      input.value = "";
-      void createFile(payload);
-    }, true)));
-    // Explicit user focus only: opening the fallback must not summon a phone keyboard.
+    editor?.clear();
+    editor = createSecretFileEditor({
+      tr: deps.tr, value,
+      changed: () => message("secret.confirmHint"),
+      reread: () => void readClipboard(),
+      submit: text => {
+        if (busy) return;
+        const payload = secretFilePayload(text);
+        if (!payload) { message("secret.invalidText"); return; }
+        if (!target || !writable(target)) { payload.fill(0); message("secret.targetChanged"); return; }
+        editor?.clear();
+        void createFile(payload);
+      },
+    });
+    view.content.replaceChildren(editor.root);
+    message("secret.confirmHint");
+    // Opening a confirmation must not summon the phone keyboard.
   }
 
   async function readClipboard() {
@@ -161,23 +163,31 @@ export function createSecretFileController(deps: Deps) {
     let promise: Promise<string>;
     try { promise = navigator.clipboard?.readText() ?? Promise.reject(new Error("unavailable")); }
     catch { promise = Promise.reject(new Error("unavailable")); }
+    editor?.setReading(true);
     message("secret.reading");
     try {
       const value = await Promise.race([
         promise,
         new Promise<never>((_, reject) => { readTimer = setTimeout(() => reject(new Error("clipboard timeout")), 3000); }),
       ]);
-      const payload = secretFilePayload(value);
       if (version !== epoch || !view.dialog.open) return;
+      const payload = secretFilePayload(value);
       busy = false;
       reading = false;
-      if (!payload) { manualInput(); message("secret.invalidText"); return; }
-      await createFile(payload);
+      if (!payload) {
+        if (!view.content.querySelector("textarea")) manualInput();
+        message("secret.invalidText"); return;
+      }
+      payload.fill(0);
+      manualInput(value);
     } catch {
-      if (version === epoch && view.dialog.open) { manualInput(); message("secret.permission"); }
+      if (version === epoch && view.dialog.open) {
+        if (!view.content.querySelector("textarea")) manualInput();
+        message("secret.permission");
+      }
     } finally {
       clearTimeout(readTimer);
-      if (version === epoch) { reading = false; busy = false; }
+      if (version === epoch) { reading = false; busy = false; editor?.setReading(false); }
     }
   }
 
@@ -200,7 +210,7 @@ export function createSecretFileController(deps: Deps) {
       message("secret.created");
     } catch {
       if (version === epoch && view.dialog.open) {
-        view.content.replaceChildren(rows(view.button("secret.retry", () => void readClipboard(), true), view.button("secret.manual", manualInput)));
+        view.content.replaceChildren(rows(view.button("secret.retry", () => void readClipboard(), true), view.button("secret.manual", () => manualInput())));
         message("secret.failed");
       }
     } finally { payload.fill(0); busy = false; }

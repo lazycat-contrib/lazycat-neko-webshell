@@ -40,3 +40,13 @@ export function secretFileShortcutLabel(shortcut: SecretFileShortcut, apple: boo
   if (shortcut === "disabled") return "—";
   return `${apple ? "⌘⌥" : "Ctrl+Alt+"}${shortcut === "alt-k" ? "K" : "V"}`;
 }
+
+// Hide short values entirely; retain only the edges of longer tokens for recognition.
+export function maskSecretText(text: string): string {
+  return text.replace(/\S+/gu, token => {
+    const chars = Array.from(token);
+    return chars.length > 8
+      ? chars.slice(0, 2).join("") + "•".repeat(chars.length - 4) + chars.slice(-2).join("")
+      : "•".repeat(chars.length);
+  });
+}

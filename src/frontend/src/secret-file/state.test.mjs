@@ -48,3 +48,11 @@ test("mobile action opens on click and does not restore the keyboard over the sh
   assert.equal(mobileActionEventPhase("secret-file"), "click");
   assert.equal(mobileActionRestoresKeyboard("secret-file"), false);
 });
+
+
+test("masked confirmation preserves whitespace, hides short tokens and bounds visible edges", async () => {
+  const { maskSecretText } = await import("./state.ts");
+  assert.equal(maskSecretText("  abc\n123456789\t密钥测试🔒\n"), "  •••\n12•••••89\t•••••\n");
+  assert.equal(maskSecretText(""), "");
+  assert.equal(maskSecretText("password"), "••••••••");
+});
