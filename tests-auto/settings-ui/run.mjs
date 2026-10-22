@@ -25,12 +25,28 @@ export async function runSettingsUiScenario() {
     await wait('!document.querySelector("#settingsPage").hidden');
   };
   const selected = () => evaluate('document.querySelector("#settingsTabs [aria-selected=true]").dataset.settingsTab');
+  const assertBackdrop = async (preview) => {
+    const style = await evaluate('(()=>{const s=getComputedStyle(document.querySelector("#settingsPage"));return {filter:s.backdropFilter,image:s.backgroundImage,color:s.backgroundColor}})()');
+    if (preview) {
+      assert.equal(style.filter, "none", "appearance previews must not blur the terminal");
+      assert.equal(style.image, "none", "appearance previews must not tint the terminal");
+      assert.equal(style.color, "rgba(0, 0, 0, 0)");
+    } else {
+      assert.match(style.filter, /blur\(10px\)/, "other settings retain their backdrop");
+      assert.notEqual(style.image, "none");
+    }
+  };
   try {
     await browser.open(`http://127.0.0.1:${server.httpServer.address().port}`);
     await browser.command(["set", "viewport", "1280", "900"]);
     await wait('document.querySelector("#settingsButton")');
     await openSettings();
     await screenshot("settings-desktop");
+    await assertBackdrop(true);
+    for (const tab of ["fonts", "themes", "terminal", "remote-hosts", "mobile", "appearance"]) {
+      await click(`[data-settings-tab=${tab}]`);
+      await assertBackdrop(["appearance", "fonts", "themes"].includes(tab));
+    }
     assert.equal(await evaluate('[...document.querySelectorAll("[data-settings-panel]")].every(panel=>panel.getAttribute("aria-labelledby")&&panel.querySelector(".settings-panel-intro h3"))'), true);
     await click("[data-settings-tab=fonts]");
     assert.equal(await evaluate('[...document.querySelectorAll("[data-font-tab]")].filter(tab=>tab.tabIndex===0).length'), 1);
@@ -38,11 +54,13 @@ export async function runSettingsUiScenario() {
     await browser.command(["focus", "[data-settings-tab=appearance]"]);
     await browser.press("ArrowDown");
     assert.equal(await selected(), "terminal");
+    await assertBackdrop(false);
     assert.equal(await evaluate('document.activeElement.id'), "settings-tab-terminal");
     await browser.press("End");
     assert.equal(await selected(), "plugins");
     await browser.press("Home");
     assert.equal(await selected(), "appearance");
+    await assertBackdrop(true);
     await browser.command(["focus", "#tabLayout"]);
     await browser.press("Tab");
     assert.equal(await evaluate("document.activeElement.id"), "closeSettings");
@@ -55,6 +73,7 @@ export async function runSettingsUiScenario() {
     await wait('!document.querySelector("#settingsPage").hidden');
     assert.equal(await evaluate('getComputedStyle(document.querySelector(".settings-dialog")).transitionDuration.split(",").every(value=>parseFloat(value)===0)'), true);
     await click("[data-settings-tab=plugins]");
+    await assertBackdrop(false);
     await wait('document.querySelectorAll(".plugin-item").length===8');
     assert.equal(await evaluate('document.querySelectorAll(".plugin-configuration[open]").length'), 0);
     await screenshot("plugins-desktop");
@@ -98,15 +117,23 @@ export async function runSettingsUiScenario() {
     await browser.command(["focus", "[data-settings-tab=appearance]"]);
     await browser.press("ArrowRight");
     assert.equal(await selected(), "terminal");
+    await assertBackdrop(false);
     await click("[data-settings-tab=plugins]");
     assert.equal(await evaluate('(()=>{const dialog=document.querySelector(".settings-dialog"),panels=document.querySelector(".settings-panels"),rect=dialog.getBoundingClientRect();return dialog.scrollWidth<=dialog.clientWidth&&panels.scrollWidth<=panels.clientWidth&&rect.top>=0&&rect.bottom<=innerHeight})()'), true);
+    await assertBackdrop(false);
     await screenshot("plugins-mobile");
     await click("[data-settings-tab=appearance]");
     await browser.command(["select", "#interfaceStyleSelect", "porcelain"]);
+    await assertBackdrop(true);
     await screenshot("settings-light-mobile");
+    for (const tab of ["fonts", "themes"]) {
+      await click(`[data-settings-tab=${tab}]`);
+      await assertBackdrop(true);
+    }
     await browser.command(["set", "media", "light", "reduced-motion"]);
     await click("[data-settings-tab=plugins]");
     assert.equal(await evaluate('getComputedStyle(document.querySelector(".plugin-switch input"),"::before").transitionDuration.split(",").every(value=>parseFloat(value)===0)'), true);
+    await assertBackdrop(false);
     await screenshot("plugins-light-mobile");
     await browser.command(["set", "viewport", "812", "375"]);
     assert.equal(await evaluate('(()=>{const r=document.querySelector(".settings-dialog").getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()'), true);

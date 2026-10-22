@@ -1,3 +1,14 @@
+/* Keep the terminal visible while adjusting its appearance. The overlay
+   continues to handle input and dismissal as a modal. */
+.settings-page:has(
+  [data-settings-tab="appearance"][aria-selected="true"],
+  [data-settings-tab="fonts"][aria-selected="true"],
+  [data-settings-tab="themes"][aria-selected="true"]
+) {
+  background: transparent;
+  backdrop-filter: none;
+}
+
 .settings-dialog {
   width: min(940px, calc(100vw - 40px));
   height: min(720px, calc(var(--app-viewport-height) - 48px));
