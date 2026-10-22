@@ -1,3 +1,4 @@
+import { createHerdrAttentionView } from "./herdr-attention-view.ts";
 import type { MessageKey } from "./i18n.ts";
 import { buildHerdrJumpModel, normalizeHerdrJumpDensity, type HerdrJumpDensity, type HerdrJumpDevice, type HerdrJumpModel } from "./herdr-jump-model.ts";
 import type { HerdrJumpPlatform, HerdrJumpPlatformFactory } from "./herdr-jump-platform.ts";
@@ -54,6 +55,16 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
   let state: HerdrBridgeState | undefined;
   let model: HerdrJumpModel = { groups: [] };
   let platform: HerdrJumpPlatform;
+  let attentionConnected = false;
+  const attention = createHerdrAttentionView({
+    menu: elements.menu,
+    tr: deps.tr,
+    navigate: (target) => {
+      close();
+      if (target.paneId) void deps.focusPane(target.paneId);
+      else void deps.focusTab(target.tabId);
+    },
+  });
 
   const device = (): HerdrJumpDevice => platform.device();
   const density = (): HerdrJumpDensity => normalizeHerdrJumpDensity(readPreference(device()), device());
@@ -68,10 +79,12 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     focusTab: deps.tr("action.focusHerdrTab"),
     focusPane: deps.tr("action.focusHerdrPane"),
     activity: (status) => deps.tr(`herdr.activity.${status}`),
+    attention: deps.tr("herdr.attention.title"),
   });
 
   const render = (nextState: HerdrBridgeState | undefined) => {
     const focusedControl = focusedJumpControl();
+    if (nextState?.available !== true || state?.selector !== nextState.selector) attentionConnected = false;
     state = nextState;
     model = buildHerdrJumpModel(state, {
       workspace: (number) => deps.tr("herdr.workspaceFallback", { number }),
@@ -79,7 +92,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
       tab: (number) => deps.tr("herdr.tabFallback", { number }),
       tabDefault: deps.tr("herdr.tabFallbackPlain"),
       terminal: deps.tr("herdr.terminalFallback"),
-    });
+    }, { attentionConnected });
     const mode = density();
     const viewLabels = labels();
     elements.dock.dataset.herdrDensity = mode;
@@ -95,6 +108,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
     syncMoreActions();
     deps.updateIcons();
     restoreJumpControlFocus(focusedControl);
+    attention.sync(model, state?.selector);
     if (!elements.menu.hidden) requestAnimationFrame(positionPopover);
   };
 
@@ -115,6 +129,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
 
   const close = (fromHistory = false) => {
     closeMore();
+    attention.close();
     if (elements.menu.hidden) return;
     elements.menu.hidden = true;
     elements.menu.querySelector<HTMLDialogElement>(".herdr-activity-help[open]")?.close();
@@ -312,7 +327,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
   }
 
   function jumpControls(): HTMLButtonElement[] {
-    return Array.from(elements.menu.querySelectorAll<HTMLButtonElement>("[data-herdr-jump-workspace], [data-herdr-jump-tab], [data-herdr-jump-pane]"));
+    return Array.from(elements.menu.querySelectorAll<HTMLButtonElement>("[data-herdr-jump-workspace], [data-herdr-jump-tab], [data-herdr-jump-pane], [data-herdr-attention]"));
   }
 
   function moreMenuItems(): HTMLButtonElement[] {
@@ -330,7 +345,7 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
         ? "current"
         : undefined;
     if (!scope) return undefined;
-    for (const attribute of ["data-herdr-jump-pane", "data-herdr-jump-tab", "data-herdr-jump-workspace"]) {
+    for (const attribute of ["data-herdr-jump-pane", "data-herdr-jump-tab", "data-herdr-jump-workspace", "data-herdr-attention"]) {
       const value = document.activeElement.getAttribute(attribute);
       if (value) return { attribute, value, scope };
     }
@@ -350,9 +365,17 @@ export function createHerdrJumpController(deps: HerdrJumpControllerDeps) {
 
   return {
     render,
+    // Only a fresh successful snapshot may restore attention after a transport failure.
+    setAttentionConnected(connected: boolean) {
+      const next = connected && state?.available === true;
+      if (next === attentionConnected) return;
+      attentionConnected = next;
+      render(state);
+    },
     open,
     close,
     destroy() {
+      attention.destroy();
       elements.trigger.removeEventListener("click", handleTriggerClick);
       elements.trigger.removeEventListener("keydown", handleTriggerKeydown);
       elements.moreButton.removeEventListener("click", handleMoreButtonClick);

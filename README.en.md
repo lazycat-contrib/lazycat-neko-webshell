@@ -81,7 +81,11 @@ Standard WebShell detects foreground coding agents such as Codex, Claude Code, O
 
 Native OSC 7501 reports and output from commands such as `w1 codex` take precedence over screen inference. Working, blocked (permission/question/auth), done, error, and clear records are supported. Returning to the shell clears the previous process's status. Reconnection restores the current table without answering historical probes. Screen rules can depend on the Agent CLI version; native reports are more precise.
 
-The replaceable `crates/program-status` adapter contains `w1 = "0.3"`. The target agent implementation version is 18; the compatible minimum remains 11. Existing compatible agents keep running. Prepare an optional upgrade through the update entry to enable this feature on the next agent launch.
+The replaceable `crates/program-status` adapter contains `w1 = "0.3"`. The target agent implementation version is 19; the compatible minimum remains 11. Existing compatible agents keep running. Prepare an optional upgrade through the update entry to enable this feature on the next agent launch.
+
+Claude Code / Codex can use [optional status hooks](docs/agent-status-hooks.md) for explicit approval and turn-completion signals. Hooks are opt-in and never rewrite existing Agent configuration. Native reports still take priority.
+
+Herdr's Jump to list shows an attention button only for current pending actions, with no placeholder when none remain or the state is stale. Hover on desktop to read the existing summary, or tap on mobile to open a detail dialog with a jump action. Selecting the original tab still navigates directly.
 
 ## Mobile Use
 

@@ -18,3 +18,11 @@ or cwd or reading another login user's session stores. Native reports take
 precedence over inferred state. A readable replacement process clears stale
 records; inspection errors retain the last identity. Linux process inspection
 and w1 types are contained in this crate.
+
+The optional `status-hook claude|codex` helper translates typed Agent hooks into
+short OSC reports with the reserved `_neko_hook` ID. Native application reports
+take precedence over these reports, which take precedence over screen inference.
+Hook-backed blocked state returns to screen inference on actual user input, so
+an approval cannot leave it stuck until the next hook. Ctrl+C and foreground
+identity replacement clear hook state. The helper is off unless explicitly
+enabled; setup and limits are in [the hook guide](../../docs/agent-status-hooks.md).

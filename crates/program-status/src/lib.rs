@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use w1::osc7501::{ParsedReport, parse_report};
 use w1::stream::{Captured, OutputStream};
 mod automatic;
+mod hooks;
+pub use hooks::{MAX_HOOK_BYTES, hook_identity, hook_report};
 
 pub const MAX_RECORDS: usize = 64;
 
@@ -50,6 +52,7 @@ pub struct Tracker {
     revision: u64,
     automatic: automatic::Automatic,
     native_seen: bool,
+    hook_active: bool,
 }
 
 impl Tracker {
@@ -81,6 +84,7 @@ impl Tracker {
             }
             if self.stream.take_reset() {
                 self.native_seen = false;
+                self.hook_active = false;
                 if !self.records.is_empty() {
                     self.records.clear();
                     self.revision += 1;
@@ -93,6 +97,7 @@ impl Tracker {
     /// A replacement table, including an empty table when the last record clears.
     pub fn snapshot_since(&mut self, previous: Option<u64>) -> Option<(u64, Vec<ProgramRecord>)> {
         if !self.native_seen
+            && !self.hook_active
             && let Some(record) = self.automatic.record()
         {
             self.replace(record);
@@ -109,11 +114,28 @@ impl Tracker {
             }
             self.records.clear();
             self.native_seen = false;
+            self.hook_active = false;
             self.stream = OutputStream::default();
         }
     }
 
     pub fn input(&mut self, data: &[u8]) {
+        // Hooks often run PreToolUse before the approval prompt and omit a
+        // permission-resolved event. On user interaction let the live screen
+        // decide whether it is still blocked or has resumed. Native reports
+        // remain authoritative, and terminal probe replies never enter here.
+        let interacting_with_prompt = !data.is_empty()
+            && self
+                .records
+                .values()
+                .any(|record| record.state == ProgramState::Blocked);
+        if self.hook_active && (data.contains(&3) || interacting_with_prompt) {
+            self.hook_active = false;
+            if !self.records.is_empty() {
+                self.records.clear();
+                self.revision += 1;
+            }
+        }
         self.automatic.input(data);
     }
 
@@ -129,8 +151,25 @@ impl Tracker {
     }
 
     fn apply(&mut self, payload: &str) {
-        let parsed = parse_report(payload);
-        if parsed.is_some() && !self.native_seen {
+        // A reserved report ID distinguishes our optional bridge from native
+        // application reports. Native reporting always owns the status table.
+        let mut parsed = parse_report(payload);
+        let is_hook = matches!(parsed, Some(ParsedReport::Clear { ref id } | ParsedReport::Record { ref id, .. }) if id == hooks::REPORT_ID);
+        if is_hook {
+            if self.native_seen {
+                return;
+            }
+            if !self.hook_active && matches!(parsed, Some(ParsedReport::Clear { .. })) {
+                return;
+            }
+            self.hook_active = matches!(parsed, Some(ParsedReport::Record { .. }));
+            match &mut parsed {
+                Some(ParsedReport::Clear { id } | ParsedReport::Record { id, .. }) => id.clear(),
+                None => unreachable!(),
+            }
+        }
+        if parsed.is_some() && !is_hook && !self.native_seen {
+            self.hook_active = false;
             self.native_seen = true;
             if !self.records.is_empty() {
                 self.records.clear();

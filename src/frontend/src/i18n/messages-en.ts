@@ -1,4 +1,7 @@
 export const enMessages = {
+  "herdr.attention.title": "Needs your attention",
+  "herdr.attention.jump": "Jump to terminal",
+  "herdr.attention.fallback": "Continue in the terminal.",
   "programStatus.permission": "Approval required",
   "programStatus.question": "Answer required",
   "programStatus.auth": "Sign-in required",

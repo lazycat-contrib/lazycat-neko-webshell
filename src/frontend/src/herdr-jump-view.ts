@@ -13,6 +13,7 @@ export type HerdrJumpLabels = {
   focusTab: string;
   focusPane: string;
   activity?: (status: HerdrActivity) => string;
+  attention?: string;
 };
 
 export function renderHerdrJumpGroups(
@@ -45,14 +46,14 @@ function renderGroup(group: HerdrJumpGroup, density: HerdrJumpDensity, labels: H
       </button>
       <div class="herdr-jump-targets" role="group" aria-label="${escapeAttr(workspaceLabel)}">
         ${group.targets.length
-          ? group.targets.map((target) => renderTarget(target, density, labels)).join("")
+          ? group.targets.map((target) => renderTarget(target, density, labels, true)).join("")
           : `<span class="herdr-jump-group-empty">${escapeHtml(labels.empty)}</span>`}
       </div>
     </section>
   `;
 }
 
-function renderTarget(target: HerdrJumpTarget, density: HerdrJumpDensity, labels: HerdrJumpLabels): string {
+function renderTarget(target: HerdrJumpTarget, density: HerdrJumpDensity, labels: HerdrJumpLabels, showAttention = false): string {
   const statusLabel = activityLabel(target.status, labels);
   const accessibleLabel = `${target.paneId ? labels.focusPane : labels.focusTab}: ${target.label} · ${target.sequence} · ${statusLabel}`;
   const targetAttribute = target.paneId
@@ -61,7 +62,7 @@ function renderTarget(target: HerdrJumpTarget, density: HerdrJumpDensity, labels
   const normalLabel = target.duplicate
     ? `<span class="herdr-target-name">${escapeHtml(target.label)}</span><small class="herdr-target-sequence">${escapeHtml(target.sequence)}</small>`
     : `<span class="herdr-target-name">${escapeHtml(target.label)}</span>`;
-  return `
+  const chip = `
     <button class="herdr-target-chip" type="button" ${targetAttribute} data-status="${escapeAttr(target.status)}" data-current="${target.current}" data-density="${density}" aria-current="${target.current ? "true" : "false"}" aria-label="${escapeAttr(accessibleLabel)}" title="${escapeAttr(`${target.title} · ${statusLabel}`)}">
       ${renderAgentIcon(target.icon)}
       <span class="herdr-jump-status" aria-hidden="true">${herdrActivityGlyph(target.status)}</span>
@@ -70,6 +71,12 @@ function renderTarget(target: HerdrJumpTarget, density: HerdrJumpDensity, labels
       ${target.current ? `<i class="herdr-target-check" data-lucide="check"></i>` : ""}
     </button>
   `;
+  if (!showAttention || !target.attention) return chip;
+  const detail = [labels.attention ?? statusLabel, target.attention.summary].filter(Boolean).join(" · ");
+  return `<span class="herdr-attention-target">${chip}
+    <button class="herdr-attention-button" type="button" data-herdr-attention="${escapeAttr(target.attention.id)}" aria-haspopup="dialog" aria-label="${escapeAttr(`${target.label}: ${detail}`)}" title="${escapeAttr(detail)}">
+      <i data-lucide="message-circle-question" aria-hidden="true"></i>
+    </button></span>`;
 }
 
 function activityLabel(status: string, labels: HerdrJumpLabels): string {

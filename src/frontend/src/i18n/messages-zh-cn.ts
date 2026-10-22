@@ -1,6 +1,9 @@
 import type { MessageKey } from "./messages-en";
 
 export const zhCNMessages = {
+  "herdr.attention.title": "需要你处理",
+  "herdr.attention.jump": "跳转到终端",
+  "herdr.attention.fallback": "请在终端中继续操作。",
   "programStatus.permission": "等待授权",
   "programStatus.question": "等待回答",
   "programStatus.auth": "等待登录",

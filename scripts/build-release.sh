@@ -75,6 +75,7 @@ CC_x86_64_unknown_linux_musl=musl-gcc \
     --bin lazycat-neko-webshell-agent
 
 agent_binary="${PWD}/target/x86_64-unknown-linux-musl/release/lazycat-neko-webshell-agent"
+python3 scripts/test-agent-status-hook.py "${agent_binary}"
 expected_agent_protocol="lazycat-neko-webshell-agent-v4"
 actual_agent_protocol="$("${agent_binary}" version)"
 if [[ "${actual_agent_protocol}" != "${expected_agent_protocol}" ]]; then

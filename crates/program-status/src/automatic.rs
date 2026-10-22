@@ -287,6 +287,7 @@ fn find_target(group: u32) -> Option<Target> {
 #[cfg(target_os = "linux")]
 #[derive(PartialEq, Eq)]
 struct Process {
+    parent: u32,
     group: i64,
     session: i64,
     tty: i64,
@@ -305,12 +306,51 @@ fn process(pid: u32) -> Option<Process> {
         .split_whitespace()
         .collect::<Vec<_>>();
     Some(Process {
+        parent: fields.get(1)?.parse().ok()?,
         group: fields.get(2)?.parse().ok()?,
         session: fields.get(3)?.parse().ok()?,
         tty: fields.get(4)?.parse().ok()?,
         start: fields.get(19)?.parse().ok()?,
         uid: std::fs::metadata(format!("/proc/{pid}")).ok()?.uid(),
     })
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn hook_identity(agent: &str, helper_pid: u32, group: u32) -> Option<(u32, u64)> {
+    let expected = w1::agents::identify_from_command(&[agent.to_string()], None)?;
+    let target = find_target(group)?;
+    if target.kind != Some(expected) {
+        return None;
+    }
+    let root = process(target.pid)?;
+    if root.tty == 0 {
+        return None;
+    }
+    let mut pid = helper_pid;
+    for _ in 0..64 {
+        let current = process(pid)?;
+        if current.group != root.group
+            || current.session != root.session
+            || current.tty != root.tty
+            || current.uid != root.uid
+        {
+            return None;
+        }
+        if pid == target.pid {
+            return (current == root && current.start == target.start)
+                .then_some((target.pid, target.start));
+        }
+        if current.parent == pid || current.parent == 0 {
+            return None;
+        }
+        pid = current.parent;
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn hook_identity(_agent: &str, _helper_pid: u32, _group: u32) -> Option<(u32, u64)> {
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -436,6 +476,19 @@ mod tests {
         let mut second = crate::Tracker::default();
         second.foreground(Some(other.id()), 80, 24);
         let other_records = second.snapshot_since(None).unwrap().1;
+        second.observe(
+            &crate::hook_report("codex", br#"{"session_id":"s","hook_event_name":"Stop"}"#)
+                .unwrap(),
+        );
+        assert_eq!(
+            second.snapshot_since(None).unwrap().1[0].state,
+            ProgramState::Done
+        );
+        second.foreground(Some(agent.id()), 80, 24);
+        assert_ne!(
+            second.snapshot_since(None).unwrap().1[0].state,
+            ProgramState::Done
+        );
         first.observe(b"\x1b]7501;state=blocked:app=claude-code:kind=question\x07");
         let native = first.snapshot_since(None).unwrap().1;
         first.observe(b"\x1b]7501;state=clear\x07");

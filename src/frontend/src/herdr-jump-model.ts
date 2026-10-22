@@ -18,6 +18,7 @@ export type HerdrJumpTarget = {
   status: string;
   current: boolean;
   duplicate: boolean;
+  attention?: { id: string; summary?: string };
 };
 
 export type HerdrJumpGroup = {
@@ -55,16 +56,23 @@ export function normalizeHerdrJumpDensity(
 }
 
 export function buildHerdrJumpModel(
-  state: (Pick<HerdrBridgeState, "workspaces" | "tabs" | "panes"> & Partial<Pick<HerdrBridgeState, "agents">>) | undefined,
+  state: (Pick<HerdrBridgeState, "workspaces" | "tabs" | "panes"> & Partial<Pick<HerdrBridgeState, "agents" | "available">>) | undefined,
   labels: HerdrJumpModelLabels,
+  options: { attentionConnected?: boolean } = {},
 ): HerdrJumpModel {
   const workspaces = state?.workspaces ?? [];
   const tabs = state?.tabs ?? [];
   const agents = new Map((state?.agents ?? []).map((agent) => [agent.pane_id, agent]));
   const panes = (state?.panes ?? []).map((pane) => ({ ...pane,
     agent_status: pane.restore_error ? "error" : agents.get(pane.pane_id)?.agent_status ?? pane.agent_status,
+    tokens: agents.has(pane.pane_id) ? agents.get(pane.pane_id)!.tokens : pane.tokens,
   }));
   const groups = workspaces.map((workspace) => groupForWorkspace(workspace, tabs, panes, labels));
+  if (state?.available === false || options.attentionConnected === false) {
+    for (const group of groups) {
+      for (const target of group.targets) delete target.attention;
+    }
+  }
   const currentWorkspace = groups.find((group) => group.current) ?? groups[0];
   const currentTarget = currentWorkspace?.targets.find((target) => target.current);
   return { groups, currentWorkspace, currentTarget };
@@ -160,6 +168,11 @@ function targetsForTab(
       title,
       icon: herdrAgentIconKey(pane.agent, [pane.display_agent, pane.title, pane.terminal_title_stripped]),
       status: normalizeHerdrActivity(pane.agent_status),
+      attention: pane.agent_status === "blocked" ? {
+        id: pane.pane_id,
+        // Only the existing public summary, never terminal titles or arbitrary metadata.
+        summary: displayText(pane.tokens?.summary?.replace(/[\x00-\x1f\x7f-\x9f]/g, " "), 240) || undefined,
+      } : undefined,
       current: workspace.focused && tab.focused && pane.focused,
       duplicate: false,
     };

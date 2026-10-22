@@ -68,6 +68,10 @@ pub fn run_agent_command(args: &[String]) -> anyhow::Result<()> {
         bail!("missing agent command");
     };
     match command {
+        "status-hook" => {
+            crate::agent_status_hook::run(&args[1..]);
+            Ok(())
+        }
         "version" => {
             println!("{AGENT_PROTOCOL_VERSION}");
             Ok(())
@@ -1259,7 +1263,7 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 18);
+        assert_eq!(AGENT_VERSION, 19);
         assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 11);
     }
 

@@ -14,6 +14,7 @@ import "./terminal-themes.css";
 import "./mobile/styles.css";
 import "./mobile/keyboard-dock.css";
 import "./herdr-activity.css";
+import "./herdr-attention.css";
 import "./program-status.css";
 import { applyProgramStatus, programStatusForTab } from "./program-status";
 import "./agent-updates/styles.css";
@@ -1565,6 +1566,7 @@ function setSelectedSelector(
 ): number {
   const normalized = normalizeSelector(selector);
   if (normalized !== selectedSelector) {
+    herdrJumpController?.setAttentionConnected(false);
     herdrConsole?.dismiss();
     herdrHistory?.dismiss();
     herdrIntegrations?.dismiss();
@@ -4882,6 +4884,7 @@ async function performHerdrStateRefresh(
     }
     const state = herdrBridgeStateForUi(fetchedState);
     if (!state.available) {
+      herdrJumpController?.setAttentionConnected(false);
       if (mode === "preserve-available" && herdrState?.available) return false;
       const stateChanged = !herdrBridgeStatesEqual(herdrState, state);
       advanceHerdrStateRevision();
@@ -4907,10 +4910,12 @@ async function performHerdrStateRefresh(
         refreshHerdrTerminalAfterAction(requestSelector, "focus_tab");
       }
     }
+    herdrJumpController?.setAttentionConnected(true);
     void maybeAutoRestoreHerdrEntry(requestSelector);
     return true;
   } catch (error) {
     if (requestId === herdrStateGeneration && isCurrentSelectorRequest(requestSelector, generation)) {
+      herdrJumpController?.setAttentionConnected(false);
       if (settings.debugMode) {
         setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
       }
@@ -5119,6 +5124,7 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
       setGlobalStatus(tr("status.herdrActionFailed", { message: errorMessage(error) }), "error");
     }
     if (generation === herdrEventSocketGeneration && normalizeSelector(selectedSelector) === selector) {
+      herdrJumpController?.setAttentionConnected(false);
       herdrEventSocketOpeningSelector = "";
       scheduleHerdrEventReconnect(selector, generation);
     }
@@ -5135,6 +5141,8 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   herdrEventSocketOpeningSelector = "";
   socket.addEventListener("open", () => {
     if (herdrEventSocket !== socket || generation !== herdrEventSocketGeneration) return;
+    // A quiet subscription may emit no events: recover attention from a fresh snapshot.
+    void refreshHerdrState(selector);
     herdrEventStreamPolicy.beginSubscription(paneIds);
     herdrLazycatNotifications.seed();
     socket.send(JSON.stringify({
@@ -5151,12 +5159,14 @@ async function syncHerdrEventBridge(options: { force?: boolean } = {}) {
   });
   socket.addEventListener("close", () => {
     if (herdrEventSocket !== socket || generation !== herdrEventSocketGeneration) return;
+    herdrJumpController?.setAttentionConnected(false);
     herdrEventSocket = undefined;
     herdrEventStreamPolicy.reset();
     herdrEventRefreshLoop.reset();
     scheduleHerdrEventReconnect(selector, generation);
   });
   socket.addEventListener("error", () => {
+    if (herdrEventSocket === socket && generation === herdrEventSocketGeneration) herdrJumpController?.setAttentionConnected(false);
     if (herdrEventSocket === socket && settings.debugMode) {
       setGlobalStatus(tr("status.herdrUnavailable"), "error");
     }
@@ -5248,6 +5258,7 @@ function scheduleHerdrEventReconnect(selector: string, generation: number) {
 }
 
 function stopHerdrEventBridge() {
+  herdrJumpController?.setAttentionConnected(false);
   herdrEventSocketGeneration += 1;
   closeHerdrEventSocket();
 }

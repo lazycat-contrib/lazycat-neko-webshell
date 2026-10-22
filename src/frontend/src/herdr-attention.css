@@ -1,0 +1,58 @@
+.herdr-attention-target {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  gap: 2px;
+}
+.herdr-attention-target > .herdr-target-chip { min-width: 0; }
+.herdr-attention-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  color: var(--herdr-activity-blocked);
+  background: color-mix(in srgb, var(--herdr-activity-blocked) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--herdr-activity-blocked) 40%, var(--component-border));
+  border-radius: var(--radius-sm);
+}
+.herdr-attention-button svg { width: 15px; height: 15px; }
+.herdr-attention-button:focus-visible, .herdr-attention-jump:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.herdr-attention-button:hover { background: var(--control-hover-bg); }
+.herdr-attention-dialog {
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
+  padding: 0;
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-deep);
+}
+.herdr-attention-dialog::backdrop { background: var(--overlay-scrim); }
+.herdr-attention-content { padding: 16px; overflow-wrap: anywhere; }
+.herdr-attention-content header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.herdr-attention-content h3 { margin: 0; font-size: 15px; }
+.herdr-attention-content .icon-button { color: var(--text); flex: 0 0 auto; width: 44px; height: 44px; }
+.herdr-attention-content > strong { font-size: 13px; }
+.herdr-attention-content p { margin: 12px 0 16px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.herdr-attention-jump {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--component-border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--control-hover-bg);
+  font: inherit;
+  font-size: 13px;
+}
+@media (max-width: 760px), (pointer: coarse) {
+  .herdr-attention-button { width: 44px; height: 44px; }
+}

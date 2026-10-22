@@ -136,7 +136,7 @@ function controllerHarness() {
   const focusedTabs = [];
   const consoleActions = [];
   const featureActions = [];
-  createHerdrJumpController({
+  const controller = createHerdrJumpController({
     elements: {
       dock,
       switcher,
@@ -170,7 +170,7 @@ function controllerHarness() {
     openIntegrations: async () => featureActions.push("integrations"),
     runConsoleAction: async (action) => consoleActions.push(action),
   });
-  return { dock, currentTargets, focusedTabs, consoleActions, featureActions, moreButton, moreMenu };
+  return { controller, menu, dock, currentTargets, focusedTabs, consoleActions, featureActions, moreButton, moreMenu };
 }
 
 test("top Herdr tab clicks navigate even when the dock stores its display density", async (t) => {
@@ -230,4 +230,47 @@ test("cycles visible more-menu items with Arrow, Home, and End keys", (t) => {
 
   moreMenu.dispatch("keydown", first, { key: "End" });
   assert.equal(document.activeElement, last);
+});
+
+test("attention connection validity survives retained renders and recovers only explicitly", (t) => {
+  installFakeDom(t);
+  const { controller, menu } = controllerHarness();
+  const list = menu.children[0];
+  let renderedHtml = "";
+  let renderCount = 0;
+  Object.defineProperty(list, "innerHTML", {
+    get: () => renderedHtml,
+    set: html => { renderedHtml = html; renderCount += 1; },
+  });
+  const snapshot = {
+    available: true, selector: "demo", agents: [],
+    workspaces: [{ workspace_id: "w", number: 1, label: "Project", focused: true }],
+    tabs: [{ tab_id: "t", workspace_id: "w", number: 1, label: "Build", focused: true }],
+    panes: [{ pane_id: "p", workspace_id: "w", tab_id: "t", agent: "codex", agent_status: "blocked", tokens: {} }],
+  };
+  controller.render(snapshot);
+  assert.doesNotMatch(list.innerHTML, /data-herdr-attention/);
+  controller.setAttentionConnected(true);
+  assert.match(list.innerHTML, /data-herdr-attention/);
+  const connectedRenderCount = renderCount;
+  controller.setAttentionConnected(true);
+  assert.equal(renderCount, connectedRenderCount, "unchanged validity must not rebuild the list");
+  controller.setAttentionConnected(false);
+  const disconnectedRenderCount = renderCount;
+  controller.setAttentionConnected(false);
+  assert.equal(renderCount, disconnectedRenderCount, "repeated invalidation must not rebuild the list");
+  assert.doesNotMatch(list.innerHTML, /data-herdr-attention/);
+  assert.match(list.innerHTML, /data-herdr-jump-tab="t"/);
+  controller.render(snapshot);
+  assert.doesNotMatch(list.innerHTML, /data-herdr-attention/);
+  controller.setAttentionConnected(true);
+  assert.match(list.innerHTML, /data-herdr-attention/);
+  controller.render({ ...snapshot, available: false });
+  controller.setAttentionConnected(true);
+  assert.doesNotMatch(list.innerHTML, /data-herdr-attention/);
+  controller.render(snapshot);
+  assert.doesNotMatch(list.innerHTML, /data-herdr-attention/);
+  controller.setAttentionConnected(true);
+  controller.render({ ...snapshot, selector: "other" });
+  assert.doesNotMatch(list.innerHTML, /data-herdr-attention/);
 });

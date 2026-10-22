@@ -8,6 +8,8 @@ mod agent_history;
 mod agent_protocol;
 #[path = "../agent_pty.rs"]
 mod agent_pty;
+#[path = "../agent_status_hook.rs"]
+mod agent_status_hook;
 #[path = "../agent_workspace.rs"]
 mod agent_workspace;
 #[path = "../config.rs"]
