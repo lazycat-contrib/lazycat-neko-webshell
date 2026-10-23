@@ -4,9 +4,9 @@ import { createServer } from "vite";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
-export async function createSettingsUiPreview(port = 0, { configureDelayMs = 0, agentKind } = {}) {
-  const ids = ["ai-chat", "file-transfer", "lightos-port-forward", "pomodoro", "public-tunnel", "terminal-mcp", "terminal-transfer", "white-noise"];
-  const plugins = ids.map((id) => ({ id, displayName: id, kind: id === "ai-chat" ? "ai" : "productivity", scopes: ["terminal"], enabled: id !== "terminal-mcp", metadata: {} }));
+export async function createSettingsUiPreview(port = 0, { configureDelayMs = 0, agentKind, lightosEnabled = false } = {}) {
+  const ids = ["ai-chat", "file-transfer", "lightos-port-forward", "pomodoro", "public-tunnel", "terminal-diagnostics", "terminal-mcp", "terminal-transfer", "white-noise"];
+  const plugins = ids.map((id) => ({ id, displayName: id, kind: id === "ai-chat" ? "ai" : "productivity", scopes: ["terminal"], enabled: !["terminal-mcp", "terminal-diagnostics"].includes(id), metadata: {} }));
   let settings = { locale: "en" };
   const agentUpdateCalls = [];
   const mock = {
@@ -14,13 +14,19 @@ export async function createSettingsUiPreview(port = 0, { configureDelayMs = 0, 
     configureServer(server) {
       server.middlewares.use(async (request, response, next) => {
         const pathname = (request.url ?? "").split("?")[0];
+        if (pathname === "/lightos-test-home") {
+          response.setHeader("content-type", "text/html");
+          response.end("<!doctype html><title>LightOS home fixture</title>LightOS home");
+          return;
+        }
         if (!pathname.startsWith("/api/") && !pathname.startsWith("/lazycat.webshell.v1.CapabilityService/")) return next();
         let text = "";
         for await (const chunk of request) text += chunk;
         let body = {};
         try { body = JSON.parse(text || "{}"); } catch { /* Some plugin requests contain raw payloads. */ }
         let result = {};
-        if (pathname === "/api/runtime") result = { mode: agentKind ? "lightos" : "generic", lightosFeaturesEnabled: Boolean(agentKind), revision: "settings-ui-preview" };
+        if (pathname === "/api/runtime") result = { mode: agentKind || lightosEnabled ? "lightos" : "generic", lightosFeaturesEnabled: Boolean(agentKind) || lightosEnabled, revision: "settings-ui-preview" };
+        else if (pathname === "/api/lightos-admin-info") result = { base_url: "/lightos-test-home?keep=value#instances" };
         else if (pathname === "/api/agent/update") {
           if (request.method === "POST") { agentUpdateCalls.push(body); agentKind = body.optional ? "pending_restart" : "ready"; }
           result = { selector: "preview@owner", kind: agentKind, currentVersion: agentKind === "ready" ? 17 : 16,
@@ -51,6 +57,7 @@ export async function createSettingsUiPreview(port = 0, { configureDelayMs = 0, 
   await server.listen();
   server.agentUpdateCalls = agentUpdateCalls;
   server.setAgentKind = (kind) => { agentKind = kind; };
+  server.setLightosEnabled = (enabled) => { lightosEnabled = enabled; };
   return server;
 }
 

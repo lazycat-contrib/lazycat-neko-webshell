@@ -15,9 +15,8 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::ai_chat::{
-    ai_access_configured, ai_model_configured, fetch_ai_models, load_ai_settings, stream_ai_chat,
-    test_ai_access,
+use crate::plugins::ai_chat::{
+    ai_access_configured, ai_model_configured, fetch_ai_models, stream_ai_chat, test_ai_access,
 };
 use crate::service::CapabilityServiceImpl;
 use crate::state::AppState;
@@ -387,7 +386,7 @@ async fn handle_ai(
     message: ActionMessage,
 ) -> anyhow::Result<()> {
     ensure_plugin_enabled(&state, "ai-chat")?;
-    let settings = load_ai_settings(&state)?;
+    let settings = state.plugin.ai_chat.load_settings()?;
     if !ai_access_configured(&settings) {
         send_error(
             sender,
@@ -436,7 +435,8 @@ async fn handle_ai(
 
 fn ensure_plugin_enabled(state: &AppState, plugin_id: &str) -> anyhow::Result<()> {
     let plugins = state
-        .plugins
+        .plugin
+        .settings
         .read()
         .map_err(|_| anyhow::anyhow!("plugin store lock poisoned"))?;
     let plugin = plugins

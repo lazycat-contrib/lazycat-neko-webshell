@@ -1,0 +1,11 @@
+.terminal-diagnostics-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 8px 0;
+}
+.terminal-diagnostics-summary dt { color: var(--muted); font-size: 12px; }
+.terminal-diagnostics-summary dd { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.terminal-diagnostics-timeline { padding-left: 20px; max-height: 320px; overflow: auto; }
+.terminal-diagnostics-timeline li { padding: 5px 0; font-size: 12px; overflow-wrap: anywhere; }
+.terminal-diagnostics-timeline span { display: block; font-variant-numeric: tabular-nums; }

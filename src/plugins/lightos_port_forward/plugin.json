@@ -1,0 +1,41 @@
+{
+  "id": "lightos-port-forward",
+  "kind": "network",
+  "display_name": "LightOS Port Forward",
+  "description": "Forward a target LightOS instance HTTP port to a local WebShell provider port for preview or tunnel publishing.",
+  "input_schema_json": "{\"operation\":\"acquire|release|list\",\"metadata\":{\"remoteHost\":\"127.0.0.1\",\"remotePort\":\"number\",\"forwardId\":\"string for release\"}}",
+  "output_schema_json": "{\"forwards\":[{\"id\":\"string\",\"localUrl\":\"http://127.0.0.1:port/\",\"remotePort\":8080,\"status\":\"running\"}]}",
+  "scopes": [
+    "session",
+    "network",
+    "lightos"
+  ],
+  "accepted_content_types": [
+    "application/json"
+  ],
+  "produced_content_types": [
+    "application/json"
+  ],
+  "enabled": false,
+  "metadata": {
+    "builtin": "true",
+    "requiresRuntime": "lightos",
+    "defaultEnabled": "false"
+  },
+  "resources": [
+    "lightos-forward",
+    "ui"
+  ],
+  "frontend": {
+    "entry": "lightos-port-forward/entry.ts",
+    "tool": true,
+    "icon": "waypoints",
+    "nameKey": "plugin.lightosPortForward.name",
+    "descriptionKey": "plugin.lightosPortForward.description"
+  },
+  "configuration": {
+    "version": 1,
+    "metadata": {},
+    "preferences": []
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "id": "public-tunnel",
+  "kind": "tunnel",
+  "display_name": "Public Tunnel",
+  "description": "Publish a local HTTP endpoint through Cloudflare Quick Tunnel or ngrok. Pair it with LightOS Port Forward to expose an instance port.",
+  "input_schema_json": "{\"operation\":\"start|stop|list\",\"metadata\":{\"provider\":\"cloudflare-quick|ngrok\",\"upstreamUrl\":\"http://127.0.0.1:port/\",\"ngrokProfileId\":\"required for ngrok\",\"tunnelId\":\"string for stop\"}}",
+  "output_schema_json": "{\"sessions\":[{\"id\":\"string\",\"provider\":\"cloudflare-quick|ngrok\",\"publicUrl\":\"https://...\",\"upstreamUrl\":\"http://127.0.0.1:port/\",\"status\":\"running\"}]}",
+  "scopes": [
+    "session",
+    "network",
+    "tunnel"
+  ],
+  "accepted_content_types": [
+    "application/json"
+  ],
+  "produced_content_types": [
+    "application/json"
+  ],
+  "enabled": false,
+  "metadata": {
+    "builtin": "true",
+    "defaultEnabled": "false",
+    "providers": "cloudflare-quick,ngrok"
+  },
+  "resources": [
+    "tunnel-profiles",
+    "network",
+    "ui"
+  ],
+  "frontend": {
+    "entry": "public-tunnel/entry.ts",
+    "tool": true,
+    "icon": "radio-tower",
+    "nameKey": "plugin.publicTunnel.name",
+    "descriptionKey": "plugin.publicTunnel.description"
+  },
+  "configuration": {
+    "version": 1,
+    "metadata": {},
+    "preferences": [],
+    "secrets": [
+      "ngrokAuthtoken"
+    ],
+    "providerProfiles": "tunnelProviderProfiles",
+    "privateMetadata": [
+      "ngrokAuthtoken",
+      "ngrokConfigured",
+      "tunnelProviderProfiles"
+    ]
+  }
+}

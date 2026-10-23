@@ -6,6 +6,8 @@ use anyhow::{Context as _, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+mod runtime;
+pub use runtime::register;
 pub mod cloudflare_quick;
 pub mod ngrok_provider;
 
@@ -48,10 +50,26 @@ pub struct TunnelPluginResponse {
 struct TunnelHandle {
     info: TunnelSessionInfo,
     status: Arc<Mutex<String>>,
-    stop_tx: mpsc::Sender<()>,
+    stop_tx: tokio::sync::watch::Sender<bool>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl TunnelManager {
+    pub fn stop_all(&self) -> Result<(), neko_plugin::PluginError> {
+        let handles = self
+            .sessions
+            .lock()
+            .map_err(|_| neko_plugin::PluginError::internal("tunnel session store lock poisoned"))?
+            .drain()
+            .map(|(_, handle)| handle)
+            .collect::<Vec<_>>();
+        for handle in &handles {
+            let _ = handle.stop_tx.send(true);
+        }
+        drop(handles); // Each handle joins its worker after signaling cancellation.
+        Ok(())
+    }
+
     pub fn invoke_metadata(
         &self,
         operation: &str,
@@ -67,26 +85,34 @@ impl TunnelManager {
 
     fn start(&self, metadata: &HashMap<String, String>) -> anyhow::Result<TunnelPluginResponse> {
         let start = parse_start_request(metadata)?;
-        let (stop_tx, stop_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
         let (ready_tx, ready_rx) = mpsc::channel();
         let status = Arc::new(Mutex::new("starting".to_owned()));
 
-        match start.provider.as_str() {
+        let worker = match start.provider.as_str() {
             "cloudflare-quick" => {
-                cloudflare_quick::spawn(start, stop_rx, ready_tx, Arc::clone(&status));
+                cloudflare_quick::spawn(start, stop_rx, ready_tx, Arc::clone(&status))
             }
             "ngrok" => ngrok_provider::spawn(start, stop_rx, ready_tx, Arc::clone(&status)),
             provider => bail!("unsupported tunnel provider: {provider}"),
-        }
+        };
 
-        let info = ready_rx
-            .recv_timeout(START_TIMEOUT)
-            .map_err(|_| anyhow!("tunnel provider did not become ready"))?
-            .map_err(anyhow::Error::msg)?;
+        let info = match ready_rx.recv_timeout(START_TIMEOUT) {
+            Ok(Ok(info)) => info,
+            result => {
+                let _ = stop_tx.send(true);
+                let _ = worker.join();
+                return Err(match result {
+                    Ok(Err(error)) => anyhow!(error),
+                    _ => anyhow!("tunnel provider did not become ready"),
+                });
+            }
+        };
         let handle = TunnelHandle {
             info: info.clone(),
             status,
             stop_tx,
+            worker: Some(worker),
         };
         self.sessions
             .lock()
@@ -127,7 +153,7 @@ impl TunnelManager {
             .remove(tunnel_id)
             .ok_or_else(|| anyhow!("tunnel session not found: {tunnel_id}"))?;
         let mut info = handle.snapshot();
-        let _ = handle.stop_tx.send(());
+        let _ = handle.stop_tx.send(true);
         "stopping".clone_into(&mut info.status);
         json_response(
             "complete",
@@ -136,6 +162,15 @@ impl TunnelManager {
                 "providers": provider_descriptors(),
             }),
         )
+    }
+}
+
+impl Drop for TunnelHandle {
+    fn drop(&mut self) {
+        let _ = self.stop_tx.send(true);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 

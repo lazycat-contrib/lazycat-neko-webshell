@@ -14,7 +14,6 @@ mod agent_pty;
 mod agent_status_hook;
 mod agent_updates;
 mod agent_workspace;
-mod ai_chat;
 mod assets;
 mod backgrounds;
 mod client_terminal;
@@ -29,8 +28,8 @@ mod http_body;
 mod lightos;
 mod lightos_admin;
 mod notifications;
+mod plugin;
 mod plugins;
-mod pomodoro;
 mod preferences;
 mod proto;
 mod pty_io;
@@ -73,11 +72,17 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let state = Arc::new(AppState::new()?);
-    let app = build_app(state);
+    state.plugin.runtime(&state).await?;
+    let app = build_app(Arc::clone(&state));
 
     let addr: SocketAddr = "127.0.0.1:8080".parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!(%addr, "listening");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
+    state.plugin.shutdown().await?;
     Ok(())
 }

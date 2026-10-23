@@ -10,6 +10,8 @@ const scenarios = new Map([
   ["agent-updates", { module: "./agent-updates/run.mjs", exportName: "runAgentUpdateScenario" }],
   ["settings-ui", { module: "./settings-ui/run.mjs", exportName: "runSettingsUiScenario" }],
   ["mobile-workflow", { module: "./mobile-workflow/run.mjs", exportName: "runMobileWorkflowScenario" }],
+  ["mobile-remote-desktop", { module: "./mobile-remote-desktop/run.mjs", exportName: "runMobileRemoteDesktopScenario" }],
+  ["terminal-diagnostics", { module: "./terminal-diagnostics/run.mjs", exportName: "runTerminalDiagnosticsScenario" }],
   ["herdr-history", { module: "./herdr-history/run.mjs", exportName: "runHerdrHistoryScenario" }],
   ["mobile-keyboard", { module: "./mobile-keyboard/run.mjs", exportName: "runMobileKeyboardScenario" }],
   ["mobile-layout", { module: "./mobile-layout/run.mjs", exportName: "runMobileLayoutScenario" }],

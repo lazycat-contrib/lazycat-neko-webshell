@@ -36,9 +36,9 @@ use crate::workspace::{
     create_workspace_session,
 };
 
-use super::herdr_adapter::HerdrTerminalAdapter;
-use super::principal::McpPrincipal;
-use super::types::{
+use super::terminal_mcp_herdr_adapter::HerdrTerminalAdapter;
+use crate::plugins::terminal_mcp::principal::McpPrincipal;
+use crate::plugins::terminal_mcp::types::{
     ControlAccess, ControlGrant, ControlRequest, ControlTarget, TerminalBackend,
     TerminalCapability, TerminalMcpError, TerminalMcpPolicy, TerminalOutputFrame,
     TerminalReadResult, TerminalSessionSummary,
@@ -123,6 +123,7 @@ impl TerminalControlService {
                                 busy: true,
                                 control_granted: self
                                     .state
+                                    .plugin
                                     .terminal_mcp
                                     .has_grant(principal, &record.id),
                                 workspace_id: pane.workspace_id,
@@ -173,6 +174,7 @@ impl TerminalControlService {
         self.policy()?;
         let _read_permit = self
             .state
+            .plugin
             .terminal_mcp
             .begin_read(principal, session_id, pane_id)?;
         let wait_ms = wait_ms.min(MCP_TERMINAL_MAX_WAIT_MS);
@@ -211,7 +213,7 @@ impl TerminalControlService {
         let policy = self.policy()?;
         let target = self.resolve_target(session_id, pane_id).await?;
         let control_target = control_target(&target);
-        let access = self.state.terminal_mcp.authorize(
+        let access = self.state.plugin.terminal_mcp.authorize(
             &policy,
             principal,
             control_target,
@@ -357,7 +359,7 @@ impl TerminalControlService {
                 .collect(),
         };
         let policy = self.policy()?;
-        self.require_grant(self.state.terminal_mcp.authorize(
+        self.require_grant(self.state.plugin.terminal_mcp.authorize(
             &policy,
             principal,
             create_target,
@@ -436,6 +438,7 @@ impl TerminalControlService {
             TerminalBackend::Herdr => unreachable!(),
         };
         self.state
+            .plugin
             .terminal_mcp
             .record_created_session(principal, &summary.session_id);
         Ok(summary)
@@ -454,6 +457,7 @@ impl TerminalControlService {
         }
         if !self
             .state
+            .plugin
             .terminal_mcp
             .caller_created_session(principal, session_id)
         {
@@ -491,30 +495,36 @@ impl TerminalControlService {
                     .sessions
                     .close_sessions(closed.closed_session_ids.iter().map(String::as_str));
                 for closed_id in &closed.closed_session_ids {
-                    self.state.terminal_mcp.revoke_session(closed_id);
+                    self.state.plugin.terminal_mcp.revoke_session(closed_id);
                 }
             }
             ResolvedTarget::Herdr(_, _) => unreachable!(),
         }
-        self.state.terminal_mcp.revoke_session(session_id);
+        self.state.plugin.terminal_mcp.revoke_session(session_id);
         Ok(())
     }
 
     pub fn revoke_control(&self, principal: &McpPrincipal, grant_id: &str) -> bool {
         self.state
+            .plugin
             .terminal_mcp
             .revoke_grant_for(principal, grant_id)
     }
 
     fn policy(&self) -> Result<TerminalMcpPolicy, TerminalMcpError> {
-        let plugins = self.state.plugins.read().map_err(|_| internal_error())?;
+        let plugins = self
+            .state
+            .plugin
+            .settings
+            .read()
+            .map_err(|_| internal_error())?;
         let plugin = plugins
-            .get(super::PLUGIN_ID)
+            .get(crate::plugins::terminal_mcp::PLUGIN_ID)
             .ok_or_else(TerminalMcpError::disabled)?;
         if !plugin.enabled {
             return Err(TerminalMcpError::disabled());
         }
-        Ok(TerminalMcpPolicy::from_plugin(plugin))
+        Ok(TerminalMcpPolicy::from_metadata(&plugin.metadata))
     }
 
     fn authorize_target(
@@ -525,7 +535,7 @@ impl TerminalControlService {
         reason: &str,
     ) -> Result<ControlGrant, TerminalMcpError> {
         let policy = self.policy()?;
-        self.require_grant(self.state.terminal_mcp.authorize(
+        self.require_grant(self.state.plugin.terminal_mcp.authorize(
             &policy,
             principal,
             control_target(target),
@@ -880,7 +890,11 @@ impl TerminalControlService {
             cols: session.cols,
             rows: session.rows,
             busy: terminal.as_ref().is_some_and(|terminal| terminal.is_busy()),
-            control_granted: self.state.terminal_mcp.has_grant(principal, &session.id),
+            control_granted: self
+                .state
+                .plugin
+                .terminal_mcp
+                .has_grant(principal, &session.id),
             workspace_id,
             tab_id,
             pane_id,
@@ -903,6 +917,7 @@ impl TerminalControlService {
             busy: target.busy,
             control_granted: self
                 .state
+                .plugin
                 .terminal_mcp
                 .has_grant(principal, &target.session_id),
             workspace_id: Some(target.selector.clone()),
@@ -1024,7 +1039,7 @@ fn add_control_notification(
         format!("Reason: {}", request.reason)
     };
     let input = NewNotification {
-        source_kind: super::PLUGIN_ID.to_owned(),
+        source_kind: crate::plugins::terminal_mcp::PLUGIN_ID.to_owned(),
         source_id: Some(request.id.clone()),
         kind: "interactive".to_owned(),
         severity: "warning".to_owned(),
@@ -1055,7 +1070,7 @@ fn add_control_notification(
     };
     state
         .notifications
-        .add_if_absent(super::PLUGIN_ID, &request.id, input)
+        .add_if_absent(crate::plugins::terminal_mcp::PLUGIN_ID, &request.id, input)
         .map(|_| ())
         .map_err(|_| {
             TerminalMcpError::new("INTERNAL_ERROR", "Failed to create approval notification")
@@ -1279,7 +1294,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::state::PluginRecord;
+    use crate::plugin::settings::PluginRecord;
 
     fn principal() -> McpPrincipal {
         McpPrincipal {
@@ -1293,10 +1308,10 @@ mod tests {
         let state = Arc::new(AppState::new_for_test(
             std::env::temp_dir().join(format!("terminal-mcp-service-{}.db", Uuid::new_v4())),
         ));
-        state.plugins.write().unwrap().insert(
-            super::super::PLUGIN_ID.to_owned(),
+        state.plugin.settings.write().unwrap().insert(
+            crate::plugins::terminal_mcp::PLUGIN_ID.to_owned(),
             PluginRecord {
-                id: super::super::PLUGIN_ID.to_owned(),
+                id: crate::plugins::terminal_mcp::PLUGIN_ID.to_owned(),
                 kind: "integration".to_owned(),
                 display_name: "Terminal MCP".to_owned(),
                 description: String::new(),
@@ -1306,6 +1321,7 @@ mod tests {
                 input_schema_json: "{}".to_owned(),
                 output_schema_json: "{}".to_owned(),
                 enabled: true,
+                configuration_version: 1,
                 metadata: HashMap::from([
                     ("defaultPolicy".to_owned(), "confirm".to_owned()),
                     ("trustedCallers".to_owned(), "[]".to_owned()),
@@ -1445,7 +1461,7 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.code, "CONTROL_APPROVAL_REQUIRED");
-        assert_eq!(state.terminal_mcp.pending_requests().len(), 1);
+        assert_eq!(state.plugin.terminal_mcp.pending_requests().len(), 1);
     }
 
     #[tokio::test]
@@ -1472,9 +1488,12 @@ mod tests {
             assert_eq!(error.code, "CONTROL_APPROVAL_REQUIRED");
         }
 
-        assert_eq!(state.terminal_mcp.pending_requests().len(), 1);
+        assert_eq!(state.plugin.terminal_mcp.pending_requests().len(), 1);
         let notifications = state.notifications.list_active().unwrap();
         assert_eq!(notifications.len(), 1);
-        assert_eq!(notifications[0].source_kind, super::super::PLUGIN_ID);
+        assert_eq!(
+            notifications[0].source_kind,
+            crate::plugins::terminal_mcp::PLUGIN_ID
+        );
     }
 }

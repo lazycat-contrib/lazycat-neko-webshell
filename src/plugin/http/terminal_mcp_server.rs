@@ -23,9 +23,11 @@ use crate::config::{
 use crate::ssh_backend;
 use crate::state::AppState;
 
-use super::principal::McpPrincipal;
-use super::service::TerminalControlService;
-use super::types::{ControlAccess, TerminalBackend, TerminalCapability, TerminalMcpError};
+use super::terminal_mcp_service::TerminalControlService;
+use crate::plugins::terminal_mcp::principal::McpPrincipal;
+use crate::plugins::terminal_mcp::types::{
+    ControlAccess, TerminalBackend, TerminalCapability, TerminalMcpError,
+};
 
 const SERVER_NAME: &str = "lazycat-neko-webshell-terminal";
 const PRODUCTION_HOST: &str = "app.community.lazycat.webshell.neko.lzcx";
@@ -117,6 +119,7 @@ impl TerminalMcpServer {
                     Err(error) => return tool_error(error),
                 };
                 self.state
+                    .plugin
                     .terminal_mcp
                     .wait_for_control(
                         principal,
@@ -260,10 +263,15 @@ impl TerminalMcpServer {
 
     fn enabled(&self) -> bool {
         self.state
-            .plugins
+            .plugin
+            .settings
             .read()
             .ok()
-            .and_then(|plugins| plugins.get(super::PLUGIN_ID).map(|plugin| plugin.enabled))
+            .and_then(|plugins| {
+                plugins
+                    .get(crate::plugins::terminal_mcp::PLUGIN_ID)
+                    .map(|plugin| plugin.enabled)
+            })
             .unwrap_or(false)
     }
 }
@@ -606,17 +614,18 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::plugin::settings::PluginRecord;
     use crate::router::build_app;
-    use crate::state::{PluginRecord, SessionRecord};
+    use crate::state::SessionRecord;
 
     fn test_state(enabled: bool) -> Arc<AppState> {
         let state = Arc::new(AppState::new_for_test(
             std::env::temp_dir().join(format!("terminal-mcp-server-{}.db", Uuid::new_v4())),
         ));
-        state.plugins.write().unwrap().insert(
-            super::super::PLUGIN_ID.to_owned(),
+        state.plugin.settings.write().unwrap().insert(
+            crate::plugins::terminal_mcp::PLUGIN_ID.to_owned(),
             PluginRecord {
-                id: super::super::PLUGIN_ID.to_owned(),
+                id: crate::plugins::terminal_mcp::PLUGIN_ID.to_owned(),
                 kind: "integration".to_owned(),
                 display_name: "Terminal MCP".to_owned(),
                 description: String::new(),
@@ -626,6 +635,7 @@ mod tests {
                 input_schema_json: "{}".to_owned(),
                 output_schema_json: "{}".to_owned(),
                 enabled,
+                configuration_version: 1,
                 metadata: HashMap::from([
                     ("defaultPolicy".to_owned(), "confirm".to_owned()),
                     ("trustedCallers".to_owned(), "[]".to_owned()),
@@ -753,10 +763,11 @@ mod tests {
         assert_eq!(disabled["result"]["tools"].as_array().unwrap().len(), 0);
 
         state
-            .plugins
+            .plugin
+            .settings
             .write()
             .unwrap()
-            .get_mut(super::super::PLUGIN_ID)
+            .get_mut(crate::plugins::terminal_mcp::PLUGIN_ID)
             .unwrap()
             .enabled = true;
         let enabled = post_mcp(
@@ -872,7 +883,7 @@ mod tests {
             response["result"]["structuredContent"]["error"]["code"],
             "CONTROL_APPROVAL_REQUIRED"
         );
-        assert_eq!(state.terminal_mcp.pending_requests().len(), 1);
+        assert_eq!(state.plugin.terminal_mcp.pending_requests().len(), 1);
         assert!(state.sessions.terminal("session-one").unwrap().is_none());
         handle.abort();
     }

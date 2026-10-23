@@ -7,7 +7,6 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
 
 use crate::database::{AppDatabase, KV_NAMESPACE_STATE};
@@ -16,51 +15,7 @@ use crate::state::AppState;
 const KV_KEY_NOTIFICATIONS: &str = "notifications";
 const MAX_RETAINED_NOTIFICATIONS: usize = 100;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WebshellNotification {
-    pub id: String,
-    pub source_kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_id: Option<String>,
-    pub kind: String,
-    pub severity: String,
-    #[serde(default = "default_presentation_hint")]
-    pub presentation_hint: String,
-    pub title: String,
-    pub body: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub actions: Vec<NotificationAction>,
-    pub state: String,
-    pub created_at_ms: u64,
-    pub updated_at_ms: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NotificationAction {
-    pub id: String,
-    pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub style: Option<String>,
-    #[serde(default, skip_serializing_if = "Value::is_null")]
-    pub payload: Value,
-}
-
-#[derive(Clone, Debug)]
-pub struct NewNotification {
-    pub source_kind: String,
-    pub source_id: Option<String>,
-    pub kind: String,
-    pub severity: String,
-    pub presentation_hint: String,
-    pub title: String,
-    pub body: String,
-    pub url: Option<String>,
-    pub actions: Vec<NotificationAction>,
-}
+pub use neko_plugin::{NewNotification, NotificationAction, WebshellNotification};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -366,10 +321,6 @@ fn normalize_presentation_hint(value: &str) -> String {
         "toast" => "toast".to_owned(),
         _ => "center".to_owned(),
     }
-}
-
-fn default_presentation_hint() -> String {
-    "center".to_owned()
 }
 
 fn normalize_notification_url(value: Option<String>) -> Option<String> {

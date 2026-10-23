@@ -11,8 +11,6 @@ use uuid::Uuid;
 use crate::config::LIGHTOSCTL;
 use crate::state::SessionRecord;
 
-pub const PLUGIN_ID: &str = "lightos-port-forward";
-
 const FORWARD_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const FORWARD_READY_POLL: Duration = Duration::from_millis(100);
 
@@ -41,6 +39,18 @@ struct ForwardHandle {
 }
 
 impl LightOsPortForwardManager {
+    pub fn stop_all(&self) -> anyhow::Result<()> {
+        let mut forwards = self
+            .forwards
+            .lock()
+            .map_err(|_| anyhow!("LightOS forward store lock poisoned"))?;
+        for (_, mut handle) in forwards.drain() {
+            let _ = handle.child.kill();
+            let _ = handle.child.wait();
+        }
+        Ok(())
+    }
+
     pub fn invoke(
         &self,
         session: &SessionRecord,

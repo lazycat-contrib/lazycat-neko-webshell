@@ -30,28 +30,30 @@ const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 pub fn spawn(
     request: StartTunnelRequest,
-    stop_rx: mpsc::Receiver<()>,
+    mut stop_rx: tokio::sync::watch::Receiver<bool>,
     ready_tx: mpsc::Sender<Result<TunnelSessionInfo, String>>,
     status: Arc<Mutex<String>>,
-) {
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let runtime = RuntimeBuilder::new_current_thread()
             .enable_all()
             .build()
             .expect("failed to build Cloudflare tunnel runtime");
         runtime.block_on(LocalSet::new().run_until(async move {
-            let result = run(request, stop_rx, ready_tx, Arc::clone(&status)).await;
+            let result = tokio::select! {
+                _ = stop_rx.changed() => { mark_status(&status, "stopped"); Ok(()) },
+                result = run(request, ready_tx, Arc::clone(&status)) => result,
+            };
             if let Err(error) = result {
                 mark_status(&status, "error");
                 let _ = error;
             }
         }));
-    });
+    })
 }
 
 async fn run(
     request: StartTunnelRequest,
-    stop_rx: mpsc::Receiver<()>,
     ready_tx: mpsc::Sender<Result<TunnelSessionInfo, String>>,
     status: Arc<Mutex<String>>,
 ) -> anyhow::Result<()> {
@@ -72,10 +74,6 @@ async fn run(
     mark_status(&status, "running");
 
     loop {
-        if stop_rx.try_recv().is_ok() {
-            mark_status(&status, "stopped");
-            return Ok(());
-        }
         let accept =
             tokio::time::timeout(std::time::Duration::from_millis(250), connection.accept()).await;
         let connect_request = match accept {

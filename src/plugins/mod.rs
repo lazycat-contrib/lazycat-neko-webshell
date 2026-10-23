@@ -1,4 +1,1 @@
-pub mod file_transfer;
-pub mod lightos_port_forward;
-pub mod terminal_mcp;
-pub mod tunnel;
+include!(concat!(env!("OUT_DIR"), "/plugin_modules.rs"));

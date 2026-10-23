@@ -1,8 +1,12 @@
+import { createPluginStreamBroker, type TerminalStreamHook } from "./plugins/terminal-stream";
+import { createBuiltinPluginEntries } from "./plugins/entries.generated";
+import type { PluginEntry } from "./plugins/host";
 import { createAgentUpdateController, bindAgentUpdateView, syncAgentUpdateView, agentUpdateDeferral } from "./agent-updates/controller";
 import { createMobileExperience } from "./mobile/experience";
+import { createMobileRemoteDesktopSettings } from "./mobile/settings/remote-desktop-controller";
 import { captureMobileInputTarget, mobileInputTargetRetired } from "./mobile/input-target";
-import { createTerminalTrace } from "./diagnostics/terminal-trace";
-import { createTerminalDiagnosticsSettings } from "./diagnostics/settings-controller";
+import { createTerminalDiagnosticsResources } from "./diagnostics/plugin-resource";
+import { createTerminalDiagnosticsSettings, downloadTerminalDiagnostics } from "./diagnostics/settings-controller";
 import { createWorkspaceRequestController, workspaceActionChangesFocus, type WorkspaceRequest } from "./workspace-request-controller";
 import { createWorkspacePaneLifetime } from "./workspace-pane-lifetime";
 import { reconcileWorkspace } from "./workspace-reconcile";
@@ -260,7 +264,6 @@ import {
   buildAIChatTerminalTargetsForTab,
   createAIChatTerminalTargetResolver,
 } from "./plugins/ai-chat/terminal-target";
-import { renderAIChatToolView } from "./plugins/ai-chat/tool-view";
 import {
   newAiVoiceProviderProfile,
 } from "./plugins/ai-chat/voice-profiles";
@@ -311,14 +314,10 @@ import { createSecretFileController } from "./secret-file/controller";
 import { createFileTransferController } from "./plugins/file-transfer/controller";
 import { createPaneFileDropController, paneAcceptsFileDrop } from "./plugins/file-transfer/pane-drop";
 import { setFileTransferOutput } from "./plugins/file-transfer/dom";
-import { renderFileTransferToolView } from "./plugins/file-transfer/tool-view";
 import { createPluginJsonInvoker } from "./plugins/invoke-json";
 import { createLightOsPortForwardController } from "./plugins/lightos-port-forward/controller";
-import { renderLightOsPortForwardToolView } from "./plugins/lightos-port-forward/tool-view";
 import { createPomodoroController } from "./plugins/pomodoro/controller";
 import { createPomodoroTicker } from "./plugins/pomodoro/ticker";
-import { pomodoroToolViewState } from "./plugins/pomodoro/tool-presenter";
-import { renderPomodoroToolView } from "./plugins/pomodoro/tool-view";
 import { createPublicTunnelController } from "./plugins/public-tunnel/controller";
 import {
   parseTunnelProviderProfiles,
@@ -327,7 +326,6 @@ import {
   type TunnelProfileDialogState,
   type TunnelProviderProfileSaveInput,
 } from "./plugins/public-tunnel/profile-presenter";
-import { renderPublicTunnelToolView } from "./plugins/public-tunnel/tool-view";
 import { createTerminalMcpController } from "./plugins/terminal-mcp/controller";
 import { createTerminalTransferController } from "./plugins/terminal-transfer/controller";
 import {
@@ -336,7 +334,6 @@ import {
   TERMINAL_TRANSFER_PROTOCOLS_METADATA,
   terminalTransferProtocolsFromMetadata,
 } from "./plugins/terminal-transfer/protocols";
-import { renderTerminalTransferToolView } from "./plugins/terminal-transfer/tool-view";
 import { createWhiteNoiseController } from "./plugins/white-noise/controller";
 import {
   WHITE_NOISE_AUTO_PLAY_ON_SELECT_METADATA,
@@ -347,7 +344,6 @@ import {
 import {
   findWhiteNoisePlugin,
   renderWhiteNoiseFloatingSurfaceView,
-  renderWhiteNoiseToolSurface,
   runWhiteNoiseAction,
   runWhiteNoiseFloatingAction,
 } from "./plugins/white-noise/runtime";
@@ -779,11 +775,13 @@ const notificationController = createNotificationController({
 });
 
 let settings = loadLocalSettings();
-const terminalTrace = createTerminalTrace();
+const terminalDiagnosticsResources = createTerminalDiagnosticsResources();
+const terminalTrace = terminalDiagnosticsResources.trace;
 const terminalDiagnosticsSettings = createTerminalDiagnosticsSettings({
   root: qs<HTMLElement>("#terminalDiagnostics"), trace: terminalTrace, tr,
 });
 terminalDiagnosticsSettings.setEnabled(settings.debugMode);
+const mobileRemoteDesktop = createMobileRemoteDesktopSettings(qs<HTMLElement>("#mobileRemoteDesktopSettings"));
 let runtimeInfo: RuntimeInfo = { mode: "lightos", lightosFeaturesEnabled: true, revision: "" };
 let providerRevisionStale = false;
 const providerRevisionController = createProviderRevisionController({
@@ -1429,6 +1427,9 @@ const {
   imageFilePayloadErrorCode: (error) => error instanceof ImageFilePayloadError ? error.code : undefined,
   maxClipboardImageBytes: MAX_CLIPBOARD_IMAGE_BYTES,
 });
+
+let builtinPluginEntries: Map<string, PluginEntry> | undefined;
+let pluginTerminalStream: TerminalStreamHook | undefined;
 
 updateViewportMetrics();
 init().catch((error) => setGlobalStatus(tr("status.startupFailed", { message: errorMessage(error) }), "error"));
@@ -2743,6 +2744,7 @@ function bindLifecycleEvents() {
   bindWorkspacePassiveSync(workspacePassiveSync, window, document, () => {
     workspaceRequests.dispose();
     terminalDiagnosticsSettings.dispose();
+    mobileRemoteDesktop.dispose();
     mobileExperience.dispose();
     mobileKeyboard.dispose();
   });
@@ -2972,7 +2974,7 @@ async function navigateLightOSHome() {
   elements.homeButton.disabled = true;
   setGlobalStatus(tr("status.lightosHomeLoading"));
   try {
-    const target = await resolveLightOSHomeUrl();
+    const target = await resolveLightOSHomeUrl(mobileRemoteDesktop.isEnabled());
     window.location.assign(target);
   } catch (error) {
     elements.homeButton.disabled = false;
@@ -2984,6 +2986,7 @@ function applyRuntimeChrome() {
   void agentUpdates.refresh();
   elements.webshell.dataset.runtimeMode = runtimeInfo.mode;
   elements.homeButton.hidden = !runtimeInfo.lightosFeaturesEnabled;
+  mobileRemoteDesktop.setAvailable(runtimeInfo.lightosFeaturesEnabled);
   if (!runtimeInfo.lightosFeaturesEnabled) {
     elements.herdrWorkspaceSwitcher.hidden = true;
     closeHerdrWorkspaceMenu();
@@ -3656,6 +3659,7 @@ async function loadPlugins() {
   try {
     const response = await capabilityClient.listPlugins({}, { timeoutMs: 10000 });
     plugins = [...response.plugins].sort((left, right) => left.id.localeCompare(right.id));
+    for (const plugin of plugins) pluginEntries().get(plugin.id)?.configured?.(plugin);
     syncPublicTunnelProviderSelection();
     pluginsLoaded = true;
     renderPlugins();
@@ -3791,15 +3795,7 @@ async function configurePlugin(
       metadata: { ...plugin.metadata, ...metadata },
     };
     plugins = plugins.map((item) => item.id === pluginId ? updated : item);
-    if (pluginId === PUBLIC_TUNNEL_PLUGIN_ID) {
-      syncPublicTunnelProviderSelection();
-    }
-    if (pluginId === TERMINAL_TRANSFER_PLUGIN_ID && !updated.enabled) {
-      terminalTransfer.cancel();
-    }
-    if (pluginId === WHITE_NOISE_PLUGIN_ID && !updated.enabled) {
-      whiteNoise.pause();
-    }
+    pluginEntries().get(pluginId)?.configured?.(updated);
     renderWhiteNoiseFloatingSurface();
     setPluginStatus(
       statusMode === "settings"
@@ -3947,6 +3943,31 @@ function pluginControlsDisabled(plugin: PluginDescriptor): boolean {
   return !plugin.enabled || pluginSaveInFlight.has(plugin.id) || pluginsLoading;
 }
 
+function pluginEntries(): Map<string, PluginEntry> {
+  if (builtinPluginEntries) return builtinPluginEntries;
+  const common = { tr, disabled: pluginControlsDisabled };
+  builtinPluginEntries = createBuiltinPluginEntries({
+    "file-transfer": { ...common, controller: fileTransfer },
+    "ai-chat": {
+      ...common, controller: aiChat, voiceReply: aiVoiceReply,
+      providerState: () => ({ providerProfiles: settings.aiProviderProfiles, activeProviderProfileId: settings.aiActiveProviderProfileId, providerPickerOpen: aiProviderPickerOpen, voiceReplyEnabled: settings.aiVoiceReplyEnabled }),
+      terminalContext: () => recentAIContext(activeAIChatTerminalPane()),
+    },
+    "pomodoro": { ...common, controller: pomodoro, formatDeadline: (date) => formatMobileClockTime(date, { locale: settings.locale, hour12: !settings.mobileClockUse24Hour, showPeriod: !settings.mobileClockUse24Hour && settings.mobileClockShowPeriod, showSeconds: false }) },
+    "lightos-port-forward": { ...common, controller: lightosPortForward },
+    "public-tunnel": { ...common, controller: publicTunnel, profiles: publicTunnelProfiles, forwards: () => lightosPortForward.state().forwards },
+    "terminal-transfer": { ...common, controller: terminalTransfer, backend: () => activePane()?.sessionBackend, protocols: currentTerminalTransferProtocols },
+    "white-noise": { ...common, controller: whiteNoise },
+    "terminal-mcp": {},
+    "terminal-diagnostics": { ...common, diagnostics: terminalDiagnosticsResources.resource, root: elements.pluginToolBody, refresh: renderPluginTools, download: downloadTerminalDiagnostics },
+  });
+  return builtinPluginEntries;
+}
+
+function pluginStream(): TerminalStreamHook {
+  return pluginTerminalStream ??= createPluginStreamBroker(pluginEntries().values());
+}
+
 function renderPluginTools() {
   const active = activePane();
   const tools = filterRemoteClientPluginTools(
@@ -3965,142 +3986,12 @@ function renderPluginTools() {
   activePluginToolId = resolveActivePluginToolId(tools, activePluginToolId);
   syncPluginToolTabs(elements.pluginToolTabs, tools, activePluginToolId, tr);
   const activePlugin = tools.find((plugin) => plugin.id === activePluginToolId);
-  if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID) {
-    fileTransfer.syncPathWithPane();
-  }
-  elements.pluginToolBody.innerHTML = activePlugin?.id === FILE_TRANSFER_PLUGIN_ID
-    ? renderFileTransferTool(activePlugin)
-    : activePlugin?.id === AI_CHAT_PLUGIN_ID
-      ? renderAIChatTool(activePlugin)
-      : activePlugin?.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID
-        ? renderLightOsPortForwardTool(activePlugin)
-        : activePlugin?.id === POMODORO_PLUGIN_ID
-          ? renderPomodoroTool(activePlugin)
-          : activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID
-            ? renderPublicTunnelTool(activePlugin)
-            : activePlugin?.id === TERMINAL_TRANSFER_PLUGIN_ID
-              ? renderTerminalTransferTool(activePlugin)
-              : activePlugin?.id === WHITE_NOISE_PLUGIN_ID
-                ? renderWhiteNoiseTool(activePlugin)
-      : "";
+  const entry = activePlugin ? pluginEntries().get(activePlugin.id) : undefined;
+  entry?.prepare?.();
+  elements.pluginToolBody.innerHTML = activePlugin ? entry?.render?.(activePlugin) ?? "" : "";
   renderWhiteNoiseFloatingSurface();
   updateIcons();
-  if (activePlugin?.id === FILE_TRANSFER_PLUGIN_ID) {
-    void fileTransfer.loadCurrentDirectoryIfStale();
-  }
-  if (activePlugin?.id === AI_CHAT_PLUGIN_ID) {
-    scrollAIChatToBottom();
-  }
-  const portForwardState = lightosPortForward.state();
-  if (activePlugin?.id === LIGHTOS_PORT_FORWARD_PLUGIN_ID && !portForwardState.loaded && !portForwardState.loading) {
-    void lightosPortForward.list();
-  }
-  const tunnelState = publicTunnel.state();
-  if (activePlugin?.id === PUBLIC_TUNNEL_PLUGIN_ID && !tunnelState.loaded && !tunnelState.loading) {
-    void publicTunnel.list();
-  }
-  const whiteNoiseState = whiteNoise.viewState();
-  if (activePlugin?.id === WHITE_NOISE_PLUGIN_ID && !whiteNoiseState.loading && !whiteNoiseState.tracks.length && !whiteNoiseState.error) {
-    void whiteNoise.ensureLoaded();
-  }
-}
-
-function renderFileTransferTool(plugin: PluginDescriptor): string {
-  const disabled = pluginControlsDisabled(plugin);
-  const state = fileTransfer.viewState();
-  return renderFileTransferToolView({
-    disabled,
-    ...state,
-    tr,
-  });
-}
-
-function renderAIChatTool(plugin: PluginDescriptor): string {
-  const disabled = pluginControlsDisabled(plugin);
-  aiChat.syncSessionForActiveTarget();
-  const session = aiChat.ensureSession();
-  const target = aiChat.activeTerminalTarget();
-  return renderAIChatToolView({
-    disabled,
-    title: tr("plugin.aiChat.name"),
-    description: pluginDescription(plugin, tr),
-    session,
-    messages: session.messages,
-    streaming: aiChat.isStreaming(),
-    modelOptions: aiChat.modelValues(),
-    selectedModel: aiChat.currentModel(),
-    providerProfiles: settings.aiProviderProfiles,
-    activeProviderProfileId: settings.aiActiveProviderProfileId,
-    providerPickerOpen: aiProviderPickerOpen,
-    targetTerminalLabel: target?.label ?? tr("status.noTarget"),
-    sendTerminalContext: session.sendTerminalContext,
-    terminalContextPreview: session.sendTerminalContext ? recentAIContext(activeAIChatTerminalPane()) : "",
-    herdrAgentPromptAvailable: aiChat.canPromptHerdrAgent(),
-    voiceReplyEnabled: settings.aiVoiceReplyEnabled,
-    voiceReplyStateForMessage: (messageIndex, content) => aiVoiceReply.stateFor(session.id, messageIndex, content),
-    tr,
-  });
-}
-
-function renderPomodoroTool(plugin: PluginDescriptor): string {
-  const disabled = pluginControlsDisabled(plugin);
-  const viewState = pomodoro.viewState();
-  return renderPomodoroToolView(pomodoroToolViewState({
-    disabled,
-    state: viewState.state,
-    draftMinutes: viewState.draftMinutes,
-    draftRounds: viewState.draftRounds,
-    tr,
-    formatDeadline: (date) => formatMobileClockTime(date, {
-      locale: settings.locale,
-      hour12: !settings.mobileClockUse24Hour,
-      showPeriod: !settings.mobileClockUse24Hour && settings.mobileClockShowPeriod,
-      showSeconds: false,
-    }),
-  }));
-}
-
-function renderLightOsPortForwardTool(plugin: PluginDescriptor): string {
-  const state = lightosPortForward.state();
-  return renderLightOsPortForwardToolView({
-    disabled: pluginControlsDisabled(plugin),
-    remoteHost: state.remoteHost,
-    remotePort: state.remotePort,
-    forwards: state.forwards,
-    loading: state.loading,
-    output: state.output,
-    tr,
-  });
-}
-
-function renderPublicTunnelTool(plugin: PluginDescriptor): string {
-  publicTunnel.syncProviderSelection();
-  const state = publicTunnel.state();
-  return renderPublicTunnelToolView({
-    disabled: pluginControlsDisabled(plugin),
-    provider: state.provider,
-    upstreamUrl: state.upstreamUrl,
-    ngrokProfiles: publicTunnelProfiles(),
-    tunnels: state.tunnels,
-    forwards: lightosPortForward.state().forwards,
-    loading: state.loading,
-    output: state.output,
-    tr,
-  });
-}
-
-function renderTerminalTransferTool(plugin: PluginDescriptor): string {
-  return renderTerminalTransferToolView({
-    disabled: pluginControlsDisabled(plugin),
-    activeBackend: activePane()?.sessionBackend,
-    protocols: currentTerminalTransferProtocols(),
-    state: terminalTransfer.viewState(),
-    tr,
-  });
-}
-
-function renderWhiteNoiseTool(plugin: PluginDescriptor): string {
-  return renderWhiteNoiseToolSurface(plugin, whiteNoise, pluginControlsDisabled(plugin), tr);
+  entry?.rendered?.();
 }
 
 function renderWhiteNoiseSurfaces() {
@@ -5600,7 +5491,7 @@ function restoreTerminalStageChrome() {
 function preparePaneForFullReplay(pane: TerminalPane) {
   paneConnectionLifecycle.clearReconnect(pane);
   clearReplayInputLock(pane);
-  terminalTransfer.resetPane(pane);
+  pluginStream().resetPane(pane);
   flushPaneDecoder(pane);
   disposePaneTerminalRuntime(pane);
   destroyPaneTransport(pane);
@@ -6101,7 +5992,7 @@ async function applyPaneShaderPlugin(pane: TerminalPane) {
 
 function handleTerminalResize(pane: TerminalPane, cols: number, rows: number) {
   updatePaneTerminalSize(pane, cols, rows);
-  terminalTransfer.resizePane(pane, pane.cols);
+  pluginStream().resizePane(pane, pane.cols);
   updateActiveDetails();
 }
 
@@ -6252,7 +6143,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     pane.remoteKeepaliveStop?.();
     pane.remoteKeepaliveStop = undefined;
     pendingPaneSocketOpens.delete(pane.id);
-    terminalTransfer.resetPane(pane, tr("status.socketError"));
+    pluginStream().resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
     flushPaneDecoder(pane);
     terminalControl.forgetPane(pane);
@@ -6265,7 +6156,7 @@ async function openSocketPrepared(pane: TerminalPane) {
     pane.remoteKeepaliveStop?.();
     pane.remoteKeepaliveStop = undefined;
     pendingPaneSocketOpens.delete(pane.id);
-    terminalTransfer.resetPane(pane, tr("status.socketError"));
+    pluginStream().resetPane(pane, tr("status.socketError"));
     clearReplayInputLock(pane);
     herdrWheelInputBatcher.clear(pane);
     pane.transport?.notifyError(tr("status.socketError"));
@@ -6375,7 +6266,7 @@ function handleSocketMessage(pane: TerminalPane, socket: WebSocket, event: Messa
 
 function handleTerminalBytes(pane: TerminalPane, bytes: Uint8Array) {
   if (terminalReplayController.push(pane, bytes)) return;
-  if (terminalTransfer.consumePaneOutput(pane, bytes)) return;
+  if (pluginStream().consumePaneOutput(pane, bytes)) return;
   writeTerminalBytes(pane, bytes);
 }
 
@@ -7243,7 +7134,7 @@ function sendPaneInput(pane: TerminalPane, data: string): boolean {
     focusActivePaneCanvas();
     return false;
   }
-  if (terminalTransfer.consumePaneInput(pane, data)) {
+  if (pluginStream().consumePaneInput(pane, data)) {
     return true;
   }
   if (herdrWheelInputBatcher.handle(pane, data)) {

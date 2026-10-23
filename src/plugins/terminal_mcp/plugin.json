@@ -1,0 +1,65 @@
+{
+  "id": "terminal-mcp",
+  "kind": "integration",
+  "display_name": "Terminal MCP",
+  "description": "Expose terminal session discovery, output, and explicitly authorized control through the LazyCat MCP resource gateway.",
+  "input_schema_json": "{\"transport\":\"streamable-http\",\"endpoint\":\"/mcp\"}",
+  "output_schema_json": "{\"tools\":\"terminal session discovery, replay, lifecycle, and authorized interaction\"}",
+  "scopes": [
+    "terminal",
+    "mcp",
+    "automation"
+  ],
+  "accepted_content_types": [
+    "application/json"
+  ],
+  "produced_content_types": [
+    "application/json"
+  ],
+  "enabled": false,
+  "metadata": {
+    "builtin": "true",
+    "defaultEnabled": "false",
+    "runtime": "backend-service",
+    "backends": "webshell,ssh,herdr",
+    "defaultPolicy": "confirm",
+    "trustedCallers": "[]",
+    "deniedCallers": "[]"
+  },
+  "resources": [
+    "terminal-read",
+    "terminal-control",
+    "notifications",
+    "ui"
+  ],
+  "frontend": {
+    "entry": "terminal-mcp/entry.ts",
+    "tool": false,
+    "icon": "square-terminal",
+    "nameKey": "plugin.terminalMcp.name",
+    "descriptionKey": "plugin.terminalMcp.description"
+  },
+  "configuration": {
+    "version": 1,
+    "metadata": {
+      "defaultPolicy": {
+        "type": "enum",
+        "values": [
+          "confirm",
+          "trusted_callers",
+          "same_user_automatic",
+          "read_only"
+        ]
+      },
+      "trustedCallers": {
+        "type": "string-array",
+        "maxItems": 128
+      },
+      "deniedCallers": {
+        "type": "string-array",
+        "maxItems": 128
+      }
+    },
+    "preferences": []
+  }
+}

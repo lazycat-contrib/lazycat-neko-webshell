@@ -11,17 +11,10 @@ use tracing::warn;
 use crate::config::{LIGHTOSCTL, MAX_COLS, MAX_ROWS};
 #[cfg(test)]
 use crate::database::remove_database_file;
-use crate::database::{
-    AppDatabase, KV_KEY_PLUGINS, KV_KEY_SESSIONS, KV_NAMESPACE_STATE, database_path,
-};
+use crate::database::{AppDatabase, KV_KEY_SESSIONS, KV_NAMESPACE_STATE, database_path};
 use crate::herdr_notifications::HerdrNotificationSender;
 use crate::notifications::NotificationHub;
-use crate::plugins::file_transfer::FileTransferUploadManager;
-use crate::plugins::lightos_port_forward::LightOsPortForwardManager;
-use crate::plugins::terminal_mcp::TerminalMcpManager;
-use crate::plugins::tunnel::TunnelManager;
-use crate::pomodoro::PomodoroManager;
-use crate::proto::lazycat::webshell::v1::{PluginDescriptor, Session};
+use crate::proto::lazycat::webshell::v1::Session;
 use crate::remote_program::RemoteProgramStore;
 use crate::session_manager::SessionManager;
 use crate::terminal_control::TerminalControlHub;
@@ -29,6 +22,9 @@ use crate::terminal_manager::{OutputBuffer, TerminalSpec};
 use crate::tty_init::terminal_session_bootstrap_script;
 use crate::validation::{normalize_output_frame_limit, validate_selector, validate_size};
 use crate::workspace::{WorkspaceRecord, WorkspaceStore, default_workspace_store};
+
+#[cfg(test)]
+use crate::plugin::settings::{PluginStore, builtin_plugins};
 
 const METADATA_RESTARTABLE: &str = "restartable";
 const METADATA_HOST: &str = "host";
@@ -38,18 +34,13 @@ pub const METADATA_LOGIN_USER: &str = "loginUser";
 
 #[derive(Clone)]
 pub struct AppState {
+    pub plugin: crate::plugin::PluginHost,
     pub sessions: Arc<SessionManager>,
     pub terminal_control: Arc<TerminalControlHub>,
-    pub plugins: Arc<RwLock<HashMap<String, PluginRecord>>>,
-    pub terminal_mcp: Arc<TerminalMcpManager>,
-    pub lightos_port_forwards: Arc<LightOsPortForwardManager>,
-    pub file_uploads: Arc<FileTransferUploadManager>,
-    pub public_tunnels: Arc<TunnelManager>,
     pub notifications: Arc<NotificationHub>,
     pub herdr_notifications: Arc<HerdrNotificationSender>,
     pub(crate) herdr_handoffs: Arc<crate::herdr::HerdrHandoffTracker>,
     pub(crate) herdr_resources: Arc<crate::herdr::HerdrResourceCache>,
-    pub pomodoro: Arc<PomodoroManager>,
     pub remote_programs: Arc<RemoteProgramStore>,
     pub workspaces: Arc<RwLock<HashMap<String, WorkspaceRecord>>>,
     database: Arc<AppDatabase>,
@@ -63,10 +54,6 @@ impl AppState {
         let session_store = Arc::new(SessionStore::new(Arc::clone(&database)));
         let workspace_store = Arc::new(default_workspace_store(Arc::clone(&database)));
         let notifications = Arc::new(NotificationHub::new(Arc::clone(&database)));
-        let pomodoro = Arc::new(PomodoroManager::new(
-            Arc::clone(&database),
-            Arc::clone(&notifications),
-        ));
         let workspaces = workspace_store.load().unwrap_or_else(|err| {
             warn!(error = %err, "failed to load persisted terminal workspaces");
             HashMap::new()
@@ -86,29 +73,21 @@ impl AppState {
         if let Err(err) = session_store.save(&sessions) {
             warn!(error = %err, "failed to prune unreferenced terminal sessions");
         }
-        let plugins = PluginStore::new(Arc::clone(&database))
-            .load()
-            .unwrap_or_else(|err| {
-                warn!(error = %err, "failed to load persisted plugin settings");
-                builtin_plugins()
-            });
         Ok(Self {
+            plugin: crate::plugin::PluginHost::new(
+                Arc::clone(&database),
+                Arc::clone(&notifications),
+            ),
             sessions: Arc::new(SessionManager::new(
                 sessions,
                 Arc::clone(&session_store),
                 Arc::clone(&database),
             )),
             terminal_control: Arc::new(TerminalControlHub::new()),
-            plugins: Arc::new(RwLock::new(plugins)),
-            terminal_mcp: Arc::new(TerminalMcpManager::default()),
-            lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
-            file_uploads: Arc::new(FileTransferUploadManager::default()),
-            public_tunnels: Arc::new(TunnelManager::default()),
             notifications,
             herdr_notifications: Arc::new(HerdrNotificationSender::default()),
             herdr_handoffs: Arc::new(crate::herdr::HerdrHandoffTracker::default()),
             herdr_resources: Arc::new(crate::herdr::HerdrResourceCache::default()),
-            pomodoro,
             remote_programs,
             workspaces: Arc::new(RwLock::new(workspaces)),
             database,
@@ -128,13 +107,6 @@ impl AppState {
         workspaces: &HashMap<String, WorkspaceRecord>,
     ) -> io::Result<()> {
         self.workspace_store.save(workspaces)
-    }
-
-    pub fn persist_plugins_snapshot(
-        &self,
-        plugins: &HashMap<String, PluginRecord>,
-    ) -> io::Result<()> {
-        PluginStore::new(Arc::clone(&self.database)).save(plugins)
     }
 
     pub fn output_buffer(
@@ -157,27 +129,21 @@ impl AppState {
             RemoteProgramStore::load(Arc::clone(&database)).expect("test remote programs"),
         );
         let notifications = Arc::new(NotificationHub::new(Arc::clone(&database)));
-        let pomodoro = Arc::new(PomodoroManager::new(
-            Arc::clone(&database),
-            Arc::clone(&notifications),
-        ));
         Self {
+            plugin: crate::plugin::PluginHost::new_for_test(
+                Arc::clone(&database),
+                Arc::clone(&notifications),
+            ),
             sessions: Arc::new(SessionManager::new(
                 HashMap::new(),
                 Arc::new(SessionStore::new(Arc::clone(&database))),
                 Arc::clone(&database),
             )),
             terminal_control: Arc::new(TerminalControlHub::new()),
-            plugins: Arc::new(RwLock::new(HashMap::new())),
-            terminal_mcp: Arc::new(TerminalMcpManager::default()),
-            lightos_port_forwards: Arc::new(LightOsPortForwardManager::default()),
-            file_uploads: Arc::new(FileTransferUploadManager::default()),
-            public_tunnels: Arc::new(TunnelManager::default()),
             notifications,
             herdr_notifications: Arc::new(HerdrNotificationSender::default()),
             herdr_handoffs: Arc::new(crate::herdr::HerdrHandoffTracker::default()),
             herdr_resources: Arc::new(crate::herdr::HerdrResourceCache::default()),
-            pomodoro,
             remote_programs,
             workspaces: Arc::new(RwLock::new(HashMap::new())),
             database: Arc::clone(&database),
@@ -221,21 +187,6 @@ pub struct SessionRecord {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub metadata: HashMap<String, String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct PluginRecord {
-    pub id: String,
-    pub kind: String,
-    pub display_name: String,
-    pub description: String,
-    pub scopes: Vec<String>,
-    pub accepted_content_types: Vec<String>,
-    pub produced_content_types: Vec<String>,
-    pub input_schema_json: String,
-    pub output_schema_json: String,
-    pub enabled: bool,
     pub metadata: HashMap<String, String>,
 }
 
@@ -311,111 +262,6 @@ impl SessionRecord {
     pub fn output_frame_limit(&self) -> usize {
         output_frame_limit_from_metadata(&self.metadata)
     }
-}
-
-impl PluginRecord {
-    pub fn to_proto(&self) -> PluginDescriptor {
-        PluginDescriptor {
-            id: Some(self.id.clone()),
-            kind: Some(self.kind.clone()),
-            display_name: Some(self.display_name.clone()),
-            description: Some(self.description.clone()),
-            scopes: self.scopes.clone(),
-            accepted_content_types: self.accepted_content_types.clone(),
-            produced_content_types: self.produced_content_types.clone(),
-            input_schema_json: Some(self.input_schema_json.clone()),
-            output_schema_json: Some(self.output_schema_json.clone()),
-            enabled: Some(self.enabled),
-            metadata: self.public_metadata().into_iter().collect(),
-            ..Default::default()
-        }
-    }
-
-    fn public_metadata(&self) -> HashMap<String, String> {
-        let mut metadata = self.metadata.clone();
-        if self.id == crate::plugins::tunnel::PLUGIN_ID {
-            metadata.remove("ngrokAuthtoken");
-            metadata.remove("ngrokConfigured");
-            metadata.remove("tunnelProviderProfiles");
-        }
-        metadata
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct PersistedPluginState {
-    version: u32,
-    plugins: Vec<PersistedPluginRecord>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct PersistedPluginRecord {
-    id: String,
-    enabled: bool,
-    #[serde(default)]
-    metadata: HashMap<String, String>,
-}
-
-struct PluginStore {
-    database: Arc<AppDatabase>,
-}
-
-impl PluginStore {
-    fn new(database: Arc<AppDatabase>) -> Self {
-        Self { database }
-    }
-
-    fn load(&self) -> io::Result<HashMap<String, PluginRecord>> {
-        let mut plugins = builtin_plugins();
-        let Some(bytes) = self.database.load_kv(KV_NAMESPACE_STATE, KV_KEY_PLUGINS)? else {
-            return Ok(plugins);
-        };
-        let persisted = serde_json::from_slice::<PersistedPluginState>(&bytes)
-            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
-        for record in persisted.plugins {
-            let id = record.id.trim();
-            if id.is_empty() {
-                continue;
-            }
-            let Some(plugin) = plugins.get_mut(id) else {
-                warn!(plugin_id = %id, "ignored persisted settings for unknown plugin");
-                continue;
-            };
-            let builtin_metadata = plugin.metadata.clone();
-            plugin.enabled = record.enabled;
-            plugin.metadata.extend(record.metadata);
-            for key in builtin_owned_metadata_keys(id) {
-                if let Some(value) = builtin_metadata.get(*key) {
-                    plugin.metadata.insert((*key).to_owned(), value.to_owned());
-                }
-            }
-        }
-        Ok(plugins)
-    }
-
-    fn save(&self, plugins: &HashMap<String, PluginRecord>) -> io::Result<()> {
-        let mut plugins = plugins
-            .values()
-            .map(|plugin| PersistedPluginRecord {
-                id: plugin.id.clone(),
-                enabled: plugin.enabled,
-                metadata: plugin.metadata.clone(),
-            })
-            .collect::<Vec<_>>();
-        plugins.sort_by(|left, right| left.id.cmp(&right.id));
-        let persisted = PersistedPluginState {
-            version: 1,
-            plugins,
-        };
-        let bytes =
-            serde_json::to_vec(&persisted).map_err(|err| io::Error::other(err.to_string()))?;
-        self.database
-            .store_kv(KV_NAMESPACE_STATE, KV_KEY_PLUGINS, &bytes)
-    }
-}
-
-fn builtin_owned_metadata_keys(_plugin_id: &str) -> &'static [&'static str] {
-    &["builtin", "runtime", "backends", "requiresRuntime"]
 }
 
 pub fn mark_session_status(state: &AppState, session_id: &str, status: &str) {
@@ -834,167 +680,6 @@ pub fn output_frame_limit_from_metadata(metadata: &HashMap<String, String>) -> u
 }
 
 #[allow(clippy::too_many_lines)] // The built-in plugin catalog is intentionally centralized for review.
-fn builtin_plugins() -> HashMap<String, PluginRecord> {
-    [
-        PluginRecord {
-            id: crate::plugins::terminal_mcp::PLUGIN_ID.to_owned(),
-            kind: "integration".to_owned(),
-            display_name: "Terminal MCP".to_owned(),
-            description: "Expose terminal session discovery, output, and explicitly authorized control through the LazyCat MCP resource gateway.".to_owned(),
-            scopes: vec![
-                "terminal".to_owned(),
-                "mcp".to_owned(),
-                "automation".to_owned(),
-            ],
-            accepted_content_types: vec!["application/json".to_owned()],
-            produced_content_types: vec!["application/json".to_owned()],
-            input_schema_json: r#"{"transport":"streamable-http","endpoint":"/mcp"}"#.to_owned(),
-            output_schema_json: r#"{"tools":"terminal session discovery, replay, lifecycle, and authorized interaction"}"#.to_owned(),
-            enabled: false,
-            metadata: HashMap::from([
-                ("builtin".to_owned(), "true".to_owned()),
-                ("defaultEnabled".to_owned(), "false".to_owned()),
-                ("runtime".to_owned(), "backend-service".to_owned()),
-                ("backends".to_owned(), "webshell,ssh,herdr".to_owned()),
-                ("defaultPolicy".to_owned(), "confirm".to_owned()),
-                ("trustedCallers".to_owned(), "[]".to_owned()),
-                ("deniedCallers".to_owned(), "[]".to_owned()),
-            ]),
-        },
-        PluginRecord {
-            id: "file-transfer".to_owned(),
-            kind: "transfer".to_owned(),
-            display_name: "File Transfer Adapter".to_owned(),
-            description: "Read, write, list, and inspect files on the selected terminal target through its active backend boundary.".to_owned(),
-            scopes: vec!["session".to_owned(), "filesystem".to_owned()],
-            accepted_content_types: vec![
-                "text/plain".to_owned(),
-                "application/json".to_owned(),
-                "application/octet-stream".to_owned(),
-            ],
-            produced_content_types: vec![
-                "text/plain".to_owned(),
-                "application/json".to_owned(),
-                "application/octet-stream".to_owned(),
-            ],
-            input_schema_json: r#"{"sessionId":"string","operation":"list|stat|read|download|write|upload|upload_begin|upload_chunk|upload_finish|upload_cancel","metadata":{"selector":"optional LightOS selector for agent-managed webshell panes","path":"string","uploadId":"string for chunk/finish/cancel","offset":"number for chunk","size":"number for begin"},"payload":"bytes for write/upload/upload_chunk"}"#.to_owned(),
-            output_schema_json: r#"{"status":"complete","contentType":"text/plain|application/json|application/octet-stream","payload":"file bytes, directory listing, stat output, or write summary"}"#.to_owned(),
-            enabled: true,
-            metadata: HashMap::from([
-                ("builtin".to_owned(), "true".to_owned()),
-                ("runtime".to_owned(), "target-shell".to_owned()),
-                ("backends".to_owned(), "webshell,herdr,zellij,ssh".to_owned()),
-            ]),
-        },
-        PluginRecord {
-            id: "terminal-transfer".to_owned(),
-            kind: "transfer".to_owned(),
-            display_name: "Terminal Transfer".to_owned(),
-            description: "Automatically handles lrzsz (rz/sz) and trzsz (trz/tsz) transfers in native WebShell terminals through the browser terminal stream.".to_owned(),
-            scopes: vec!["session".to_owned(), "transfer".to_owned()],
-            accepted_content_types: vec!["application/octet-stream".to_owned()],
-            produced_content_types: vec!["application/octet-stream".to_owned()],
-            input_schema_json: r#"{"operation":"rz|sz|trz|tsz","metadata":{"terminalBackend":"webshell|ssh","cwd":"current terminal directory","protocols":"lrzsz,trzsz"},"payload":"local file bytes for upload protocols"}"#.to_owned(),
-            output_schema_json: r#"{"status":"complete|failed|cancelled","name":"file name","size":"bytes when known"}"#.to_owned(),
-            enabled: false,
-            metadata: HashMap::from([
-                ("builtin".to_owned(), "true".to_owned()),
-                ("defaultEnabled".to_owned(), "false".to_owned()),
-                ("runtime".to_owned(), "browser-terminal".to_owned()),
-                ("backends".to_owned(), "webshell,ssh".to_owned()),
-                ("protocols".to_owned(), "lrzsz,trzsz".to_owned()),
-            ]),
-        },
-        PluginRecord {
-            id: "ai-chat".to_owned(),
-            kind: "chat".to_owned(),
-            display_name: "AI Chat".to_owned(),
-            description: "Chat inside WebShell with optional recent terminal context. It does not control terminal input.".to_owned(),
-            scopes: vec!["session".to_owned(), "ai".to_owned()],
-            accepted_content_types: vec!["application/json".to_owned()],
-            produced_content_types: vec!["application/json".to_owned()],
-            input_schema_json: r#"{"operation":"chat|models|test","metadata":{"model":"string"},"payload":{"input":"string","ctx":"optional terminal context"}}"#.to_owned(),
-            output_schema_json: r#"{"status":"complete","stream":"assistant response chunks","models":"optional model list"}"#.to_owned(),
-            enabled: false,
-            metadata: HashMap::from([
-                ("builtin".to_owned(), "true".to_owned()),
-                ("defaultEnabled".to_owned(), "false".to_owned()),
-            ]),
-        },
-        PluginRecord {
-            id: "pomodoro".to_owned(),
-            kind: "productivity".to_owned(),
-            display_name: "Pomodoro".to_owned(),
-            description: "Focus timer for short work sessions inside the WebShell plugin panel.".to_owned(),
-            scopes: vec!["productivity".to_owned()],
-            accepted_content_types: vec![],
-            produced_content_types: vec![],
-            input_schema_json: r#"{"operation":"state|start|stop|dismiss","metadata":{"minutes":"1..180 for start","rounds":"1..8 optional","currentRound":"1..rounds optional"}}"#.to_owned(),
-            output_schema_json: r#"{"status":"idle|running|completed","durationMinutes":25,"totalRounds":4,"currentRound":1,"startedAtMs":0,"deadlineMs":0,"notificationId":"optional"}"#.to_owned(),
-            enabled: true,
-            metadata: HashMap::from([
-                ("builtin".to_owned(), "true".to_owned()),
-                ("runtime".to_owned(), "backend-task".to_owned()),
-            ]),
-        },
-        PluginRecord {
-            id: "white-noise".to_owned(),
-            kind: "sound".to_owned(),
-            display_name: "White Noise".to_owned(),
-            description: "Play local focus sounds from the provider sounds directory without bundling audio in the frontend.".to_owned(),
-            scopes: vec!["productivity".to_owned(), "sound".to_owned()],
-            accepted_content_types: vec![],
-            produced_content_types: vec![],
-            input_schema_json: r#"{"operation":"catalog|playback","metadata":{"soundsDir":"/lzcapp/var/sounds","formats":"mp3,wav,ogg,flac,m4a,webm"}}"#.to_owned(),
-            output_schema_json: r#"{"rootPath":"string","exists":true,"files":[{"id":"string","category":"string","url":"/sounds/..."}]}"#.to_owned(),
-            enabled: true,
-            metadata: HashMap::from([
-                ("builtin".to_owned(), "true".to_owned()),
-                ("runtime".to_owned(), "browser-audio".to_owned()),
-                ("floatingControls".to_owned(), "true".to_owned()),
-                ("autoPlayOnSelect".to_owned(), "true".to_owned()),
-            ]),
-        },
-        PluginRecord {
-            id: crate::plugins::lightos_port_forward::PLUGIN_ID.to_owned(),
-            kind: "network".to_owned(),
-            display_name: "LightOS Port Forward".to_owned(),
-            description: "Forward a target LightOS instance HTTP port to a local WebShell provider port for preview or tunnel publishing.".to_owned(),
-            scopes: vec!["session".to_owned(), "network".to_owned(), "lightos".to_owned()],
-            accepted_content_types: vec!["application/json".to_owned()],
-            produced_content_types: vec!["application/json".to_owned()],
-            input_schema_json: r#"{"operation":"acquire|release|list","metadata":{"remoteHost":"127.0.0.1","remotePort":"number","forwardId":"string for release"}}"#.to_owned(),
-            output_schema_json: r#"{"forwards":[{"id":"string","localUrl":"http://127.0.0.1:port/","remotePort":8080,"status":"running"}]}"#.to_owned(),
-            enabled: false,
-            metadata: HashMap::from([
-                ("builtin".to_owned(), "true".to_owned()),
-                ("requiresRuntime".to_owned(), "lightos".to_owned()),
-                ("defaultEnabled".to_owned(), "false".to_owned()),
-            ]),
-        },
-        PluginRecord {
-            id: crate::plugins::tunnel::PLUGIN_ID.to_owned(),
-            kind: "tunnel".to_owned(),
-            display_name: "Public Tunnel".to_owned(),
-            description: "Publish a local HTTP endpoint through Cloudflare Quick Tunnel or ngrok. Pair it with LightOS Port Forward to expose an instance port.".to_owned(),
-            scopes: vec!["session".to_owned(), "network".to_owned(), "tunnel".to_owned()],
-            accepted_content_types: vec!["application/json".to_owned()],
-            produced_content_types: vec!["application/json".to_owned()],
-            input_schema_json: r#"{"operation":"start|stop|list","metadata":{"provider":"cloudflare-quick|ngrok","upstreamUrl":"http://127.0.0.1:port/","ngrokProfileId":"required for ngrok","tunnelId":"string for stop"}}"#.to_owned(),
-            output_schema_json: r#"{"sessions":[{"id":"string","provider":"cloudflare-quick|ngrok","publicUrl":"https://...","upstreamUrl":"http://127.0.0.1:port/","status":"running"}]}"#.to_owned(),
-            enabled: false,
-            metadata: HashMap::from([
-                ("builtin".to_owned(), "true".to_owned()),
-                ("defaultEnabled".to_owned(), "false".to_owned()),
-                ("providers".to_owned(), "cloudflare-quick,ngrok".to_owned()),
-            ]),
-        },
-    ]
-    .into_iter()
-    .map(|plugin| (plugin.id.clone(), plugin))
-    .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

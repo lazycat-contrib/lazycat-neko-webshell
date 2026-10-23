@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use connectrpc::ConnectError;
+use neko_plugin::PluginError as ConnectError;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -31,6 +31,11 @@ struct UploadState {
 }
 
 impl FileTransferUploadManager {
+    pub fn clear(&self) -> Result<(), ConnectError> {
+        self.lock_uploads()?.clear();
+        Ok(())
+    }
+
     pub fn begin(
         &self,
         session_id: &str,
@@ -99,19 +104,15 @@ impl FileTransferUploadManager {
     ) -> Result<FinishedUpload, ConnectError> {
         let mut uploads = self.lock_uploads()?;
         prune_stale_uploads(&mut uploads);
-        let Some(upload) = uploads.remove(upload_id) else {
-            return Err(ConnectError::not_found("upload is not initialized"));
-        };
-        if upload.session_id != session_id {
-            return Err(ConnectError::permission_denied(
-                "upload does not belong to this session",
-            ));
-        }
+        let upload = upload_for_session(uploads.get_mut(upload_id), session_id)?;
         if upload.received != upload.size {
             return Err(ConnectError::invalid_argument(
                 "upload ended before declared size",
             ));
         }
+        let upload = uploads
+            .remove(upload_id)
+            .expect("authorized completed upload");
         Ok(FinishedUpload {
             path: upload.path,
             data: upload.data,
@@ -217,5 +218,14 @@ mod tests {
             .append("session-1", upload_id, 1, b"x")
             .expect_err("offset mismatch");
         assert!(error.to_string().contains("upload chunk offset mismatch"));
+    }
+    #[test]
+    fn finishing_as_another_owner_does_not_consume_the_upload() {
+        let uploads = FileTransferUploadManager::default();
+        let begin = uploads.begin("owner", "/tmp/file", "file", 2).unwrap();
+        let id = begin["uploadId"].as_str().unwrap();
+        uploads.append("owner", id, 0, b"ok").unwrap();
+        assert!(uploads.finish("other-owner", id).is_err());
+        assert_eq!(uploads.finish("owner", id).unwrap().data, b"ok");
     }
 }

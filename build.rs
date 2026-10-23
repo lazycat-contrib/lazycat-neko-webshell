@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest as _, Sha256};
 
 fn main() {
+    build_plugin_catalog().expect("plugin catalog generation failed");
     connectrpc_build::Config::new()
         .files(&["proto/lazycat/webshell/v1/capability.proto"])
         .includes(&["proto/"])
@@ -138,4 +139,91 @@ fn collect_files(
         }
     }
     Ok(())
+}
+
+fn build_plugin_catalog() -> std::io::Result<()> {
+    let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
+    let directory = root.join("src/plugins");
+    println!("cargo:rerun-if-changed={}", directory.display());
+    let mut entries = Vec::new();
+    let mut ids = std::collections::HashSet::new();
+    for entry in fs::read_dir(&directory)? {
+        let entry = entry?;
+        let manifest_path = entry.path().join("plugin.json");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let json = fs::read_to_string(&manifest_path)?;
+        let manifest: serde_json::Value = serde_json::from_str(&json)?;
+        let id = manifest["id"]
+            .as_str()
+            .filter(|id| {
+                !id.is_empty()
+                    && id.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
+                    })
+            })
+            .ok_or_else(|| std::io::Error::other("invalid plugin id"))?;
+        if !ids.insert(id.to_owned()) {
+            return Err(std::io::Error::other(format!("duplicate plugin id: {id}")));
+        }
+        let module = entry.file_name().to_string_lossy().into_owned();
+        if !module
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(std::io::Error::other("invalid plugin module name"));
+        }
+        let source = entry.path().join("mod.rs");
+        if !source.is_file() {
+            return Err(std::io::Error::other(format!(
+                "plugin has no Rust entry: {id}"
+            )));
+        }
+        let frontend = manifest["frontend"]["entry"]
+            .as_str()
+            .ok_or_else(|| std::io::Error::other("missing plugin frontend entry"))?;
+        if frontend.contains("..")
+            || !root
+                .join("src/frontend/src/plugins")
+                .join(frontend)
+                .is_file()
+        {
+            return Err(std::io::Error::other(format!(
+                "plugin has no frontend entry: {id}"
+            )));
+        }
+        if manifest["resources"].as_array().is_none()
+            || manifest["configuration"]["version"].as_u64() != Some(1)
+        {
+            return Err(std::io::Error::other(format!(
+                "plugin has no resource/configuration contract: {id}"
+            )));
+        }
+        println!("cargo:rerun-if-changed={}", manifest_path.display());
+        entries.push((id.to_owned(), module, source, json));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    if entries.is_empty() {
+        return Err(std::io::Error::other("no built-in plugins discovered"));
+    }
+    let mut modules = String::new();
+    let mut catalog = String::from("pub const ENTRIES: &[Entry] = &[\n");
+    for (id, module, source, json) in entries {
+        writeln!(
+            &mut modules,
+            "#[path = {:?}] pub mod {module};",
+            source.to_string_lossy()
+        )
+        .expect("String write");
+        writeln!(
+            &mut catalog,
+            "Entry {{ id: {id:?}, json: {json:?}, register: crate::plugins::{module}::register }},"
+        )
+        .expect("String write");
+    }
+    catalog.push_str("];\n");
+    let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
+    fs::write(out.join("plugin_modules.rs"), modules)?;
+    fs::write(out.join("plugin_catalog.rs"), catalog)
 }

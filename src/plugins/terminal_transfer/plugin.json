@@ -1,0 +1,51 @@
+{
+  "id": "terminal-transfer",
+  "kind": "transfer",
+  "display_name": "Terminal Transfer",
+  "description": "Automatically handles lrzsz (rz/sz) and trzsz (trz/tsz) transfers in native WebShell terminals through the browser terminal stream.",
+  "input_schema_json": "{\"operation\":\"rz|sz|trz|tsz\",\"metadata\":{\"terminalBackend\":\"webshell|ssh\",\"cwd\":\"current terminal directory\",\"protocols\":\"lrzsz,trzsz\"},\"payload\":\"local file bytes for upload protocols\"}",
+  "output_schema_json": "{\"status\":\"complete|failed|cancelled\",\"name\":\"file name\",\"size\":\"bytes when known\"}",
+  "scopes": [
+    "session",
+    "transfer"
+  ],
+  "accepted_content_types": [
+    "application/octet-stream"
+  ],
+  "produced_content_types": [
+    "application/octet-stream"
+  ],
+  "enabled": false,
+  "metadata": {
+    "builtin": "true",
+    "defaultEnabled": "false",
+    "runtime": "browser-terminal",
+    "backends": "webshell,ssh",
+    "protocols": "lrzsz,trzsz"
+  },
+  "resources": [
+    "terminal-stream",
+    "ui"
+  ],
+  "frontend": {
+    "entry": "terminal-transfer/entry.ts",
+    "tool": true,
+    "icon": "arrow-left-right",
+    "nameKey": "plugin.terminalTransfer.name",
+    "descriptionKey": "plugin.terminalTransfer.description"
+  },
+  "configuration": {
+    "version": 1,
+    "metadata": {
+      "protocols": {
+        "type": "csv",
+        "values": [
+          "lrzsz",
+          "trzsz",
+          "zmodem"
+        ]
+      }
+    },
+    "preferences": []
+  }
+}

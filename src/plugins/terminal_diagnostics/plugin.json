@@ -1,0 +1,22 @@
+{
+  "id": "terminal-diagnostics",
+  "kind": "diagnostics",
+  "display_name": "Terminal Diagnostics",
+  "description": "Inspect connection, replay, resize and reconnect timing without recording terminal contents.",
+  "input_schema_json": "{}",
+  "output_schema_json": "{\"version\":1,\"trace\":{},\"performance\":{}}",
+  "scopes": ["terminal"],
+  "accepted_content_types": [],
+  "produced_content_types": ["application/json"],
+  "enabled": false,
+  "metadata": {"builtin":"true", "defaultEnabled":"false", "runtime":"browser"},
+  "resources": ["diagnostics", "ui"],
+  "frontend": {
+    "entry": "terminal-diagnostics/entry.ts",
+    "tool": true,
+    "icon": "activity",
+    "nameKey": "plugin.terminalDiagnostics.name",
+    "descriptionKey": "plugin.terminalDiagnostics.description"
+  },
+  "configuration": {"version":1, "metadata":{}, "preferences":[]}
+}

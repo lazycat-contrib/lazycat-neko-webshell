@@ -1,16 +1,12 @@
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use axum::Json;
-use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::database::{AppDatabase, KV_NAMESPACE_STATE};
-use crate::notifications::{NewNotification, NotificationAction, NotificationHub, now_ms};
-use crate::state::AppState;
+use neko_plugin::{
+    NewNotification, NotificationAction, PluginNotifications, PluginStorage, now_ms,
+};
 
 const KV_KEY_POMODORO: &str = "pomodoro";
 const DEFAULT_DURATION_MINUTES: u32 = 25;
@@ -43,11 +39,11 @@ pub struct PomodoroState {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StartPomodoroRequest {
-    minutes: u32,
+    pub minutes: u32,
     #[serde(default)]
-    rounds: Option<u32>,
+    pub rounds: Option<u32>,
     #[serde(default)]
-    current_round: Option<u32>,
+    pub current_round: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -73,13 +69,16 @@ struct PersistedPomodoroState {
 
 #[derive(Clone)]
 pub struct PomodoroManager {
-    database: Arc<AppDatabase>,
-    notifications: Arc<NotificationHub>,
+    database: Arc<dyn PluginStorage>,
+    notifications: Arc<dyn PluginNotifications>,
     lock: Arc<Mutex<()>>,
 }
 
 impl PomodoroManager {
-    pub fn new(database: Arc<AppDatabase>, notifications: Arc<NotificationHub>) -> Self {
+    pub fn new(
+        database: Arc<dyn PluginStorage>,
+        notifications: Arc<dyn PluginNotifications>,
+    ) -> Self {
         Self {
             database,
             notifications,
@@ -97,7 +96,7 @@ impl PomodoroManager {
         Ok(state.into_public())
     }
 
-    fn start_round(&self, minutes: u32, rounds: u32, round: u32) -> io::Result<PomodoroState> {
+    pub fn start_round(&self, minutes: u32, rounds: u32, round: u32) -> io::Result<PomodoroState> {
         let _guard = self.lock.lock().expect("pomodoro lock poisoned");
         let duration_minutes = normalize_duration_minutes(minutes);
         let total_rounds = normalize_total_rounds(rounds);
@@ -233,7 +232,7 @@ impl PomodoroManager {
     }
 
     fn load_unlocked(&self) -> io::Result<PersistedPomodoroState> {
-        let Some(bytes) = self.database.load_kv(KV_NAMESPACE_STATE, KV_KEY_POMODORO)? else {
+        let Some(bytes) = self.database.load(KV_KEY_POMODORO)? else {
             return Ok(idle_state(DEFAULT_DURATION_MINUTES, DEFAULT_TOTAL_ROUNDS));
         };
         let mut state = serde_json::from_slice::<PersistedPomodoroState>(&bytes)
@@ -244,127 +243,7 @@ impl PomodoroManager {
 
     fn save_unlocked(&self, state: &PersistedPomodoroState) -> io::Result<()> {
         let bytes = serde_json::to_vec(state).map_err(|err| io::Error::other(err.to_string()))?;
-        self.database
-            .store_kv(KV_NAMESPACE_STATE, KV_KEY_POMODORO, &bytes)
-    }
-}
-
-pub async fn get_pomodoro_state(State(state): State<Arc<AppState>>) -> Response {
-    match state.pomodoro.state() {
-        Ok(pomodoro) => Json(pomodoro).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to read pomodoro state: {err}"),
-        )
-            .into_response(),
-    }
-}
-
-pub async fn post_pomodoro_start(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<StartPomodoroRequest>,
-) -> Response {
-    match state.pomodoro.start_round(
-        request.minutes,
-        request.rounds.unwrap_or(DEFAULT_TOTAL_ROUNDS),
-        request.current_round.unwrap_or(1),
-    ) {
-        Ok(pomodoro) => Json(pomodoro).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to start pomodoro: {err}"),
-        )
-            .into_response(),
-    }
-}
-
-pub async fn post_pomodoro_stop(State(state): State<Arc<AppState>>) -> Response {
-    match state.pomodoro.stop() {
-        Ok(pomodoro) => Json(pomodoro).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to stop pomodoro: {err}"),
-        )
-            .into_response(),
-    }
-}
-
-pub async fn post_pomodoro_dismiss(State(state): State<Arc<AppState>>) -> Response {
-    match state.pomodoro.dismiss_completed() {
-        Ok(pomodoro) => Json(pomodoro).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to dismiss pomodoro: {err}"),
-        )
-            .into_response(),
-    }
-}
-
-pub async fn post_notification_action(
-    State(state): State<Arc<AppState>>,
-    Path((id, action_id)): Path<(String, String)>,
-    headers: HeaderMap,
-) -> Response {
-    let notification = match state.notifications.notification(&id) {
-        Ok(Some(notification)) => notification,
-        Ok(None) => return (StatusCode::NOT_FOUND, "notification not found").into_response(),
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to read notification: {err}"),
-            )
-                .into_response();
-        }
-    };
-    if !notification
-        .actions
-        .iter()
-        .any(|action| action.id == action_id)
-    {
-        return (StatusCode::NOT_FOUND, "notification action not found").into_response();
-    }
-    if notification.source_kind == NOTIFICATION_SOURCE_KIND {
-        return match state.pomodoro.handle_notification_action(&id, &action_id) {
-            Ok(Some(pomodoro)) => Json(pomodoro).into_response(),
-            Ok(None) => (StatusCode::NOT_FOUND, "notification action not found").into_response(),
-            Err(err) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to run notification action: {err}"),
-            )
-                .into_response(),
-        };
-    }
-    if notification.source_kind == crate::plugins::terminal_mcp::PLUGIN_ID {
-        if !crate::plugins::terminal_mcp::http::is_terminal_ui_request(&headers) {
-            return (StatusCode::FORBIDDEN, "terminal-side approval is required").into_response();
-        }
-        return match crate::plugins::terminal_mcp::http::handle_notification_action(
-            &state,
-            &notification,
-            &action_id,
-        ) {
-            Ok(Some(request)) => Json(request).into_response(),
-            Ok(None) => (StatusCode::NOT_FOUND, "notification action not found").into_response(),
-            Err(error) => (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({
-                    "error": {
-                        "code": error.code,
-                        "message": error.message,
-                    }
-                })),
-            )
-                .into_response(),
-        };
-    }
-    match state.notifications.mark_actioned(&id) {
-        Ok(Some(notification)) => Json(notification).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, "notification not found").into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to update notification: {err}"),
-        )
-            .into_response(),
+        self.database.store(KV_KEY_POMODORO, &bytes)
     }
 }
 
@@ -384,7 +263,7 @@ impl PersistedPomodoroState {
 }
 
 fn notification_is_pomodoro(
-    notification: Option<&crate::notifications::WebshellNotification>,
+    notification: Option<&neko_plugin::WebshellNotification>,
     notification_id: &str,
 ) -> bool {
     notification.is_some_and(|notification| {

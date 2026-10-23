@@ -1,0 +1,35 @@
+{
+  "id": "pomodoro",
+  "kind": "productivity",
+  "display_name": "Pomodoro",
+  "description": "Focus timer for short work sessions inside the WebShell plugin panel.",
+  "input_schema_json": "{\"operation\":\"state|start|stop|dismiss\",\"metadata\":{\"minutes\":\"1..180 for start\",\"rounds\":\"1..8 optional\",\"currentRound\":\"1..rounds optional\"}}",
+  "output_schema_json": "{\"status\":\"idle|running|completed\",\"durationMinutes\":25,\"totalRounds\":4,\"currentRound\":1,\"startedAtMs\":0,\"deadlineMs\":0,\"notificationId\":\"optional\"}",
+  "scopes": [
+    "productivity"
+  ],
+  "accepted_content_types": [],
+  "produced_content_types": [],
+  "enabled": true,
+  "metadata": {
+    "builtin": "true",
+    "runtime": "backend-task"
+  },
+  "resources": [
+    "storage",
+    "notifications",
+    "ui"
+  ],
+  "frontend": {
+    "entry": "pomodoro/entry.ts",
+    "tool": true,
+    "icon": "timer",
+    "nameKey": "plugin.pomodoro.name",
+    "descriptionKey": "plugin.pomodoro.description"
+  },
+  "configuration": {
+    "version": 1,
+    "metadata": {},
+    "preferences": []
+  }
+}

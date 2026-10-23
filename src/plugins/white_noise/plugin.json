@@ -1,0 +1,44 @@
+{
+  "id": "white-noise",
+  "kind": "sound",
+  "display_name": "White Noise",
+  "description": "Play local focus sounds from the provider sounds directory without bundling audio in the frontend.",
+  "input_schema_json": "{\"operation\":\"catalog|playback\",\"metadata\":{\"soundsDir\":\"/lzcapp/var/sounds\",\"formats\":\"mp3,wav,ogg,flac,m4a,webm\"}}",
+  "output_schema_json": "{\"rootPath\":\"string\",\"exists\":true,\"files\":[{\"id\":\"string\",\"category\":\"string\",\"url\":\"/sounds/...\"}]}",
+  "scopes": [
+    "productivity",
+    "sound"
+  ],
+  "accepted_content_types": [],
+  "produced_content_types": [],
+  "enabled": true,
+  "metadata": {
+    "builtin": "true",
+    "runtime": "browser-audio",
+    "floatingControls": "true",
+    "autoPlayOnSelect": "true"
+  },
+  "resources": [
+    "media",
+    "ui"
+  ],
+  "frontend": {
+    "entry": "white-noise/entry.ts",
+    "tool": true,
+    "icon": "waves",
+    "nameKey": "plugin.whiteNoise.name",
+    "descriptionKey": "plugin.whiteNoise.description"
+  },
+  "configuration": {
+    "version": 1,
+    "metadata": {
+      "autoPlayOnSelect": {
+        "type": "boolean"
+      },
+      "floatingControls": {
+        "type": "boolean"
+      }
+    },
+    "preferences": []
+  }
+}

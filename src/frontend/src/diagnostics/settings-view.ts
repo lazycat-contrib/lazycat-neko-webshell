@@ -1,5 +1,8 @@
+import { renderMobileRemoteDesktopSettings } from "../mobile/settings/remote-desktop-view";
+
 export function renderTerminalDiagnosticsSettings(): string {
   return `<div id="terminalDiagnostics" class="settings-group" hidden>
+    ${renderMobileRemoteDesktopSettings()}
     <p class="settings-help" data-i18n="setting.terminalDiagnosticsHelp">Records connection timing and counters without terminal contents.</p>
     <div class="terminal-diagnostics-actions">
       <button type="button" class="command-button" data-diagnostics-copy data-i18n="action.copyTerminalDiagnostics">Copy terminal diagnostics</button>

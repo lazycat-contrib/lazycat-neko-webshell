@@ -121,7 +121,7 @@ mod tests {
             std::env::temp_dir().join(format!("secret-http-{}.db", uuid::Uuid::new_v4())),
         );
         // The built-in route must work independently of this registry.
-        state.plugins.write().unwrap().clear();
+        state.plugin.settings.write().unwrap().clear();
         Arc::new(state)
     }
 

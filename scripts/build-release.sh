@@ -18,6 +18,7 @@ cp vendor/restty/0.3.0/LICENSE "${content_dir}/licenses/restty-0.3.0-LICENSE"
 cp vendor/w1/0.3.0/LICENSE-MIT "${content_dir}/licenses/w1-0.3.0-LICENSE-MIT"
 
 npm ci
+npm run plugins:generate
 node scripts/export-restty-wasm.mjs
 npm test
 npm run build

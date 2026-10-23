@@ -1,0 +1,60 @@
+{
+  "id": "ai-chat",
+  "kind": "chat",
+  "display_name": "AI Chat",
+  "description": "Chat inside WebShell with optional recent terminal context. It does not control terminal input.",
+  "input_schema_json": "{\"operation\":\"chat|models|test\",\"metadata\":{\"model\":\"string\"},\"payload\":{\"input\":\"string\",\"ctx\":\"optional terminal context\"}}",
+  "output_schema_json": "{\"status\":\"complete\",\"stream\":\"assistant response chunks\",\"models\":\"optional model list\"}",
+  "scopes": [
+    "session",
+    "ai"
+  ],
+  "accepted_content_types": [
+    "application/json"
+  ],
+  "produced_content_types": [
+    "application/json"
+  ],
+  "enabled": false,
+  "metadata": {
+    "builtin": "true",
+    "defaultEnabled": "false"
+  },
+  "resources": [
+    "ai-preferences",
+    "terminal-context",
+    "ui"
+  ],
+  "frontend": {
+    "entry": "ai-chat/entry.ts",
+    "tool": true,
+    "icon": "message-square-text",
+    "nameKey": "plugin.aiChat.name",
+    "descriptionKey": "plugin.aiChat.description"
+  },
+  "configuration": {
+    "version": 1,
+    "metadata": {},
+    "preferences": [
+      "aiProvider",
+      "aiBaseUrl",
+      "aiApiKey",
+      "aiModel",
+      "aiMcpServers",
+      "aiProviderProfiles",
+      "aiActiveProviderProfileId",
+      "aiVoiceProviderProfiles",
+      "aiVoiceActiveProviderProfileId",
+      "aiVoiceReplyProviderProfiles",
+      "aiVoiceReplyActiveProviderProfileId",
+      "aiVoiceReplyEnabled"
+    ],
+    "secrets": [
+      "aiApiKey",
+      "aiProviderProfiles",
+      "aiMcpServers",
+      "aiVoiceProviderProfiles",
+      "aiVoiceReplyProviderProfiles"
+    ]
+  }
+}

@@ -7,9 +7,6 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::database::{KV_KEY_SETTINGS, KV_NAMESPACE_PREFERENCES};
-use crate::state::AppState;
-
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const MAX_TOOL_LOOPS: usize = 4;
@@ -76,16 +73,6 @@ struct StreamResult {
 struct SseEvent {
     event: String,
     data: String,
-}
-
-pub fn load_ai_settings(state: &AppState) -> anyhow::Result<AiSettings> {
-    let Some(bytes) = state
-        .database()
-        .load_kv(KV_NAMESPACE_PREFERENCES, KV_KEY_SETTINGS)?
-    else {
-        return Ok(AiSettings::default());
-    };
-    Ok(serde_json::from_slice(&bytes)?)
 }
 
 pub fn ai_access_configured(settings: &AiSettings) -> bool {

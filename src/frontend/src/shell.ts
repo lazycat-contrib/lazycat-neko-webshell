@@ -462,7 +462,7 @@ export function renderShell(app: HTMLElement): ShellElements {
               </label>
               <label class="switch">
                 <input id="debugMode" type="checkbox" />
-                <span data-i18n="setting.debugAdapter">Debug adapter</span>
+                <span data-i18n="setting.debugAdapter">Debug mode</span>
               </label>
               ${renderTerminalDiagnosticsSettings()}
               <label class="switch">

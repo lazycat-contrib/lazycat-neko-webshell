@@ -7,7 +7,9 @@ use serde_json::Value;
 use crate::herdr::{HerdrTerminalOperation, run_terminal_mcp_operation};
 use crate::state::AppState;
 
-use super::types::{TerminalMcpError, TerminalOutputFrame, TerminalReadResult};
+use crate::plugins::terminal_mcp::types::{
+    TerminalMcpError, TerminalOutputFrame, TerminalReadResult,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HerdrPaneDescriptor {

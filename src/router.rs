@@ -26,14 +26,14 @@ use crate::herdr_notifications::post_herdr_lazycat_notification;
 use crate::lightos::{self, AdminInfo};
 use crate::lightos_admin;
 use crate::notifications::{get_notifications, post_notification_dismiss, post_notification_read};
-use crate::plugins::terminal_mcp::http::{
-    get_control_state, post_approve_request, post_deny_request, post_revoke_grant,
-};
-use crate::plugins::terminal_mcp::server::streamable_http_service;
-use crate::pomodoro::{
+use crate::plugin::http::pomodoro::{
     get_pomodoro_state, post_notification_action, post_pomodoro_dismiss, post_pomodoro_start,
     post_pomodoro_stop,
 };
+use crate::plugin::http::terminal_mcp_http::{
+    get_control_state, post_approve_request, post_deny_request, post_revoke_grant,
+};
+use crate::plugin::http::terminal_mcp_server::streamable_http_service;
 use crate::preferences::{get_settings, put_settings};
 use crate::proto::lazycat::webshell::v1::{CapabilityServiceExt, Instance};
 use crate::service::CapabilityServiceImpl;

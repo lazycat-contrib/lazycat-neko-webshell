@@ -9,7 +9,9 @@ use serde::Serialize;
 use crate::notifications::WebshellNotification;
 use crate::state::AppState;
 
-use super::types::{ControlDecision, ControlGrant, ControlRequest, TerminalMcpError};
+use crate::plugins::terminal_mcp::types::{
+    ControlDecision, ControlGrant, ControlRequest, TerminalMcpError,
+};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,8 +24,8 @@ pub async fn get_control_state(State(state): State<Arc<AppState>>, headers: Head
     if !is_terminal_ui_request(&headers) {
         return delegated_caller_response();
     }
-    let mut pending_requests = state.terminal_mcp.pending_requests();
-    let mut active_grants = state.terminal_mcp.active_grants();
+    let mut pending_requests = state.plugin.terminal_mcp.pending_requests();
+    let mut active_grants = state.plugin.terminal_mcp.active_grants();
     pending_requests.sort_by(|left, right| {
         right
             .created_at_ms
@@ -73,7 +75,7 @@ pub async fn post_revoke_grant(
     if !is_terminal_ui_request(&headers) {
         return delegated_caller_response();
     }
-    if state.terminal_mcp.revoke_grant(grant_id.trim()) {
+    if state.plugin.terminal_mcp.revoke_grant(grant_id.trim()) {
         Json(serde_json::json!({ "revoked": true })).into_response()
     } else {
         (StatusCode::NOT_FOUND, "control grant not found").into_response()
@@ -91,7 +93,7 @@ pub(crate) fn handle_notification_action(
     notification: &WebshellNotification,
     action_id: &str,
 ) -> Result<Option<ControlRequest>, TerminalMcpError> {
-    if notification.source_kind != super::PLUGIN_ID {
+    if notification.source_kind != crate::plugins::terminal_mcp::PLUGIN_ID {
         return Ok(None);
     }
     let decision = match action_id {
@@ -114,7 +116,7 @@ pub(crate) fn handle_notification_action(
     if notification.source_id.as_deref() != Some(request_id) {
         return Err(TerminalMcpError::caller_not_authorized());
     }
-    let request = state.terminal_mcp.decide(request_id, decision)?;
+    let request = state.plugin.terminal_mcp.decide(request_id, decision)?;
     state
         .notifications
         .mark_actioned(&notification.id)
@@ -129,11 +131,11 @@ fn decide_request(state: &AppState, request_id: &str, decision: ControlDecision)
     if request_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "request id is required").into_response();
     }
-    match state.terminal_mcp.decide(request_id, decision) {
+    match state.plugin.terminal_mcp.decide(request_id, decision) {
         Ok(request) => {
             let _ = state
                 .notifications
-                .mark_source_actioned(super::PLUGIN_ID, request_id);
+                .mark_source_actioned(crate::plugins::terminal_mcp::PLUGIN_ID, request_id);
             Json(request).into_response()
         }
         Err(error) => terminal_error_response(&error),
@@ -198,6 +200,7 @@ mod tests {
 
     fn pending_request(state: &AppState) -> ControlRequest {
         let ControlAccess::ApprovalRequired(request) = state
+            .plugin
             .terminal_mcp
             .authorize(
                 &TerminalMcpPolicy::default(),
@@ -224,7 +227,7 @@ mod tests {
         let notification = state
             .notifications
             .add(crate::notifications::NewNotification {
-                source_kind: super::super::PLUGIN_ID.to_owned(),
+                source_kind: crate::plugins::terminal_mcp::PLUGIN_ID.to_owned(),
                 source_id: Some(request.id.clone()),
                 kind: "interactive".to_owned(),
                 severity: "warning".to_owned(),
@@ -246,7 +249,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(decided.decision, ControlDecision::Approved);
-        assert_eq!(state.terminal_mcp.active_grants().len(), 1);
+        assert_eq!(state.plugin.terminal_mcp.active_grants().len(), 1);
         assert_eq!(
             state
                 .notifications
@@ -264,7 +267,7 @@ mod tests {
         let request = pending_request(&state);
         let notification = WebshellNotification {
             id: "notification-one".to_owned(),
-            source_kind: super::super::PLUGIN_ID.to_owned(),
+            source_kind: crate::plugins::terminal_mcp::PLUGIN_ID.to_owned(),
             source_id: Some(request.id),
             kind: "interactive".to_owned(),
             severity: "warning".to_owned(),
@@ -316,7 +319,7 @@ mod tests {
             post_approve_request(State(Arc::clone(&state)), Path(request.id), headers).await;
 
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        assert!(state.terminal_mcp.active_grants().is_empty());
-        assert_eq!(state.terminal_mcp.pending_requests().len(), 1);
+        assert!(state.plugin.terminal_mcp.active_grants().is_empty());
+        assert_eq!(state.plugin.terminal_mcp.pending_requests().len(), 1);
     }
 }

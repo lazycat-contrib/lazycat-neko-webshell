@@ -3,8 +3,6 @@ use std::collections::BTreeSet;
 use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::state::PluginRecord;
-
 pub const DEFAULT_POLICY_METADATA: &str = "defaultPolicy";
 pub const TRUSTED_CALLERS_METADATA: &str = "trustedCallers";
 pub const DENIED_CALLERS_METADATA: &str = "deniedCallers";
@@ -34,16 +32,15 @@ pub struct TerminalMcpPolicy {
 }
 
 impl TerminalMcpPolicy {
-    pub fn from_plugin(plugin: &PluginRecord) -> Self {
-        let mode = plugin
-            .metadata
+    pub fn from_metadata(metadata: &std::collections::HashMap<String, String>) -> Self {
+        let mode = metadata
             .get(DEFAULT_POLICY_METADATA)
             .and_then(|value| serde_json::from_value(serde_json::Value::String(value.clone())).ok())
             .unwrap_or_default();
         Self {
             mode,
-            trusted_callers: parse_caller_list(plugin.metadata.get(TRUSTED_CALLERS_METADATA)),
-            denied_callers: parse_caller_list(plugin.metadata.get(DENIED_CALLERS_METADATA)),
+            trusted_callers: parse_caller_list(metadata.get(TRUSTED_CALLERS_METADATA)),
+            denied_callers: parse_caller_list(metadata.get(DENIED_CALLERS_METADATA)),
         }
     }
 
@@ -279,29 +276,17 @@ mod tests {
 
     use super::*;
 
-    fn plugin(mode: &str, trusted: &str, denied: &str) -> PluginRecord {
-        PluginRecord {
-            id: "terminal-mcp".to_owned(),
-            kind: "integration".to_owned(),
-            display_name: "Terminal MCP".to_owned(),
-            description: String::new(),
-            scopes: Vec::new(),
-            accepted_content_types: Vec::new(),
-            produced_content_types: Vec::new(),
-            input_schema_json: "{}".to_owned(),
-            output_schema_json: "{}".to_owned(),
-            enabled: true,
-            metadata: HashMap::from([
-                (DEFAULT_POLICY_METADATA.to_owned(), mode.to_owned()),
-                (TRUSTED_CALLERS_METADATA.to_owned(), trusted.to_owned()),
-                (DENIED_CALLERS_METADATA.to_owned(), denied.to_owned()),
-            ]),
-        }
+    fn plugin(mode: &str, trusted: &str, denied: &str) -> HashMap<String, String> {
+        HashMap::from([
+            (DEFAULT_POLICY_METADATA.to_owned(), mode.to_owned()),
+            (TRUSTED_CALLERS_METADATA.to_owned(), trusted.to_owned()),
+            (DENIED_CALLERS_METADATA.to_owned(), denied.to_owned()),
+        ])
     }
 
     #[test]
     fn parses_policy_and_applies_deny_precedence() {
-        let policy = TerminalMcpPolicy::from_plugin(&plugin(
+        let policy = TerminalMcpPolicy::from_metadata(&plugin(
             "trusted_callers",
             r#"["trusted","denied","trusted"]"#,
             r#"["denied"]"#,
@@ -315,7 +300,7 @@ mod tests {
 
     #[test]
     fn malformed_policy_falls_back_to_confirmation() {
-        let policy = TerminalMcpPolicy::from_plugin(&plugin("unknown", "not-json", "{}"));
+        let policy = TerminalMcpPolicy::from_metadata(&plugin("unknown", "not-json", "{}"));
 
         assert_eq!(policy.mode, TerminalMcpPolicyMode::Confirm);
         assert!(policy.trusted_callers.is_empty());
@@ -324,8 +309,9 @@ mod tests {
 
     #[test]
     fn automatic_and_read_only_modes_are_explicit() {
-        let automatic = TerminalMcpPolicy::from_plugin(&plugin("same_user_automatic", "[]", "[]"));
-        let read_only = TerminalMcpPolicy::from_plugin(&plugin("read_only", "[]", "[]"));
+        let automatic =
+            TerminalMcpPolicy::from_metadata(&plugin("same_user_automatic", "[]", "[]"));
+        let read_only = TerminalMcpPolicy::from_metadata(&plugin("read_only", "[]", "[]"));
 
         assert_eq!(automatic.access_for("agent"), PolicyAccess::Automatic);
         assert_eq!(read_only.access_for("agent"), PolicyAccess::Denied);

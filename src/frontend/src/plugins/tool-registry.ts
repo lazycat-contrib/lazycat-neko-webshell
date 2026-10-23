@@ -1,26 +1,9 @@
 import type { PluginDescriptor } from "../gen/lazycat/webshell/v1/capability_pb";
 import type { SessionBackendId } from "../types";
-import {
-  AI_CHAT_PLUGIN_ID,
-  FILE_TRANSFER_PLUGIN_ID,
-  LIGHTOS_PORT_FORWARD_PLUGIN_ID,
-  POMODORO_PLUGIN_ID,
-  PUBLIC_TUNNEL_PLUGIN_ID,
-  TERMINAL_TRANSFER_PLUGIN_ID,
-  WHITE_NOISE_PLUGIN_ID,
-} from "../plugin-utils";
+import { BUILTIN_PLUGINS } from "./catalog.generated.ts";
 
 const BACKENDS_METADATA = "backends";
-
-const PLUGIN_TOOL_IDS = new Set([
-  FILE_TRANSFER_PLUGIN_ID,
-  AI_CHAT_PLUGIN_ID,
-  LIGHTOS_PORT_FORWARD_PLUGIN_ID,
-  POMODORO_PLUGIN_ID,
-  WHITE_NOISE_PLUGIN_ID,
-  PUBLIC_TUNNEL_PLUGIN_ID,
-  TERMINAL_TRANSFER_PLUGIN_ID,
-]);
+const PLUGIN_TOOL_IDS = new Set<string>(BUILTIN_PLUGINS.filter((plugin) => plugin.frontend.tool).map((plugin) => plugin.id));
 
 export function enabledPluginTools(
   plugins: PluginDescriptor[],

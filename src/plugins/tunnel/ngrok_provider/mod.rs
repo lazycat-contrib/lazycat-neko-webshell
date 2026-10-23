@@ -10,10 +10,10 @@ use crate::plugins::tunnel::{StartTunnelRequest, TunnelSessionInfo, mark_status,
 
 pub fn spawn(
     request: StartTunnelRequest,
-    stop_rx: mpsc::Receiver<()>,
+    stop_rx: tokio::sync::watch::Receiver<bool>,
     ready_tx: mpsc::Sender<Result<TunnelSessionInfo, String>>,
     status: Arc<Mutex<String>>,
-) {
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let runtime = RuntimeBuilder::new_current_thread()
             .enable_all()
@@ -23,12 +23,12 @@ pub fn spawn(
         if result.is_err() {
             mark_status(&status, "error");
         }
-    });
+    })
 }
 
 async fn run(
     request: StartTunnelRequest,
-    stop_rx: mpsc::Receiver<()>,
+    mut stop_rx: tokio::sync::watch::Receiver<bool>,
     ready_tx: mpsc::Sender<Result<TunnelSessionInfo, String>>,
     status: Arc<Mutex<String>>,
 ) -> anyhow::Result<()> {
@@ -41,8 +41,15 @@ async fn run(
     let upstream = Url::parse(&request.upstream_url).context("invalid ngrok upstream URL")?;
     let mut builder = ngrok::Session::builder();
     builder.authtoken(authtoken);
-    let session = builder.connect().await?;
-    let mut forwarder = session.http_endpoint().listen_and_forward(upstream).await?;
+    let session = tokio::select! {
+        _ = stop_rx.changed() => { mark_status(&status, "stopped"); return Ok(()); },
+        session = builder.connect() => session?,
+    };
+    let endpoint = session.http_endpoint();
+    let mut forwarder = tokio::select! {
+        _ = stop_rx.changed() => { mark_status(&status, "stopped"); return Ok(()); },
+        forwarder = endpoint.listen_and_forward(upstream) => forwarder?,
+    };
     let info = TunnelSessionInfo {
         id: request.id,
         provider: "ngrok".to_owned(),
@@ -57,11 +64,14 @@ async fn run(
     mark_status(&status, "running");
 
     loop {
-        if stop_rx.try_recv().is_ok() {
-            mark_status(&status, "stopping");
-            let _ = forwarder.close().await;
-            mark_status(&status, "stopped");
-            return Ok(());
+        tokio::select! {
+            _ = stop_rx.changed() => {
+                mark_status(&status, "stopping");
+                let _ = tokio::time::timeout(Duration::from_secs(3), forwarder.close()).await;
+                mark_status(&status, "stopped");
+                return Ok(());
+            },
+            _ = tokio::time::sleep(Duration::from_millis(250)) => {},
         }
         if forwarder.join().is_finished() {
             mark_status(&status, "stopped");
@@ -72,6 +82,5 @@ async fn run(
             result.map_err(|err| anyhow!("ngrok forward task failed: {err}"))?;
             return Ok(());
         }
-        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 }

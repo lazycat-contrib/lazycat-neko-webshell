@@ -1,34 +1,25 @@
+import { pluginSettings } from "./plugins/entries.generated";
 import type { PluginDescriptor } from "./gen/lazycat/webshell/v1/capability_pb";
 import {
-  renderAIAccessSettingsView,
   type AIAccessSettingsViewState,
 } from "./plugins/ai-chat/settings-view";
 import {
-  renderPublicTunnelSettingsView,
   type PublicTunnelSettingsViewState,
 } from "./plugins/public-tunnel/settings-view";
 import {
-  renderTerminalMcpSettingsView,
   type TerminalMcpSettingsViewState,
 } from "./plugins/terminal-mcp/settings-view";
 import {
-  renderTerminalTransferSettingsView,
   type TerminalTransferSettingsViewState,
 } from "./plugins/terminal-transfer/settings-view";
 import {
-  renderWhiteNoiseSettingsView,
   type WhiteNoiseSettingsViewState,
 } from "./plugins/white-noise/settings-view";
 import {
-  AI_CHAT_PLUGIN_ID,
   pluginDescription,
   pluginDisplayName,
   pluginIcon,
   pluginMetaLabel,
-  PUBLIC_TUNNEL_PLUGIN_ID,
-  TERMINAL_MCP_PLUGIN_ID,
-  TERMINAL_TRANSFER_PLUGIN_ID,
-  WHITE_NOISE_PLUGIN_ID,
 } from "./plugin-utils";
 import type { MessageKey } from "./i18n";
 import { escapeAttr, escapeHtml } from "./utils";
@@ -61,40 +52,9 @@ function renderPluginSetting(plugin: PluginDescriptor, state: PluginSettingsView
   const name = pluginDisplayName(plugin, state.tr);
   const meta = Array.from(new Set([plugin.kind, ...plugin.scopes].filter(Boolean)))
     .map((item) => pluginMetaLabel(item, state.tr));
-  const settingsTool = plugin.id === AI_CHAT_PLUGIN_ID
-    ? renderAIAccessSettingsView({
-      ...state.aiAccess,
-      disabled: !plugin.enabled || saving || state.pluginsLoading,
-      tr: state.tr,
-    })
-    : plugin.id === PUBLIC_TUNNEL_PLUGIN_ID
-      ? renderPublicTunnelSettingsView({
-        ...state.publicTunnel,
-        disabled: saving || state.pluginsLoading,
-        tr: state.tr,
-      })
-      : plugin.id === TERMINAL_TRANSFER_PLUGIN_ID
-      ? renderTerminalTransferSettingsView({
-        ...state.terminalTransfer,
-        disabled: saving || state.pluginsLoading,
-        tr: state.tr,
-      })
-      : plugin.id === TERMINAL_MCP_PLUGIN_ID
-        ? renderTerminalMcpSettingsView({
-          ...state.terminalMcp,
-          enabled: plugin.enabled,
-          disabled: saving || state.pluginsLoading,
-          tr: state.tr,
-        })
-        : plugin.id === WHITE_NOISE_PLUGIN_ID
-          ? renderWhiteNoiseSettingsView({
-            ...state.whiteNoise,
-            disabled: saving || state.pluginsLoading,
-            tr: state.tr,
-          })
-          : "";
-  const open = expanded || Boolean((plugin.id === AI_CHAT_PLUGIN_ID && state.aiAccess.dialog)
-    || (plugin.id === PUBLIC_TUNNEL_PLUGIN_ID && state.publicTunnel.dialog));
+  const entry = pluginSettings[plugin.id];
+  const settingsTool = entry?.render(plugin, state) ?? "";
+  const open = expanded || Boolean(entry?.open(state));
   return `
     <div class="plugin-item" role="listitem" data-enabled="${plugin.enabled}" aria-busy="${saving}">
       <div class="plugin-content">
