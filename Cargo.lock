@@ -410,6 +410,7 @@ version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a92f2f5df67a9d5ccfc65237bfc954c56328aee40a04a9b92381ecba370be246"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "foldhash 0.1.5",
  "hashbrown 0.15.5",
@@ -1906,7 +1907,7 @@ dependencies = [
  "async-openai",
  "axum",
  "base64 0.23.1",
- "buffa 0.8.1",
+ "buffa 0.9.2",
  "buffa-types",
  "bytes",
  "capnp",
