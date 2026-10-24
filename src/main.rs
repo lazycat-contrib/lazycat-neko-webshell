@@ -17,6 +17,7 @@ mod agent_workspace;
 mod assets;
 mod backgrounds;
 mod client_terminal;
+mod client_terminal_auth;
 mod config;
 mod database;
 mod embedded_frontend;

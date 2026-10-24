@@ -9,7 +9,6 @@ use axum::extract::ws::{Message as BrowserMessage, WebSocket};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
-use lzc_sdk::{ClientCredentials, CredentialPaths, TokenProvider};
 use reqwest::{Method, Url};
 use rustls23::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls23::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
@@ -24,6 +23,7 @@ use tokio_tungstenite::tungstenite::Message as RemoteMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tracing::{info, warn};
 
+use crate::client_terminal_auth::{DeviceAuthCache, DeviceAuthLease};
 use crate::http_body::read_limited_body;
 use crate::lightos;
 use crate::lightos_admin::{
@@ -32,12 +32,14 @@ use crate::lightos_admin::{
 };
 use crate::proto::lazycat::webshell::v1::Session;
 use crate::remote_program::{RemoteBootstrapState, RemoteProgramKind, RemoteProgramStore};
+use crate::state::AppState;
 use crate::workspace::{
     SessionBackend, SplitAxis, SplitDirection, WorkspaceAction, WorkspaceActionRequest,
     WorkspaceLayoutNode, WorkspacePaneState, WorkspaceState, WorkspaceTabState,
 };
 
 const CLIENT_TERMINAL_TIMEOUT: Duration = Duration::from_secs(30);
+const REMOTE_RELAY_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_TICKET_RESPONSE_BYTES: usize = 1024 * 1024;
 const MAX_WORKSPACE_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 const REMOTE_REPLAY_TAIL_MAX_BYTES: usize = 512 * 1024;
@@ -45,6 +47,19 @@ const REMOTE_REPLAY_TAIL_MAX_FRAMES: usize = 256;
 const REMOTE_HERDR_LAUNCH: &str = "if [ -x \"$HOME/.local/bin/herdr\" ]; then exec \"$HOME/.local/bin/herdr\"; elif [ -x \"$HOME/bin/herdr\" ]; then exec \"$HOME/bin/herdr\"; elif command -v herdr >/dev/null 2>&1; then exec herdr; else printf '%s\\n' 'Herdr is not installed on this remote device.'; exit 127; fi\r";
 
 type RemoteWebSocketRequest = tokio_tungstenite::tungstenite::http::Request<()>;
+
+async fn relay_write<Value, Error>(
+    write: impl Future<Output = Result<Value, Error>>,
+    deadline: Duration,
+) -> anyhow::Result<Value>
+where
+    Error: std::error::Error + Send + Sync + 'static,
+{
+    timeout(deadline, write)
+        .await
+        .map_err(|_| anyhow::anyhow!("remote terminal websocket send timed out"))?
+        .map_err(Into::into)
+}
 
 async fn await_client_terminal_boundary<T, F>(
     duration: Duration,
@@ -124,6 +139,7 @@ struct ClientTerminalDialInfo {
     ticket: ClientTerminalTicket,
     device_api_url: Url,
     auth_token: secrecy::SecretString,
+    auth_lease: DeviceAuthLease,
 }
 
 pub(crate) struct RemoteTerminalConnection {
@@ -137,6 +153,8 @@ pub(crate) struct RemoteTerminalConnection {
     auth_token: secrecy::SecretString,
     program_state: Option<(RemoteProgramKind, RemoteBootstrapState)>,
     remote_programs: Arc<RemoteProgramStore>,
+    auth_cache: Arc<DeviceAuthCache>,
+    auth_lease: DeviceAuthLease,
 }
 
 pub(crate) struct RemoteTerminalConnectOptions<'a> {
@@ -525,15 +543,23 @@ pub(crate) async fn get_workspace(
     selector: &str,
     cols: u16,
     rows: u16,
-    remote_programs: &RemoteProgramStore,
+    state: &AppState,
 ) -> Result<WorkspaceState, ClientTerminalError> {
     let query = [("cols", cols.to_string()), ("rows", rows.to_string())];
-    let body =
-        client_terminal_json(headers, selector, Method::GET, "/workspace", &query, None).await?;
+    let body = client_terminal_json(
+        headers,
+        selector,
+        Method::GET,
+        "/workspace",
+        &query,
+        None,
+        &state.remote_auth,
+    )
+    .await?;
     let remote = serde_json::from_slice::<RemoteWorkspaceState>(&body).map_err(|error| {
         ClientTerminalError::bad_gateway(format!("invalid remote workspace response: {error}"))
     })?;
-    let workspace = convert_remote_workspace(selector, remote, remote_programs)?;
+    let workspace = convert_remote_workspace(selector, remote, &state.remote_programs)?;
     info!(
         selector,
         tabs = workspace.tabs.len(),
@@ -549,24 +575,40 @@ pub(crate) async fn apply_workspace_action(
     cols: u16,
     rows: u16,
     request: &WorkspaceActionRequest,
-    remote_programs: &RemoteProgramStore,
+    state: &AppState,
 ) -> Result<WorkspaceState, ClientTerminalError> {
     let outbound = remote_workspace_action(request, cols, rows)?;
-    let mut remote =
-        request_remote_workspace_action(headers, selector, cols, rows, &outbound).await?;
+    let mut remote = request_remote_workspace_action(
+        headers,
+        selector,
+        cols,
+        rows,
+        &outbound,
+        &state.remote_auth,
+    )
+    .await?;
     if request.session_backend == Some(SessionBackend::Herdr) {
         let (tab_id, pane_id) = remote_workspace_active_ids(&remote).ok_or_else(|| {
             ClientTerminalError::bad_gateway(
                 "remote client did not return the created Herdr terminal",
             )
         })?;
-        remote_programs
+        state
+            .remote_programs
             .mark_pending(selector, pane_id, RemoteProgramKind::Herdr)
             .map_err(|error| remote_program_persistence_error(selector, pane_id, &error))?;
         let rename = remote_herdr_rename_action(tab_id, cols, rows);
-        remote = request_remote_workspace_action(headers, selector, cols, rows, &rename).await?;
+        remote = request_remote_workspace_action(
+            headers,
+            selector,
+            cols,
+            rows,
+            &rename,
+            &state.remote_auth,
+        )
+        .await?;
     }
-    let workspace = convert_remote_workspace(selector, remote, remote_programs)?;
+    let workspace = convert_remote_workspace(selector, remote, &state.remote_programs)?;
     info!(
         selector,
         action = ?request.action,
@@ -583,6 +625,7 @@ async fn request_remote_workspace_action(
     cols: u16,
     rows: u16,
     outbound: &RemoteWorkspaceActionRequest,
+    auth_cache: &DeviceAuthCache,
 ) -> Result<RemoteWorkspaceState, ClientTerminalError> {
     let payload = serde_json::to_vec(&outbound).map_err(|error| {
         ClientTerminalError::bad_request(format!("invalid workspace action: {error}"))
@@ -595,6 +638,7 @@ async fn request_remote_workspace_action(
         "/workspace",
         &query,
         Some(payload),
+        auth_cache,
     )
     .await?;
     serde_json::from_slice::<RemoteWorkspaceState>(&body).map_err(|error| {
@@ -609,7 +653,7 @@ pub(crate) async fn create_session(
     rows: u16,
     output_limit: usize,
     metadata: HashMap<String, String>,
-    remote_programs: &RemoteProgramStore,
+    state: &AppState,
 ) -> Result<Session, ClientTerminalError> {
     let request = remote_session_action_request(
         selector,
@@ -618,8 +662,7 @@ pub(crate) async fn create_session(
         rows,
         output_limit,
     );
-    let workspace =
-        apply_workspace_action(headers, selector, cols, rows, &request, remote_programs).await?;
+    let workspace = apply_workspace_action(headers, selector, cols, rows, &request, state).await?;
     workspace_active_session(&workspace, metadata)
         .ok_or_else(|| ClientTerminalError::bad_gateway("remote client did not create a session"))
 }
@@ -631,9 +674,9 @@ pub(crate) async fn close_session(
     cols: u16,
     rows: u16,
     output_limit: usize,
-    remote_programs: &RemoteProgramStore,
+    state: &AppState,
 ) -> Result<(), ClientTerminalError> {
-    let workspace = get_workspace(headers, selector, cols, rows, remote_programs).await?;
+    let workspace = get_workspace(headers, selector, cols, rows, state).await?;
     let tab_id = workspace_tab_id_for_pane(&workspace, session_id).ok_or_else(|| {
         ClientTerminalError::new(StatusCode::NOT_FOUND, "remote terminal session not found")
     })?;
@@ -646,7 +689,7 @@ pub(crate) async fn close_session(
     );
     request.tab_id = Some(tab_id.to_owned());
     request.pane_id = Some(session_id.to_owned());
-    apply_workspace_action(headers, selector, cols, rows, &request, remote_programs).await?;
+    apply_workspace_action(headers, selector, cols, rows, &request, state).await?;
     Ok(())
 }
 
@@ -655,9 +698,9 @@ pub(crate) async fn list_sessions(
     selector: &str,
     cols: u16,
     rows: u16,
-    remote_programs: &RemoteProgramStore,
+    state: &AppState,
 ) -> Result<Vec<Session>, ClientTerminalError> {
-    let workspace = get_workspace(headers, selector, cols, rows, remote_programs).await?;
+    let workspace = get_workspace(headers, selector, cols, rows, state).await?;
     Ok(workspace_sessions(&workspace))
 }
 
@@ -666,13 +709,13 @@ pub(crate) async fn connect_terminal(
     selector: &str,
     pane_id: &str,
     options: RemoteTerminalConnectOptions<'_>,
-    remote_programs: Arc<RemoteProgramStore>,
+    state: &AppState,
 ) -> Result<RemoteTerminalConnection, ClientTerminalError> {
     let pane_id = pane_id.trim();
     if pane_id.is_empty() || pane_id.len() > 256 || pane_id.chars().any(char::is_control) {
         return Err(ClientTerminalError::bad_request("pane_id is required"));
     }
-    let dial = client_terminal_dial_info(headers, selector).await?;
+    let dial = client_terminal_dial_info(headers, selector, &state.remote_auth).await?;
     let mut url = client_terminal_url(&dial.ticket, "/ws")?;
     {
         let mut query = url.query_pairs_mut();
@@ -710,7 +753,7 @@ pub(crate) async fn connect_terminal(
         .map_err(|_| ClientTerminalError::bad_gateway("invalid device auth token"))?,
     );
     let connector = websocket_tls_connector()?;
-    let program_state = remote_programs.program_state(selector, pane_id);
+    let program_state = state.remote_programs.program_state(selector, pane_id);
     Ok(RemoteTerminalConnection {
         request,
         connector,
@@ -721,7 +764,9 @@ pub(crate) async fn connect_terminal(
         ticket: secrecy::SecretString::from(dial.ticket.ticket),
         auth_token: dial.auth_token,
         program_state,
-        remote_programs,
+        remote_programs: Arc::clone(&state.remote_programs),
+        auth_cache: Arc::clone(&state.remote_auth),
+        auth_lease: dial.auth_lease,
     })
 }
 
@@ -741,6 +786,8 @@ pub(crate) async fn relay_terminal_socket(
         auth_token,
         program_state,
         remote_programs,
+        auth_cache,
+        auth_lease,
     } = remote;
     let socket = match timeout(
         CLIENT_TERMINAL_TIMEOUT,
@@ -760,6 +807,9 @@ pub(crate) async fn relay_terminal_socket(
         }
         Ok(Err(error)) => {
             let (status, body) = remote_websocket_error_response(&error);
+            if status == Some(StatusCode::UNAUTHORIZED) {
+                auth_cache.invalidate(&auth_lease).await;
+            }
             let body =
                 redact_sensitive_text(&body, ticket.expose_secret(), auth_token.expose_secret());
             let technical_message = redact_sensitive_text(
@@ -797,7 +847,11 @@ pub(crate) async fn relay_terminal_socket(
         while let Some(message) = browser_stream.next().await {
             let message = message?;
             let message = browser_message_to_remote(message);
-            browser_remote_sink.lock().await.send(message).await?;
+            relay_write(
+                async { browser_remote_sink.lock().await.send(message).await },
+                REMOTE_RELAY_WRITE_TIMEOUT,
+            )
+            .await?;
         }
         Ok::<(), anyhow::Error>(())
     };
@@ -813,12 +867,16 @@ pub(crate) async fn relay_terminal_socket(
                 .unwrap_or(RemoteBootstrapAction::None);
             let messages = replay_tail.push(message, &selector, &pane_id, replay_after)?;
             for message in messages {
-                browser_sink.send(message).await?;
+                relay_write(browser_sink.send(message), REMOTE_RELAY_WRITE_TIMEOUT).await?;
             }
             match bootstrap_action {
                 RemoteBootstrapAction::SendHerdr => {
-                    let mut sink = remote_sink.lock().await;
-                    sink.send(remote_herdr_launch_message()?).await?;
+                    let message = remote_herdr_launch_message()?;
+                    relay_write(
+                        async { remote_sink.lock().await.send(message).await },
+                        REMOTE_RELAY_WRITE_TIMEOUT,
+                    )
+                    .await?;
                     if let Some(state) = bootstrap.as_mut() {
                         state.mark_sent();
                     }
@@ -906,7 +964,11 @@ async fn send_remote_websocket_failure(
     failure: &RemoteWebSocketFailure,
 ) -> anyhow::Result<()> {
     let payload = serde_json::to_string(&remote_websocket_failure_payload(failure))?;
-    browser.send(BrowserMessage::Text(payload.into())).await?;
+    relay_write(
+        browser.send(BrowserMessage::Text(payload.into())),
+        REMOTE_RELAY_WRITE_TIMEOUT,
+    )
+    .await?;
     Ok(())
 }
 
@@ -1127,10 +1189,11 @@ async fn client_terminal_json(
     path: &str,
     query: &[(&str, String)],
     body: Option<Vec<u8>>,
+    auth_cache: &DeviceAuthCache,
 ) -> Result<Vec<u8>, ClientTerminalError> {
     let method_name = method.as_str().to_owned();
     info!(selector, method = %method_name, path, "remote client terminal request started");
-    let dial = client_terminal_dial_info(headers, selector).await?;
+    let dial = client_terminal_dial_info(headers, selector, auth_cache).await?;
     let mut url = client_terminal_url(&dial.ticket, path)?;
     if url.scheme() != dial.device_api_url.scheme()
         || url.host_str() != dial.device_api_url.host_str()
@@ -1188,6 +1251,9 @@ async fn client_terminal_json(
         ))
     })?;
     let status = response.status();
+    if status == StatusCode::UNAUTHORIZED {
+        auth_cache.invalidate(&dial.auth_lease).await;
+    }
     info!(
         selector,
         method = %method_name,
@@ -1224,6 +1290,7 @@ async fn client_terminal_json(
 async fn client_terminal_dial_info(
     headers: &HeaderMap,
     selector: &str,
+    auth_cache: &DeviceAuthCache,
 ) -> Result<ClientTerminalDialInfo, ClientTerminalError> {
     let client_id = authorize_client(headers, selector).await?;
     info!(selector, client_id, "remote client visibility authorized");
@@ -1239,16 +1306,11 @@ async fn client_terminal_dial_info(
         device_origin,
         "remote client terminal ticket validated"
     );
-    let credentials = ClientCredentials::load(CredentialPaths::runtime())
-        .await
-        .map_err(|error| {
-            ClientTerminalError::bad_gateway(format!(
-                "failed to load LazyCat device credentials: {error}"
-            ))
-        })?;
-    let token_provider = await_client_terminal_boundary(
+    let account_id = current_request_account_id(headers)
+        .ok_or_else(|| ClientTerminalError::unauthorized("account id is required"))?;
+    let auth_lease = await_client_terminal_boundary(
         CLIENT_TERMINAL_TIMEOUT,
-        TokenProvider::connect(device_api_url.as_str(), credentials),
+        auth_cache.provider(&account_id, &client_id, &device_api_url),
         "LazyCat device authentication connection timed out",
     )
     .await?
@@ -1259,7 +1321,7 @@ async fn client_terminal_dial_info(
     })?;
     let auth_token = await_client_terminal_boundary(
         CLIENT_TERMINAL_TIMEOUT,
-        token_provider.token(),
+        auth_lease.provider.token(),
         "LazyCat device authentication token timed out",
     )
     .await?
@@ -1277,6 +1339,7 @@ async fn client_terminal_dial_info(
         ticket,
         device_api_url,
         auth_token,
+        auth_lease,
     })
 }
 
@@ -1751,6 +1814,72 @@ fn non_empty(value: String) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn remote_dial_rejects_unauthenticated_account_before_loading_credentials() {
+        let headers = axum::http::HeaderMap::new();
+        let cache = crate::client_terminal_auth::DeviceAuthCache::default();
+        let result = super::client_terminal_dial_info(&headers, "client:device-a", &cache).await;
+        let error = result.err().expect("missing account must be rejected");
+        assert_eq!(error.status, axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn remote_dial_rejects_invalid_selector_before_authentication() {
+        let headers = axum::http::HeaderMap::new();
+        let cache = crate::client_terminal_auth::DeviceAuthCache::default();
+        let result = super::client_terminal_dial_info(&headers, "client:../bad", &cache).await;
+        let error = result.err().expect("invalid target must be rejected");
+        assert_eq!(error.status, axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn remote_relay_write_lock_acquisition_is_bounded() {
+        let writer = tokio::sync::Mutex::new(());
+        let _held = writer.lock().await;
+        let result = super::relay_write(
+            async {
+                let _guard = writer.lock().await;
+                Ok::<(), std::io::Error>(())
+            },
+            std::time::Duration::from_millis(20),
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn remote_relay_write_to_non_reading_peer_is_bounded() {
+        use futures::SinkExt as _;
+        let (mut sender, _receiver) = futures::channel::mpsc::channel::<u8>(0);
+        let sending = super::relay_write(sender.send(1), std::time::Duration::from_millis(20));
+        let result = tokio::time::timeout(std::time::Duration::from_millis(200), sending).await;
+        assert!(result.is_ok(), "relay write exceeded its deadline");
+        assert!(
+            result
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("timed out")
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_relay_write_preserves_errors_and_success() {
+        let success = super::relay_write(
+            async { Ok::<_, std::io::Error>(42) },
+            std::time::Duration::from_millis(20),
+        )
+        .await
+        .unwrap();
+        assert_eq!(success, 42);
+        let error = super::relay_write(
+            async { Err::<(), _>(std::io::Error::other("closed peer")) },
+            std::time::Duration::from_millis(20),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("closed peer"));
+    }
     use std::collections::HashMap;
     use std::future::pending;
     use std::sync::Arc;

@@ -234,7 +234,7 @@ impl CapabilityService for CapabilityServiceImpl {
                 rows,
                 output_limit,
                 metadata,
-                self.state.remote_programs.as_ref(),
+                self.state.as_ref(),
             )
             .await
             .map_err(client_terminal_connect_error)?;
@@ -293,7 +293,7 @@ impl CapabilityService for CapabilityServiceImpl {
                 DEFAULT_COLS,
                 DEFAULT_ROWS,
                 DEFAULT_OUTPUT_FRAME_LIMIT,
-                self.state.remote_programs.as_ref(),
+                self.state.as_ref(),
             )
             .await
             .map_err(client_terminal_connect_error)?;
@@ -346,7 +346,7 @@ impl CapabilityService for CapabilityServiceImpl {
                 selector,
                 DEFAULT_COLS,
                 DEFAULT_ROWS,
-                self.state.remote_programs.as_ref(),
+                self.state.as_ref(),
             )
             .await
             .map_err(client_terminal_connect_error)?;

@@ -332,14 +332,8 @@ pub async fn get_workspace(
             // non-restoring snapshot contract. Do not infer it from GET.
             return passive_snapshot_unsupported();
         }
-        return match crate::client_terminal::get_workspace(
-            &headers,
-            selector,
-            cols,
-            rows,
-            state.remote_programs.as_ref(),
-        )
-        .await
+        return match crate::client_terminal::get_workspace(&headers, selector, cols, rows, &state)
+            .await
         {
             Ok(workspace) => Json(workspace).into_response(),
             Err(error) => error.into_response(),
@@ -418,12 +412,7 @@ pub async fn put_workspace_action(
 
     if lightos_admin::is_client_selector(&selector) {
         return match crate::client_terminal::apply_workspace_action(
-            &headers,
-            &selector,
-            cols,
-            rows,
-            &request,
-            state.remote_programs.as_ref(),
+            &headers, &selector, cols, rows, &request, &state,
         )
         .await
         {
