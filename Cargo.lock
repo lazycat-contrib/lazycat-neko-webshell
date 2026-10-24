@@ -487,12 +487,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "capnp"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93f7ce2b1b49d58b2b754f9146ef07e3244f9b67e7563bc1292fbd5f01b142f0"
+dependencies = [
+ "embedded-io",
+]
+
+[[package]]
 name = "capnp-futures"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2a0655816a8c19628e54f9f9c373549e4a7166effd0cf92c3d05e3426e85d4e"
 dependencies = [
- "capnp",
+ "capnp 0.26.2",
+ "futures-channel",
+ "futures-util",
+]
+
+[[package]]
+name = "capnp-futures"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3a1724aec0e9587f267bf19708934afa545113a44f20acac4b3db9a92857056"
+dependencies = [
+ "capnp 0.27.2",
  "futures-channel",
  "futures-util",
 ]
@@ -503,8 +523,8 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44dc4aa9dc0f725ef11deb423cea95d9b64c2e0692d0621e4334cc463fd69d95"
 dependencies = [
- "capnp",
- "capnp-futures",
+ "capnp 0.26.2",
+ "capnp-futures 0.26.1",
  "futures",
 ]
 
@@ -1909,8 +1929,8 @@ dependencies = [
  "buffa 0.8.1",
  "buffa-types",
  "bytes",
- "capnp",
- "capnp-futures",
+ "capnp 0.26.2",
+ "capnp-futures 0.27.0",
  "capnp-rpc",
  "connectrpc",
  "connectrpc-build",
