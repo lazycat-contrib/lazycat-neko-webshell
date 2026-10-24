@@ -17,10 +17,22 @@ export async function runHerdrActivityScenario(){
   await browser.waitFor('window.fixtureReady');
   const headerAligned='(()=>{const r=[...document.querySelector(".herdr-jump-head").children].filter(e=>getComputedStyle(e).display!=="none").map(e=>e.getBoundingClientRect());return Math.max(...r.map(v=>v.top))-Math.min(...r.map(v=>v.top))<20})()';
   assert.equal(await browser.evaluate(headerAligned),true,'Desktop switch header fits one row with bundled styles');
-  assert.equal(await browser.evaluate('document.querySelectorAll(".herdr-target-chip").length'),4);
+  assert.equal(await browser.evaluate('document.querySelectorAll(".herdr-target-chip").length'),8);
   assert.equal(await browser.evaluate('document.querySelector(".herdr-jump-workspace").dataset.status'),'blocked');
-  const colors=await browser.evaluate('[...document.querySelectorAll(".herdr-target-chip .herdr-jump-status")].map(element=>getComputedStyle(element).color)');
-  assert.deepEqual(colors,['rgb(249, 226, 175)','rgb(243, 139, 168)','rgb(148, 226, 213)','rgb(166, 227, 161)']);
+  const statusColors=['rgb(249, 226, 175)','rgb(243, 139, 168)','rgb(148, 226, 213)','rgb(166, 227, 161)'];
+  const colors=await browser.evaluate('[...document.querySelectorAll(".herdr-target-chip > .herdr-agent-icon, .herdr-target-chip > .herdr-agent-fallback")].map(element=>getComputedStyle(element).color)');
+  assert.deepEqual(colors,[...statusColors,...statusColors],'Both branded and fallback icons carry the actual status color');
+  assert.equal(await browser.evaluate('document.querySelectorAll(".herdr-target-chip > .herdr-agent-fallback").length'),4);
+  const assertTargetSemantics=async density=>{
+   assert.equal(await browser.evaluate('document.querySelectorAll(".herdr-jump-status, .herdr-target-check, .herdr-target-chip [data-lucide=check], .herdr-target-chip .lucide-check").length'),0,'No redundant glyphs or current check marks');
+   assert.equal(await browser.evaluate('document.querySelectorAll(".herdr-target-chip[data-current=true][aria-current=true]").length'),1);
+   assert.equal(await browser.evaluate('document.querySelectorAll(".herdr-target-chip[data-current=false][aria-current=false]").length'),7);
+   assert.deepEqual(await browser.evaluate('[...document.querySelectorAll(".herdr-target-chip")].map(element=>element.getAttribute("aria-label"))'),['working','blocked','done','idle','working','blocked','done','idle'].map((status,index)=>`Pane: ${index<4?'Codex':'Tool'} · 1.${index+1} · ${status}`));
+   assert.equal(await browser.evaluate('(()=>{const current=document.querySelector(".herdr-target-chip[data-current=true]"),other=document.querySelector(".herdr-target-chip[data-current=false]");return getComputedStyle(current).backgroundColor!==getComputedStyle(other).backgroundColor})()'),true,'Current target retains a distinct background independently of icon status color');
+   const sequenceClass=density==='compact'?'.herdr-target-compact-sequence':'.herdr-target-sequence';
+   assert.deepEqual(await browser.evaluate(`[...document.querySelectorAll('${sequenceClass}')].filter(element=>getComputedStyle(element).display!=='none').map(element=>element.textContent)`),Array.from({length:8},(_,index)=>`1.${index+1}`),'Duplicate or compact sequence identifiers remain visible');
+  };
+  await assertTargetSemantics('normal');
   await browser.command(['click','[data-herdr-activity-help-open]']);
   await browser.waitFor('document.querySelector("#herdrActivityHelp").open');
   await browser.screenshot(path.join(artifacts,'status-help.png'));
@@ -29,6 +41,9 @@ export async function runHerdrActivityScenario(){
   assert.equal(await browser.evaluate('document.querySelector("#herdrWorkspaceMenu").hidden'),false);
   assert.equal(await browser.evaluate('document.activeElement.hasAttribute("data-herdr-activity-help-open")'),true);
   await browser.command(['set','viewport','375','812']);
+  await browser.evaluate('window.setDensity("compact")');
+  await assertTargetSemantics('compact');
+  assert.deepEqual(await browser.evaluate('[...document.querySelectorAll(".herdr-target-chip > .herdr-agent-icon, .herdr-target-chip > .herdr-agent-fallback")].map(element=>getComputedStyle(element).color)'),[...statusColors,...statusColors]);
   await browser.waitFor('(()=>{const r=document.querySelector("[data-herdr-activity-help-open]").getBoundingClientRect();return r.width>=43.9&&r.height>=43.9})()');
   assert.equal(await browser.evaluate('(()=>{const r=[...document.querySelector(".herdr-jump-head").children].filter(e=>getComputedStyle(e).display!=="none").map(e=>e.getBoundingClientRect());return Math.max(...r.map(v=>v.top))-Math.min(...r.map(v=>v.top))<20})()'),true);
   await browser.command(['click','[data-herdr-activity-help-open]']);

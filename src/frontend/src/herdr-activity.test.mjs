@@ -22,5 +22,8 @@ test("jump groups use authoritative agent statuses and lightweight accessible ma
   assert.equal(model.groups[0].targets[0].status, "working");
   const html=renderHerdrJumpGroups(model,"compact",{current:"Current",empty:"Empty",focusWorkspace:"Workspace",focusTab:"Tab",focusPane:"Pane",activity:s=>s});
   assert.match(html,/data-status="working"/);assert.match(html,/aria-label="Tab: Build · 1 · working"/);
-  assert.match(html,/herdr-jump-status" aria-hidden="true">◐/);
+  assert.match(html, /<svg class="herdr-agent-fallback"/);
+  assert.match(html, /data-current="true".*aria-current="true"/);
+  assert.match(html, /herdr-target-compact-sequence">1/);
+  assert.doesNotMatch(html, /herdr-jump-status|herdr-target-check|data-lucide="check"/);
 });

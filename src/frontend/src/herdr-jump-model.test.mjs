@@ -217,11 +217,16 @@ test("renders compact icon sequences and normal duplicate suffixes as density ch
   assert.match(compact, /herdr-target-name">Codex/);
   assert.match(compact, /data-agent-icon="codex"/);
   assert.match(compact, />Current</);
+  assert.match(compact, /data-current="true".*aria-current="true"/);
+  assert.match(compact, /data-current="false".*aria-current="false"/);
+  assert.match(compact, /aria-label="Focus pane: Codex · 1\.1 · working"/);
+  assert.doesNotMatch(compact, /herdr-jump-status|herdr-target-check|data-lucide="check"/);
 
   const normal = renderHerdrJumpGroups(model, "normal", ui);
   assert.match(normal, /herdr-target-name">Codex/);
   assert.match(normal, /herdr-target-sequence">1\.1/);
   assert.match(normal, /herdr-target-sequence">1\.2/);
+  assert.doesNotMatch(normal, /herdr-target-compact-sequence|herdr-jump-status|herdr-target-check/);
 });
 
 test("renders the Herdr jump trigger as a single icon instead of a select-like field", () => {

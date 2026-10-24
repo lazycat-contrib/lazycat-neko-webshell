@@ -866,9 +866,12 @@ pub(crate) async fn relay_terminal_socket(
                 })
                 .unwrap_or(RemoteBootstrapAction::None);
             let messages = replay_tail.push(message, &selector, &pane_id, replay_after)?;
-            for message in messages {
-                relay_write(browser_sink.send(message), REMOTE_RELAY_WRITE_TIMEOUT).await?;
-            }
+            crate::terminal_socket_write::send_batch(
+                &mut browser_sink,
+                messages,
+                REMOTE_RELAY_WRITE_TIMEOUT,
+            )
+            .await?;
             match bootstrap_action {
                 RemoteBootstrapAction::SendHerdr => {
                     let message = remote_herdr_launch_message()?;

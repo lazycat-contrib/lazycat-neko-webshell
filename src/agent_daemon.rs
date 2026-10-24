@@ -86,6 +86,7 @@ pub fn run_agent_command(args: &[String]) -> anyhow::Result<()> {
         }
         "daemon" => run_daemon_command(&args[1..]),
         "request" => run_request_command(&args[1..]),
+        "request-stream" => run_request_stream_command(&args[1..]),
         "attach" => run_attach_command(&args[1..]),
         "herdr-socket-bridge" => run_herdr_socket_bridge_command(&args[1..]),
         "herdr-runtime" => run_herdr_runtime_command(&args[1..]),
@@ -464,6 +465,57 @@ fn run_request_command(args: &[String]) -> anyhow::Result<()> {
     let response = read_agent_response(&mut stream).context("failed to read agent response")?;
     write_agent_response(io::stdout().lock(), &response)
         .context("failed to write agent response to stdout")
+}
+
+fn serve_control_stream<Reader: Read, Writer: Write>(
+    reader: &mut Reader,
+    writer: &mut Writer,
+    mut forward: impl FnMut(
+        AgentRequest,
+    ) -> anyhow::Result<crate::proto::lazycat::webshell::v1::AgentResponse>,
+) -> anyhow::Result<()> {
+    let mut ready = ok_response();
+    ready.agent_version = Some(AGENT_VERSION);
+    write_agent_response(&mut *writer, &ready)?;
+    writer.flush()?;
+    loop {
+        let mut first = [0_u8; 1];
+        match reader.read_exact(&mut first) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+            Err(error) => return Err(error.into()),
+        }
+        let request = read_agent_request(io::Cursor::new(first).chain(&mut *reader))?;
+        let response = match request_type(&request) {
+            Some(
+                AgentRequestType::AGENT_REQUEST_TYPE_PING
+                | AgentRequestType::AGENT_REQUEST_TYPE_STATE
+                | AgentRequestType::AGENT_REQUEST_TYPE_ACTION
+                | AgentRequestType::AGENT_REQUEST_TYPE_CLOSE_SESSION
+                | AgentRequestType::AGENT_REQUEST_TYPE_SNAPSHOT,
+            ) => forward(request)?,
+            _ => error_response("request type is not supported by the control stream"),
+        };
+        write_agent_response(&mut *writer, &response)?;
+        writer.flush()?;
+    }
+}
+
+fn run_request_stream_command(args: &[String]) -> anyhow::Result<()> {
+    let options = parse_options(args)?;
+    let socket = required_option(&options, "socket")?;
+    serve_control_stream(
+        &mut io::stdin().lock(),
+        &mut io::stdout().lock(),
+        |request| {
+            let mut stream =
+                UnixStream::connect(&socket).context("failed to connect agent socket")?;
+            stream.set_read_timeout(Some(Duration::from_secs(8)))?;
+            stream.set_write_timeout(Some(Duration::from_secs(8)))?;
+            write_agent_request(&mut stream, &request)?;
+            Ok(read_agent_response(&mut stream)?)
+        },
+    )
 }
 
 fn run_attach_command(args: &[String]) -> anyhow::Result<()> {
@@ -1210,6 +1262,64 @@ fn read_raw_agent_message<R: Read>(reader: &mut R) -> io::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn control_stream_reuses_one_helper_for_multiple_requests() {
+        let mut input = Vec::new();
+        for _ in 0..3 {
+            super::write_agent_request(
+                &mut input,
+                &crate::agent_protocol::ping_request("target@scope", "user"),
+            )
+            .unwrap();
+        }
+        let mut input = std::io::Cursor::new(input);
+        let mut output = Vec::new();
+        let mut calls = 0;
+        super::serve_control_stream(&mut input, &mut output, |_| {
+            calls += 1;
+            Ok(crate::agent_protocol::ok_response())
+        })
+        .unwrap();
+        assert_eq!(calls, 3);
+        let mut output = std::io::Cursor::new(output);
+        let ready = super::read_agent_response(&mut output).unwrap();
+        assert_eq!(ready.agent_version, Some(super::AGENT_VERSION));
+        for _ in 0..3 {
+            assert_eq!(
+                super::read_agent_response(&mut output).unwrap().ok,
+                Some(true)
+            );
+        }
+    }
+
+    #[test]
+    fn control_stream_does_not_forward_attach_or_truncated_frames() {
+        let attach =
+            crate::agent_protocol::attach_request("target@scope", "user", "pane", 80, 24, 128, 0);
+        let mut input = Vec::new();
+        super::write_agent_request(&mut input, &attach).unwrap();
+        let mut output = Vec::new();
+        super::serve_control_stream(&mut std::io::Cursor::new(input), &mut output, |_| {
+            panic!("attach must never enter the control bridge");
+        })
+        .unwrap();
+        let mut output = std::io::Cursor::new(output);
+        let _ready = super::read_agent_response(&mut output).unwrap();
+        assert_eq!(
+            super::read_agent_response(&mut output).unwrap().ok,
+            Some(false)
+        );
+        assert!(
+            super::serve_control_stream(
+                &mut std::io::Cursor::new(vec![0, 0]),
+                &mut Vec::new(),
+                |_| {
+                    panic!("partial frame must not be forwarded");
+                }
+            )
+            .is_err()
+        );
+    }
     use super::*;
 
     #[test]
@@ -1263,7 +1373,7 @@ mod tests {
 
     #[test]
     fn agent_compatibility_window_is_valid() {
-        assert_eq!(AGENT_VERSION, 19);
+        assert_eq!(AGENT_VERSION, 20);
         assert_eq!(MIN_SUPPORTED_AGENT_VERSION, 11);
     }
 

@@ -171,6 +171,59 @@ enum ReaderEvent {
     Eof,
 }
 
+struct OutputBatcher {
+    pending: Vec<u8>,
+    interval: Duration,
+    last_flush: Option<Instant>,
+    flush_at: Option<Instant>,
+}
+
+impl OutputBatcher {
+    fn new(interval: Duration) -> Self {
+        Self {
+            pending: Vec::with_capacity(PTY_OUTPUT_BATCH_BYTES),
+            interval,
+            last_flush: None,
+            flush_at: None,
+        }
+    }
+
+    fn push(
+        &mut self,
+        data: &[u8],
+        now: Instant,
+        emit: &mut impl FnMut(PtyOutputEvent) -> bool,
+    ) -> bool {
+        let immediate = self
+            .last_flush
+            .is_none_or(|last| now.saturating_duration_since(last) >= self.interval);
+        let mut emitted = false;
+        let mut record = |event| {
+            emitted = true;
+            emit(event)
+        };
+        let accepted = append_output(&mut self.pending, data, &mut record)
+            && (!immediate || flush_output(&mut self.pending, &mut record));
+        if emitted {
+            self.last_flush = Some(now);
+        }
+        self.flush_at = if self.pending.is_empty() {
+            None
+        } else {
+            Some(self.last_flush.unwrap_or(now) + self.interval)
+        };
+        accepted
+    }
+
+    fn flush(&mut self, now: Instant, emit: &mut impl FnMut(PtyOutputEvent) -> bool) -> bool {
+        self.flush_at = None;
+        if !self.pending.is_empty() {
+            self.last_flush = Some(now);
+        }
+        flush_output(&mut self.pending, emit)
+    }
+}
+
 pub fn spawn_batched_output_reader(
     mut reader: Box<dyn Read + Send>,
     mut emit: impl FnMut(PtyOutputEvent) -> bool + Send + 'static,
@@ -200,10 +253,9 @@ pub fn spawn_batched_output_reader(
         }
     });
     thread::spawn(move || {
-        let mut pending = Vec::with_capacity(PTY_OUTPUT_BATCH_BYTES);
-        let mut deadline: Option<Instant> = None;
+        let mut batcher = OutputBatcher::new(Duration::from_millis(PTY_OUTPUT_BATCH_INTERVAL_MS));
         loop {
-            let event = match deadline {
+            let event = match batcher.flush_at {
                 Some(deadline) => {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     match receiver.recv_timeout(remaining) {
@@ -220,34 +272,25 @@ pub fn spawn_batched_output_reader(
 
             match event {
                 Some(ReaderEvent::Output(data)) => {
-                    if pending.is_empty() {
-                        deadline = Some(
-                            Instant::now() + Duration::from_millis(PTY_OUTPUT_BATCH_INTERVAL_MS),
-                        );
-                    }
-                    if !append_output(&mut pending, &data, &mut emit) {
+                    if !batcher.push(&data, Instant::now(), &mut emit) {
                         break;
-                    }
-                    if pending.is_empty() {
-                        deadline = None;
                     }
                 }
                 Some(ReaderEvent::Error(error)) => {
-                    if !flush_output(&mut pending, &mut emit) {
+                    if !batcher.flush(Instant::now(), &mut emit) {
                         break;
                     }
                     let _ = emit(PtyOutputEvent::Error(error));
                     break;
                 }
                 Some(ReaderEvent::Eof) => {
-                    let _ = flush_output(&mut pending, &mut emit);
+                    let _ = batcher.flush(Instant::now(), &mut emit);
                     break;
                 }
                 None => {
-                    if !flush_output(&mut pending, &mut emit) {
+                    if !batcher.flush(Instant::now(), &mut emit) {
                         break;
                     }
-                    deadline = None;
                 }
             }
         }
@@ -319,6 +362,99 @@ impl ChildWait {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn interactive_output_is_immediate_but_continuous_output_is_coalesced() {
+        let mut batcher = super::OutputBatcher::new(Duration::from_millis(16));
+        let start = std::time::Instant::now();
+        let mut chunks = Vec::new();
+        let mut emit = |event| {
+            if let PtyOutputEvent::Output(bytes) = event {
+                chunks.push(bytes);
+            }
+            true
+        };
+        assert!(batcher.push(b"a", start, &mut emit));
+        assert!(
+            batcher.pending.is_empty(),
+            "first interactive output should not wait for the batch timer"
+        );
+        assert!(batcher.push(b"b", start + Duration::from_millis(1), &mut emit));
+        assert!(batcher.push(b"c", start + Duration::from_millis(2), &mut emit));
+        assert_eq!(batcher.pending, b"bc");
+        assert_eq!(batcher.flush_at, Some(start + Duration::from_millis(16)));
+        assert!(batcher.flush(start + Duration::from_millis(16), &mut emit));
+        assert!(batcher.push(b"d", start + Duration::from_millis(40), &mut emit));
+        assert!(
+            batcher.pending.is_empty(),
+            "output after idle should also be immediate"
+        );
+        assert_eq!(chunks, [b"a".to_vec(), b"bc".to_vec(), b"d".to_vec()]);
+    }
+
+    #[test]
+    fn continuous_output_remains_bounded_and_byte_exact() {
+        let mut batcher = super::OutputBatcher::new(Duration::from_millis(16));
+        let start = std::time::Instant::now();
+        let input = vec![b'x'; 1000 * 8192];
+        let mut chunks = Vec::new();
+        let mut emit = |event| {
+            if let PtyOutputEvent::Output(bytes) = event {
+                chunks.push(bytes);
+            }
+            true
+        };
+        for part in input.chunks(8192) {
+            assert!(batcher.push(part, start, &mut emit));
+            assert!(batcher.pending.len() < PTY_OUTPUT_BATCH_BYTES);
+        }
+        assert!(batcher.flush(start, &mut emit));
+        assert!(
+            chunks.len() < 130,
+            "continuous output must not become one frame per read"
+        );
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.len() <= PTY_OUTPUT_BATCH_BYTES)
+        );
+        assert_eq!(chunks.concat(), input);
+    }
+
+    #[test]
+    fn fast_output_stops_when_consumer_is_gone() {
+        let mut batcher = super::OutputBatcher::new(Duration::from_millis(16));
+        assert!(!batcher.push(b"x", std::time::Instant::now(), &mut |_| false));
+    }
+
+    #[test]
+    #[ignore = "local PTY output-stage latency measurement"]
+    fn measure_sparse_output_latency() {
+        use std::io::Write as _;
+        use std::os::unix::net::UnixStream;
+        use std::time::Instant;
+
+        let (mut producer, reader) = UnixStream::pair().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        spawn_batched_output_reader(Box::new(reader), move |event| sender.send(event).is_ok());
+        let mut samples = Vec::new();
+        for _ in 0..20 {
+            let started = Instant::now();
+            producer.write_all(b"x").unwrap();
+            let event = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(matches!(event, PtyOutputEvent::Output(bytes) if bytes == b"x"));
+            samples.push(started.elapsed().as_secs_f64() * 1000.0);
+            std::thread::sleep(Duration::from_millis(24));
+        }
+        samples.sort_by(f64::total_cmp);
+        println!(
+            "sparse output-stage latency: median={:.3}ms p95={:.3}ms samples={}",
+            samples[10],
+            samples[18],
+            samples.len()
+        );
+        drop(producer);
+        assert!(receiver.recv_timeout(Duration::from_secs(2)).is_err());
+    }
     use std::io::{Cursor, Write};
     use std::sync::{Arc, Condvar, Mutex, mpsc};
     use std::time::Duration;
@@ -473,18 +609,27 @@ mod tests {
     fn output_reader_flushes_at_batch_byte_limit() {
         let (tx, rx) = mpsc::channel();
         spawn_batched_output_reader(
-            Box::new(Cursor::new(vec![b'x'; PTY_OUTPUT_BATCH_BYTES + 3])),
+            Box::new(Cursor::new(vec![b'x'; PTY_OUTPUT_BATCH_BYTES * 3 + 3])),
             move |event| tx.send(event).is_ok(),
         );
 
-        match rx.recv().unwrap() {
-            PtyOutputEvent::Output(bytes) => assert_eq!(bytes.len(), PTY_OUTPUT_BATCH_BYTES),
-            PtyOutputEvent::Error(error) => panic!("unexpected output error: {error}"),
+        let mut chunks = Vec::new();
+        for event in rx {
+            match event {
+                PtyOutputEvent::Output(bytes) => chunks.push(bytes),
+                PtyOutputEvent::Error(error) => panic!("unexpected output error: {error}"),
+            }
         }
-        match rx.recv().unwrap() {
-            PtyOutputEvent::Output(bytes) => assert_eq!(bytes, b"xxx"),
-            PtyOutputEvent::Error(error) => panic!("unexpected output error: {error}"),
-        }
-        assert!(rx.recv().is_err());
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.len() <= PTY_OUTPUT_BATCH_BYTES)
+        );
+        assert!(
+            chunks
+                .iter()
+                .any(|chunk| chunk.len() == PTY_OUTPUT_BATCH_BYTES)
+        );
+        assert_eq!(chunks.concat(), vec![b'x'; PTY_OUTPUT_BATCH_BYTES * 3 + 3]);
     }
 }

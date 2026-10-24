@@ -250,6 +250,7 @@ impl CapabilityService for CapabilityServiceImpl {
             .map_err(|err| ConnectError::unavailable(err.to_string()))?;
         let workspace = agent
             .action(
+                &self.state.agent_control,
                 cols,
                 rows,
                 output_limit,
@@ -320,7 +321,7 @@ impl CapabilityService for CapabilityServiceImpl {
         let selector = requested_selector.ok_or_else(|| {
             ConnectError::invalid_argument("selector is required to close agent-managed sessions")
         })?;
-        close_agent_session(selector, &session_id).await?;
+        close_agent_session(&self.state, selector, &session_id).await?;
         ConnectResponse::ok(CloseSessionResponse {
             session_id: Some(session_id),
             status: Some("closed".to_owned()),
@@ -564,7 +565,11 @@ fn provider_descriptor() -> ProviderDescriptor {
     }
 }
 
-async fn close_agent_session(selector: &str, session_id: &str) -> Result<(), ConnectError> {
+async fn close_agent_session(
+    state: &AppState,
+    selector: &str,
+    session_id: &str,
+) -> Result<(), ConnectError> {
     if ssh_backend::is_ssh_selector(selector) {
         return Err(ConnectError::failed_precondition(
             "SSH sessions are managed by the workspace store",
@@ -580,6 +585,7 @@ async fn close_agent_session(selector: &str, session_id: &str) -> Result<(), Con
         .map_err(|err| ConnectError::unavailable(err.to_string()))?;
     agent
         .close_session(
+            &state.agent_control,
             session_id,
             DEFAULT_COLS,
             DEFAULT_ROWS,

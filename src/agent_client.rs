@@ -5,6 +5,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
+use crate::agent_control::AgentControlPool;
 use anyhow::{Context as _, anyhow, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -302,6 +303,7 @@ IFS= read -r _release || true
 impl AgentClient {
     pub async fn state(
         &self,
+        control: &AgentControlPool,
         cols: u16,
         rows: u16,
         output_limit: usize,
@@ -313,11 +315,12 @@ impl AgentClient {
             rows,
             output_limit,
         );
-        response_state(run_agent_request(self, &request).await?)
+        response_state(self.control_request(control, &request).await?)
     }
 
     pub async fn action(
         &self,
+        control: &AgentControlPool,
         cols: u16,
         rows: u16,
         output_limit: usize,
@@ -331,11 +334,12 @@ impl AgentClient {
             output_limit,
             action,
         );
-        response_state(run_agent_request(self, &request).await?)
+        response_state(self.control_request(control, &request).await?)
     }
 
     pub async fn close_session(
         &self,
+        control: &AgentControlPool,
         session_id: &str,
         cols: u16,
         rows: u16,
@@ -349,7 +353,32 @@ impl AgentClient {
             rows,
             output_limit,
         );
-        response_state(run_agent_request(self, &request).await?)
+        response_state(self.control_request(control, &request).await?)
+    }
+
+    async fn control_request(
+        &self,
+        control: &AgentControlPool,
+        request: &crate::proto::lazycat::webshell::v1::AgentRequest,
+    ) -> anyhow::Result<AgentResponse> {
+        let mut command = Command::new(LIGHTOSCTL);
+        command.args([
+            "exec",
+            "-i",
+            self.selector.as_str(),
+            AGENT_INSTALL_PATH,
+            "agent",
+            "request-stream",
+            "--socket",
+            self.socket_path.as_str(),
+        ]);
+        if let Some(response) = control
+            .request(&self.selector, &self.username, command, request)
+            .await?
+        {
+            return Ok(response);
+        }
+        run_agent_request(self, request).await
     }
 
     pub fn attach_command(

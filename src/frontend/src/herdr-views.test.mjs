@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { herdrPaneDetailForTab, herdrTabPresentation } from "./herdr-views.ts";
+import { herdrPaneDetailForTab, herdrTabPresentation, renderHerdrWorkspaceMenuRow } from "./herdr-views.ts";
+
+test("current workspace keeps selection semantics and styling without a check", () => {
+  const html = renderHerdrWorkspaceMenuRow({ workspace_id: "w", label: "Project", focused: true, tab_count: 1, pane_count: 2 }, { tabs: "tabs", panes: "panes", close: "Close" });
+  assert.match(html, /herdr-workspace-row-shell selected/);
+  assert.match(html, /aria-selected="true"/);
+  assert.match(html, /data-herdr-workspace="w"/);
+  assert.doesNotMatch(html, /data-lucide="check"/);
+});
 
 function tab(overrides = {}) {
   return {

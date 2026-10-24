@@ -513,7 +513,7 @@ async fn standard_agent_workspace(
         .await
         .map_err(|err| format!("failed to start webshell agent: {err}"))?;
     let agent_state = agent
-        .state(cols, rows, output_limit)
+        .state(&state.agent_control, cols, rows, output_limit)
         .await
         .map_err(|err| format!("failed to load webshell workspace: {err}"))?;
     Ok(merge_optional_backend_tabs(
@@ -536,7 +536,7 @@ async fn standard_agent_workspace_action(
         .await
         .map_err(|err| format!("failed to start webshell agent: {err}"))?;
     let agent_state = agent
-        .action(cols, rows, output_limit, action)
+        .action(&state.agent_control, cols, rows, output_limit, action)
         .await
         .map_err(|err| format!("failed to update webshell workspace: {err}"))?;
     Ok(merge_optional_backend_tabs(

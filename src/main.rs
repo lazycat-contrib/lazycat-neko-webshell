@@ -7,6 +7,7 @@ use tracing::info;
 
 mod action_ws;
 mod agent_client;
+mod agent_control;
 mod agent_daemon;
 mod agent_history;
 mod agent_protocol;
@@ -50,6 +51,7 @@ mod terminal_agent_stream;
 mod terminal_control;
 mod terminal_manager;
 mod terminal_reply_authority;
+mod terminal_socket_write;
 mod tty_init;
 mod validation;
 mod voice_input;
@@ -84,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
             let _ = tokio::signal::ctrl_c().await;
         })
         .await?;
+    state.agent_control.close();
     state.plugin.shutdown().await?;
     Ok(())
 }

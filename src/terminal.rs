@@ -1048,7 +1048,12 @@ async fn serve_agent_terminal(
     };
     let pane_id = target.pane_id.as_deref().unwrap_or_default();
     let agent_state = agent
-        .state(target.cols, target.rows, target.output_limit)
+        .state(
+            &state.agent_control,
+            target.cols,
+            target.rows,
+            target.output_limit,
+        )
         .await
         .context("failed to read webshell agent reply authority")?;
     let actual_reply_authority = agent_pane_reply_authority(&agent_state, pane_id)
@@ -2447,23 +2452,21 @@ async fn send_nonretryable_terminal_error_with_policy(
 async fn send_output_frame(
     sender: &mut TerminalSender,
     frame: &OutputFrame,
-    bounded: bool,
+    _bounded: bool,
 ) -> anyhow::Result<bool> {
-    if send_terminal_message_with_policy(sender, Message::Binary(frame.data.clone()), bounded)
-        .await
-        .is_err()
-    {
-        return Ok(false);
-    }
-    send_control_with_policy(
+    let sequence = serde_json::to_string(&TerminalServerMessage::OutputSequence {
+        sequence: frame.sequence,
+    })?;
+    Ok(crate::terminal_socket_write::send_batch(
         sender,
-        &TerminalServerMessage::OutputSequence {
-            sequence: frame.sequence,
-        },
-        bounded,
+        [
+            Message::Binary(frame.data.clone()),
+            Message::Text(sequence.into()),
+        ],
+        TERMINAL_SOCKET_SEND_TIMEOUT,
     )
-    .await?;
-    Ok(true)
+    .await
+    .is_ok())
 }
 
 #[allow(clippy::too_many_lines)] // Keeps authority and backend selection in one auditable decision path.

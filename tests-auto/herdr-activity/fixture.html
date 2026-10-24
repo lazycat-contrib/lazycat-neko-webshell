@@ -16,9 +16,11 @@ import {renderHerdrJumpGroups} from '/src/frontend/src/herdr-jump-view.ts';
 import {bindHerdrActivityHelp} from '/src/frontend/src/herdr-activity-help.ts';
 const root=document.querySelector('#fixture');root.innerHTML=renderHerdrJumpShell();
 const labels={workspace:n=>`Workspace ${n}`,workspaceDefault:'Workspace',tab:n=>`Tab ${n}`,tabDefault:'Tab',terminal:'Terminal'};
-const state={workspaces:[{workspace_id:'w',label:'Project',number:1,focused:true}],tabs:[{tab_id:'t',workspace_id:'w',label:'Build',number:1,focused:true}],panes:['working','blocked','done','idle'].map((status,i)=>({pane_id:'p'+i,workspace_id:'w',tab_id:'t',agent:'codex',display_agent:'Codex '+i,agent_status:status,focused:i===0}))};
+const state={workspaces:[{workspace_id:'w',label:'Project',number:1,focused:true}],tabs:[{tab_id:'t',workspace_id:'w',label:'Build',number:1,focused:true}],panes:['working','blocked','done','idle','working','blocked','done','idle'].map((status,i)=>({pane_id:'p'+i,workspace_id:'w',tab_id:'t',agent:i<4?'codex':'unknown-tool',display_agent:i<4?'Codex':'Tool',agent_status:status,focused:i===0}))};
 const model=buildHerdrJumpModel(state,labels);
 const menu=document.querySelector('#herdrWorkspaceMenu');menu.hidden=false;menu.style.left='16px';menu.style.top='16px';document.querySelector('#herdrDock').hidden=false;
-document.querySelector('#herdrWorkspaceMenuList').innerHTML=renderHerdrJumpGroups(model,'normal',{current:'Current',focusWorkspace:'Workspace',focusTab:'Tab',focusPane:'Pane',empty:'Empty',activity:s=>s});
+const ui={current:'Current',focusWorkspace:'Workspace',focusTab:'Tab',focusPane:'Pane',empty:'Empty',activity:s=>s};
+window.setDensity=density=>{document.querySelector('#herdrWorkspaceMenuList').innerHTML=renderHerdrJumpGroups(model,density,ui);createIcons({icons});};
+window.setDensity('normal');
 bindHerdrActivityHelp(menu);createIcons({icons});window.fixtureReady=true;
 </script></body></html>

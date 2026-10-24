@@ -382,6 +382,7 @@ impl TerminalControlService {
                 })?;
                 let state = agent
                     .action(
+                        &self.state.agent_control,
                         cols,
                         rows,
                         DEFAULT_OUTPUT_FRAME_LIMIT,
@@ -475,6 +476,7 @@ impl TerminalControlService {
                     })?;
                 agent
                     .close_session(
+                        &self.state.agent_control,
                         &target.session_id,
                         target.cols,
                         target.rows,
@@ -858,7 +860,15 @@ impl TerminalControlService {
                     continue;
                 }
             };
-            let Ok(state) = agent.state(120, 32, DEFAULT_OUTPUT_FRAME_LIMIT).await else {
+            let Ok(state) = agent
+                .state(
+                    &self.state.agent_control,
+                    120,
+                    32,
+                    DEFAULT_OUTPUT_FRAME_LIMIT,
+                )
+                .await
+            else {
                 continue;
             };
             targets.extend(agent_targets(state, &login_user));

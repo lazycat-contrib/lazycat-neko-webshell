@@ -1,4 +1,5 @@
-.herdr-jump-status { flex: 0 0 auto; display: inline-block; width: 12px; color: var(--herdr-status-color); font: 650 12px/1 var(--font-mono); text-align: center; }
+.herdr-target-chip > .herdr-agent-icon,
+.herdr-target-chip > .herdr-agent-fallback { color: var(--herdr-status-color); }
 .herdr-target-chip:not([data-status="unknown"]) { border-color: color-mix(in srgb, var(--herdr-status-color) 50%, var(--component-border)); }
 .herdr-jump-workspace .herdr-jump-workspace-number { color: var(--herdr-status-color); background: color-mix(in srgb, var(--herdr-status-color) 12%, var(--surface-2)); }
 

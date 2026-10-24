@@ -1746,7 +1746,7 @@ textarea:focus-visible {
 
 .herdr-workspace-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -1786,11 +1786,6 @@ textarea:focus-visible {
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
-}
-
-.herdr-workspace-row svg {
-  width: 15px;
-  height: 15px;
 }
 
 .herdr-workspace-close {
@@ -1856,7 +1851,7 @@ textarea:focus-visible {
 
 .herdr-agent-row {
   display: grid;
-  grid-template-columns: 9px minmax(0, 1fr) 16px;
+  grid-template-columns: 9px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -1870,7 +1865,8 @@ textarea:focus-visible {
 }
 
 .herdr-agent-row:hover,
-.herdr-agent-row:focus-visible {
+.herdr-agent-row:focus-visible,
+.herdr-agent-row[aria-current="true"] {
   border-color: var(--line-strong);
   background: var(--surface-2);
 }
@@ -2172,12 +2168,6 @@ textarea:focus-visible {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 650;
-}
-
-.herdr-target-check {
-  width: 13px;
-  height: 13px;
-  flex: 0 0 auto;
 }
 
 .herdr-agent-icon,

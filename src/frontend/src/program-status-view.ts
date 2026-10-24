@@ -1,16 +1,13 @@
 import { escapeAttr } from "./utils.ts";
-import { herdrActivityGlyph } from "./herdr-activity.ts";
+import { renderHerdrAgentIcon } from "./herdr-agent-icon-view.ts";
 import type { ProgramStatusPresentation } from "./program-status.ts";
 
 export function renderProgramStatusContent(status: ProgramStatusPresentation): string {
-  const icon = status.icon
-    ? `<span class="herdr-agent-icon" data-agent-icon="${escapeAttr(status.icon)}" aria-hidden="true"></span>`
-    : "";
-  return `${icon}<span class="herdr-jump-status" aria-hidden="true">${herdrActivityGlyph(status.state)}</span>`;
+  return renderHerdrAgentIcon(status.icon);
 }
 
 export function renderProgramStatusView(status?: ProgramStatusPresentation): string {
-  return `<span class="tab-program-status" data-status="${status?.state ?? "unknown"}" ${status ? `title="${escapeAttr(status.label)}"` : "hidden"}>${status ? renderProgramStatusContent(status) : ""}</span>`;
+  return `<span class="tab-program-status" role="img" data-status="${status?.state ?? "unknown"}" ${status ? `aria-label="${escapeAttr(status.label)}" title="${escapeAttr(status.label)}"` : "hidden"}>${status ? renderProgramStatusContent(status) : ""}</span>`;
 }
 
 export function syncProgramStatusView(root: HTMLElement, status?: ProgramStatusPresentation) {
@@ -24,5 +21,6 @@ export function syncProgramStatusView(root: HTMLElement, status?: ProgramStatusP
     node.dataset.signature = signature;
   }
   node.dataset.status = status.state;
+  node.setAttribute("aria-label", status.label);
   node.title = status.label;
 }

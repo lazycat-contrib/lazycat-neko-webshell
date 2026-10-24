@@ -14,7 +14,6 @@ export function renderHerdrWorkspaceMenuRow(
           <strong>${escapeHtml(label)}</strong>
           <small>${escapeHtml(detail)}</small>
         </span>
-        ${workspace.focused ? `<i data-lucide="check"></i>` : ""}
       </button>
       <button class="herdr-workspace-close" type="button" data-herdr-close-workspace="${escapeAttr(workspace.workspace_id)}" aria-label="${escapeAttr(labels.close)}" title="${escapeAttr(labels.close)}">
         <i data-lucide="x"></i>

@@ -86,6 +86,13 @@ test("renders local filters and focus targets for Herdr agents", () => {
   assert.doesNotMatch(html, /Codex review/);
 });
 
+test("focused agents retain current semantics without a redundant check", () => {
+  const html = renderHerdrAgentMenuView(agents, "all", labels);
+  assert.match(html, /data-herdr-agent-pane="w1:p1"[^>]*aria-current="true"/);
+  assert.match(html, /data-herdr-agent-pane="w2:p1"[^>]*aria-current="false"/);
+  assert.doesNotMatch(html, /data-lucide="check"/);
+});
+
 test("keeps allowlisted Agent interactions available on future compatible protocols", () => {
   assert.equal(herdrAgentInteractionsAvailable({ herdr_protocol: 18, protocol_compatible: true }), true);
   assert.equal(herdrAgentInteractionsAvailable({ herdr_protocol: 18 }), true);

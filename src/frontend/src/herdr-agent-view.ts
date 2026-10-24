@@ -84,13 +84,12 @@ function renderAgentRow(agent: HerdrAgentInfo, labels: HerdrAgentMenuLabels): st
     agent.title?.trim() || agent.terminal_title_stripped?.trim() || "",
   ].filter(Boolean).join(" · ");
   return `
-    <button class="herdr-agent-row" type="button" data-herdr-agent-pane="${escapeAttr(agent.pane_id)}" data-status="${escapeAttr(agent.agent_status)}" aria-label="${escapeAttr(`${labels.focus}: ${label}`)}" title="${escapeAttr(`${labels.focus}: ${label}`)}">
+    <button class="herdr-agent-row" type="button" data-herdr-agent-pane="${escapeAttr(agent.pane_id)}" data-status="${escapeAttr(agent.agent_status)}" aria-current="${agent.focused ? "true" : "false"}" aria-label="${escapeAttr(`${labels.focus}: ${label}`)}" title="${escapeAttr(`${labels.focus}: ${label}`)}">
       <span class="status-dot" data-status="${escapeAttr(agent.agent_status)}"></span>
       <span>
         <strong>${escapeHtml(label)}</strong>
         <small>${escapeHtml(detail)}</small>
       </span>
-      ${agent.focused ? `<i data-lucide="check"></i>` : ""}
     </button>
   `;
 }
