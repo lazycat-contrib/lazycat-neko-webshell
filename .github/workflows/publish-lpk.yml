@@ -1,0 +1,140 @@
+name: Publish verified LPK component
+on:
+  workflow_call:
+    inputs:
+      component:
+        required: true
+        type: string
+      source-run-id:
+        type: string
+        default: ''
+      dry-run:
+        type: boolean
+        default: true
+    secrets:
+      LPK_SOURCE_REPOSITORY:
+        required: true
+      SOURCE_REPO_TOKEN:
+        required: true
+      APPSTORE_URL:
+        required: true
+      APPSTORE_TOKEN:
+        required: true
+      APP_ID:
+        required: false
+      PRIVATE_STORE_GROUP_CODES:
+        required: false
+      LZC_API_TOKEN:
+        required: false
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: publish-lpk-${{ inputs.component }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPONENT: ${{ inputs.component }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Select the successful component build
+        id: source
+        uses: actions/github-script@v9
+        env:
+          SOURCE_REPOSITORY: ${{ secrets.LPK_SOURCE_REPOSITORY }}
+          SOURCE_BRANCH: ${{ vars.LPK_SOURCE_BRANCH || 'main' }}
+          SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+        with:
+          github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          script: |
+            await require('./scripts/release.cjs').selectSource({github, core});
+      - name: Download only the component LPK
+        if: steps.source.outputs.available == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.source.outputs.artifact-name }}
+          path: dist/import
+          repository: ${{ secrets.LPK_SOURCE_REPOSITORY }}
+          run-id: ${{ steps.source.outputs.run-id }}
+          github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+      - name: Inspect runtime and prepare the versioned asset
+        if: steps.source.outputs.available == 'true'
+        id: package
+        env:
+          LPK_VERSION: ${{ steps.source.outputs.version }}
+        run: python3 scripts/prepare-lpk.py
+      - name: Verify package ID, version, architecture and SHA256
+        if: steps.source.outputs.available == 'true'
+        uses: ca-x/lazycat-github-action@v1.3.6
+        with:
+          operation: publish-private
+          config: components/${{ inputs.component }}/action.yml
+          version: ${{ steps.source.outputs.version }}
+          changelog: Release ${{ steps.source.outputs.version }}
+          lpk-path: ${{ steps.package.outputs.action-lpk-path }}
+          download-url: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ steps.source.outputs.tag }}/${{ steps.source.outputs.package-id }}-v${{ steps.source.outputs.version }}.lpk
+          sha256: ${{ steps.package.outputs.sha256 }}
+          dry-run: true
+      - name: Publish this component Release
+        id: release
+        if: ${{ !inputs.dry-run && steps.source.outputs.available == 'true' }}
+        uses: actions/github-script@v9
+        env:
+          LPK_VERSION: ${{ steps.source.outputs.version }}
+          LPK_PATH: ${{ steps.package.outputs.lpk-path }}
+          LPK_SHA256: ${{ steps.package.outputs.sha256 }}
+        with:
+          script: |
+            await require('./scripts/release.cjs').publishRelease({github, context, core});
+      - name: Submit to MiaoMiao store
+        id: private
+        if: ${{ !inputs.dry-run && steps.source.outputs.available == 'true' }}
+        continue-on-error: true
+        uses: ca-x/lazycat-github-action@v1.3.6
+        env:
+          APPSTORE_URL: ${{ secrets.APPSTORE_URL }}
+          APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
+          APP_ID: ${{ secrets.APP_ID }}
+          PRIVATE_STORE_GROUP_CODES: ${{ secrets.PRIVATE_STORE_GROUP_CODES }}
+        with:
+          operation: publish-private
+          config: components/${{ inputs.component }}/action.yml
+          version: ${{ steps.source.outputs.version }}
+          changelog: ${{ steps.release.outputs.changelog }}
+          lpk-path: ${{ steps.package.outputs.action-lpk-path }}
+          download-url: ${{ steps.release.outputs.download-url }}
+          sha256: ${{ steps.package.outputs.sha256 }}
+      - name: Submit to LazyCat official store
+        id: official
+        if: ${{ !cancelled() && !inputs.dry-run && steps.source.outputs.official == 'true' && steps.release.outcome == 'success' }}
+        continue-on-error: true
+        uses: ca-x/lazycat-github-action@v1.3.6
+        env:
+          LZC_API_TOKEN: ${{ secrets.LZC_API_TOKEN }}
+        with:
+          operation: publish-official
+          config: components/${{ inputs.component }}/action.yml
+          version: ${{ steps.source.outputs.version }}
+          changelog: ${{ steps.release.outputs.changelog }}
+          lpk-path: ${{ steps.package.outputs.action-lpk-path }}
+          sha256: ${{ steps.package.outputs.sha256 }}
+      - name: Summarize this component
+        if: ${{ always() && !cancelled() && !inputs.dry-run && steps.source.outputs.available == 'true' }}
+        env:
+          PRIVATE_OUTCOME: ${{ steps.private.outcome }}
+          OFFICIAL_OUTCOME: ${{ steps.official.outcome }}
+        run: |
+          {
+            echo "Component: ${COMPONENT}"
+            echo "MiaoMiao: ${PRIVATE_OUTCOME}"
+            echo "Official: ${OFFICIAL_OUTCOME}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "${PRIVATE_OUTCOME}" == failure ]]; then exit 1; fi
+          if [[ "${OFFICIAL_OUTCOME}" == failure ]]; then
+            echo '::warning::Official store submission failed; the MiaoMiao result has been preserved.'
+          fi

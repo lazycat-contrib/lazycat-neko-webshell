@@ -1,0 +1,20 @@
+name: Check publication workflow
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify source-file rejection and release recovery
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          node --test scripts/release.test.cjs
+      - name: Validate workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml

@@ -1,0 +1,4 @@
+# Publication metadata only; never build application source here.
+manifest: ./lzc-manifest.yml
+icon: ./icon.png
+pkgout: ./dist

@@ -1,0 +1,32 @@
+version: 1
+project:
+  root: components/neko
+  build_config: lzc-build.yml
+  package_file: package.yml
+  output: dist/application.lpk
+  target_arch: amd64
+update:
+  strategy: publish
+  version_source:
+    type: git
+  sync_homepage: false
+  sync_license: false
+build:
+  run_buildscript: false
+stores:
+  official:
+    enabled: true
+    skip_if_version_exists: true
+    create_if_missing: false
+    changelog_locales:
+    - zh
+    - en
+  private:
+    enabled: true
+    skip_if_version_exists: true
+    name: Neko Webshell
+    summary: Published from GitHub Actions
+images: []
+release:
+  use_github_release_notes: true
+  store_changelog_format: plain

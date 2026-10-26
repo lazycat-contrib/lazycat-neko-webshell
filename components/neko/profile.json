@@ -1,0 +1,20 @@
+{
+  "name": "小橘终端",
+  "packageId": "community.lazycat.webshell.neko",
+  "tagPrefix": "v",
+  "artifactPrefix": "neko-lpk-v",
+  "workflow": "lazycat.yml",
+  "root": "components/neko",
+  "binary": "lazycat-neko-webshell",
+  "contentFiles": [
+    ".env",
+    "lazycat-neko-webshell",
+    "licenses/restty-0.3.0-LICENSE",
+    "licenses/w1-0.3.0-LICENSE-MIT"
+  ],
+  "exports": [
+    "exports/lightos.webshell/default/webshell-provider.json",
+    "exports/mcp-providers/terminal-control/mcp.yml"
+  ],
+  "official": true
+}
