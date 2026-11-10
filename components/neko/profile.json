@@ -10,7 +10,10 @@
     ".env",
     "lazycat-neko-webshell",
     "licenses/restty-0.3.0-LICENSE",
-    "licenses/w1-0.3.0-LICENSE-MIT"
+    "licenses/w1-0.3.0-LICENSE-MIT",
+    "licenses/wowtype-voice-LICENSE-APACHE",
+    "licenses/wowtype-voice-NOTICE.md",
+    "licenses/wowtype-voice-ATTRIBUTION.txt"
   ],
   "exports": [
     "exports/lightos.webshell/default/webshell-provider.json",
