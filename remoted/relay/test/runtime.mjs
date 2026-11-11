@@ -77,3 +77,19 @@ test('unapproved peer cannot occupy the shared host window', {timeout:10000},asy
  const record=await host.take('data');assert.equal(record.peer,peer);assert.equal(record.data,'ZGVm');
  }finally{host.close();for(const p of peers)p.close();}
 });
+
+test('health WebSocket returns protocol and closes after one response', {timeout:10000}, async()=>{
+ const socket=new WebSocket(`${wsOrigin}/healthz`,protocol,{handshakeTimeout:4000});
+ const frames=[];
+ try {
+  const code=await new Promise((resolve,reject)=>{
+   socket.on('message',data=>frames.push(JSON.parse(data.toString())));
+   socket.once('close',resolve);
+   socket.once('error',reject);
+   socket.once('unexpected-response',(_,response)=>{response.resume();socket.terminate();reject(Error(`health upgrade returned HTTP ${response.statusCode}`));});
+  });
+  assert.equal(code,1000);
+  assert.equal(socket.protocol,protocol);
+  assert.deepEqual(frames,[{protocol,version:1}]);
+ } finally {socket.close();}
+});

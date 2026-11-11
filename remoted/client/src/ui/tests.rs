@@ -509,3 +509,54 @@ fn readonly_observer_has_real_scrollback_and_selectable_rows_without_an_input() 
     );
     app.scroll("terminal-observer", px(180.0)).unwrap();
 }
+
+#[test]
+fn public_relay_shortcut_only_edits_draft_and_survives_delayed_preference() {
+    let mut app = start::<ConnectionFixture>(480.0, ColorScheme::Light);
+    assert_eq!(app.screen().input_text("Relay 地址").unwrap(), Some(""));
+    app.press("Use public relay").unwrap();
+    assert_eq!(
+        app.screen().input_text("Relay 地址").unwrap(),
+        Some("https://neko-relay.czyt.eu.org")
+    );
+    assert!(
+        !app.screen()
+            .texts()
+            .iter()
+            .any(|text| text.contains("COMMAND"))
+    );
+    assert!(!app.shows("请求主机批准"));
+    app.press("加载已保存 Relay（测试）").unwrap();
+    app.wait_for("PREFERENCE LOADED").unwrap();
+    assert_eq!(
+        app.screen().input_text("Relay 地址").unwrap(),
+        Some("https://neko-relay.czyt.eu.org")
+    );
+    app.press("检查并连接 Relay").unwrap();
+    app.wait_for("COMMAND Check(\"https://neko-relay.czyt.eu.org\")")
+        .unwrap();
+}
+
+#[test]
+fn public_relay_shortcut_has_chinese_copy_and_keeps_existing_bindings() {
+    let mut config = EngineConfig::new(
+        Root::of::<SavedBindingFixture>()
+            .tokens(nsh_base::tokens_of(Some(include_str!("theme.json"))).unwrap()),
+    );
+    config.environment.locale = nsh_core::platform::Locale::parse("zh-CN").unwrap();
+    let mut app = Headless::start(config).unwrap();
+    app.first_render().unwrap();
+    app.press("编辑 Relay").unwrap();
+    app.press("使用公共中转").unwrap();
+    assert_eq!(
+        app.screen().input_text("Relay 地址").unwrap(),
+        Some("https://neko-relay.czyt.eu.org")
+    );
+    assert!(app.shows("重新连接"));
+    assert!(
+        !app.screen()
+            .texts()
+            .iter()
+            .any(|text| text.contains("COMMAND"))
+    );
+}

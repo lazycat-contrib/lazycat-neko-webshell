@@ -12,7 +12,14 @@ use nsh_platform_windows as platform;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn main() -> impl std::process::Termination {
     env_logger::init();
-    platform::run_app(
+    let _instance = match neko_remoted_client::platform::initialize() {
+        Ok(instance) => instance,
+        Err(error) => {
+            eprintln!("Cannot start Remoted: {error:#}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    std::process::Termination::report(platform::run_app(
         platform::AppSource::Rust(neko_remoted_client::root()),
         platform::AppOptions {
             title: "小橘远程".to_owned(),
@@ -21,7 +28,7 @@ fn main() -> impl std::process::Termination {
             size: (480, 640),
             ..Default::default()
         },
-    )
+    ))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

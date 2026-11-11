@@ -5,6 +5,8 @@ use super::{
 use crate::controller::{Command, Phase};
 use nsh_core::prelude::*;
 
+mod public_relay;
+
 pub fn render(ui: Ui) -> impl IntoElement {
     let address = signal(ui.model.with_untracked(|model| {
         model
@@ -47,6 +49,16 @@ pub fn render(ui: Ui) -> impl IntoElement {
                             "https://relay.example.com",
                             move || edited.set(true),
                         ))
+                        .child(action(
+                            move || public_relay::label(locale()),
+                            false,
+                            || false,
+                            move || {
+                                edited.set(true);
+                                address.set(public_relay::ORIGIN.to_owned());
+                            },
+                        ))
+                        .child(hint(move || public_relay::hint(locale())))
                         .child(action(
                             move || {
                                 if ui.model.with(|model| model.phase == Phase::Checking) {
@@ -102,13 +114,21 @@ pub fn render(ui: Ui) -> impl IntoElement {
                         .child(heading("配对设备"))
                         .child(field(name, "本设备名称", "主机批准时显示的名称"))
                         .child(field(code, "设备码", "NR1.…"))
-                        .child(hint("扫码和手输使用同一设备码校验；扫码不会更改 Relay。"))
+                        .child(hint(if cfg!(target_os = "android") {
+                            "扫码和手输使用同一设备码校验；扫码不会更改 Relay。"
+                        } else {
+                            "从主机复制设备码并粘贴，或手动输入；无需摄像头。"
+                        }))
                         .child(action(
                             move || {
                                 if scanning.get() {
                                     "正在扫码…"
                                 } else {
-                                    "扫描设备码"
+                                    if cfg!(target_os = "android") {
+                                        "扫描设备码"
+                                    } else {
+                                        "粘贴设备码"
+                                    }
                                 }
                             },
                             false,
@@ -116,12 +136,14 @@ pub fn render(ui: Ui) -> impl IntoElement {
                             move || {
                                 scanning.set(true);
                                 spawn(async move {
-                                    match background(crate::platform::scan_code()).await {
+                                    match read_device_code().await {
                                         Ok(Ok(value)) => code.set(value),
-                                        Ok(Err(error)) => {
-                                            ui.error(format!("扫码未完成，可继续手输：{error:#}"))
+                                        Ok(Err(error)) => ui.error(format!(
+                                            "读取设备码未完成，可继续手输：{error:#}"
+                                        )),
+                                        Err(error) => {
+                                            ui.error(format!("读取设备码不可用：{error}"))
                                         }
-                                        Err(error) => ui.error(format!("扫码服务不可用：{error}")),
                                     }
                                     scanning.set(false);
                                 });
@@ -234,4 +256,23 @@ pub fn render(ui: Ui) -> impl IntoElement {
                 },
             )),
     )
+}
+
+// NSH clipboard services belong to the UI thread, unlike the Android bridge.
+async fn read_device_code() -> Result<Result<String, anyhow::Error>, String> {
+    #[cfg(target_os = "android")]
+    {
+        background(crate::platform::scan_code())
+            .await
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let value = nsh_core::element::clipboard_string().await;
+        Ok(if value.trim().is_empty() {
+            Err(anyhow::anyhow!("剪贴板没有设备码，请手动输入"))
+        } else {
+            Ok(value)
+        })
+    }
 }

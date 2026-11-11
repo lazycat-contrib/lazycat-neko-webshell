@@ -21,7 +21,16 @@ export async function authorizeHost(header, route) {
 export default {
   async fetch(request, env) {
     const u = new URL(request.url);
-    if (request.method === "GET" && u.pathname === "/healthz" && !u.search) return Response.json({ protocol: PROTOCOL, version: 1 });
+    if (request.method === "GET" && u.pathname === "/healthz" && !u.search) {
+      const health = { protocol: PROTOCOL, version: 1 };
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return Response.json(health);
+      if (!request.headers.get("sec-websocket-protocol")?.split(",").map(x => x.trim()).includes(PROTOCOL)) return json(400, "PROTOCOL_REQUIRED");
+      const pair = new WebSocketPair();
+      pair[1].accept();
+      pair[1].send(JSON.stringify(health));
+      pair[1].close(1000, "Healthy");
+      return new Response(null, {status: 101, webSocket: pair[0], headers: {"sec-websocket-protocol": PROTOCOL}});
+    }
     const match = /^\/v1\/(host|client)\/([A-Za-z0-9_-]{43})$/.exec(u.pathname);
     if (!match || !validRoute(match[2]) || u.search) return json(404, "NOT_FOUND");
     if (request.method !== "GET") return json(405, "METHOD_NOT_ALLOWED");

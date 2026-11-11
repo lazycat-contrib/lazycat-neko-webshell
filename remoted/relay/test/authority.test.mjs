@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { authorizeHost, Tunnel, Admission } from '../src/worker.mjs';
+import worker, { authorizeHost, Tunnel, Admission } from '../src/worker.mjs';
 const secret=randomBytes(32).toString('base64url');
 const route=createHash('sha256').update(Buffer.from(secret,'base64url')).digest('base64url');
 test('routing credential proves route without exposing pairing or device keys',async()=>{
@@ -58,4 +58,17 @@ test('one unauthenticated client cannot consume the shared host window',()=>{
  assert.equal(tunnel.peers.has('good'),true);assert.equal(host.sent,9);
  tunnel.message('host',host,JSON.stringify({type:'acknowledge',sequence:9}));
  assert.equal(good.inflight,0);assert.equal(bad.inflight,0);
+});
+
+test('public health HTTP is unchanged and malformed probes never access business objects', async()=>{
+ const env=new Proxy({}, {get(){throw Error('unexpected business object lookup');}});
+ const normal=await worker.fetch(new Request('https://relay.example/healthz'),env);
+ assert.equal(normal.status,200);
+ assert.deepEqual(await normal.json(),{protocol:'neko.remoted.v1',version:1});
+ for(const offered of ['', 'wrong.protocol']){
+  const headers={upgrade:'websocket'};if(offered)headers['sec-websocket-protocol']=offered;
+  const invalid=await worker.fetch(new Request('https://relay.example/healthz',{headers}),env);
+  assert.equal(invalid.status,400);
+ }
+ assert.equal((await worker.fetch(new Request('https://relay.example/healthz?extra=1'),env)).status,404);
 });

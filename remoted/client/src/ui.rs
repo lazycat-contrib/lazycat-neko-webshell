@@ -18,6 +18,8 @@ use nsh_core::prelude::*;
 
 #[component]
 pub fn App() -> impl IntoElement {
+    #[cfg(not(target_os = "android"))]
+    crate::platform::start_services();
     provide_context(crate::terminal::factory());
     provide_context(state::Ui::start());
     nav_stack().flex_1().bg(move || theme().background).child(

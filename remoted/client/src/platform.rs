@@ -1,5 +1,14 @@
-//! App-owned Android services. SAF handles are opaque and chunks are at most 64 KiB.
+//! App-owned native services with opaque file handles and bounded chunks.
+#[cfg(not(target_os = "android"))]
+mod desktop;
+#[cfg(target_os = "android")]
+use android as host;
+#[cfg(not(target_os = "android"))]
+use desktop as host;
+
 use anyhow::{Context, Result, bail, ensure};
+#[cfg(not(target_os = "android"))]
+pub use desktop::{initialize, start_services};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
@@ -28,15 +37,15 @@ pub async fn secure_set(key: &str, value: &str) -> Result<()> {
 }
 
 pub fn data_dir() -> Result<PathBuf> {
-    android::data_dir()
+    host::data_dir()
 }
 
 pub fn drain_events() -> Vec<Value> {
-    android::drain_events()
+    host::drain_events()
 }
 
 pub async fn request(value: Value) -> Result<Value> {
-    android::request(value).await
+    host::request(value).await
 }
 
 const MAX_BUFFERED_FILE: usize = 16 * 1024 * 1024;
@@ -126,20 +135,6 @@ mod tests {
         assert_send(secure_set("binding", "{}"));
         assert_send(pick_upload());
         assert_send(save_download("file.bin", Vec::new()));
-    }
-}
-
-#[cfg(not(target_os = "android"))]
-mod android {
-    use super::*;
-    pub fn data_dir() -> Result<PathBuf> {
-        bail!("Android platform host is unavailable")
-    }
-    pub fn drain_events() -> Vec<Value> {
-        Vec::new()
-    }
-    pub async fn request(_: Value) -> Result<Value> {
-        bail!("Android platform host is unavailable")
     }
 }
 

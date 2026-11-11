@@ -2,7 +2,7 @@
 
 Remoted 将小橘终端中明确授权的会话，通过自建 Relay 提供给独立的 NSH 原生客户端。主机和客户端均主动连接 Relay，不需要把终端服务端口直接暴露到公网。
 
-Android 首发包名为 `community.lazycat.neko.remoted`，支持 Android 9 / API 28 及以上的 arm64 设备。客户端、协议及 Relay 独立版本；主机能力由小橘终端新版提供。两端没有内置公共 Relay，必须分别配置自己的中转地址并由主机用户批准设备。
+Android 首发包名为 `community.lazycat.neko.remoted`，支持 Android 9 / API 28 及以上的 arm64 设备。客户端、协议及 Relay 独立版本；主机能力由小橘终端新版提供。两端均需显式配置同一个 Relay 并由主机用户批准设备；可以填写自建地址，或点击“使用公共中转”填入 `https://neko-relay.czyt.eu.org`，不会自动连接或配对。
 | 目录 | 职责 |
 | --- | --- |
 | `protocol/` | 地址与设备码、Noise 握手、加密消息及协议边界 |
@@ -11,7 +11,7 @@ Android 首发包名为 `community.lazycat.neko.remoted`，支持 Android 9 / AP
 
 WebShell 主机的配对、审批、授权、会话与文件适配由已安装的小橘终端应用提供。其实现位于私有源码仓库的 `src/remoted/`，不包含在本公开仓库中；此处路径仅作源码位置说明，不是本仓库的相对链接。
 
-部署从 [Cloudflare 部署指南](docs/deploy-cloudflare.md) 开始；Relay 的入口和测试见 [Relay README](relay/README.md)。原生客户端的构建、签名和 Android 平台验证见 [Android 指南](docs/android.md)，线协议见 [协议说明](docs/protocol.md)。
+部署从 [Cloudflare 部署指南](docs/deploy-cloudflare.md) 开始；Relay 的入口和测试见 [Relay README](relay/README.md)。原生客户端的构建、签名和 Android 平台验证见 [Android 指南](docs/android.md)，Windows、macOS 和 Linux deb 的构建与安装见 [桌面指南](docs/native-desktop.md)，线协议见 [协议说明](docs/protocol.md)。
 
 ## 支持范围与授权
 

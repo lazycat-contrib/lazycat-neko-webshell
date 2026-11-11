@@ -35,6 +35,8 @@ curl --fail --show-error --silent "${RELAY_ORIGIN%/}/healthz"
 {"protocol":"neko.remoted.v1","version":1}
 ```
 
+Web 设置在启用前会通过同一个 `/healthz` 入口进行 WebSocket 健康检查，子协议为 `neko.remoted.v1`；收到版本响应后立即关闭，不创建主机或设备连接。若更新小橘后出现健康检查失败，请先同步部署本仓库的 Relay 版本。关闭远程控制不要求 Relay 在线。
+
 此检查只证明 Worker 入口可访问。还需用实际应用验证 WebSocket、主机注册、Noise 配对与权限；HTML 登录页、反向代理挑战或无法透传升级请求的代理都不能替代此协议。
 
 ## 2. 手动配置两端
