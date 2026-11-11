@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "neko-remoted-client"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "directories",
