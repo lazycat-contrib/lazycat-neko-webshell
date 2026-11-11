@@ -31,7 +31,14 @@ is `$NSH_TOOLCHAIN/target/android/debug/classes.jar`; the CLI is
 `NSH_ANDROID_RUNTIME` and `NSH_CLI` for prebuilt inputs. These inputs must
 come from the same NSH revision. No public build default points at `/tmp`.
 `NEKO_NDK_HOST` defaults to `linux-x86_64`; use the NDK host directory for
-other supported build hosts. The script requires Bash 4+ and GNU sha256sum.
+other supported build hosts. The scripts require Bash 4+, GNU coreutils (including sha256sum), findutils,
+grep, awk, sed, unzip, curl, OpenSSL, and JDK tools (`java`, `javac`, `jar`,
+`keytool`). These system utilities are standard on Ubuntu or installed by the
+workflow; ripgrep is not required. Run `build-android.sh --check-tools` to
+check PATH and SDK/NDK executables without downloading or compiling anything.
+The normal build additionally checks the NSH CLI/runtime before downloading.
+CI runs the tool preflight immediately after installing its dependencies,
+before the expensive NSH and application builds.
 
 The runtime directory must contain `classes.jar`, `classes.dex`, and
 `lib/arm64-v8a/libnsh.so`. The script passes this prebuilt runtime explicitly

@@ -1,7 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
+for tool in dirname java javac jar keytool curl sha256sum cmp awk sed grep unzip mkdir mktemp rm find sort cp mv ln tee chmod openssl cat; do
+    command -v "$tool" >/dev/null || { echo "Missing required build tool: $tool" >&2; exit 1; }
+done
+if [[ -z ${NEKO_ANDROID_NATIVE_LIB:-} ]]; then
+    if [[ -n ${CARGO:-} ]]; then
+        command -v "$CARGO" >/dev/null || { echo "Missing Cargo executable: $CARGO" >&2; exit 1; }
+    else
+        command -v rustup >/dev/null || { echo 'Missing required build tool: rustup' >&2; exit 1; }
+        rustup which cargo >/dev/null
+    fi
+fi
 client_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}
+tools=$sdk/build-tools/35.0.1
+android_jar=$sdk/platforms/android-35/android.jar
+ndk_root=${ANDROID_NDK_HOME:-$sdk/ndk/27.3.13750724}
+ndk_host=${NEKO_NDK_HOST:-linux-x86_64}
+ndk_bin=$ndk_root/toolchains/llvm/prebuilt/$ndk_host/bin
+[[ -r "$android_jar" ]] || { echo "Missing Android SDK platform: $android_jar" >&2; exit 1; }
+for required in "$tools/aapt2" "$tools/d8" "$tools/apksigner" "$tools/zipalign" "$ndk_bin/llvm-nm" "$ndk_bin/llvm-readelf" "$ndk_bin/llvm-ar" "$ndk_bin/llvm-strip" "$ndk_bin/llvm-objdump" "$ndk_bin/aarch64-linux-android28-clang" "$ndk_bin/aarch64-linux-android28-clang++"; do
+    [[ -x "$required" ]] || { echo "Missing Android SDK/NDK executable: $required" >&2; exit 1; }
+done
+if [[ ${1:-} == --check-tools && $# == 1 ]]; then
+    echo 'Android build tool preflight passed'
+    exit 0
+fi
+[[ $# == 0 ]] || { echo 'Usage: build-android.sh [--check-tools]' >&2; exit 1; }
 toolchain=${NSH_TOOLCHAIN:-}
 if [[ -z "$toolchain" && ( -z ${NSH_CLI:-} || -z ${NSH_ANDROID_RUNTIME:-} ) ]]; then
     echo 'Set NSH_TOOLCHAIN to the matching NSH checkout, or set both NSH_CLI and NSH_ANDROID_RUNTIME' >&2
@@ -9,9 +34,13 @@ if [[ -z "$toolchain" && ( -z ${NSH_CLI:-} || -z ${NSH_ANDROID_RUNTIME:-} ) ]]; 
 fi
 nsh_cli=${NSH_CLI:-$toolchain/target/debug/nsh}
 runtime=${NSH_ANDROID_RUNTIME:-$toolchain/target/android/debug}
+if [[ -z ${NEKO_ANDROID_NATIVE_LIB:-} ]]; then
+    [[ -x "$nsh_cli" ]] || { echo "Missing NSH CLI executable: $nsh_cli" >&2; exit 1; }
+fi
+for required in "$runtime/classes.jar" "$runtime/classes.dex" "$runtime/lib/arm64-v8a/libnsh.so"; do
+    [[ -r "$required" ]] || { echo "Missing Android runtime input: $required" >&2; exit 1; }
+done
 output=${NEKO_ANDROID_OUT:-$client_dir/target/android-app}
-tools=$sdk/build-tools/35.0.1
-android_jar=$sdk/platforms/android-35/android.jar
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/neko-remoted/android
 mkdir -p "$output" "$cache"
 zxing=$cache/zxing-core-3.5.3.jar
@@ -21,9 +50,6 @@ if [[ ! -f "$zxing" ]] || ! printf '%s  %s\n' "$zxing_sha" "$zxing" | sha256sum 
     printf '%s  %s\n' "$zxing_sha" "$zxing.tmp" | sha256sum --check --status
     mv "$zxing.tmp" "$zxing"
 fi
-for required in "$runtime/classes.jar" "$runtime/classes.dex" "$runtime/lib/arm64-v8a/libnsh.so" "$android_jar" "$tools/aapt2" "$tools/d8" "$tools/apksigner"; do
-    [[ -f "$required" ]] || { echo "Missing Android build input: $required" >&2; exit 1; }
-done
 work=$(mktemp -d "$output/build.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/classes" "$work/dex" "$work/package/lib/arm64-v8a" "$work/package/assets/licenses"
@@ -47,13 +73,10 @@ else
     native_lib=$work/package/lib/arm64-v8a/libnsh.so
 fi
 [[ -f "$native_lib" ]] || { echo "Native app library missing: $native_lib" >&2; exit 1; }
-ndk_root=${ANDROID_NDK_HOME:-$sdk/ndk/27.3.13750724}
-ndk_host=${NEKO_NDK_HOST:-linux-x86_64}
-ndk_bin=$ndk_root/toolchains/llvm/prebuilt/$ndk_host/bin
 for symbol in Java_com_longbridge_nsh_Native_runRust Java_community_lazycat_neko_remoted_PlatformBridge_nativeAttach Java_community_lazycat_neko_remoted_PlatformBridge_nativeEvent; do
-    "$ndk_bin/llvm-nm" --dynamic --defined-only "$native_lib" | awk '{print $NF}' | rg -x "$symbol" >/dev/null || { echo "Native library lacks required app hook: $symbol" >&2; exit 1; }
+    "$ndk_bin/llvm-nm" --dynamic --defined-only "$native_lib" | awk '{print $NF}' | grep -Fx "$symbol" >/dev/null || { echo "Native library lacks required app hook: $symbol" >&2; exit 1; }
 done
-"$ndk_bin/llvm-readelf" --file-header "$native_lib" | rg 'Machine:.*AArch64' >/dev/null || { echo 'Native library is not arm64' >&2; exit 1; }
+"$ndk_bin/llvm-readelf" --file-header "$native_lib" | grep -E 'Machine:.*AArch64' >/dev/null || { echo 'Native library is not arm64' >&2; exit 1; }
 mapfile -t load_alignments < <("$ndk_bin/llvm-readelf" --program-headers --wide "$native_lib" | awk '$1 == "LOAD" {print $NF}')
 [[ ${#load_alignments[@]} -gt 0 ]] || { echo 'Native library has no PT_LOAD segments' >&2; exit 1; }
 for alignment in "${load_alignments[@]}"; do
