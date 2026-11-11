@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="community.lazycat.neko.remoted.tests">
+    <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="35" />
+    <application android:label="Remoted platform tests">
+        <activity android:name="community.lazycat.neko.remoted.FixtureGrantActivity" android:exported="true" />
+        <provider android:name="community.lazycat.neko.remoted.FixtureDocuments" android:authorities="community.lazycat.neko.remoted.tests.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter><action android:name="android.content.action.DOCUMENTS_PROVIDER" /></intent-filter>
+        </provider>
+    </application>
+    <instrumentation android:name="community.lazycat.neko.remoted.PlatformInstrumentation" android:targetPackage="community.lazycat.neko.remoted" android:label="Remoted platform tests" />
+</manifest>

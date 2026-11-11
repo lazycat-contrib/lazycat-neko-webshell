@@ -1,0 +1,13 @@
+{
+  "name": "小橘远程",
+  "id": "community.lazycat.neko.remoted",
+  "version": "0.1.0",
+  "build": 1,
+  "appearance": "system",
+  "rust": ".",
+  "root": "App",
+  "theme": "src/ui/theme.json",
+  "android": {
+    "targetSdk": 35
+  }
+}

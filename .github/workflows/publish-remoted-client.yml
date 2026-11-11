@@ -1,0 +1,88 @@
+name: Publish Remoted native client
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Native stable version, for example 0.1.0
+        required: true
+        type: string
+      source-run-id:
+        description: Successful trusted private remoted-client.yml run ID
+        required: true
+        type: string
+      source-commit:
+        description: Exact private release tag and workflow head commit (40 lowercase hex)
+        required: true
+        type: string
+      dry-run:
+        description: Validate only; create no public tag or Release
+        type: boolean
+        default: true
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: publish-remoted-client
+  cancel-in-progress: false
+jobs:
+  native:
+    if: github.repository == 'lazycat-contrib/lazycat-neko-webshell' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Select trusted native source and download the bounded ZIP
+        uses: actions/github-script@v9
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+          SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+          SOURCE_COMMIT: ${{ inputs.source-commit }}
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        with:
+          github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          script: await require('./scripts/remoted-client.cjs').selectAndDownload({github, core});
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install the pinned Android inspection tools
+        run: sdkmanager 'build-tools;35.0.1'
+      - name: Verify native ZIP, provenance, APK metadata, ABI and production signature
+        run: |
+          python3 scripts/prepare-remoted-native.py \
+            --archive dist/remoted-client/artifact.zip \
+            --selection dist/remoted-client/selection.json \
+            --aapt "$ANDROID_HOME/build-tools/35.0.1/aapt" \
+            --apksigner "$ANDROID_HOME/build-tools/35.0.1/apksigner"
+      - name: Revalidate source run, immutable tag and selected artifact
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          script: await require('./scripts/remoted-client.cjs').revalidateSource({github});
+      - name: Complete the dry run or publish only native Release assets
+        id: release
+        uses: actions/github-script@v9
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+        with:
+          script: |
+            await require('./scripts/remoted-client.cjs').publishRelease({
+              github, context, core, dryRun: process.env.DRY_RUN !== 'false',
+            });
+      - name: Summarize native verification
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+          SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+          SOURCE_COMMIT: ${{ inputs.source-commit }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          RELEASE_URL: ${{ steps.release.outputs.release-url }}
+        run: |
+          {
+            printf 'Native version: %s\n' "$NATIVE_VERSION"
+            printf 'Private source run: %s\n' "$SOURCE_RUN_ID"
+            printf 'Private source commit: %s\n' "$SOURCE_COMMIT"
+            printf 'Dry run: %s\n' "$DRY_RUN"
+            printf 'Release: %s\n' "$RELEASE_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -18,3 +18,9 @@
 可通过喵喵商店或懒猫官方商店安装，也可以在本仓库的 Releases 下载 `community.lazycat.webshell.neko-v<版本>.lpk` 手动安装。`checksums.txt` 提供 SHA256 校验信息。
 
 要求懒猫系统 1.6.0 或更新版本。安装后，从系统 WebShell 入口选择目标应用实例即可使用。
+
+## 小橘远程 Android 客户端
+
+小橘远程是独立的 Android ARM64 原生客户端，最低支持 Android 9（API 28）。客户端源码位于 [remoted/client](remoted/client)，通过用户指定的 Relay 与主机配对；自行部署 Relay 请参阅 [Cloudflare 部署指南](remoted/docs/deploy-cloudflare.md)。
+
+原生 APK 使用独立的 `remoted-client-v<版本>` 发布标签，与小橘终端的 LPK 和商店发布分开管理。发布流程默认仅验证，检查来源、校验值及固定生产证书后才能正式发布；详见 [原生客户端发布说明](components/remoted-client/README.md)。

@@ -1,0 +1,20 @@
+{
+  "component": "remoted-client",
+  "name": "小橘远程",
+  "sourceRepository": "ca-x/lazycat-neko-webshell",
+  "sourceWorkflow": "remoted-client.yml",
+  "publicRepository": "lazycat-contrib/lazycat-neko-webshell",
+  "tagPrefix": "remoted-client-v",
+  "artifactPrefix": "remoted-client-native-v",
+  "packageName": "community.lazycat.neko.remoted",
+  "abi": "arm64-v8a",
+  "protocolVersion": 1,
+  "minSdk": 28,
+  "targetSdk": 35,
+  "buildToolsVersion": "35.0.1",
+  "signingCertificateSha256": "6e2df6d3940b6898cb749365015483c52d40c2991995ab47333c03328b142e8e",
+  "maxArchiveBytes": 268435456,
+  "maxApkBytes": 268435456,
+  "maxApkExpandedBytes": 536870912,
+  "maxApkEntries": 4096
+}
