@@ -62,6 +62,29 @@ Output is `remoted/client/target/android-app/neko-remoted.apk`; override with
 `NEKO_ANDROID_OUT`. The manifest does not mark the application debuggable.
 Native optimization follows `nsh package`'s release build.
 
+## CI disk and download bounds
+
+The native workflow runs protocol, Linux client/headless, and Relay checks in a
+separate `verify` job. The Android job depends on it and uses a fresh runner,
+so Linux test targets do not share disk with Android build targets. It sets
+`CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_DEV_STRIP=debuginfo`,
+`CARGO_INCREMENTAL=0`, and `CARGO_BUILD_JOBS=2`.
+
+Only disposable GitHub-hosted runners remove unused .NET, GHC, Boost, and
+CodeQL installations before building; required Java, Node, Rust, and Android
+SDK installations are retained. Android does not restore or save full Cargo
+target caches. The NSH CLI is copied into `RUNNER_TEMP` and its target directory
+is removed before building the generic Android runtime. The runtime's actual
+`classes.jar`, `classes.dex`, and arm64 `libnsh.so` are then copied into
+`RUNNER_TEMP` before removing that generic target too. The final app build uses
+explicit `NSH_CLI` and `NSH_ANDROID_RUNTIME` paths, with `NSH_TOOLCHAIN` retained
+for the matching checkout. Only the final app compilation target remains.
+
+Maven downloads allow three retries of any download error (including HTTP 404),
+with a 15-second connection timeout, 60-second per-attempt timeout and
+180-second retry budget. The downloaded ZXing JAR must still match its pinned
+SHA-256 before use. No retry changes dependency versions or checksum policy.
+
 ## Signing and dependencies
 
 The first build generates a stable RSA signing key and random password under

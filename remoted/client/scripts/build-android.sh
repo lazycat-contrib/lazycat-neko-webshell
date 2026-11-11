@@ -17,7 +17,7 @@ mkdir -p "$output" "$cache"
 zxing=$cache/zxing-core-3.5.3.jar
 zxing_sha=8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82
 if [[ ! -f "$zxing" ]] || ! printf '%s  %s\n' "$zxing_sha" "$zxing" | sha256sum --check --status; then
-    curl --fail --location --proto '=https' --tlsv1.2 https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar -o "$zxing.tmp"
+    curl --fail --location --retry 3 --retry-all-errors --retry-delay 2 --retry-max-time 180 --connect-timeout 15 --max-time 60 --proto '=https' --tlsv1.2 https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar -o "$zxing.tmp"
     printf '%s  %s\n' "$zxing_sha" "$zxing.tmp" | sha256sum --check --status
     mv "$zxing.tmp" "$zxing"
 fi
