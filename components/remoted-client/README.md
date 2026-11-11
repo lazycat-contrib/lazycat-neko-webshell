@@ -6,14 +6,21 @@ This component publishes only the Android arm64-v8a native client. It has an ind
 Run `publish-remoted-client.yml` manually on the public repository's `main` branch with
 the native `version`, explicit private `source-run-id`, and exact 40-character
 `source-commit`. `dry-run` defaults to `true`. No scheduled publication is configured.
-`SOURCE_REPO_TOKEN` needs read access to Actions and metadata in the private source
-repository. Publication uses the public workflow's own `GITHUB_TOKEN`.
+`SOURCE_REPO_TOKEN` needs read access to Actions, Contents (including Git refs/tags),
+and Metadata in the private source repository. Publication uses the public workflow's own `GITHUB_TOKEN`.
 
 The source must be a completed, successful `remoted-client.yml` push or manual run on
 the matching `remoted-client-vX.Y.Z` private tag, whose current commit must equal the
 run head and the explicitly supplied commit. Pull requests, forks, branches, moved
 tags, expired or ambiguous native artifacts, and missing GitHub archive digests fail.
 Revalidation repeats these checks after Android inspection and before publication.
+
+A `403 Resource not accessible by personal access token` from `git/ref/tags` means
+the source token lacks Contents read access. Artifact download access alone is not
+enough. Have the credential owner correct the token permissions, then rerun the
+dry run; do not remove the immutable-tag check or copy a broad personal token into
+the public repository. A maintainer publishing locally must retain the same source,
+tag, archive, signature and readback checks using their existing authorized login.
 
 The artifact name is `remoted-client-native-vX.Y.Z`. Its ZIP has exactly three flat files:
 
