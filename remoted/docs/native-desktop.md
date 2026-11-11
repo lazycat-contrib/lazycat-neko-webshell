@@ -70,7 +70,7 @@ python3 remoted/client/scripts/build-desktop.py --version 0.2.0 --target x86_64-
 - `neko-remoted-desktop-0.2.0-x86_64-apple-darwin.zip`，独立 Intel APP。
 - `neko-remoted-desktop-0.2.0-x86_64-unknown-linux-gnu.deb`，含 desktop entry、图标、许可证。
 
-Windows 未签名，可能触发 SmartScreen。Mac **仅 ad-hoc 签名，没有 Developer ID、没有公证**；
+Windows 运行前需安装 [Microsoft Visual C++ Redistributable x64](https://aka.ms/vs/17/release/vc_redist.x64.exe)；当前 EXE 导入 `VCRUNTIME140.dll` 和 `VCRUNTIME140_1.dll`，ZIP 未附带这两个运行库。Windows 未签名，可能触发 SmartScreen。Mac **仅 ad-hoc 签名，没有 Developer ID、没有公证**；
 Gatekeeper 可能要求系统设置中的“仍要打开”。不能把 codesign verify 通过称为官方签名或公证。
 Linux deb 用构建机实际 glibc/GTK/GLib/GStreamer 版本声明保守运行下限；本机 Arch 构建仅供本机
 提取启动验证，不代表 Ubuntu 可安装。发行用 CI Ubuntu 24.04 包。安装 `sudo apt install ./包.deb`；
