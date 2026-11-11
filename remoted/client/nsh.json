@@ -1,8 +1,8 @@
 {
   "name": "小橘远程",
   "id": "community.lazycat.neko.remoted",
-  "version": "0.1.3",
-  "build": 4,
+  "version": "0.1.4",
+  "build": 5,
   "appearance": "system",
   "rust": ".",
   "root": "App",
