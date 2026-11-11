@@ -45,7 +45,7 @@ Prologue 为 JSON 编码的数组：`["neko-remoted",1,mode,route,relayDigest]`�
 
 ## 文件与终端
 
-文件路径相对于批准的根目录。目标用户下的 Python helper 使用 dirfd 和 O_NOFOLLOW 逐段解析，根目录的 device/inode/uid 固定校验，不通过中转读取主机提供方的本地文件。下载按 offset 拉取并计算 SHA-256；上传按 offset 接收 chunk，核对长度与 hash 后提交。默认不覆盖，显式覆盖才替换，禁止跟随目标符号链接。中断与取消清理 staging，崩溃遗留项按期限清理。主机最大单文件 4 GiB；客户端可施加更小上限，必须在选择文件时说明。
+文件路径相对于批准的根目录。目标用户下的 Python helper 使用 dirfd 和 O_NOFOLLOW 逐段解析，根目录的 device/inode/uid 固定校验，不通过中转读取主机提供方的本地文件。下载按 offset 拉取并计算 SHA-256；上传按 offset 接收 chunk，核对长度与 hash 后提交。默认不覆盖，显式覆盖才替换，禁止跟随目标符号链接。目标目录与 staging 不在同一文件系统时，在上传开始前明确拒绝，避免数据传完后才因 EXDEV 提交失败。中断与取消清理 staging，崩溃遗留项按期限清理。主机最大单文件 4 GiB；客户端可施加更小上限，必须在选择文件时说明。
 
 终端 attach 只附加已存在的授权会话。输出具有 sequence、replay、reset 和 gap；客户端按增量 UTF-8 解码，reset 开启新的屏幕 epoch，gap 不能伪装成连续输出。断开网络不会关闭持久终端。Herdr pane 与普通终端采用同一渲染规则，控制与只读权限同样生效。
 
