@@ -1,7 +1,7 @@
 # Remoted 原生桌面发行
 
 桌面采用独立版本 **0.2.0**，发行源码 tag 为 `remoted-desktop-v0.2.0-build.2`。
-Android 保持 `0.1.3`，已发布的 `remoted-client-v0.1.3` 不变。
+本桌面构件使用共享 crate `0.1.3`，Android 按独立版本更新，既有发布 tag 不变。
 桌面版本进入包名、deb/APP 元数据与 `build-info.json`；`crate_version` 记录共享源码的
 0.1.3。`cargo_binary_sha256` 标识打包前的 Cargo binary（Mac ad-hoc 签名会改变 APP 内的 binary）。
 桌面包通过独立发行流程发布，不使用 Android 的三资产 publisher。
@@ -82,10 +82,10 @@ Linux deb 用构建机实际 glibc/GTK/GLib/GStreamer 版本声明保守运行�
 `fail-fast: false`：Windows x64、Mac arm64、Mac Intel、Linux amd64。没有 push/tag 自动触发、
 没有 release 写权限、没有 publisher/Android 调用。源码 tag 只是主线可审计的独立发行锚点。
 
-主线审阅并提交本次拥有文件后，可自行创建独立 tag，再显式授权触发；本实现阶段不执行这些命令：
+提交源码并创建固定 tag 后，手动触发四个平台的构建：
 
 ```sh
-# 主线确认版本并完成 commit/tag/push 后
+# 完成 commit/tag/push 后
 # workflow 必须已存在于默认分支，才能从该 tag 手动 dispatch。
 gh workflow run remoted-client-desktop.yml --ref remoted-desktop-v0.2.0-build.2 -f desktop_version=0.2.0
 gh run list --workflow remoted-client-desktop.yml --limit 5
@@ -95,7 +95,7 @@ gh run download RUN_ID --dir /tmp/remoted-desktop-ci
 
 每个作业先运行客户端 lib tests，再 `cargo build --locked --release --target` 打包。Mac 在
 macos-15 runner 上指定 CPU target，两个包都显式构建；不同 runner CPU 不表示产物 CPU。
-主线必须检查四个 job 实际成功，而非看到 workflow 文件就宣称 Windows/Mac 已构建。
+发布前必须检查四个 job 实际成功，而非看到 workflow 文件就宣称 Windows/Mac 已构建。
 
 公共发布保持现有本机人工授权流程：核对 source tag 指向提交、run 的 head SHA、四个 build-info
 的 `source_sha`/`source_dirty=false`、版本、NSH revision、target、包内元数据与 SHA-256 后，再上传
