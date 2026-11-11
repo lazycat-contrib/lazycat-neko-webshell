@@ -47,6 +47,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
       - name: Install the pinned Android inspection tools
         run: sdkmanager 'build-tools;35.0.1'
       - name: Verify native ZIP, provenance, APK metadata, ABI and production signature
