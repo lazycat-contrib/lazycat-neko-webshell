@@ -21,12 +21,14 @@
 
 ## neoko-terminal 原生客户端
 
-neoko-terminal 是支持 Windows、macOS、Linux 和 Android 的原生终端客户端。Android 提供 ARM64 版本，最低支持 Android 9（API 28）。客户端通过用户指定的 Relay 与主机配对；自行部署 Relay 请参阅 [Cloudflare 部署指南](relay/DEPLOY.md)。
+neoko-terminal 是支持 Windows、macOS、Linux 和 Android 的原生终端客户端。桌面 0.4.1 起可以独立使用本机终端、hc 持久化终端和本机 Herdr，在偏好设置中选择默认会话后端；默认值只影响本机新建会话，已有会话保持原后端。hc 和 Herdr 需要单独安装，程序提供相应引导。
+
+桌面端支持互相配对和共享会话，主机明确批准设备并配置只读或操作权限。Android 仅用于远程连接，提供 ARM64 版本，最低支持 Android 9（API 28）。远程主机和客户端需填写同一 Relay v2 地址，使用 WebShell 0.14.2 或桌面 0.4.1 主机；自行部署 Relay 请参阅 [Cloudflare 部署指南](relay/DEPLOY.md)。
 
 原生 APK 使用独立的 `neoko-terminal-android-v<版本>` 发布标签，与小橘终端的 LPK 和商店发布分开管理。发布流程默认仅验证，检查来源、校验值及固定生产证书后才能正式发布；详见 [原生客户端发布说明](components/neoko-terminal/README.md)。
 
 桌面发布使用独立的 `neoko-terminal-desktop-v<版本>` 标签，包名以 `neoko-terminal-<版本>-<target>` 开头。Android 应用 ID 与生产签名证书保持不变，已有安装可以沿用原有身份升级。
 
-公开仓库的 Android 和桌面发布流程都从私有仓库拉取对应 Actions 构建产物，校验来源、校验值及各平台产物合同后发布，不在公开仓库重复构建原生客户端。桌面发布须齐备四个目标平台的产物，上传后逐一回读校验。
+公开仓库的 Android 和桌面发布流程都从私有仓库拉取对应 Actions 构建产物，校验来源、校验值及各平台产物合同后发布，不在公开仓库重复构建原生客户端。桌面统一发布 Release 构建的稳定正式包，须齐备 Windows x64、macOS Apple Silicon、macOS Intel 和 Linux amd64 deb 的产物，上传后逐一回读校验；草稿和预发布版本不算发布完成。
 
 本仓库维护 GitHub Actions 发布流程、产物校验脚本，以及 [Relay 源码](relay) 和部署说明。应用与原生客户端由私有仓库构建，安装包在 Releases 下载。
