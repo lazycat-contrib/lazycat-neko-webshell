@@ -18,7 +18,7 @@ desktop = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(desktop)
 
 
-def package_fixture(target, info):
+def package_fixture(target, info, compression='gz'):
     """Small structural fixtures; actual runtime evidence comes from real CI packages."""
     files = {}
     if target.endswith('linux-gnu'):
@@ -32,7 +32,7 @@ def package_fixture(target, info):
                  'usr/share/pixmaps/community.lazycat.neko.remoted.png': b'\x89PNG\r\n\x1a\n'}
         def tar(entries):
             output = io.BytesIO()
-            with tarfile.open(fileobj=output, mode='w:gz') as archive:
+            with tarfile.open(fileobj=output, mode='w:' + compression) as archive:
                 for name, data in entries.items():
                     entry = tarfile.TarInfo(name)
                     entry.size = len(data)
@@ -44,7 +44,7 @@ def package_fixture(target, info):
                          [('libc6', 'libc6'), ('gtk4', 'libgtk-4-1'), ('glib', 'libglib2.0-0t64'), ('gstreamer', 'libgstreamer1.0-0')])
         control = f'Package: neoko-terminal\nVersion: 0.3.0\nArchitecture: amd64\nDepends: {deps}\n'.encode()
         output = bytearray(b'!<arch>\n')
-        for name, data in [('debian-binary', b'2.0\n'), ('control.tar.gz', tar({'control': control})), ('data.tar.gz', tar(files))]:
+        for name, data in [('debian-binary', b'2.0\n'), ('control.tar.' + compression, tar({'control': control})), ('data.tar.' + compression, tar(files))]:
             output.extend(f'{name + "/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{len(data):<10}`\n'.encode())
             output.extend(data)
             if len(data) % 2:
@@ -139,6 +139,21 @@ class DesktopValidationTests(unittest.TestCase):
         for name, digest in result['files'].items():
             self.assertEqual(hashlib.sha256((self.root / 'verified' / name).read_bytes()).hexdigest(), digest)
 
+    def test_zstd_deb_tar_members_pass_full_preparation(self):
+        target = desktop.TARGETS[0]
+        name = next(n for n in self.contents[target] if n.endswith('.json'))
+        info = json.loads(self.contents[target][name])
+        package = next(n for n in self.contents[target] if n.endswith('.deb'))
+        data = package_fixture(target, info, compression='zst')
+        self.assertIn(b'control.tar.zst', data)
+        self.assertIn(b'data.tar.zst', data)
+        self.contents[target].update({name: json.dumps(info).encode(), package: data,
+                                     package + '.sha256': f'{hashlib.sha256(data).hexdigest()}  {package}\n'.encode()})
+        self.archive(target)
+        result = self.prepare()
+        self.assertEqual(len(result['files']), 12)
+        self.assertEqual((self.root / 'verified' / package).read_bytes(), data)
+
     def test_opaque_packages_with_valid_outer_digest_checksum_and_provenance_fail(self):
         for target in desktop.TARGETS:
             name = next(n for n in self.contents[target] if n.endswith(('.deb', '.zip')))
@@ -214,6 +229,32 @@ class DesktopValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.prepare()
             self.assertFalse((self.root / 'verified').exists())
+
+    def test_windows_crlf_checksum_passes_full_preparation(self):
+        target = desktop.TARGETS[1]
+        name = next(n for n in self.contents[target] if n.endswith('.sha256'))
+        self.contents[target][name] = self.contents[target][name].replace(b'\n', b'\r\n')
+        self.archive(target)
+        result = self.prepare()
+        self.assertEqual(len(result['files']), 12)
+        self.assertEqual((self.root / 'verified' / name).read_bytes(), self.contents[target][name])
+
+    def test_checksum_crlf_compatibility_rejects_other_changes(self):
+        for target in desktop.TARGETS[:2]:
+            name = next(n for n in self.contents[target] if n.endswith('.sha256'))
+            original = self.contents[target][name]
+            cases = [original + b'\n', original.replace(b'  ', b' '), original.rstrip(b'\n') + b' \r\n',
+                     original + b'extra-file\n', b'0' * 64 + original[64:]]
+            if target.endswith('linux-gnu'):
+                cases.append(original.replace(b'\n', b'\r\n'))
+            for altered in cases:
+                self.contents[target][name] = altered
+                self.archive(target)
+                with self.subTest(target=target, checksum=altered), self.assertRaisesRegex(ValueError, 'checksum'):
+                    self.prepare()
+                self.assertFalse((self.root / 'verified').exists())
+            self.contents[target][name] = original
+            self.archive(target)
 
     def test_package_checksum_mismatch_fails(self):
         target = desktop.TARGETS[0]

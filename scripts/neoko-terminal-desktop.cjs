@@ -114,9 +114,9 @@ function verifiedFiles(profile = loadProfile(), directory = work) {
   });
   return {selection, files};
 }
-async function publishRelease({github, context, core, dryRun = true, profile = loadProfile(), directory = work}) {
+async function publishRelease({github, context, core, dryRun = true, releaseCommit = context.sha, profile = loadProfile(), directory = work}) {
   const {selection, files} = verifiedFiles(profile, directory);
-  return native.publishVerifiedRelease({github, context, core, dryRun, profile, selection, files,
+  return native.publishVerifiedRelease({github, context, core, dryRun, releaseCommit, profile, selection, files,
     body: `neoko-terminal desktop ${selection.version}.\n\nSource: ${selection.sourceRepository}@${selection.sourceCommit}\nPrivate build: ${selection.sourceRunId} (attempt ${selection.sourceRunAttempt}).\n\nFour target packages, checksums and build provenance. Windows/Linux are unsigned; macOS uses ad-hoc signing and is not notarized.`,
   });
 }

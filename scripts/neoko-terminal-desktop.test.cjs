@@ -94,8 +94,9 @@ test('desktop revalidation detects source attempt and any artifact digest mutati
   const files = [{...artifacts[0], digest: 'sha256:' + 'f'.repeat(64)}, ...artifacts.slice(1)];
   await assert.rejects(desktop.revalidateSource({github: sourceGithub({files}), directory: fixture.directory}), /changed after/);
 });
-function publicGithub({assets = [], wrongReadback = false, tag = null, draft = true, existing = false} = {}) {
+function publicGithub({assets = [], wrongReadback = false, tag = null, draft = true, existing = false, comparison} = {}) {
   const writes = [];
+  const comparisons = [];
   let tagSHA = tag;
   const release = {id: 7, tag_name: 'neoko-terminal-desktop-v0.3.0', draft, html_url: 'https://github.com/public/release'};
   const github = {
@@ -103,6 +104,7 @@ function publicGithub({assets = [], wrongReadback = false, tag = null, draft = t
       getRef: async () => { if (!tagSHA) throw Object.assign(new Error('missing'), {status: 404}); return {data: {object: {type: 'commit', sha: tagSHA}}}; },
       createRef: async request => { writes.push(['tag', request]); tagSHA = request.sha; },
     }, repos: {
+      compareCommits: async request => { comparisons.push(request); if (comparison instanceof Error) throw comparison; return {data: comparison}; },
       listReleases() {}, listReleaseAssets() {},
       createRelease: async request => { writes.push(['create', request]); return {data: release}; },
       uploadReleaseAsset: async request => { writes.push(['upload', request]); const asset = {id: assets.length + 1, name: request.name, size: request.data.length, bytes: request.data}; assets.push(asset); return {data: asset}; },
@@ -111,7 +113,7 @@ function publicGithub({assets = [], wrongReadback = false, tag = null, draft = t
     paginate: async method => method === github.rest.repos.listReleases ? (existing ? [release] : []) : assets,
     request: async (route, request) => ({data: wrongReadback ? Buffer.from('wrong') : assets.find(asset => asset.id === request.asset_id).bytes}),
   };
-  return {github, writes, assets};
+  return {github, writes, assets, comparisons};
 }
 const context = {repo: {owner: 'lazycat-contrib', repo: 'lazycat-neko-webshell'}, sha: publicCommit, ref: 'refs/heads/main', eventName: 'workflow_dispatch'};
 const core = {notice() {}, setOutput() {}};
@@ -186,8 +188,10 @@ test('desktop identical partial draft resumes without moving tag or duplicating 
 test('public desktop workflow only pulls private artifacts, verifies and revalidates before publication', () => {
   const workflowText = fs.readFileSync(path.join(root, '.github/workflows/neoko-terminal-desktop.yml'), 'utf8');
   assert.match(workflowText, /workflow_dispatch:/);
-  for (const input of ['version', 'source-run-id', 'source-commit', 'dry-run']) assert.match(workflowText, new RegExp(`      ${input}:`));
+  for (const input of ['version', 'source-run-id', 'source-commit', 'release-commit', 'dry-run']) assert.match(workflowText, new RegExp(`      ${input}:`));
   assert.match(workflowText, /default: '0\.3\.0'/);
+  assert.match(workflowText, /python-version: '3\.14'/);
+  assert.match(workflowText, /releaseCommit: process.env.RELEASE_COMMIT \|\| context.sha/);
   assert.match(workflowText, /dry-run:[\s\S]*default: true/);
   assert.doesNotMatch(workflowText, /cargo |rust-toolchain|build-desktop\.py|upload-artifact|\n  push:|matrix:|resolveVersion/);
   assert.match(workflowText, /github-token: \$\{\{ secrets\.SOURCE_REPO_TOKEN \}\}/);
@@ -196,6 +200,69 @@ test('public desktop workflow only pulls private artifacts, verifies and revalid
   assert.ok(workflowText.indexOf('.revalidateSource(') < workflowText.indexOf('.publishRelease('));
   const check = fs.readFileSync(path.join(root, '.github/workflows/check-neoko-terminal.yml'), 'utf8');
   assert.match(check, /scripts\/\*neoko\*/);
+  assert.match(check, /python-version: '3\.14'/);
   assert.match(check, /test_neoko_terminal\*\.py/);
   assert.match(check, /scripts\/neoko-terminal-desktop\.test\.cjs/);
+});
+
+
+test('desktop explicit ancestor resumes a fixed public draft without moving its tag', async t => {
+  const fixture = await verifiedFixture(t);
+  const releaseCommit = 'c'.repeat(40);
+  const comparison = {status: 'ahead', base_commit: {sha: releaseCommit}, merge_base_commit: {sha: releaseCommit}, ahead_by: 2, behind_by: 0};
+  const {github, writes, comparisons} = publicGithub({tag: releaseCommit, existing: true, comparison});
+  await desktop.publishRelease({github, core, context, releaseCommit, directory: fixture.directory, dryRun: false});
+  assert.deepEqual(comparisons, [{owner: context.repo.owner, repo: context.repo.repo, base: releaseCommit, head: context.sha}]);
+  assert.equal(writes.some(([type]) => type === 'tag' || type === 'create'), false);
+  assert.equal(writes.at(-1)[0], 'publish');
+  // The private source SHA stays independent of the public release commit.
+  assert.equal(fixture.selection.sourceCommit, commit);
+});
+
+test('desktop release commit rejects invalid and nonancestor values even in dry runs', async t => {
+  const fixture = await verifiedFixture(t);
+  const ancestor = 'c'.repeat(40);
+  const valid = {status: 'ahead', base_commit: {sha: ancestor}, merge_base_commit: {sha: ancestor}, ahead_by: 1, behind_by: 0};
+  for (const releaseCommit of ['', null, 'main', 'A'.repeat(40), 'a'.repeat(39), 123]) {
+    const {github, writes, comparisons} = publicGithub();
+    await assert.rejects(desktop.publishRelease({github, core, context, releaseCommit, directory: fixture.directory}), /full lowercase SHA/);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(comparisons, []);
+  }
+  for (const comparison of [{...valid, status: 'behind'}, {...valid, status: 'diverged'},
+    {...valid, merge_base_commit: {sha: 'f'.repeat(40)}}, {...valid, base_commit: {sha: 'f'.repeat(40)}},
+    {...valid, behind_by: 1}, {...valid, ahead_by: 0}, Object.assign(new Error('compare denied'), {status: 403})]) {
+    const {github, writes} = publicGithub({comparison});
+    await assert.rejects(desktop.publishRelease({github, core, context, releaseCommit: ancestor, directory: fixture.directory}));
+    assert.deepEqual(writes, []);
+  }
+  const {github, writes, comparisons} = publicGithub({comparison: valid});
+  await desktop.publishRelease({github, core, context, releaseCommit: ancestor, directory: fixture.directory});
+  assert.equal(comparisons.length, 1);
+  assert.deepEqual(writes, []);
+});
+
+test('desktop identical release commit needs no comparison and new tags default to main', async t => {
+  const fixture = await verifiedFixture(t);
+  const {github, writes, comparisons} = publicGithub();
+  await desktop.publishRelease({github, core, context, releaseCommit: context.sha, directory: fixture.directory, dryRun: false});
+  assert.deepEqual(comparisons, []);
+  assert.equal(writes.find(([type]) => type === 'tag')[1].sha, context.sha);
+  assert.equal(writes.find(([type]) => type === 'create')[1].target_commitish, context.sha);
+});
+
+test('desktop ancestor anchor cannot move a mismatching tag or publish after its tag changes', async t => {
+  const fixture = await verifiedFixture(t);
+  const releaseCommit = 'c'.repeat(40);
+  const comparison = {status: 'ahead', base_commit: {sha: releaseCommit}, merge_base_commit: {sha: releaseCommit}, ahead_by: 1, behind_by: 0};
+  const mismatch = publicGithub({tag: publicCommit, comparison});
+  await assert.rejects(desktop.publishRelease({github: mismatch.github, core, context, releaseCommit,
+    directory: fixture.directory, dryRun: false}), /immutable/);
+  assert.deepEqual(mismatch.writes, []);
+  const changed = publicGithub({tag: releaseCommit, existing: true, comparison});
+  let reads = 0;
+  changed.github.rest.git.getRef = async () => ({data: {object: {type: 'commit', sha: ++reads === 1 ? releaseCommit : publicCommit}}});
+  await assert.rejects(desktop.publishRelease({github: changed.github, core, context, releaseCommit,
+    directory: fixture.directory, dryRun: false}), /changed before completion/);
+  assert.equal(changed.writes.some(([type]) => type === 'tag' || type === 'publish'), false);
 });

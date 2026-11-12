@@ -1,6 +1,6 @@
 # 在 Cloudflare 部署 Remoted Relay
 
-本指南对应 `remoted/relay/src/worker.mjs`、`wrangler.jsonc` 与当前主机实现。Relay 是 Cloudflare Worker + SQLite Durable Objects，不是 Cloudflare Tunnel，也不需要运行 cloudflared。部署 Worker 只完成中转服务，之后还需手动配置 WebShell 和原生客户端。
+本指南对应 `relay/src/worker.mjs`、`wrangler.jsonc` 与当前主机实现。Relay 是 Cloudflare Worker + SQLite Durable Objects，不是 Cloudflare Tunnel，也不需要运行 cloudflared。部署 Worker 只完成中转服务，之后还需手动配置 WebShell 和原生客户端。
 
 ## 1. 准备并部署
 
@@ -9,7 +9,7 @@
 从仓库根目录执行：
 
 ```bash
-cd remoted/relay
+cd relay
 npm ci
 npm test
 npm run test:integration
@@ -49,7 +49,7 @@ Web 设置在启用前会通过同一个 `/healthz` 入口进行 WebSocket 健�
 
 更换 Relay 前必须移除已绑定设备，随后重新配对。保留主机持久化数据才能保留 routing secret、身份和设备授权；更换身份或丢失客户端密钥不能靠复制旧设备码恢复信任。
 
-主机要求平台权威确认当前部署和目标归属。支持范围限于获批的现有 `webshell`、`ssh`、`herdr`、`hc`、`zellij` 会话。物理客户端的短期票据目标和 MicroVM 不受支持；不能把 Relay 当成绕过平台认证、任意 SSH 跳板或任意 Herdr RPC 代理。详见 [支持范围](../README.md#支持范围与授权)。
+主机要求平台权威确认当前部署和目标归属。支持范围限于获批的现有 `webshell`、`ssh`、`herdr`、`hc`、`zellij` 会话。物理客户端的短期票据目标和 MicroVM 不受支持；不能把 Relay 当成绕过平台认证、任意 SSH 跳板或任意 Herdr RPC 代理。实际能力及权限以主机设置中明确授权的资源为准。
 
 ## 3. 可选的新主机注册 key
 

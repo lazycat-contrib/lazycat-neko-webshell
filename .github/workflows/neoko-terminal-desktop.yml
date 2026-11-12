@@ -15,6 +15,10 @@ on:
         description: Exact private desktop tag and workflow head commit (40 lowercase hex)
         required: true
         type: string
+      release-commit:
+        description: Optional public release SHA; blank uses current main, otherwise must be its ancestor
+        required: false
+        type: string
       dry-run:
         description: Validate all four targets only; create no public tag or Release
         type: boolean
@@ -46,7 +50,7 @@ jobs:
           script: await require('./scripts/neoko-terminal-desktop.cjs').selectAndDownload({github, core});
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Verify desktop archives, binary contents, code-page hashes and build provenance
         run: python3 scripts/prepare-neoko-terminal-desktop.py --directory dist/neoko-terminal-desktop
       - name: Revalidate private run, immutable desktop tag and every selected artifact
@@ -59,10 +63,12 @@ jobs:
         uses: actions/github-script@v9
         env:
           DRY_RUN: ${{ inputs.dry-run }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
         with:
           script: |
             await require('./scripts/neoko-terminal-desktop.cjs').publishRelease({
               github, context, core, dryRun: process.env.DRY_RUN !== 'false',
+              releaseCommit: process.env.RELEASE_COMMIT || context.sha,
             });
       - name: Summarize desktop publication
         env:
@@ -70,12 +76,14 @@ jobs:
           SOURCE_RUN_ID: ${{ inputs.source-run-id }}
           SOURCE_COMMIT: ${{ inputs.source-commit }}
           DRY_RUN: ${{ inputs.dry-run }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
           RELEASE_URL: ${{ steps.release.outputs.release-url }}
         run: |
           {
             printf 'Desktop version: %s\n' "$NATIVE_VERSION"
             printf 'Private source run: %s\n' "$SOURCE_RUN_ID"
             printf 'Private source commit: %s\n' "$SOURCE_COMMIT"
+            printf 'Public release commit (blank = workflow SHA): %s\n' "$RELEASE_COMMIT"
             printf 'Dry run: %s\n' "$DRY_RUN"
             printf 'Release: %s\n' "$RELEASE_URL"
           } >> "$GITHUB_STEP_SUMMARY"

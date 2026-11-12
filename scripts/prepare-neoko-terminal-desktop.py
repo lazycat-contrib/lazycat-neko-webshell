@@ -115,7 +115,11 @@ def prepare(directory, selection, profile):
                     require(count == entry.file_size, 'Desktop entry size changed')
             with (scratch / package).open('rb') as source:
                 package_hash = hashlib.file_digest(source, 'sha256').hexdigest()
-            require((scratch / checksum).read_bytes() == f'{package_hash}  {package}\n'.encode(), 'Desktop checksum differs from package')
+            checksum_line = f'{package_hash}  {package}'.encode()
+            allowed_checksums = [checksum_line + b'\n']
+            if target.endswith('windows-msvc'):
+                allowed_checksums.append(checksum_line + b'\r\n')
+            require((scratch / checksum).read_bytes() in allowed_checksums, 'Desktop checksum differs from package')
             validate_info(common.read_json((scratch / info_name).read_bytes()), selection, profile, target)
             package_verifier.verify_group(scratch, SimpleNamespace(
                 version=selection['version'], crate_version=profile['crateVersion'],

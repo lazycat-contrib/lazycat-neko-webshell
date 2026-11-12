@@ -51,6 +51,20 @@ all three attachments have been uploaded and downloaded back with matching hashe
 Identical partial releases can resume. A native Release does not change GitHub's
 Latest release and does not submit anything to either application store.
 
+Both native workflows accept an optional `release-commit` public SHA. Leave it
+blank for normal publication: the tag uses the workflow's current main commit
+(`context.sha`). To resume a Release whose tag was already fixed before a public
+maintenance commit, supply that original full lowercase SHA. The publisher checks
+through the public compare API that it is an ancestor of the trusted main workflow
+commit; malformed, unrelated or newer commits fail, including in dry runs. An
+explicit SHA equal to the workflow commit is also accepted. The existing public
+tag must match the selected release commit before uploads and before publication;
+no tag is moved. Private source provenance remains independently pinned and checked.
+
+For the existing desktop `0.3.0` draft after public cleanup, use
+`release-commit=cf1e4d64e520fa5133ec742b63f4b3a316dc42ae` in both the dry run and actual
+publication. New versions normally leave this input blank.
+
 ## Desktop private-build publication
 
 The public `neoko-terminal-desktop.yml` is a publisher, not a source builder. Run it
@@ -90,6 +104,12 @@ macOS is not Developer ID signed or notarized. Package verification does not cla
 target-machine runtime acceptance. It never executes a downloaded package.
 Android's actual `apksigner` checks are unchanged.
 
+Desktop inspection and its CI regression suite run on Python 3.14 so the standard
+library can read the Debian package's zstd-compressed tar members. Package checksum
+sidecars must contain exactly the expected SHA256, two spaces and package filename,
+followed by LF; Windows also accepts its native CRLF line ending. Additional lines
+or whitespace changes fail.
+
 All four archives pass bounded extraction and provenance checks before any of the
 12 files are promoted. Source selection is repeated before publication. Only those
 12 exact files may enter the desktop Release; public tags are immutable, differing
@@ -103,22 +123,25 @@ The desktop application ID and Android package name stay
 Existing `remoted-client-*` tags and Releases remain historical and are never moved
 or renamed. Only the new namespaces are accepted for new publications.
 
-## Public source synchronization
+## Public repository scope
 
-The public `remoted/` tree contains the client, protocol, Relay, documentation and
-their build support. The WebShell host implementation is supplied by the installed
-application; its private `src/remoted/` directory is not published here.
+The public repository maintains GitHub Actions workflows, publisher scripts,
+component profiles and release metadata, plus the [Relay source](../../relay/README.md),
+its tests and [Cloudflare deployment guide](../../relay/DEPLOY.md). Relay checks
+use [check-relay.yml](../../.github/workflows/check-relay.yml) and the root `relay/` path.
 
-After each source synchronization, preserve or reapply the public adaptation in
-`remoted/README.md`: its directory table lists only public directories and describes
-the host as an application capability, without a `../src/remoted/` reference. Check
-relative Markdown links against the public checkout after the final synchronization.
-Do not copy private host source merely to satisfy a documentation reference. Keep
-the existing Neko documentation and the root README's native-client and Cloudflare
-deployment links intact. This documentation adaptation does not change the artifact
-provenance: publication still verifies the exact private source commit and run.
+Application, native-client and standalone protocol source remain in the private
+repository and are not synchronized into this public checkout. Both native
+publishers download private Actions build artifacts and verify their exact source
+commit, current private tag, trusted run, archive digests and package provenance.
+Public source cleanup does not change these checks or require a public client build.
 
-Local checks:
+When updating public release support, keep publisher workflows, scripts, profiles
+and metadata together, and check relative links against the public checkout.
+Relay source updates belong under `relay/`; use its deployment guide for the current
+working directory and configuration paths.
+
+Local checks (Python 3.14 is required for the zstd regression):
 
 ```sh
 python3 -m unittest discover -s scripts -p 'test_neoko_terminal*.py'

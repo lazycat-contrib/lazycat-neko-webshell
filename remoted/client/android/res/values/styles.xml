@@ -1,8 +1,0 @@
-<resources>
-    <style name="RemotedTheme" parent="android:style/Theme.DeviceDefault.Light.NoActionBar">
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
-        <item name="android:statusBarColor">?android:attr/colorBackground</item>
-        <item name="android:navigationBarColor">?android:attr/colorBackground</item>
-    </style>
-</resources>

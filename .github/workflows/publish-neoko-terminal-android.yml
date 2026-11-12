@@ -14,6 +14,10 @@ on:
         description: Exact private release tag and workflow head commit (40 lowercase hex)
         required: true
         type: string
+      release-commit:
+        description: Optional public release SHA; blank uses current main, otherwise must be its ancestor
+        required: false
+        type: string
       dry-run:
         description: Validate only; create no public tag or Release
         type: boolean
@@ -67,10 +71,12 @@ jobs:
         uses: actions/github-script@v9
         env:
           DRY_RUN: ${{ inputs.dry-run }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
         with:
           script: |
             await require('./scripts/neoko-terminal.cjs').publishRelease({
               github, context, core, dryRun: process.env.DRY_RUN !== 'false',
+              releaseCommit: process.env.RELEASE_COMMIT || context.sha,
             });
       - name: Summarize native verification
         env:
@@ -78,12 +84,14 @@ jobs:
           SOURCE_RUN_ID: ${{ inputs.source-run-id }}
           SOURCE_COMMIT: ${{ inputs.source-commit }}
           DRY_RUN: ${{ inputs.dry-run }}
+          RELEASE_COMMIT: ${{ inputs.release-commit }}
           RELEASE_URL: ${{ steps.release.outputs.release-url }}
         run: |
           {
             printf 'Native version: %s\n' "$NATIVE_VERSION"
             printf 'Private source run: %s\n' "$SOURCE_RUN_ID"
             printf 'Private source commit: %s\n' "$SOURCE_COMMIT"
+            printf 'Public release commit (blank = workflow SHA): %s\n' "$RELEASE_COMMIT"
             printf 'Dry run: %s\n' "$DRY_RUN"
             printf 'Release: %s\n' "$RELEASE_URL"
           } >> "$GITHUB_STEP_SUMMARY"

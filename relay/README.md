@@ -2,7 +2,7 @@
 
 这是应用自有的 Cloudflare Worker Relay，入口为 `src/worker.mjs`。`TUNNELS` 绑定 `Tunnel`，每个 route 一个 Durable Object；`ADMISSION` 绑定单个全局连接准入对象 `Admission`。`wrangler.jsonc` 已包含两个 SQLite 类的 `v1` migration。
 
-完整中文操作步骤、费用、注册限制及两端配对见 [Cloudflare 部署指南](../docs/deploy-cloudflare.md)。从本目录部署：
+完整中文操作步骤、费用、注册限制及两端配对见 [Cloudflare 部署指南](DEPLOY.md)。从本目录部署：
 
 ```bash
 npm ci

@@ -128,8 +128,9 @@ function verifiedFixture(t) {
   fs.writeFileSync(path.join(directory, 'verification.json'), JSON.stringify({schemaVersion: 1, selection: reordered, files: hashes, signingCertificateSha256: profile.signingCertificateSha256}));
   return {directory, selection, files};
 }
-function publicGithub({assets = [], wrongReadback = false, tag = null, draft = true, existing = false} = {}) {
+function publicGithub({assets = [], wrongReadback = false, tag = null, draft = true, existing = false, comparison} = {}) {
   const writes = [];
+  const comparisons = [];
   let tagSHA = tag;
   const release = {id: 7, tag_name: 'neoko-terminal-android-v0.1.0', draft, html_url: 'https://github.com/public/release'};
   const github = {
@@ -137,6 +138,7 @@ function publicGithub({assets = [], wrongReadback = false, tag = null, draft = t
       getRef: async () => { if (!tagSHA) throw Object.assign(new Error('missing'), {status: 404}); return {data: {object: {type: 'commit', sha: tagSHA}}}; },
       createRef: async request => { writes.push(['tag', request]); tagSHA = request.sha; },
     }, repos: {
+      compareCommits: async request => { comparisons.push(request); if (comparison instanceof Error) throw comparison; return {data: comparison}; },
       listReleases() {}, listReleaseAssets() {},
       createRelease: async request => { writes.push(['create', request]); return {data: release}; },
       uploadReleaseAsset: async request => { writes.push(['upload', request]); const asset = {id: assets.length + 1, name: request.name, size: request.data.length, bytes: request.data}; assets.push(asset); return {data: asset}; },
@@ -145,7 +147,7 @@ function publicGithub({assets = [], wrongReadback = false, tag = null, draft = t
     paginate: async method => method === github.rest.repos.listReleases ? (existing ? [release] : []) : assets,
     request: async (route, request) => ({data: wrongReadback ? Buffer.from('wrong') : assets.find(asset => asset.id === request.asset_id).bytes}),
   };
-  return {github, writes, assets};
+  return {github, writes, assets, comparisons};
 }
 const context = {repo: {owner: 'lazycat-contrib', repo: 'lazycat-neko-webshell'}, sha: publicCommit, ref: 'refs/heads/main', eventName: 'workflow_dispatch'};
 const core = {notice() {}, setOutput() {}};
@@ -222,6 +224,8 @@ test('native workflow stays manual, dry-run-default and independent of every sto
   assert.match(workflowText, /dry-run:[\s\S]*default: true/);
   assert.doesNotMatch(workflowText, /schedule:|publish-lpk|prepare-lpk|lazycat-github-action|APPSTORE|LZC_API_TOKEN/);
   assert.match(workflowText, /revalidateSource/);
+  assert.match(workflowText, /      release-commit:/);
+  assert.match(workflowText, /releaseCommit: process.env.RELEASE_COMMIT \|\| context.sha/);
   assert.match(workflowText, /DRY_RUN !== 'false'/);
 });
 
@@ -265,4 +269,50 @@ test('old APK filename cannot publish even with a matching local verification ha
   const {github, writes} = publicGithub();
   await assert.rejects(native.publishRelease({github, core, context, directory: fixture.directory, profile, dryRun: false}), /unexpected files/);
   assert.deepEqual(writes, []);
+});
+
+
+test('android explicit ancestor resumes a fixed public draft without moving its tag', async t => {
+  const fixture = verifiedFixture(t);
+  const releaseCommit = 'c'.repeat(40);
+  const comparison = {status: 'ahead', base_commit: {sha: releaseCommit}, merge_base_commit: {sha: releaseCommit}, ahead_by: 2, behind_by: 0};
+  const {github, writes, comparisons} = publicGithub({tag: releaseCommit, existing: true, comparison});
+  await native.publishRelease({github, core, context, releaseCommit, directory: fixture.directory, dryRun: false});
+  assert.deepEqual(comparisons, [{owner: context.repo.owner, repo: context.repo.repo, base: releaseCommit, head: context.sha}]);
+  assert.equal(writes.some(([type]) => type === 'tag' || type === 'create'), false);
+  assert.equal(writes.at(-1)[0], 'publish');
+  // The private source SHA stays independent of the public release commit.
+  assert.equal(fixture.selection.sourceCommit, commit);
+});
+
+test('android release commit rejects invalid and nonancestor values even in dry runs', async t => {
+  const fixture = verifiedFixture(t);
+  const ancestor = 'c'.repeat(40);
+  const valid = {status: 'ahead', base_commit: {sha: ancestor}, merge_base_commit: {sha: ancestor}, ahead_by: 1, behind_by: 0};
+  for (const releaseCommit of ['', null, 'main', 'A'.repeat(40), 'a'.repeat(39), 123]) {
+    const {github, writes, comparisons} = publicGithub();
+    await assert.rejects(native.publishRelease({github, core, context, releaseCommit, directory: fixture.directory}), /full lowercase SHA/);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(comparisons, []);
+  }
+  for (const comparison of [{...valid, status: 'behind'}, {...valid, status: 'diverged'},
+    {...valid, merge_base_commit: {sha: 'f'.repeat(40)}}, {...valid, base_commit: {sha: 'f'.repeat(40)}},
+    {...valid, behind_by: 1}, {...valid, ahead_by: 0}, Object.assign(new Error('compare denied'), {status: 403})]) {
+    const {github, writes} = publicGithub({comparison});
+    await assert.rejects(native.publishRelease({github, core, context, releaseCommit: ancestor, directory: fixture.directory}));
+    assert.deepEqual(writes, []);
+  }
+  const {github, writes, comparisons} = publicGithub({comparison: valid});
+  await native.publishRelease({github, core, context, releaseCommit: ancestor, directory: fixture.directory});
+  assert.equal(comparisons.length, 1);
+  assert.deepEqual(writes, []);
+});
+
+test('android identical release commit needs no comparison and new tags default to main', async t => {
+  const fixture = verifiedFixture(t);
+  const {github, writes, comparisons} = publicGithub();
+  await native.publishRelease({github, core, context, releaseCommit: context.sha, directory: fixture.directory, dryRun: false});
+  assert.deepEqual(comparisons, []);
+  assert.equal(writes.find(([type]) => type === 'tag')[1].sha, context.sha);
+  assert.equal(writes.find(([type]) => type === 'create')[1].target_commitish, context.sha);
 });

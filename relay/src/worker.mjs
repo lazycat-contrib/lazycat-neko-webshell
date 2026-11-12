@@ -1,4 +1,4 @@
-// Original application relay; protocol references are documented in ../../docs/protocol.md.
+// Application relay: opaque encrypted frames; routing and deployment are documented in ../README.md.
 // Only connection metadata and Noise ciphertext pass through this service.
 export const LIMITS = Object.freeze({ message: 98_304, peers: 16, framesPerSecond: 256, buffered: 512 * 1024 });
 const PROTOCOL = "neko.remoted.v1";

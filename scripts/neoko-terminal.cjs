@@ -176,17 +176,24 @@ async function assetBytes(github, owner, repo, asset, limit) {
   return bytes;
 }
 
-async function publishRelease({github, context, core, dryRun = true, profile = loadProfile(), directory = work}) {
+async function publishRelease({github, context, core, dryRun = true, releaseCommit = context.sha, profile = loadProfile(), directory = work}) {
   const {selection, files} = verifiedFiles(profile, directory);
-  return publishVerifiedRelease({github, context, core, dryRun, profile, selection, files,
+  return publishVerifiedRelease({github, context, core, dryRun, releaseCommit, profile, selection, files,
     body: `Android arm64-v8a native client ${selection.version}.\n\nSource: ${selection.sourceRepository}@${selection.sourceCommit}\nBuild run: ${selection.sourceRunId} (attempt ${selection.sourceRunAttempt}).\n\nIncludes the production-signed APK, checksums and provenance.`,
   });
 }
 
-async function publishVerifiedRelease({github, context, core, dryRun = true, profile, selection, files, body}) {
+async function publishVerifiedRelease({github, context, core, dryRun = true, releaseCommit = context.sha, profile, selection, files, body}) {
   const {owner, repo} = context.repo;
   ensure(`${owner}/${repo}` === profile.publicRepository && context.eventName === 'workflow_dispatch' &&
     context.ref === 'refs/heads/main' && sha40.test(context.sha), 'Native publication requires the trusted public main workflow_dispatch');
+  ensure(typeof releaseCommit === 'string' && sha40.test(releaseCommit), 'Release commit must be a full lowercase SHA');
+  if (releaseCommit !== context.sha) {
+    const comparison = (await github.rest.repos.compareCommits({owner, repo, base: releaseCommit, head: context.sha})).data;
+    ensure(comparison.status === 'ahead' && comparison.base_commit?.sha === releaseCommit &&
+      comparison.merge_base_commit?.sha === releaseCommit && comparison.behind_by === 0 &&
+      positiveInteger(comparison.ahead_by), 'Release commit must be an ancestor of the current public main commit');
+  }
   if (dryRun !== false) {
     core.notice(`Dry run: verified ${profile.tagPrefix}${selection.version}; no Release or tag writes`);
     return;
@@ -194,7 +201,7 @@ async function publishVerifiedRelease({github, context, core, dryRun = true, pro
   const tag = profile.tagPrefix + selection.version;
   let exists = false;
   try {
-    ensure(await tagCommit(github, owner, repo, tag) === context.sha, 'Existing native public tag points to another commit; tags are immutable');
+    ensure(await tagCommit(github, owner, repo, tag) === releaseCommit, 'Existing native public tag points to another commit; tags are immutable');
     exists = true;
   } catch (error) { if (error.status !== 404) throw error; }
   const releases = await github.paginate(github.rest.repos.listReleases, {owner, repo, per_page: 100});
@@ -213,9 +220,9 @@ async function publishVerifiedRelease({github, context, core, dryRun = true, pro
         'Existing native Release bytes differ; assets are never overwritten');
     }
   }
-  if (!exists) await github.rest.git.createRef({owner, repo, ref: `refs/tags/${tag}`, sha: context.sha});
+  if (!exists) await github.rest.git.createRef({owner, repo, ref: `refs/tags/${tag}`, sha: releaseCommit});
   if (!release) release = (await github.rest.repos.createRelease({
-    owner, repo, tag_name: tag, target_commitish: context.sha, name: `${profile.name} ${selection.version}`, draft: true,
+    owner, repo, tag_name: tag, target_commitish: releaseCommit, name: `${profile.name} ${selection.version}`, draft: true,
     prerelease: false, make_latest: 'false', body,
   })).data;
   for (const file of files) {
@@ -227,7 +234,7 @@ async function publishVerifiedRelease({github, context, core, dryRun = true, pro
     ensure(asset.size === file.bytes.length && hash(await assetBytes(github, owner, repo, asset, file.bytes.length)) === file.sha256,
       'Uploaded native Release bytes differ on readback');
   }
-  ensure(await tagCommit(github, owner, repo, tag) === context.sha, 'Native public tag changed before completion');
+  ensure(await tagCommit(github, owner, repo, tag) === releaseCommit, 'Native public tag changed before completion');
   if (release.draft) release = (await github.rest.repos.updateRelease({owner, repo, release_id: release.id, draft: false, make_latest: 'false'})).data;
   core.notice(`Published verified native Release ${tag}`);
   core.setOutput('release-url', release.html_url);

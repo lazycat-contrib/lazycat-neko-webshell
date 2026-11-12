@@ -1,6 +1,0 @@
-**/node_modules/
-**/.wrangler/
-**/target/
-**/.nsh/
-**/__pycache__/
-dist/
