@@ -21,6 +21,11 @@ package_spec.loader.exec_module(package_verifier)
 require = common.require
 TARGETS = ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'aarch64-apple-darwin', 'x86_64-apple-darwin']
 PROFILE = BASE / 'components/neoko-terminal/desktop-profile.json'
+NATIVE_BUILD_INPUTS = {
+    'ghostty_source_revision': '108cacb17ed8990840cd14abfce43d8ed8503ca1',
+    'ghostty_wrapper_revision': 'cd4d497e8c698b27054a677ce19d1bd1a1a4d8bf',
+    'zig_version': '0.17.1',
+}
 
 
 def validate_profile(profile):
@@ -30,7 +35,9 @@ def validate_profile(profile):
             and profile['sourceWorkflow'] == 'neoko-terminal-desktop.yml'
             and profile['tagPrefix'] == 'neoko-terminal-desktop-v'
             and profile['artifactPrefix'] == 'neoko-terminal-desktop-'
-            and profile['crateVersion'] == '0.2.0' and profile['packageName'] == 'community.lazycat.neko.remoted'
+            and profile['crateVersion'] == '0.3.0'
+            and profile.get('nativeBuildInputs') == NATIVE_BUILD_INPUTS
+            and profile['packageName'] == 'community.lazycat.neko.remoted'
             and re.fullmatch(r'[0-9a-f]{40}', profile['nshRevision'])
             and profile['targets'] == TARGETS, 'Unexpected desktop profile')
     for field in ('maxArchiveBytes', 'maxPackageBytes', 'maxMetadataBytes'):
@@ -60,7 +67,7 @@ def validate_selection(selection, profile):
 
 def validate_info(info, selection, profile, target):
     fields = {'desktop_version', 'crate_version', 'target', 'source_sha', 'source_dirty',
-              'nsh_revision', 'signing', 'cargo_binary_sha256'}
+              'nsh_revision', 'signing', 'cargo_binary_sha256'} | set(NATIVE_BUILD_INPUTS)
     linux = target.endswith('linux-gnu')
     if linux:
         fields.add('build_runtime_versions')
@@ -70,6 +77,8 @@ def validate_info(info, selection, profile, target):
             and info['nsh_revision'] == profile['nshRevision'], 'Desktop build provenance source/target differs')
     require(type(info['crate_version']) is str and info['crate_version'] == profile['crateVersion']
             and type(info['cargo_binary_sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', info['cargo_binary_sha256']), 'Invalid desktop build provenance value')
+    require(all(info[key] == profile['nativeBuildInputs'][key] for key in NATIVE_BUILD_INPUTS),
+            'Desktop native build input pin differs')
     require(info['signing'] == ('ad-hoc; not notarized' if target.endswith('apple-darwin') else 'unsigned'), 'Unexpected desktop signing claim')
     if linux:
         versions = info['build_runtime_versions']
@@ -123,7 +132,8 @@ def prepare(directory, selection, profile):
             validate_info(common.read_json((scratch / info_name).read_bytes()), selection, profile, target)
             package_verifier.verify_group(scratch, SimpleNamespace(
                 version=selection['version'], crate_version=profile['crateVersion'],
-                source=selection['sourceCommit'], nsh=profile['nshRevision']), target)
+                source=selection['sourceCommit'], nsh=profile['nshRevision'],
+                native_build_inputs=profile['nativeBuildInputs']), target)
             for name in sorted(expected):
                 with (scratch / name).open('rb') as source:
                     hashes[name] = hashlib.file_digest(source, 'sha256').hexdigest()

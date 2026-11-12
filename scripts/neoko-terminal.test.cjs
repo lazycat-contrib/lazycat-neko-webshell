@@ -316,3 +316,19 @@ test('android identical release commit needs no comparison and new tags default 
   assert.equal(writes.find(([type]) => type === 'tag')[1].sha, context.sha);
   assert.equal(writes.find(([type]) => type === 'create')[1].target_commitish, context.sha);
 });
+
+ test('native toolchain profile pins are exact and fail closed', () => {
+  for (const key of Object.keys(profile.nativeBuildInputs)) {
+    assert.throws(() => native.validateProfile({...profile, nativeBuildInputs: {...profile.nativeBuildInputs, [key]: 'wrong'}}), /pins/);
+  }
+  for (const value of [undefined, {}, {...profile.nativeBuildInputs, extra: 'x'}]) {
+    assert.throws(() => native.validateProfile({...profile, nativeBuildInputs: value}), /pins/);
+  }
+});
+
+test('Android app protocol is pinned to version 2', () => {
+  assert.equal(profile.protocolVersion, 2);
+  for (const protocolVersion of [1, 3, true, '2', undefined]) {
+    assert.throws(() => native.validateProfile({...profile, protocolVersion}), /protocol/);
+  }
+});

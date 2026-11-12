@@ -42,7 +42,7 @@ def package_fixture(target, info, compression='gz'):
         versions = info['build_runtime_versions']
         deps = ', '.join(f'{name} (>= {versions[key]})' for key, name in
                          [('libc6', 'libc6'), ('gtk4', 'libgtk-4-1'), ('glib', 'libglib2.0-0t64'), ('gstreamer', 'libgstreamer1.0-0')])
-        control = f'Package: neoko-terminal\nVersion: 0.3.0\nArchitecture: amd64\nDepends: {deps}\n'.encode()
+        control = f'Package: neoko-terminal\nVersion: 0.4.0\nArchitecture: amd64\nDepends: {deps}\n'.encode()
         output = bytearray(b'!<arch>\n')
         for name, data in [('debian-binary', b'2.0\n'), ('control.tar.' + compression, tar({'control': control})), ('data.tar.' + compression, tar(files))]:
             output.extend(f'{name + "/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{len(data):<10}`\n'.encode())
@@ -63,8 +63,8 @@ def package_fixture(target, info, compression='gz'):
     else:
         prefix = 'neoko-terminal.app/Contents/'
         plist = plistlib.dumps({'CFBundleIdentifier': 'community.lazycat.neko.remoted',
-                               'CFBundleExecutable': 'neoko-terminal', 'CFBundleShortVersionString': '0.3.0',
-                               'CFBundleVersion': '0.3.0', 'LSMinimumSystemVersion': '14.0'})
+                               'CFBundleExecutable': 'neoko-terminal', 'CFBundleShortVersionString': '0.4.0',
+                               'CFBundleVersion': '0.4.0', 'LSMinimumSystemVersion': '14.0'})
         resources = b'<plist/>'
         # A thin Mach-O with one signed code page and bound plist/resource special slots.
         binary = bytearray(48)
@@ -94,26 +94,26 @@ class DesktopValidationTests(unittest.TestCase):
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name)
         self.profile = json.loads(desktop.PROFILE.read_text())
-        self.selection = {'schemaVersion': 1, 'version': '0.3.0', 'sourceRepository': self.profile['sourceRepository'],
+        self.selection = {'schemaVersion': 1, 'version': '0.4.0', 'sourceRepository': self.profile['sourceRepository'],
                           'sourceCommit': 'a' * 40, 'sourceRunId': 123, 'sourceRunAttempt': 1,
                           'sourceWorkflow': 'neoko-terminal-desktop.yml', 'sourceEvent': 'push',
-                          'sourceRef': 'refs/tags/neoko-terminal-desktop-v0.3.0', 'artifacts': []}
+                          'sourceRef': 'refs/tags/neoko-terminal-desktop-v0.4.0', 'artifacts': []}
         self.contents = {}
         for index, target in enumerate(desktop.TARGETS):
-            stem = f'neoko-terminal-0.3.0-{target}'
+            stem = f'neoko-terminal-0.4.0-{target}'
             package = stem + ('.deb' if target.endswith('linux-gnu') else '.zip')
 
-            info = {'desktop_version': '0.3.0', 'crate_version': '0.2.0', 'target': target, 'source_sha': 'a' * 40,
+            info = {'desktop_version': '0.4.0', 'crate_version': '0.3.0', 'target': target, 'source_sha': 'a' * 40,
                     'source_dirty': False, 'nsh_revision': self.profile['nshRevision'],
                     'signing': 'ad-hoc; not notarized' if target.endswith('apple-darwin') else 'unsigned',
-                    'cargo_binary_sha256': 'b' * 64}
+                    'cargo_binary_sha256': 'b' * 64, **self.profile['nativeBuildInputs']}
             if target.endswith('linux-gnu'):
                 info['build_runtime_versions'] = {'libc6': '2.39', 'gtk4': '4.14.2', 'glib': '2.80.0', 'gstreamer': '1.24.2'}
             data = package_fixture(target, info)
             self.contents[target] = {package: data, package + '.sha256': f'{hashlib.sha256(data).hexdigest()}  {package}\n'.encode(),
                                      stem + '.build-info.json': json.dumps(info).encode()}
             self.selection['artifacts'].append({'target': target, 'artifactId': index + 1,
-                                               'artifactName': f'neoko-terminal-desktop-0.3.0-{target}'})
+                                               'artifactName': f'neoko-terminal-desktop-0.4.0-{target}'})
             self.archive(target)
 
     def archive(self, target, entries=None):
@@ -183,6 +183,71 @@ class DesktopValidationTests(unittest.TestCase):
         self.assertFalse((self.root / 'verified').exists())
         self.assertFalse((self.root / 'verification.json').exists())
 
+    def replace_package(self, target, info, outer_info=None):
+        name = next(n for n in self.contents[target] if n.endswith('.json'))
+        package = next(n for n in self.contents[target] if n.endswith(('.deb', '.zip')))
+        data = package_fixture(target, info)
+        self.contents[target].update({name: json.dumps(info if outer_info is None else outer_info).encode(),
+                                     package: data,
+                                     package + '.sha256': f'{hashlib.sha256(data).hexdigest()}  {package}\n'.encode()})
+        self.archive(target)
+
+    def test_missing_wrong_or_extra_native_inputs_fail_even_with_matching_inner_metadata(self):
+        for target in desktop.TARGETS:
+            name = next(n for n in self.contents[target] if n.endswith('.json'))
+            original = dict(self.contents[target])
+            correct = json.loads(original[name])
+            for key in self.profile['nativeBuildInputs']:
+                for missing in (False, True):
+                    info = dict(correct)
+                    if missing:
+                        info.pop(key)
+                    else:
+                        info[key] = '0.0.0' if key == 'zig_version' else 'f' * 40
+                    self.replace_package(target, info)
+                    with self.subTest(target=target, key=key, missing=missing), self.assertRaises(ValueError):
+                        self.prepare()
+                    self.assertFalse((self.root / 'verified').exists())
+                    self.assertFalse((self.root / 'verification.json').exists())
+                    self.contents[target] = dict(original)
+                    self.archive(target)
+            info = {**correct, 'native_build_inputs': dict(self.profile['nativeBuildInputs'])}
+            self.replace_package(target, info)
+            with self.assertRaisesRegex(ValueError, 'provenance fields'):
+                self.prepare()
+            self.contents[target] = original
+            self.archive(target)
+
+    def test_package_internal_native_pins_must_match_valid_sidecar_for_every_target(self):
+        for target in desktop.TARGETS:
+            name = next(n for n in self.contents[target] if n.endswith('.json'))
+            original = dict(self.contents[target])
+            correct = json.loads(original[name])
+            info = {**correct, 'ghostty_wrapper_revision': 'f' * 40}
+            self.replace_package(target, info, outer_info=correct)
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, 'package-internal'):
+                self.prepare()
+            self.assertFalse((self.root / 'verified').exists())
+            self.assertFalse((self.root / 'verification.json').exists())
+            self.contents[target] = original
+            self.archive(target)
+
+    def test_profile_requires_fixed_native_pins_and_current_client_version(self):
+        for key in self.profile['nativeBuildInputs']:
+            for missing in (False, True):
+                pins = dict(self.profile['nativeBuildInputs'])
+                if missing:
+                    pins.pop(key)
+                else:
+                    pins[key] = 'wrong'
+                with self.subTest(key=key, missing=missing), self.assertRaisesRegex(ValueError, 'profile'):
+                    desktop.validate_profile({**self.profile, 'nativeBuildInputs': pins})
+        for pins in (None, {}, {**self.profile['nativeBuildInputs'], 'extra': True}):
+            with self.assertRaisesRegex(ValueError, 'profile'):
+                desktop.validate_profile({**self.profile, 'nativeBuildInputs': pins})
+        with self.assertRaisesRegex(ValueError, 'profile'):
+            desktop.validate_profile({**self.profile, 'crateVersion': '0.2.0'})
+
     def test_missing_or_duplicate_target_ids_fail_before_promotion(self):
         for change in ['missing', 'duplicate', 'reordered']:
             original = list(self.selection['artifacts'])
@@ -199,7 +264,7 @@ class DesktopValidationTests(unittest.TestCase):
 
     def test_forged_source_workflow_tag_event_commit_and_run_identity_fail(self):
         changes = {'sourceRepository': 'attacker/fork', 'sourceWorkflow': 'neoko-terminal-android.yml',
-                   'sourceRef': 'refs/tags/remoted-client-desktop-v0.3.0', 'sourceEvent': 'pull_request',
+                   'sourceRef': 'refs/tags/remoted-client-desktop-v0.4.0', 'sourceEvent': 'pull_request',
                    'sourceCommit': 'main', 'sourceRunId': True, 'sourceRunAttempt': 0, 'schemaVersion': True}
         original = self.selection.copy()
         for field, value in changes.items():

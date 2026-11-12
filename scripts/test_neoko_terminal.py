@@ -33,7 +33,7 @@ class NativeValidationTests(unittest.TestCase):
             'artifactName': 'neoko-terminal-android-v0.1.0',
         }
         self.manifest = {
-            'schemaVersion': 1, 'component': 'neoko-terminal', 'version': '0.1.0', 'protocolVersion': 1,
+            'schemaVersion': 1, 'component': 'neoko-terminal', 'version': '0.1.0', 'protocolVersion': 2,
             **{key: self.selection[key] for key in native.SOURCE_FIELDS if key != 'version'},
             'apkName': self.apk_name, 'apkSha256': self.apk_sha, 'apkSize': len(self.apk),
             'packageName': 'community.lazycat.neko.remoted', 'versionCode': 1, 'abi': 'arm64-v8a',
@@ -41,7 +41,7 @@ class NativeValidationTests(unittest.TestCase):
             'minSdk': 28, 'targetSdk': 35, 'debuggable': False,
         }
 
-    def make_apk(self, abi='arm64-v8a', machine=183, extra=()):
+    def make_apk(self, abi='arm64-v8a', machine=183, extra=(), metadata=True):
         stream = io.BytesIO()
         header = bytearray(64)
         header[:6] = b'\x7fELF\x02\x01'
@@ -49,6 +49,9 @@ class NativeValidationTests(unittest.TestCase):
         with zipfile.ZipFile(stream, 'w') as archive:
             archive.writestr('AndroidManifest.xml', b'manifest')
             archive.writestr('classes.dex', b'dex')
+            if metadata is not None:
+                info = {'source_sha': 'a' * 40, 'source_dirty': False, **native.NATIVE_BUILD_INPUTS} if metadata is True else metadata
+                archive.writestr('assets/build-inputs.json', json.dumps(info))
             archive.writestr(f'lib/{abi}/libapp.so', header)
             for name, content in extra:
                 archive.writestr(name, content)
@@ -152,7 +155,7 @@ class NativeValidationTests(unittest.TestCase):
                    'sourceRunAttempt': 2, 'sourceWorkflow': 'pull-request.yml', 'sourceEvent': 'pull_request',
                    'sourceRef': 'refs/heads/main', 'version': '0.1.1', 'apkSha256': '0' * 64,
                    'apkSize': 999, 'packageName': 'wrong.app', 'abi': 'x86_64', 'versionCode': True,
-                   'protocolVersion': 2, 'debuggable': True, 'signingCertificateSha256': 'f' * 64,
+                   'protocolVersion': 1, 'debuggable': True, 'signingCertificateSha256': 'f' * 64,
                    'minSdk': 27, 'targetSdk': 34, 'apkName': 'other.apk'}
         for field, value in changes.items():
             with self.subTest(field=field), self.assertRaises(ValueError):
@@ -180,7 +183,7 @@ class NativeValidationTests(unittest.TestCase):
             with self.subTest(apk=hashlib.sha256(apk).hexdigest()), self.assertRaises(ValueError):
                 filename = self.directory / 'bad.apk'
                 filename.write_bytes(apk)
-                native.inspect_apk_zip(filename, self.profile)
+                native.inspect_apk_zip(filename, self.profile, 'a' * 40)
 
     def test_signature_inspection_failure_does_not_promote_outputs(self):
         def reject(*args):
@@ -201,6 +204,51 @@ class NativeValidationTests(unittest.TestCase):
         for output in (certificate.replace(self.profile['signingCertificateSha256'], 'f' * 64), certificate + 'Signer #2 certificate SHA-256 digest: ' + 'f' * 64 + '\n', certificate + 'Signer #1 certificate DN: CN=Android Debug\n'):
             with self.subTest(output=output), self.assertRaises(ValueError):
                 native.inspect_android('app.apk', self.manifest, self.profile, 'aapt', 'apksigner', run=lambda command: badging if command[0] == 'aapt' else output)
+
+    def test_native_build_inputs_reject_missing_extra_dirty_wrong_source_and_pins(self):
+        valid = {'source_sha': 'a' * 40, 'source_dirty': False, **native.NATIVE_BUILD_INPUTS}
+        invalid = [None, {**valid, 'unexpected': 'field'},
+                   {**valid, 'source_sha': 'b' * 40}, {**valid, 'source_dirty': True},
+                   {**valid, 'source_dirty': 0}, {**valid, 'source_dirty': 'false'}]
+        for key in valid:
+            invalid.append({name: value for name, value in valid.items() if name != key})
+        for key in native.NATIVE_BUILD_INPUTS:
+            invalid.append({**valid, key: 'wrong'})
+        for metadata in invalid:
+            with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                apk = self.directory / 'metadata.apk'
+                apk.write_bytes(self.make_apk(metadata=metadata))
+                native.inspect_apk_zip(apk, self.profile, 'a' * 40)
+
+    def test_native_build_input_rejection_prevents_prepare_promotion(self):
+        self.apk = self.make_apk(metadata={'source_sha': 'a' * 40, 'source_dirty': True, **native.NATIVE_BUILD_INPUTS})
+        self.apk_sha = hashlib.sha256(self.apk).hexdigest()
+        self.manifest.update(apkSha256=self.apk_sha, apkSize=len(self.apk))
+        with self.assertRaisesRegex(ValueError, 'must be clean'):
+            self.prepare()
+        self.assertFalse((self.directory / 'verified').exists())
+        self.assertFalse((self.directory / 'verification.json').exists())
+
+    def test_native_build_input_json_duplicate_keys_and_size_fail_closed(self):
+        for content in (b'{"source_dirty":false,"source_dirty":true}', b' ' * 8193):
+            with self.subTest(length=len(content)), self.assertRaises(ValueError):
+                apk = self.directory / 'malformed.apk'
+                apk.write_bytes(self.make_apk(metadata=None, extra=[('assets/build-inputs.json', content)]))
+                native.inspect_apk_zip(apk, self.profile, 'a' * 40)
+
+    def test_protocol_v2_profile_rejects_old_and_mistyped_versions(self):
+        self.assertEqual(self.profile['protocolVersion'], 2)
+        for version in (1, 3, True, 2.0, '2', None):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, 'protocol'):
+                native.validate_profile({**self.profile, 'protocolVersion': version})
+
+    def test_native_build_input_profile_cannot_substitute_pins(self):
+        for key in native.NATIVE_BUILD_INPUTS:
+            profile = {**self.profile, 'nativeBuildInputs': {**native.NATIVE_BUILD_INPUTS, key: 'wrong'}}
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'pins'):
+                native.validate_profile(profile)
+        with self.assertRaisesRegex(ValueError, 'pins'):
+            native.validate_profile({**self.profile, 'nativeBuildInputs': {**native.NATIVE_BUILD_INPUTS, 'extra': 'x'}})
 
     def test_tool_output_is_bounded_and_failed_tool_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'output exceeds'):

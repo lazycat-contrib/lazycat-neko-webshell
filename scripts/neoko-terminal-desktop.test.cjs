@@ -13,9 +13,9 @@ const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const repository = {id: 42, full_name: profile.sourceRepository, private: true};
 const workflow = {id: 73, path: '.github/workflows/neoko-terminal-desktop.yml', state: 'active'};
 const trusted = {id: 123, workflow_id: workflow.id, path: workflow.path, repository, head_repository: repository,
-  status: 'completed', conclusion: 'success', event: 'push', head_branch: 'neoko-terminal-desktop-v0.3.0',
+  status: 'completed', conclusion: 'success', event: 'push', head_branch: 'neoko-terminal-desktop-v0.4.0',
   head_sha: commit, run_attempt: 1, pull_requests: []};
-const artifacts = profile.targets.map((target, index) => ({id: index + 1, name: `neoko-terminal-desktop-0.3.0-${target}`,
+const artifacts = profile.targets.map((target, index) => ({id: index + 1, name: `neoko-terminal-desktop-0.4.0-${target}`,
   expired: false, size_in_bytes: 3, digest: 'sha256:' + sha('zip'), expires_at: '2099-01-01T00:00:00Z',
   workflow_run: {id: 123, head_sha: commit, repository_id: 42, head_repository_id: 42, head_branch: trusted.head_branch}}));
 function sourceGithub({run = trusted, files = artifacts, tag = commit, repo = repository, wf = workflow} = {}) {
@@ -23,7 +23,7 @@ function sourceGithub({run = trusted, files = artifacts, tag = commit, repo = re
     getWorkflow: async () => ({data: wf}), getWorkflowRun: async () => ({data: run}), listWorkflowRunArtifacts() {},
   }, git: {getRef: async () => ({data: {object: {type: 'commit', sha: tag}}})}}, paginate: async () => files};
 }
-function select(github) { return desktop.selectSource({github, version: '0.3.0', commit, runID: '123', profile}); }
+function select(github) { return desktop.selectSource({github, version: '0.4.0', commit, runID: '123', profile}); }
 function temporaryDirectory(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'desktop-publish-test-'));
   t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
@@ -44,7 +44,7 @@ async function verifiedFixture(t) {
 test('successful immutable private desktop tag selects exactly four target artifacts', async () => {
   const selection = await select(sourceGithub({files: [...artifacts].reverse()}));
   assert.equal(selection.sourceWorkflow, 'neoko-terminal-desktop.yml');
-  assert.equal(selection.sourceRef, 'refs/tags/neoko-terminal-desktop-v0.3.0');
+  assert.equal(selection.sourceRef, 'refs/tags/neoko-terminal-desktop-v0.4.0');
   assert.equal(selection.sourceCommit, commit);
   assert.deepEqual(selection.artifacts.map(a => a.target), profile.targets);
   await select(sourceGithub({run: {...trusted, event: 'workflow_dispatch'}}));
@@ -54,7 +54,7 @@ test('desktop source rejects PRs forks branches workflow substitutions and unfin
   for (const change of [{event: 'pull_request'}, {event: 'pull_request_target'}, {event: 'workflow_run'},
     {head_repository: {...repository, id: 99}}, {repository: {...repository, full_name: 'attacker/fork'}},
     {workflow_id: 99}, {path: '.github/workflows/neoko-terminal-android.yml'}, {head_branch: 'main'},
-    {head_branch: 'neoko-terminal-android-v0.3.0'}, {head_sha: 'f'.repeat(40)}, {run_attempt: 0}, {id: 124},
+    {head_branch: 'neoko-terminal-android-v0.4.0'}, {head_sha: 'f'.repeat(40)}, {run_attempt: 0}, {id: 124},
     {status: 'in_progress'}, {conclusion: 'failure'}, {pull_requests: [{number: 1}]}]) {
     await assert.rejects(select(sourceGithub({run: {...trusted, ...change}})));
   }
@@ -65,8 +65,8 @@ test('desktop source rejects PRs forks branches workflow substitutions and unfin
 });
 
 test('desktop versions commits IDs and profile namespaces fail closed', async () => {
-  for (const change of [{version: '0.3.0;bad'}, {version: '03.0.0'}, {version: '0.3.0-rc1'}, {commit: 'main'}, {runID: '1e2'}, {runID: '9007199254740992'}]) {
-    await assert.rejects(desktop.selectSource({github: sourceGithub(), version: '0.3.0', commit, runID: '123', ...change}));
+  for (const change of [{version: '0.4.0;bad'}, {version: '03.0.0'}, {version: '0.4.0-rc1'}, {commit: 'main'}, {runID: '1e2'}, {runID: '9007199254740992'}]) {
+    await assert.rejects(desktop.selectSource({github: sourceGithub(), version: '0.4.0', commit, runID: '123', ...change}));
   }
   for (const change of [{sourceWorkflow: 'neoko-terminal-android.yml'}, {tagPrefix: 'remoted-client-desktop-v'},
     {crateVersion: '99.99.99'}, {crateVersion: undefined}, {targets: profile.targets.slice(1)}, {artifactPrefix: 'other-'}, {sourceRepository: 'attacker/fork'}]) {
@@ -98,7 +98,7 @@ function publicGithub({assets = [], wrongReadback = false, tag = null, draft = t
   const writes = [];
   const comparisons = [];
   let tagSHA = tag;
-  const release = {id: 7, tag_name: 'neoko-terminal-desktop-v0.3.0', draft, html_url: 'https://github.com/public/release'};
+  const release = {id: 7, tag_name: 'neoko-terminal-desktop-v0.4.0', draft, html_url: 'https://github.com/public/release'};
   const github = {
     rest: {git: {
       getRef: async () => { if (!tagSHA) throw Object.assign(new Error('missing'), {status: 404}); return {data: {object: {type: 'commit', sha: tagSHA}}}; },
@@ -132,7 +132,7 @@ test('desktop only uploads its twelve exact assets and publishes after all readb
   const {github, writes} = publicGithub();
   await desktop.publishRelease({github, core, context, directory: fixture.directory, dryRun: false});
   assert.deepEqual(writes.filter(([type]) => type === 'upload').map(([,request]) => request.name).sort(), Object.keys(fixture.files).sort());
-  assert.equal(writes[0][1].ref, 'refs/tags/neoko-terminal-desktop-v0.3.0');
+  assert.equal(writes[0][1].ref, 'refs/tags/neoko-terminal-desktop-v0.4.0');
   assert.equal(writes.at(-1)[0], 'publish');
   assert.equal(writes.find(([type]) => type === 'create')[1].draft, true);
   assert.equal(writes.find(([type]) => type === 'create')[1].make_latest, 'false');
@@ -189,7 +189,7 @@ test('public desktop workflow only pulls private artifacts, verifies and revalid
   const workflowText = fs.readFileSync(path.join(root, '.github/workflows/neoko-terminal-desktop.yml'), 'utf8');
   assert.match(workflowText, /workflow_dispatch:/);
   for (const input of ['version', 'source-run-id', 'source-commit', 'release-commit', 'dry-run']) assert.match(workflowText, new RegExp(`      ${input}:`));
-  assert.match(workflowText, /default: '0\.3\.0'/);
+  assert.match(workflowText, /default: '0\.4\.0'/);
   assert.match(workflowText, /python-version: '3\.14'/);
   assert.match(workflowText, /releaseCommit: process.env.RELEASE_COMMIT \|\| context.sha/);
   assert.match(workflowText, /dry-run:[\s\S]*default: true/);
@@ -265,4 +265,16 @@ test('desktop ancestor anchor cannot move a mismatching tag or publish after its
   await assert.rejects(desktop.publishRelease({github: changed.github, core, context, releaseCommit,
     directory: fixture.directory, dryRun: false}), /changed before completion/);
   assert.equal(changed.writes.some(([type]) => type === 'tag' || type === 'publish'), false);
+});
+
+
+test('desktop native build pins and client crate version cannot be substituted', () => {
+  for (const nativeBuildInputs of [undefined, {}, {...profile.nativeBuildInputs, extra: true},
+    ...Object.keys(profile.nativeBuildInputs).flatMap(key => {
+      const missing = {...profile.nativeBuildInputs}; delete missing[key];
+      return [missing, {...profile.nativeBuildInputs, [key]: 'wrong'}, {...profile.nativeBuildInputs, [key]: null}];
+    })]) {
+    assert.throws(() => desktop.validateProfile({...profile, nativeBuildInputs}), /profile/);
+  }
+  assert.throws(() => desktop.validateProfile({...profile, crateVersion: '0.2.0'}), /profile/);
 });

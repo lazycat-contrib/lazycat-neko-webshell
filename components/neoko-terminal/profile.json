@@ -8,7 +8,7 @@
   "artifactPrefix": "neoko-terminal-android-v",
   "packageName": "community.lazycat.neko.remoted",
   "abi": "arm64-v8a",
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "minSdk": 28,
   "targetSdk": 35,
   "buildToolsVersion": "35.0.1",
@@ -16,5 +16,10 @@
   "maxArchiveBytes": 268435456,
   "maxApkBytes": 268435456,
   "maxApkExpandedBytes": 536870912,
-  "maxApkEntries": 4096
+  "maxApkEntries": 4096,
+  "nativeBuildInputs": {
+    "ghostty_source_revision": "108cacb17ed8990840cd14abfce43d8ed8503ca1",
+    "ghostty_wrapper_revision": "cd4d497e8c698b27054a677ce19d1bd1a1a4d8bf",
+    "zig_version": "0.17.1"
+  }
 }

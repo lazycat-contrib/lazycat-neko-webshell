@@ -192,6 +192,7 @@ def verify_group(root, args, target):
     require(checksum[:64] == digest, 'package SHA-256 mismatch')
     info = read_json((package.parent / (stem + '.build-info.json')).read_bytes())
     expected = dict(desktop_version=args.version, crate_version=args.crate_version, target=target, source_sha=args.source, nsh_revision=args.nsh)
+    expected.update(args.native_build_inputs)
     for key, value in expected.items():
         require(info.get(key) == value, f'{key} mismatch: {info.get(key)!r} != {value!r}')
     require(info.get('source_dirty') is False, 'source_dirty must be false')

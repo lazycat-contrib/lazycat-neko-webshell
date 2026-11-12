@@ -18,9 +18,13 @@ function loadProfile() {
   return profile;
 }
 function validateProfile(profile) {
+  ensure(profile.protocolVersion === 2, 'Native protocol must be version 2');
   ensure(profile.component === 'neoko-terminal' && profile.tagPrefix === 'neoko-terminal-android-v' &&
     profile.artifactPrefix === 'neoko-terminal-android-v' && profile.sourceWorkflow === 'neoko-terminal-android.yml', 'Unexpected native component profile');
   ensure(profile.sourceRepository === 'ca-x/lazycat-neko-webshell' && profile.publicRepository === 'lazycat-contrib/lazycat-neko-webshell', 'Unexpected repository profile');
+  const pins = {"ghostty_source_revision": "108cacb17ed8990840cd14abfce43d8ed8503ca1", "ghostty_wrapper_revision": "cd4d497e8c698b27054a677ce19d1bd1a1a4d8bf", "zig_version": "0.17.1"};
+  ensure(profile.nativeBuildInputs && Object.keys(profile.nativeBuildInputs).length === 3 &&
+    Object.entries(pins).every(([key, value]) => profile.nativeBuildInputs[key] === value), 'Unexpected native build input pins');
   ensure(typeof profile.signingCertificateSha256 === 'string' && sha256.test(profile.signingCertificateSha256) &&
     profile.signingCertificateSha256 !== '0'.repeat(64), 'A production signing certificate fingerprint must be pinned');
   ensure(positiveInteger(profile.maxArchiveBytes) && profile.maxArchiveBytes <= 1024 ** 3, 'Invalid native archive bound');

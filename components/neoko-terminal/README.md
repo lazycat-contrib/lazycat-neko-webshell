@@ -31,11 +31,19 @@ The artifact name is `neoko-terminal-android-vX.Y.Z`. Its ZIP has exactly three 
 All provenance fields are mandatory; additional or duplicate JSON keys are rejected.
 The provenance `component` is exactly `neoko-terminal`.
 `schemaVersion`, `protocolVersion`, `sourceRunId`, `sourceRunAttempt`, `apkSize`,
-`versionCode`, `minSdk`, and `targetSdk` are positive JSON integers. `debuggable` is
+`versionCode`, `minSdk`, and `targetSdk` are positive JSON integers. The current application protocol is exactly 2; `schemaVersion` remains 1. `debuggable` is
 the JSON boolean `false`. All other fields are strings. `sourceWorkflow` is the
 basename `neoko-terminal-android.yml`; `sourceRef` is the full `refs/tags/neoko-terminal-android-vX.Y.Z`.
 `version` equals the APK version name. `sourceCommit` has 40 lowercase hex digits;
 APK and signing-certificate SHA256 fields have 64 lowercase hex digits without colons.
+
+The APK also embeds `assets/build-inputs.json` with exactly five fields:
+`source_sha`, `source_dirty`, `ghostty_source_revision`,
+`ghostty_wrapper_revision`, and `zig_version`. The source must match the selected
+private commit and be clean; the three toolchain values must equal the public
+profile's fixed pins. Missing metadata, extra fields, dirty sources and pin drift
+fail before publication. The private build includes Ghostty and third-party
+licenses; the public publisher does not rebuild the APK.
 
 The profile pins the package, protocol, API levels, ABI, build tools, and stable
 production signing certificate. A null, missing, malformed, or all-zero fingerprint
@@ -61,20 +69,20 @@ explicit SHA equal to the workflow commit is also accepted. The existing public
 tag must match the selected release commit before uploads and before publication;
 no tag is moved. Private source provenance remains independently pinned and checked.
 
-For the existing desktop `0.3.0` draft after public cleanup, use
-`release-commit=cf1e4d64e520fa5133ec742b63f4b3a316dc42ae` in both the dry run and actual
-publication. New versions normally leave this input blank.
+The historical desktop `0.3.0` release uses public commit
+`cf1e4d64e520fa5133ec742b63f4b3a316dc42ae`; that tag remains immutable.
+New versions normally leave `release-commit` blank.
 
 ## Desktop private-build publication
 
 The public `neoko-terminal-desktop.yml` is a publisher, not a source builder. Run it
-manually on public `main` with `version` (default `0.3.0`), `source-run-id`,
+manually on public `main` with `version` (default `0.4.0`), `source-run-id`,
 `source-commit` and `dry-run` (default `true`). It fetches artifacts from the private
 `neoko-terminal-desktop.yml` successful run on the exact immutable
 `neoko-terminal-desktop-vX.Y.Z` tag. There is no public Cargo build or package rebuild.
 
 `desktop-profile.json` pins the repositories, workflow, tag and artifact namespaces,
-application ID, crate version (`0.2.0`), NSH revision and these four targets:
+application ID, crate version (`0.3.0`), NSH revision and these four targets:
 
 - `x86_64-unknown-linux-gnu`
 - `x86_64-pc-windows-msvc`
@@ -98,7 +106,7 @@ also inspects package contents: Linux Debian control metadata, executable ELF64
 x86_64 and its SHA256, desktop entry, icon and runtime dependencies; Windows x64
 PE32+ GUI executable, its SHA256 and absent certificate directory; and macOS thin
 Mach-O architecture, bundle plist identity/version and ad-hoc signed code-page
-hashes. Package-internal build-info must equal the sidecar. Opaque packages fail
+hashes. Ghostty source, Rust binding and Zig pins must match the public profile. Package-internal build-info must equal the sidecar. Opaque packages fail
 even when outer digests and sidecars match. Windows/Linux packages are unsigned;
 macOS is not Developer ID signed or notarized. Package verification does not claim
 target-machine runtime acceptance. It never executes a downloaded package.

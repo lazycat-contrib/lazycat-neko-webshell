@@ -10,13 +10,19 @@ const sha40 = /^[0-9a-f]{40}$/;
 const sha256 = /^[0-9a-f]{64}$/;
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+const nativeBuildInputs = Object.freeze({
+  ghostty_source_revision: '108cacb17ed8990840cd14abfce43d8ed8503ca1',
+  ghostty_wrapper_revision: 'cd4d497e8c698b27054a677ce19d1bd1a1a4d8bf',
+  zig_version: '0.17.1',
+});
 const targets = ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'aarch64-apple-darwin', 'x86_64-apple-darwin'];
 function ensure(value, message) { if (!value) throw new Error(message); }
 function validateProfile(profile) {
   ensure(profile.component === 'neoko-terminal' && profile.sourceRepository === 'ca-x/lazycat-neko-webshell' &&
     profile.publicRepository === 'lazycat-contrib/lazycat-neko-webshell' && profile.sourceWorkflow === 'neoko-terminal-desktop.yml' &&
     profile.tagPrefix === 'neoko-terminal-desktop-v' && profile.artifactPrefix === 'neoko-terminal-desktop-' &&
-    profile.crateVersion === '0.2.0' && profile.packageName === 'community.lazycat.neko.remoted' && sha40.test(profile.nshRevision) &&
+    profile.crateVersion === '0.3.0' && isDeepStrictEqual(profile.nativeBuildInputs, nativeBuildInputs) &&
+    profile.packageName === 'community.lazycat.neko.remoted' && sha40.test(profile.nshRevision) &&
     isDeepStrictEqual(profile.targets, targets), 'Unexpected desktop source profile');
   for (const key of ['maxArchiveBytes', 'maxPackageBytes', 'maxMetadataBytes']) {
     ensure(positive(profile[key]) && profile[key] <= 1024 ** 3, 'Invalid desktop content bound');

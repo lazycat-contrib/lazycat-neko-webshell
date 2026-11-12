@@ -25,6 +25,7 @@ MANIFEST_FIELDS = {
     'sourceRef', 'apkName', 'apkSha256', 'apkSize', 'packageName', 'versionCode',
     'abi', 'signingCertificateSha256', 'minSdk', 'targetSdk', 'debuggable',
 }
+NATIVE_BUILD_INPUTS = {'ghostty_source_revision': '108cacb17ed8990840cd14abfce43d8ed8503ca1', 'ghostty_wrapper_revision': 'cd4d497e8c698b27054a677ce19d1bd1a1a4d8bf', 'zig_version': '0.17.1'}
 SOURCE_FIELDS = ('version', 'sourceRepository', 'sourceCommit', 'sourceRunId',
                  'sourceRunAttempt', 'sourceWorkflow', 'sourceEvent', 'sourceRef')
 
@@ -48,9 +49,11 @@ def read_json(data):
 
 def validate_profile(profile):
     require(profile['component'] == 'neoko-terminal', 'Wrong native component')
+    require(type(profile.get('protocolVersion')) is int and profile['protocolVersion'] == 2, 'Native protocol must be version 2')
     require(profile['sourceWorkflow'] == 'neoko-terminal-android.yml', 'Wrong source workflow')
     require(profile['tagPrefix'] == 'neoko-terminal-android-v', 'Wrong native tag prefix')
     require(profile['artifactPrefix'] == 'neoko-terminal-android-v', 'Wrong native artifact prefix')
+    require(profile.get('nativeBuildInputs') == NATIVE_BUILD_INPUTS, 'Unexpected native build input pins')
     fingerprint = profile.get('signingCertificateSha256')
     require(isinstance(fingerprint, str) and re.fullmatch(r'[0-9a-f]{64}', fingerprint)
             and fingerprint != '0' * 64, 'A production signing certificate fingerprint must be pinned')
@@ -124,7 +127,7 @@ def zip_directory_guard(filename, maximum):
         require(count == entries, 'ZIP directory count differs from footer')
 
 
-def inspect_apk_zip(apk, profile):
+def inspect_apk_zip(apk, profile, source_commit):
     total = 0
     native = 0
     zip_directory_guard(apk, profile['maxApkEntries'])
@@ -151,6 +154,17 @@ def inspect_apk_zip(apk, profile):
                     total += len(chunk)
                     require(total <= profile['maxApkExpandedBytes'], 'APK decompression exceeds bound')
         require(native > 0, 'APK has no ARM64 native library')
+        metadata_name = 'assets/build-inputs.json'
+        require(metadata_name in names, 'APK is missing native build inputs')
+        require(0 < archive.getinfo(metadata_name).file_size <= 8192, 'APK native build inputs exceed bound')
+        metadata = read_json(archive.read(metadata_name))
+        require(type(metadata) is dict and set(metadata) == {'source_sha', 'source_dirty', *NATIVE_BUILD_INPUTS},
+                'Unexpected APK native build input fields')
+        require(type(metadata['source_sha']) is str and re.fullmatch(r'[0-9a-f]{40}', metadata['source_sha'])
+                and metadata['source_sha'] == source_commit, 'APK native build source differs from selected commit')
+        require(metadata['source_dirty'] is False, 'APK native build source must be clean')
+        require(all(metadata[key] == profile['nativeBuildInputs'][key] for key in NATIVE_BUILD_INPUTS),
+                'APK native build input pins differ from public profile')
 
 
 def tool_output(command):
@@ -234,7 +248,7 @@ def prepare(archive_path, selection, profile, output, aapt, apksigner, inspect=i
         manifest = read_json((scratch / 'provenance.json').read_bytes())
         validate_manifest(manifest, selection, profile, apk_name, apk.stat().st_size, apk_sha)
         require((scratch / 'checksums.txt').read_bytes() == f'{apk_sha}  {apk_name}\n'.encode(), 'Checksum content differs from verified APK')
-        inspect_apk_zip(apk, profile)
+        inspect_apk_zip(apk, profile, manifest['sourceCommit'])
         inspect(apk, manifest, profile, aapt, apksigner)
         hashes = {name: hashlib.sha256((scratch / name).read_bytes()).hexdigest() for name in sorted(expected)}
         output.mkdir(mode=0o700)
