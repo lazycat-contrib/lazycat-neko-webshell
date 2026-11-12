@@ -20,7 +20,7 @@ test('stale host close cannot kill replacement host or its peers',()=>{
 test('client cannot choose authenticated peer identity',()=>{
  const messages=[];const tunnel=new Tunnel({blockConcurrencyWhile(){},storage:{}},{});
  tunnel.generation=1;tunnel.host={generation:1,sent:0,acknowledged:0,pending:new Map(),role:"host",socket:{send:s=>messages.push(JSON.parse(s))}};
- const record={generation:1,peer:'actual',second:0,frames:0,hello:false,socket:{close(){}}};tunnel.peers.set('actual',record);
+ const record={role:'client',inflight:0,pending:new Map(),generation:1,peer:'actual',second:0,frames:0,hello:false,socket:{close(){}}};tunnel.peers.set('actual',record);
  tunnel.message('client',record,JSON.stringify({type:'hello',peer:'victim',mode:'pair'}));
  tunnel.message('client',record,JSON.stringify({type:'data',peer:'victim',data:'AA'}));
  assert.equal(messages.length,2);assert.equal(messages[0].peer,'actual');assert.equal(messages[1].peer,'actual');
@@ -49,14 +49,14 @@ test('admission capacity recovers when its full window expires',()=>{
 test('one unauthenticated client cannot consume the shared host window',()=>{
  const messages=[];const tunnel=new Tunnel({blockConcurrencyWhile(){},storage:{}},{});
  const host={role:'host',generation:1,sent:0,acknowledged:0,pending:new Map(),socket:{send(s){messages.push(JSON.parse(s));}}};
- const bad={role:'client',generation:1,peer:'bad',hello:true,socket:{close(){}},frames:0};
- const good={role:'client',generation:1,peer:'good',hello:true,socket:{close(){}},frames:0};
+ const bad={role:'client',inflight:0,pending:new Map(),generation:1,peer:'bad',hello:true,socket:{close(){}},frames:0};
+ const good={role:'client',inflight:0,pending:new Map(),generation:1,peer:'good',hello:true,socket:{close(){}},frames:0};
  tunnel.host=host;tunnel.generation=1;tunnel.peers.set('bad',bad);tunnel.peers.set('good',good);
  for(let i=0;i<9;i++)tunnel.message('client',bad,JSON.stringify({type:'data',data:'YWJj'}));
  assert.equal(tunnel.peers.has('bad'),false);assert.equal(host.sent,8);
  tunnel.message('client',good,JSON.stringify({type:'data',data:'YWJj'}));
  assert.equal(tunnel.peers.has('good'),true);assert.equal(host.sent,9);
- tunnel.message('host',host,JSON.stringify({type:'acknowledge',sequence:9}));
+ tunnel.message('host',host,JSON.stringify({type:'acknowledge',peer:'host',sequence:9}));
  assert.equal(good.inflight,0);assert.equal(bad.inflight,0);
 });
 
@@ -64,7 +64,7 @@ test('public health HTTP is unchanged and malformed probes never access business
  const env=new Proxy({}, {get(){throw Error('unexpected business object lookup');}});
  const normal=await worker.fetch(new Request('https://relay.example/healthz'),env);
  assert.equal(normal.status,200);
- assert.deepEqual(await normal.json(),{protocol:'neko.remoted.v1',version:1});
+ assert.deepEqual(await normal.json(),{protocol:'neko.remoted.v2',version:2});
  for(const offered of ['', 'wrong.protocol']){
   const headers={upgrade:'websocket'};if(offered)headers['sec-websocket-protocol']=offered;
   const invalid=await worker.fetch(new Request('https://relay.example/healthz',{headers}),env);

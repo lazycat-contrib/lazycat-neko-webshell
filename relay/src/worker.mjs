@@ -1,9 +1,12 @@
-// Application relay: opaque encrypted frames; routing and deployment are documented in ../README.md.
+// Original application relay; protocol references are documented in ../../docs/protocol.md.
 // Only connection metadata and Noise ciphertext pass through this service.
 import metadata from '../package.json' with { type: 'json' };
 
 export const LIMITS = Object.freeze({ message: 98_304, peers: 16, framesPerSecond: 256, buffered: 512 * 1024 });
-const PROTOCOL = "neko.remoted.v1";
+const VERSION = 2;
+const PROTOCOL = `neko.remoted.v${VERSION}`;
+const ROUTE = /^\/v2\/(host|client)\/([A-Za-z0-9_-]{43})$/;
+const WINDOW = 8;
 const json = (status, code) => Response.json({ code }, { status, headers: { "cache-control": "no-store" } });
 const validRoute = s => /^[A-Za-z0-9_-]{43}$/.test(s) && canonical32(s);
 function canonical32(s) {
@@ -28,14 +31,14 @@ export default {
       const buildValue = value => typeof value === "string" && value.trim() ? value : "unknown";
       return Response.json({
         service: metadata.name, package_version: metadata.version,
-        relay_protocol: PROTOCOL, protocol_version: 1,
+        relay_protocol: PROTOCOL, protocol_version: VERSION,
         build_commit: buildValue(env.RELAY_BUILD_COMMIT),
         build_time: buildValue(env.RELAY_BUILD_TIME),
       }, { headers: { "cache-control": "no-store" } });
     }
     if (request.method === "GET" && u.pathname === "/healthz" && !u.search) {
-      const health = { protocol: PROTOCOL, version: 1 };
-      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return Response.json(health);
+      const health = { protocol: PROTOCOL, version: VERSION };
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return Response.json(health, { headers: { "cache-control": "no-store" } });
       if (!request.headers.get("sec-websocket-protocol")?.split(",").map(x => x.trim()).includes(PROTOCOL)) return json(400, "PROTOCOL_REQUIRED");
       const pair = new WebSocketPair();
       pair[1].accept();
@@ -43,7 +46,7 @@ export default {
       pair[1].close(1000, "Healthy");
       return new Response(null, {status: 101, webSocket: pair[0], headers: {"sec-websocket-protocol": PROTOCOL}});
     }
-    const match = /^\/v1\/(host|client)\/([A-Za-z0-9_-]{43})$/.exec(u.pathname);
+    const match = ROUTE.exec(u.pathname);
     if (!match || !validRoute(match[2]) || u.search) return json(404, "NOT_FOUND");
     if (request.method !== "GET") return json(405, "METHOD_NOT_ALLOWED");
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return json(426, "WEBSOCKET_REQUIRED");
@@ -51,7 +54,7 @@ export default {
     const [_, role, route] = match;
     if (role === "host" && !await authorizeHost(request.headers.get("authorization"), route)) return json(401, "BAD_HOST_CREDENTIAL");
     // One global admission object bounds traffic before arbitrary per-route DOs are created.
-    const gate = env.ADMISSION.get(env.ADMISSION.idFromName("admission-v1"));
+    const gate = env.ADMISSION.get(env.ADMISSION.idFromName("admission-v2"));
     const allowed = await gate.fetch(new Request("https://admission/check", { method: "POST", headers: { "x-source-ip": request.headers.get("cf-connecting-ip") || "local", "x-role": role } }));
     if (!allowed.ok) return json(429, "RATE_LIMITED");
     const tunnel = env.TUNNELS.get(env.TUNNELS.idFromName(route));
@@ -83,8 +86,12 @@ export class Tunnel {
     state.blockConcurrencyWhile(async () => { this.registered = await state.storage.get("registered") === true; });
   }
   async fetch(request) {
-    const match = /^\/v1\/(host|client)\/([A-Za-z0-9_-]{43})$/.exec(new URL(request.url).pathname);
-    if (!match) return json(404, "NOT_FOUND");
+    const url = new URL(request.url);
+    const match = ROUTE.exec(url.pathname);
+    if (!match || !validRoute(match[2]) || url.search) return json(404, "NOT_FOUND");
+    if (request.method !== "GET") return json(405, "METHOD_NOT_ALLOWED");
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return json(426, "WEBSOCKET_REQUIRED");
+    if (!request.headers.get("sec-websocket-protocol")?.split(",").map(value => value.trim()).includes(PROTOCOL)) return json(400, "PROTOCOL_REQUIRED");
     const role = match[1];
     if (role === "host") {
       // Recheck at the authority as well; no caller-supplied role header is trusted.
@@ -99,22 +106,20 @@ export class Tunnel {
     socket.accept();
     const generation = role === "host" ? this.generation + 1 : this.generation;
     const peer = role === "client" ? crypto.randomUUID() : null;
-    const record = { socket, peer, generation, second: 0, frames: 0, hello: false, sent: 0, acknowledged: 0, pending: new Map(), role };
-    if (role === "host") {
-      const old = this.host;
-      this.generation = generation; this.host = record;
-      for (const p of this.peers.values()) close(p.socket, 1012, "Host reconnected");
-      this.peers.clear();
-      if (old) close(old.socket, 4000, "Host replaced");
-      send(record, { type: "connected", peer: "host" });
-    } else {
-      this.peers.set(peer, record);
-      send(record, { type: "connected", peer });
-      send(this.host, { type: "opened", peer });
-    }
+    const record = { socket, peer, generation, second: 0, frames: 0, hello: false, sent: 0, inflight: 0, pending: new Map(), role };
     socket.addEventListener("message", event => this.message(role, record, event.data));
     socket.addEventListener("close", () => this.closed(role, record));
-    socket.addEventListener("error", () => { close(socket, 1011, "Connection failed"); this.closed(role, record); });
+    socket.addEventListener("error", () => this.disconnect(role, record, 1011, "Connection failed"));
+    if (role === "host") {
+      const old = this.host;
+      if (old) this.closed("host", old);
+      this.generation = generation; this.host = record;
+      if (old) close(old.socket, 4000, "Host replaced");
+      this.notify(record, { type: "connected", peer: "host" });
+    } else {
+      this.peers.set(peer, record);
+      if (this.notify(record, { type: "connected", peer })) this.notify(this.host, { type: "opened", peer });
+    }
     return new Response(null, { status: 101, webSocket: client, headers: { "sec-websocket-protocol": PROTOCOL } });
   }
   message(role, record, data) {
@@ -125,16 +130,18 @@ export class Tunnel {
     let frame; try { frame = JSON.parse(data); } catch { return this.reject(role,record); }
     if (!frame || typeof frame !== "object" || Array.isArray(frame)) return this.reject(role,record);
     if (frame.type === "ping" && typeof frame.nonce === "string" && frame.nonce.length <= 64 && Object.keys(frame).length === 2) {
-      return send(record,{ type:"pong",nonce:frame.nonce });
+      return this.notify(record,{ type:"pong",nonce:frame.nonce });
     }
-    if (frame.type === "acknowledge" && Number.isSafeInteger(frame.sequence) && frame.sequence > record.acknowledged && frame.sequence <= record.sent && Object.keys(frame).every(k=>["type","peer","sequence"].includes(k))) {
-      for (const [sequence, origin] of record.pending) {
-        if (sequence > frame.sequence) break;
-        record.pending.delete(sequence);
-        if (origin.role === "client") origin.inflight = Math.max(0, (origin.inflight || 0) - 1);
-        try { send(origin, { type: "delivered", peer: record.role === "client" ? record.peer : origin.peer, count: 1 }); } catch {}
-      }
-      record.acknowledged = frame.sequence; return;
+    if (frame.type === "acknowledge") {
+      if (frame.peer !== (role === "host" ? "host" : record.peer) || !Number.isSafeInteger(frame.sequence) || frame.sequence <= 0 || frame.sequence > record.sent || Object.keys(frame).some(key => !["type", "peer", "sequence"].includes(key))) return this.reject(role, record);
+      // Issued tokens are never reused on this socket. A consumed or retired
+      // token is an idempotent no-op, including ACKs crossing peer cancellation.
+      if (!record.pending.has(frame.sequence)) return;
+      const origin = record.pending.get(frame.sequence);
+      record.pending.delete(frame.sequence);
+      if (origin.role === "client") origin.inflight--;
+      this.notify(origin, { type: "delivered", peer: role === "client" ? record.peer : origin.peer, count: 1 });
+      return;
     }
     if (role === "client" && frame.type === "hello" && !record.hello && ["pair","connect"].includes(frame.mode) && Object.keys(frame).every(k=>["type","mode","peer"].includes(k))) {
       record.hello=true;
@@ -145,36 +152,63 @@ export class Tunnel {
         if (!record.hello) return this.reject(role,record);
         return this.forward(role,record,this.host,{type:"data",peer:record.peer,data:frame.data});
       }
+      if (typeof frame.peer !== "string") return this.reject(role, record);
       const p=this.peers.get(frame.peer);
       if (p) return this.forward(role,record,p,{type:"data",peer:p.peer,data:frame.data});
       return; // A client may already have detached.
     }
     if (role === "host" && frame.type === "closed" && typeof frame.peer === "string" && Object.keys(frame).every(k=>["type","peer"].includes(k))) {
-      const p=this.peers.get(frame.peer);if(p){this.peers.delete(frame.peer);close(p.socket,1000,"Disconnected by host");}return;
+      const p=this.peers.get(frame.peer);if(p)this.disconnect("client",p,1000,"Disconnected by host");return;
     }
     this.reject(role,record);
   }
   forward(role,record,target,frame) {
     if (!target) return this.reject(role,record);
-    if (frame.type === "data" && role === "client" && (record.inflight || 0) >= 8) return this.reject(role,record);
+    if (frame.type === "data" && role === "client" && record.inflight >= WINDOW) return this.reject(role,record);
     // ACK credits bound buffering even on Workers where bufferedAmount is absent.
-    if ((target.socket.bufferedAmount || 0)>LIMITS.buffered || (frame.type === "data" && target.sent-target.acknowledged >= (target.role === "host" ? 64 : 8))) {
+    if ((target.socket.bufferedAmount || 0)>LIMITS.buffered || (frame.type === "data" && target.pending.size >= (target.role === "host" ? LIMITS.peers * WINDOW : WINDOW))) {
       if (role === "host") { this.reject("client",target); } else { this.reject(role,record); }
       return;
     }
-    try { if(frame.type === "data") { frame.sequence = ++target.sent; target.pending.set(frame.sequence,record); if (role === "client") record.inflight = (record.inflight || 0) + 1; } send(target,frame); }
-    catch { if(role === "host")this.reject("client",target);else this.reject(role,record); }
+    if (frame.type === "data") {
+      if (!Number.isSafeInteger(target.sent + 1)) return this.disconnect(target.role, target, 1011, "Delivery token exhausted");
+      frame.sequence = ++target.sent;
+      target.pending.set(frame.sequence, record);
+      if (role === "client") record.inflight++;
+    }
+    try { send(target, frame); }
+    catch {
+      if (frame.type === "data") {
+        target.pending.delete(frame.sequence);
+        if (role === "client") record.inflight--;
+      }
+      this.disconnect(target.role, target, 1011, "Delivery failed");
+    }
   }
-  reject(role,record) { close(record.socket,1008,"Invalid or excessive messages");this.closed(role,record); }
+  notify(record, frame) {
+    try { send(record, frame); return true; }
+    catch { this.disconnect(record.role, record, 1011, "Delivery failed"); return false; }
+  }
+  disconnect(role,record,code,reason) { this.closed(role,record);close(record.socket,code,reason); }
+  reject(role,record) { this.disconnect(role,record,1008,"Invalid or excessive messages"); }
   closed(role,record) {
     if(role === "host") {
       if(this.host !== record) return;
       this.host=null;
-      for(const p of this.peers.values())close(p.socket,1012,"Host offline");
+      record.pending?.clear();
+      for(const p of this.peers.values()) {
+        p.pending?.clear(); p.inflight = 0;
+        close(p.socket,1012,"Host offline");
+      }
       this.peers.clear();
     } else if(this.peers.get(record.peer) === record) {
       this.peers.delete(record.peer);
-      if(this.host?.generation===record.generation)try{send(this.host,{type:"closed",peer:record.peer});}catch{}
+      record.pending?.clear();
+      record.inflight = 0;
+      if(this.host?.generation===record.generation) {
+        for (const [sequence, origin] of this.host.pending) if (origin === record) this.host.pending.delete(sequence);
+        this.notify(this.host,{type:"closed",peer:record.peer});
+      }
     }
   }
 }

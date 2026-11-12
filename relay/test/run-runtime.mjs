@@ -27,7 +27,8 @@ try {
     if (worker.exitCode !== null) throw Error(`Worker exited (${worker.exitCode})\n${output}`);
     try {
       const response = await fetch(`${origin}/healthz`, {signal: AbortSignal.timeout(500)});
-      ready = response.ok && (await response.json()).protocol === 'neko.remoted.v1';
+      const health = await response.json();
+      ready = response.ok && health.protocol === 'neko.remoted.v2' && health.version === 2;
     } catch {}
     if (ready) break;
     await delay(200);
