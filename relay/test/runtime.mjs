@@ -6,7 +6,7 @@ import metadata from '../package.json' with {type: 'json'};
 
 const origin = process.env.REMOTED_TEST_RELAY || 'http://127.0.0.1:18791';
 const wsOrigin = origin.replace(/^http/, 'ws');
-const protocol = 'neko.remoted.v2';
+const protocol = 'neko.remoted.v3';
 
 function credentials() {
   const key = randomBytes(32);
@@ -14,7 +14,7 @@ function credentials() {
 }
 
 async function open(role, credentials, key = credentials.key) {
-  const ws = new WebSocket(`${wsOrigin}/v2/${role}/${credentials.route}`, protocol, {
+  const ws = new WebSocket(`${wsOrigin}/v3/${role}/${credentials.route}`, protocol, {
     handshakeTimeout: 4000,
     headers: role === 'host' ? {authorization: `Bearer ${key}`} : {},
   });
@@ -76,7 +76,7 @@ async function ping(host, nonce) {
   assert.equal((await host.take('pong')).nonce, nonce);
 }
 
-test('real DO multiplexes v2 peers, rejects hijack and fences replacement generations', {timeout: 20000}, async context => {
+test('real DO multiplexes v3 peers, rejects hijack and fences replacement generations', {timeout: 20000}, async context => {
   const fixture = await setup(context);
   const {host} = fixture;
   const first = await fixture.client();
@@ -214,14 +214,14 @@ test('future ACK is rejected and an offline route reports failure', {timeout: 10
   await assert.rejects(open('client', credentials()), /503/);
 });
 
-test('real root version diagnostic and health expose only v2 with no-store JSON', {timeout: 10000}, async () => {
+test('real root version diagnostic and health expose only v3 with no-store JSON', {timeout: 10000}, async () => {
   const response = await fetch(`${origin}/`);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.match(response.headers.get('content-type'), /^application\/json/);
   assert.deepEqual(await response.json(), {
     service: metadata.name, package_version: metadata.version,
-    relay_protocol: protocol, protocol_version: 2,
+    relay_protocol: protocol, protocol_version: 3,
     build_commit: 'unknown', build_time: 'unknown',
   });
   assert.equal((await fetch(`${origin}/?route=private`)).status, 404);
@@ -229,10 +229,10 @@ test('real root version diagnostic and health expose only v2 with no-store JSON'
   assert.equal((await fetch(`${origin}/v1/client/${credentials().route}`)).status, 404);
   const health = await fetch(`${origin}/healthz`);
   assert.equal(health.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await health.json(), {protocol, version: 2});
+  assert.deepEqual(await health.json(), {protocol, version: 3});
 });
 
-test('health WebSocket returns v2 then closes after a single response', {timeout: 10000}, async () => {
+test('health WebSocket returns v3 then closes after a single response', {timeout: 10000}, async () => {
   const socket = new WebSocket(`${wsOrigin}/healthz`, protocol, {handshakeTimeout: 4000});
   const frames = [];
   try {
@@ -246,6 +246,6 @@ test('health WebSocket returns v2 then closes after a single response', {timeout
     });
     assert.equal(code, 1000);
     assert.equal(socket.protocol, protocol);
-    assert.deepEqual(frames, [{protocol, version: 2}]);
+    assert.deepEqual(frames, [{protocol, version: 3}]);
   } finally { socket.close(); }
 });

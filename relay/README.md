@@ -1,12 +1,12 @@
-# Remoted Relay 0.2.0 · v2
+# Remoted Relay 0.3.0 · v3
 
 这是应用自有的 Cloudflare Worker Relay，入口为 `src/worker.mjs`。`TUNNELS` 绑定 `Tunnel`，每个 route 一个 Durable Object；`ADMISSION` 绑定单个全局连接准入对象 `Admission`。`wrangler.jsonc` 已包含两个 SQLite 类的 `v1` migration。
 
-本目录实现 **v2 only**：路径 `/v2/...`，WebSocket 子协议 `neko.remoted.v2`，逐帧精确 ACK，无 v1 回退。升级 v2 时需要同时更新主机和原生客户端；0.1.2 及更早的 Relay 使用 v1。部署状态以实例根路径的实际响应为准。
+本目录实现 **v3 only**：路径 `/v3/...`，WebSocket 子协议 `neko.remoted.v3`，逐帧精确 ACK，不接受旧版路径或子协议。升级 v3 时需要同时更新主机和原生客户端；既有配对身份可以保留。部署状态以实例根路径的实际响应为准。
 
 部署步骤、版本核对、协议、限额和关闭竞争说明均见 [DEPLOY.md](DEPLOY.md)，本目录可独立部署。
 
-部署前必须验证 provider、shared protocol、native client/network worker 均使用 v2，由主控统一部署。以下命令只做本地验证与打包检查，不部署：
+部署前必须验证 provider、shared protocol、native client/network worker 均使用 v3，由主控统一部署。以下命令只做本地验证与打包检查，不部署：
 
 ```bash
 npm ci
@@ -24,9 +24,9 @@ npm run check
 ```json
 {
   "service": "neko-remoted-relay",
-  "package_version": "0.2.0",
-  "relay_protocol": "neko.remoted.v2",
-  "protocol_version": 2,
+  "package_version": "0.3.0",
+  "relay_protocol": "neko.remoted.v3",
+  "protocol_version": 3,
   "build_commit": "unknown",
   "build_time": "unknown"
 }
@@ -34,7 +34,7 @@ npm run check
 
 `service` 与 `package_version` 从 `package.json` 单一来源读取。部署时通过 Worker bindings `RELAY_BUILD_COMMIT`、`RELAY_BUILD_TIME` 提供实际 commit 和构建时间；缺失、空白或非字符串时返回 `unknown`。响应不含设备、route、credential 或终端数据。根路径带非空 query 返回 404；非 GET（包括 HEAD）返回 405，错误响应同样为 JSON、`no-store`。
 
-`GET /healthz` 不带 query 时返回 `{"protocol":"neko.remoted.v2","version":2}`，HTTP 响应设置 `no-store`。WebSocket 健康检查要求 v2 子协议，发送相同结构的一帧后以 1000 关闭。health 只检查 Relay 协议，不验证主机在线或端到端授权；部署后应同时读回根路径的实际构建信息。
+`GET /healthz` 不带 query 时返回 `{"protocol":"neko.remoted.v3","version":3}`，HTTP 响应设置 `no-store`。WebSocket 健康检查要求 v3 子协议，发送相同结构的一帧后以 1000 关闭。health 只检查 Relay 协议，不验证主机在线或端到端授权；部署后应同时读回根路径的实际构建信息。
 
 ## 路由与认证
 
@@ -42,8 +42,8 @@ npm run check
 | --- | --- |
 | `GET /` | 不带 query；返回 package、协议与构建信息 |
 | `GET /healthz` | 不带 query；返回协议版本 |
-| `GET /v2/host/<route>` | WebSocket；`Sec-WebSocket-Protocol: neko.remoted.v2`；`Authorization: Bearer <routing_secret>` |
-| `GET /v2/client/<route>` | WebSocket；相同子协议；该 route 的主机必须在线，peer 数小于 16 |
+| `GET /v3/host/<route>` | WebSocket；`Sec-WebSocket-Protocol: neko.remoted.v3`；`Authorization: Bearer <routing_secret>` |
+| `GET /v3/client/<route>` | WebSocket；相同子协议；该 route 的主机必须在线，peer 数小于 16 |
 
 v1 路由返回 404，旧子协议返回 400，不自动降级。
 
@@ -73,8 +73,18 @@ npm test
 npm run test:integration
 ```
 
-`npm test` 运行 `test/*.test.mjs` 的 authority、精确 ACK、版本诊断测试。`npm run test:integration` 自动选择本地空闲端口，启动隔离的 Wrangler/workerd 实例，等待 v2 健康检查通过，再运行 `test/runtime.mjs`，结束后关闭实例；无需手动启动开发服务器。集成测试的本地持久化目录为 `.wrangler/integration`。
+`npm test` 运行 `test/*.test.mjs` 的 authority、精确 ACK、版本诊断测试。`npm run test:integration` 自动选择本地空闲端口，启动隔离的 Wrangler/workerd 实例，等待 v3 健康检查通过，再运行 `test/runtime.mjs`，结束后关闭实例；无需手动启动开发服务器。集成测试的本地持久化目录为 `.wrangler/integration`。
 
 真实 WebSocket/DO 集成测试覆盖跨 peer 乱序精确 ACK、关闭清理后 16×8 窗口、A 关闭后迟到 ACK 不影响 host/B、下游乱序额度恢复、慢客户端隔离、重复 ACK 幂等无额外 credit、错误 peer/未来 ACK 拒绝、错误凭据拒绝、host 替换后的 generation 清理、主机离线，以及根路径 metadata 和 HTTP/WS health。单元测试另覆盖 send 失败回滚、credit 隔离、构建 bindings 和 host 聚合帧率预算。
 
 自动命令会为测试设置本地 `REMOTED_TEST_RELAY`，不会使用外部同名环境变量指定的生产 Relay。应用的 Relay 地址解析仍要求 HTTPS/WSS，本地 HTTP 测试并不代表应用允许不安全连接。
+
+## NAT 穿透
+
+WebShell 0.15.0、桌面 0.5.0 和 Android 0.4.0 在已有配对认证完成后自动尝试 WebRTC/ICE 直连。
+两端只需主动连接 Relay，无需公网 IP、端口转发或开放入站监听。SDP 与 ICE 候选信息以连接专用密钥加密，Relay 不能读取。
+业务仍使用原有 Noise 加密和设备授权；STUN 不兼容、UDP 被阻止或直连中断时回退 WSS。
+
+WSS 在直连期间保持在线，负责加密信令、消费确认和撤销边界。终端、Herdr 与文件共用同一套有序传输，
+回退只重发带原序号的密文，接收端去重后再解密，不重新执行已接收的输入。
+部署者无需为这项能力单独配置 TURN；本 Worker 也不提供 TURN 服务。

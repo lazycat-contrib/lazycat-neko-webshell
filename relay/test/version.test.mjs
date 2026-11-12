@@ -13,7 +13,7 @@ test('root GET reports only package, protocol and supplied build metadata withou
   assert.match(response.headers.get('content-type'), /^application\/json/);
   assert.deepEqual(await response.json(), {
     service: metadata.name, package_version: metadata.version,
-    relay_protocol: 'neko.remoted.v2', protocol_version: 2,
+    relay_protocol: 'neko.remoted.v3', protocol_version: 3,
     build_commit: 'abc123', build_time: '2026-11-12T00:00:00Z',
   });
 });
@@ -29,13 +29,13 @@ test('missing or blank build metadata is unknown and root rejects queries and no
   assert.equal((await worker.fetch(new Request('https://relay.example/', {method: 'POST'}), {})).status, 405);
 });
 
-test('health remains a minimal v2 protocol check and v1 routes are rejected', async () => {
+test('health remains a minimal v3 protocol check and v1 routes are rejected', async () => {
   const env = new Proxy({}, {get() { throw Error('unexpected business object access'); }});
   const response = await worker.fetch(new Request('https://relay.example/healthz'), env);
-  assert.deepEqual(await response.json(), {protocol: 'neko.remoted.v2', version: 2});
+  assert.deepEqual(await response.json(), {protocol: 'neko.remoted.v3', version: 3});
   assert.equal(response.headers.get('cache-control'), 'no-store');
   const route = 'A'.repeat(43);
   assert.equal((await worker.fetch(new Request(`https://relay.example/v1/client/${route}`), env)).status, 404);
   const headers = {upgrade: 'websocket', 'sec-websocket-protocol': 'neko.remoted.v1'};
-  assert.equal((await worker.fetch(new Request(`https://relay.example/v2/client/${route}`, {headers}), env)).status, 400);
+  assert.equal((await worker.fetch(new Request(`https://relay.example/v3/client/${route}`, {headers}), env)).status, 400);
 });

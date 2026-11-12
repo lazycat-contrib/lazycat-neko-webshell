@@ -18,7 +18,7 @@ function loadProfile() {
   return profile;
 }
 function validateProfile(profile) {
-  ensure(profile.protocolVersion === 2, 'Native protocol must be version 2');
+  ensure(profile.protocolVersion === 3, 'Native protocol must be version 3');
   ensure(profile.component === 'neoko-terminal' && profile.tagPrefix === 'neoko-terminal-android-v' &&
     profile.artifactPrefix === 'neoko-terminal-android-v' && profile.sourceWorkflow === 'neoko-terminal-android.yml', 'Unexpected native component profile');
   ensure(profile.sourceRepository === 'ca-x/lazycat-neko-webshell' && profile.publicRepository === 'lazycat-contrib/lazycat-neko-webshell', 'Unexpected repository profile');

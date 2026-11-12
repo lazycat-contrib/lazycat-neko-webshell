@@ -103,7 +103,7 @@ class DesktopValidationTests(unittest.TestCase):
             stem = f'neoko-terminal-0.4.0-{target}'
             package = stem + ('.deb' if target.endswith('linux-gnu') else '.zip')
 
-            info = {'desktop_version': '0.4.0', 'crate_version': '0.3.0', 'target': target, 'source_sha': 'a' * 40,
+            info = {'desktop_version': '0.4.0', 'crate_version': '0.4.0', 'target': target, 'source_sha': 'a' * 40,
                     'source_dirty': False, 'nsh_revision': self.profile['nshRevision'],
                     'signing': 'ad-hoc; not notarized' if target.endswith('apple-darwin') else 'unsigned',
                     'cargo_binary_sha256': 'b' * 64, **self.profile['nativeBuildInputs']}

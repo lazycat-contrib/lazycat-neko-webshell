@@ -49,7 +49,7 @@ def read_json(data):
 
 def validate_profile(profile):
     require(profile['component'] == 'neoko-terminal', 'Wrong native component')
-    require(type(profile.get('protocolVersion')) is int and profile['protocolVersion'] == 2, 'Native protocol must be version 2')
+    require(type(profile.get('protocolVersion')) is int and profile['protocolVersion'] == 3, 'Native protocol must be version 3')
     require(profile['sourceWorkflow'] == 'neoko-terminal-android.yml', 'Wrong source workflow')
     require(profile['tagPrefix'] == 'neoko-terminal-android-v', 'Wrong native tag prefix')
     require(profile['artifactPrefix'] == 'neoko-terminal-android-v', 'Wrong native artifact prefix')

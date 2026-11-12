@@ -33,7 +33,7 @@ class NativeValidationTests(unittest.TestCase):
             'artifactName': 'neoko-terminal-android-v0.1.0',
         }
         self.manifest = {
-            'schemaVersion': 1, 'component': 'neoko-terminal', 'version': '0.1.0', 'protocolVersion': 2,
+            'schemaVersion': 1, 'component': 'neoko-terminal', 'version': '0.1.0', 'protocolVersion': 3,
             **{key: self.selection[key] for key in native.SOURCE_FIELDS if key != 'version'},
             'apkName': self.apk_name, 'apkSha256': self.apk_sha, 'apkSize': len(self.apk),
             'packageName': 'community.lazycat.neko.remoted', 'versionCode': 1, 'abi': 'arm64-v8a',
@@ -236,9 +236,9 @@ class NativeValidationTests(unittest.TestCase):
                 apk.write_bytes(self.make_apk(metadata=None, extra=[('assets/build-inputs.json', content)]))
                 native.inspect_apk_zip(apk, self.profile, 'a' * 40)
 
-    def test_protocol_v2_profile_rejects_old_and_mistyped_versions(self):
-        self.assertEqual(self.profile['protocolVersion'], 2)
-        for version in (1, 3, True, 2.0, '2', None):
+    def test_protocol_v3_profile_rejects_old_and_mistyped_versions(self):
+        self.assertEqual(self.profile['protocolVersion'], 3)
+        for version in (1, 2, True, 3.0, '3', None):
             with self.subTest(version=version), self.assertRaisesRegex(ValueError, 'protocol'):
                 native.validate_profile({**self.profile, 'protocolVersion': version})
 

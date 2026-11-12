@@ -64,7 +64,7 @@ test('public health HTTP is unchanged and malformed probes never access business
  const env=new Proxy({}, {get(){throw Error('unexpected business object lookup');}});
  const normal=await worker.fetch(new Request('https://relay.example/healthz'),env);
  assert.equal(normal.status,200);
- assert.deepEqual(await normal.json(),{protocol:'neko.remoted.v2',version:2});
+ assert.deepEqual(await normal.json(),{protocol:'neko.remoted.v3',version:3});
  for(const offered of ['', 'wrong.protocol']){
   const headers={upgrade:'websocket'};if(offered)headers['sec-websocket-protocol']=offered;
   const invalid=await worker.fetch(new Request('https://relay.example/healthz',{headers}),env);

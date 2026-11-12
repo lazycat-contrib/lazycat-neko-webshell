@@ -1,6 +1,6 @@
-# Cloudflare Remoted Relay v2 部署说明
+# Cloudflare Remoted Relay v3 部署说明
 
-本目录包含可独立部署的 Cloudflare Worker 与 SQLite Durable Objects。需要可使用 Workers 和 Durable Objects 的 Cloudflare 账号、Node.js 24 和 npm。原生应用与 WebShell 主机均主动向 Relay 建立出站 WSS 连接，Relay 只转发连接控制与 Noise 密文。
+本目录包含可独立部署的 Cloudflare Worker 与 SQLite Durable Objects。需要可使用 Workers 和 Durable Objects 的 Cloudflare 账号、Node.js 24 和 npm。原生应用与 WebShell 主机均主动向 Relay 建立出站 WSS 连接，Relay 只转发连接控制、会话密文与加密信令。
 
 ## 部署
 
@@ -18,16 +18,16 @@ npx wrangler deploy \
   --var RELAY_BUILD_TIME:$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ```
 
-首次部署按 `wrangler.jsonc` 创建 `Tunnel` 和 `Admission` 两个 SQLite Durable Object 类。已有部署保持原 migration tag `v1`，不要因为传输升级为 v2 就重写已应用的存储迁移。
+首次部署按 `wrangler.jsonc` 创建 `Tunnel` 和 `Admission` 两个 SQLite Durable Object 类。已有部署保持原 migration tag `v1`，不要因为传输升级为 v3 就重写已应用的存储迁移。
 
-部署后会得到 Workers 地址；自定义域名可在 Cloudflare Worker 的 Domains & Routes 中添加，并指向同一个 Worker。`https://neko-relay.czyt.eu.org` 是现有公共实例。两端配置相同 HTTPS/WSS origin，不附带 `/v2` 或 `/healthz` 路径。先在主机设置中保存 Relay 地址、开启远程控制并确认在线，再生成设备码。在客户端填写同一地址后扫码或输入设备码，最后由主机核对指纹、选择资源和只读／可操作权限并批准。
+部署后会得到 Workers 地址；自定义域名可在 Cloudflare Worker 的 Domains & Routes 中添加，并指向同一个 Worker。`https://neko-relay.czyt.eu.org` 是现有公共实例。两端配置相同 HTTPS/WSS origin，不附带 `/v3` 或 `/healthz` 路径。先在主机设置中保存 Relay 地址、开启远程控制并确认在线，再生成设备码。在客户端填写同一地址后扫码或输入设备码，最后由主机核对指纹、选择资源和只读／可操作权限并批准。
 
 ```sh
 curl -fsS https://你的域名/
 curl -fsS https://你的域名/healthz
 ```
 
-根路径应显示本次提交与构建时间，health 应显示 v2。健康检查只说明中转可用，不代表某个主机已在线或设备已获授权。旧的 v1 客户端无法连接 v2；部署升级应与新版主机和客户端协调。
+根路径应显示本次提交与构建时间，health 应显示 v3。健康检查只说明中转可用，不代表某个主机已在线或设备已获授权。旧协议客户端无法连接 v3；部署升级应与新版主机和客户端协调。
 
 首次主机注册可选部署级 `REGISTRATION_KEY`（`npx wrangler secret put REGISTRATION_KEY`）。启用后首次注册需要主机支持并配置同一注册密钥。此密钥不代替设备的端到端身份验证和主机审批。保留默认关闭的 observability，不在日志中记录设备码、routing secret、授权头或终端内容。
 
@@ -40,9 +40,9 @@ curl -fsS https://你的域名/healthz
 ```json
 {
   "service": "neko-remoted-relay",
-  "package_version": "0.2.0",
-  "relay_protocol": "neko.remoted.v2",
-  "protocol_version": 2,
+  "package_version": "0.3.0",
+  "relay_protocol": "neko.remoted.v3",
+  "protocol_version": 3,
   "build_commit": "unknown",
   "build_time": "unknown"
 }
@@ -61,10 +61,10 @@ Durable Object，也不返回设备、route、routing secret、注册凭据或�
 `GET /healthz` 保留客户端协议检查的最小结构：
 
 ```json
-{"protocol":"neko.remoted.v2","version":2}
+{"protocol":"neko.remoted.v3","version":3}
 ```
 
-HTTP 响应也设置 `no-store`。WebSocket 健康检查要求 v2 子协议，返回相同
+HTTP 响应也设置 `no-store`。WebSocket 健康检查要求 v3 子协议，返回相同
 结构的一帧，然后以 1000 关闭。它只证明 Relay 协议在线，不证明 host 在线
 或设备已授权。根路径包含 package/build 诊断信息，health 不包含这些额外字段。
 
@@ -72,13 +72,13 @@ HTTP 响应也设置 `no-store`。WebSocket 健康检查要求 v2 子协议，�
 
 | 入口 | 要求 |
 | --- | --- |
-| `/v2/host/<route>` | GET WebSocket，`Sec-WebSocket-Protocol: neko.remoted.v2`，有效 host Bearer credential |
-| `/v2/client/<route>` | GET WebSocket，同一子协议，host 已在线，peer 数小于 16 |
+| `/v3/host/<route>` | GET WebSocket，`Sec-WebSocket-Protocol: neko.remoted.v3`，有效 host Bearer credential |
+| `/v3/client/<route>` | GET WebSocket，同一子协议，host 已在线，peer 数小于 16 |
 
-v1 路由返回 404，旧子协议返回 400；没有版本探测回退。route 仍是 32 字节
+v1/v2 路由返回 404，旧子协议返回 400；没有版本探测回退。route 仍是 32 字节
 routing secret 的 SHA-256，以无 padding 的规范 base64url 编码。鉴权仍在
 入口与 Tunnel authority 两处检查。首次注册的 `REGISTRATION_KEY` 约束保留。
-连接准入对象名称改为 `admission-v2`；不需要创建新的 Durable Object 类。
+连接准入对象名称保留 `admission-v2`；不需要创建新的 Durable Object 类。
 已有 `wrangler.jsonc` 的 migration tag `v1` 是存储迁移身份，不是传输协议
 版本，不能仅为协议升级重写已经应用的 migration。
 
@@ -157,15 +157,15 @@ npm run test:integration
 ```
 
 集成命令选择本机空闲端口，启动本地 Wrangler/workerd + 真实 WebSocket/DO，
-检查 v2 readiness，运行测试并关闭该实例；持久化目录仅为本地
+检查 v3 readiness，运行测试并关闭该实例；持久化目录仅为本地
 `.wrangler/integration`。它不会连接公共 Relay，也不执行 deploy。
 覆盖跨 peer 乱序消费、16×8 host 窗口/关闭清理、A 关闭后迟到 ACK 隔离、
 反序下游 ACK、慢 client 隔离、重复 ACK 幂等、错误 peer/未来 ACK 拒绝、
 host 替换、根路径和 HTTP/WS health。
 单元测试另覆盖模拟 send 失败、精确 credit 不变量及传入 build bindings。
 
-取消竞争修复的红测记录为 `/tmp/neko-relay-v2-idempotent-red.log`（三个
-单元回归失败）与 `/tmp/neko-relay-v2-idempotent-integration-red.log`（两个
+取消竞争修复的红测记录为 `/tmp/neko-relay-v3-idempotent-red.log`（三个
+单元回归失败）与 `/tmp/neko-relay-v3-idempotent-integration-red.log`（两个
 真实集成回归失败）；修复后结果记录在同名前缀的 `unit.log`、`integration.log`。
 
 私有 package 版本已设为 0.2.0。本次限定写集不含 `package-lock.json`、

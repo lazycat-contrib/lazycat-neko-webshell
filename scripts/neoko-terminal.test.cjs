@@ -326,9 +326,9 @@ test('android identical release commit needs no comparison and new tags default 
   }
 });
 
-test('Android app protocol is pinned to version 2', () => {
-  assert.equal(profile.protocolVersion, 2);
-  for (const protocolVersion of [1, 3, true, '2', undefined]) {
+test('Android app protocol is pinned to version 3', () => {
+  assert.equal(profile.protocolVersion, 3);
+  for (const protocolVersion of [1, 2, true, '3', undefined]) {
     assert.throws(() => native.validateProfile({...profile, protocolVersion}), /protocol/);
   }
 });

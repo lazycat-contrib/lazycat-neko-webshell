@@ -28,7 +28,7 @@ try {
     try {
       const response = await fetch(`${origin}/healthz`, {signal: AbortSignal.timeout(500)});
       const health = await response.json();
-      ready = response.ok && health.protocol === 'neko.remoted.v2' && health.version === 2;
+      ready = response.ok && health.protocol === 'neko.remoted.v3' && health.version === 3;
     } catch {}
     if (ready) break;
     await delay(200);

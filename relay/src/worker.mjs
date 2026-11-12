@@ -1,11 +1,11 @@
 // Original application relay; protocol references are documented in ../../docs/protocol.md.
-// Only connection metadata and Noise ciphertext pass through this service.
+// Opaque session records, encrypted signaling and transport acknowledgements only.
 import metadata from '../package.json' with { type: 'json' };
 
 export const LIMITS = Object.freeze({ message: 98_304, peers: 16, framesPerSecond: 256, buffered: 512 * 1024 });
-const VERSION = 2;
+const VERSION = 3;
 const PROTOCOL = `neko.remoted.v${VERSION}`;
-const ROUTE = /^\/v2\/(host|client)\/([A-Za-z0-9_-]{43})$/;
+const ROUTE = /^\/v3\/(host|client)\/([A-Za-z0-9_-]{43})$/;
 const WINDOW = 8;
 const json = (status, code) => Response.json({ code }, { status, headers: { "cache-control": "no-store" } });
 const validRoute = s => /^[A-Za-z0-9_-]{43}$/.test(s) && canonical32(s);
@@ -147,7 +147,7 @@ export class Tunnel {
       record.hello=true;
       return this.forward(role,record,this.host,{type:"hello",peer:record.peer,mode:frame.mode});
     }
-    if (frame.type === "data" && typeof frame.data === "string" && frame.data.length <= 81944 && /^[A-Za-z0-9_-]*$/.test(frame.data) && Object.keys(frame).every(k=>["type","peer","data","sequence"].includes(k))) {
+    if (frame.type === "data" && typeof frame.data === "string" && frame.data.length <= 87382 && /^[A-Za-z0-9_-]*$/.test(frame.data) && Object.keys(frame).every(k=>["type","peer","data","sequence"].includes(k))) {
       if (role === "client") {
         if (!record.hello) return this.reject(role,record);
         return this.forward(role,record,this.host,{type:"data",peer:record.peer,data:frame.data});
