@@ -25,7 +25,7 @@ def version():
         raise ValueError('Native Cargo, NSH and Android versions differ')
     if int(manifest.attrib[ANDROID + 'versionCode']) != config['build']:
         raise ValueError('Native build numbers differ')
-    if os.environ.get('RELEASE_REF') != 'refs/tags/remoted-client-v' + result:
+    if os.environ.get('RELEASE_REF') != 'refs/tags/neoko-terminal-android-v' + result:
         raise ValueError('Build must use the matching remoted-client release tag')
     return result, config['build']
 
@@ -35,7 +35,7 @@ def package():
     source = {
         'repository': os.environ['SOURCE_REPOSITORY'],
         'commit': os.environ['SOURCE_COMMIT'],
-        'workflow': 'remoted-client.yml',
+        'workflow': 'neoko-terminal-android.yml',
         'runId': int(os.environ['SOURCE_RUN_ID']),
         'runAttempt': int(os.environ['SOURCE_RUN_ATTEMPT']),
         'event': os.environ['SOURCE_EVENT'],
@@ -58,10 +58,10 @@ def package():
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True)
-    name = f'neko-remoted-client-v{release}-android-arm64.apk'
+    name = f'neoko-terminal-v{release}-android-arm64.apk'
     shutil.copyfile(apk, destination / name)
     provenance = {
-        'schemaVersion': 1, 'component': 'remoted-client',
+        'schemaVersion': 1, 'component': 'neoko-terminal',
         'version': release, 'protocolVersion': 1,
         'sourceRepository': source['repository'], 'sourceCommit': source['commit'],
         'sourceRunId': source['runId'], 'sourceRunAttempt': source['runAttempt'],

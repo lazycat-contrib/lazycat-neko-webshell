@@ -22,7 +22,7 @@ class ArtifactContractTests(unittest.TestCase):
             '<manifest xmlns:android="http://schemas.android.com/apk/res/android" android:versionCode="1" android:versionName="0.1.0"/>')
         self.root_patch = patch.object(producer, 'ROOT', self.root)
         self.root_patch.start()
-        self.environment = patch.dict(os.environ, {'RELEASE_REF': 'refs/tags/remoted-client-v0.1.0'})
+        self.environment = patch.dict(os.environ, {'RELEASE_REF': 'refs/tags/neoko-terminal-android-v0.1.0'})
         self.environment.start()
 
     def tearDown(self):
@@ -32,7 +32,7 @@ class ArtifactContractTests(unittest.TestCase):
 
     def test_rejects_branch_app_tag_and_mismatched_native_tag(self):
         self.assertEqual(producer.version(), ('0.1.0', 1))
-        for ref in ['refs/heads/main', 'refs/tags/v0.1.0', 'refs/tags/remoted-client-v0.2.0']:
+        for ref in ['refs/heads/main', 'refs/tags/v0.1.0', 'refs/tags/neoko-terminal-android-v0.2.0']:
             with self.subTest(ref=ref), patch.dict(os.environ, {'RELEASE_REF': ref}):
                 with self.assertRaises(ValueError):
                     producer.version()

@@ -1,0 +1,81 @@
+name: Publish neoko-terminal desktop
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Independent desktop stable version
+        required: true
+        default: '0.3.0'
+        type: string
+      source-run-id:
+        description: Successful trusted private neoko-terminal-desktop.yml run ID
+        required: true
+        type: string
+      source-commit:
+        description: Exact private desktop tag and workflow head commit (40 lowercase hex)
+        required: true
+        type: string
+      dry-run:
+        description: Validate all four targets only; create no public tag or Release
+        type: boolean
+        default: true
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: publish-neoko-terminal-desktop
+  cancel-in-progress: false
+jobs:
+  desktop:
+    if: github.repository == 'lazycat-contrib/lazycat-neko-webshell' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Select four trusted private desktop artifacts and download bounded ZIPs
+        uses: actions/github-script@v9
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+          SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+          SOURCE_COMMIT: ${{ inputs.source-commit }}
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        with:
+          github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          script: await require('./scripts/neoko-terminal-desktop.cjs').selectAndDownload({github, core});
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify desktop archives, binary contents, code-page hashes and build provenance
+        run: python3 scripts/prepare-neoko-terminal-desktop.py --directory dist/neoko-terminal-desktop
+      - name: Revalidate private run, immutable desktop tag and every selected artifact
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          script: await require('./scripts/neoko-terminal-desktop.cjs').revalidateSource({github});
+      - name: Complete dry run or publish only twelve verified desktop release files
+        id: release
+        uses: actions/github-script@v9
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+        with:
+          script: |
+            await require('./scripts/neoko-terminal-desktop.cjs').publishRelease({
+              github, context, core, dryRun: process.env.DRY_RUN !== 'false',
+            });
+      - name: Summarize desktop publication
+        env:
+          NATIVE_VERSION: ${{ inputs.version }}
+          SOURCE_RUN_ID: ${{ inputs.source-run-id }}
+          SOURCE_COMMIT: ${{ inputs.source-commit }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          RELEASE_URL: ${{ steps.release.outputs.release-url }}
+        run: |
+          {
+            printf 'Desktop version: %s\n' "$NATIVE_VERSION"
+            printf 'Private source run: %s\n' "$SOURCE_RUN_ID"
+            printf 'Private source commit: %s\n' "$SOURCE_COMMIT"
+            printf 'Dry run: %s\n' "$DRY_RUN"
+            printf 'Release: %s\n' "$RELEASE_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

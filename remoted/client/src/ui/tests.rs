@@ -21,6 +21,7 @@ fn fixture(model: Model, connected: bool) -> impl IntoElement {
             last.set(format!("COMMAND {command:?}"));
         }
     });
+    provide_context(ui);
     view()
         .flex_1()
         .child(text(move || last.get()).number_of_lines(1))
@@ -39,7 +40,14 @@ fn fixture(model: Model, connected: bool) -> impl IntoElement {
             },
         ))
         .child(if connected {
-            workspace::render(ui).into_element()
+            nsh_base::nav_stack()
+                .flex_1()
+                .child(
+                    nsh_base::nav_page()
+                        .header_visible(false)
+                        .child(shell::body()),
+                )
+                .into_element()
         } else {
             connection::render(ui).into_element()
         })
@@ -65,6 +73,7 @@ fn ready(permission: Permission) -> Model {
             size: 7,
         }],
         panes: vec![Pane {
+            kind: crate::controller::PaneKind::Terminal,
             stream: "stream".into(),
             name: "终端一".into(),
             controller: false,
@@ -166,7 +175,7 @@ fn TerminalModesFixture() -> impl IntoElement {
                     "COLORED={colored};BRACKETED={};CURSOR={:?};BUFFER={:?}",
                     surface.buffer.modes().bracketed_paste,
                     surface.buffer.cursor(),
-                    surface.buffer.text()
+                    surface.buffer.text().trim_end_matches('\n')
                 ));
             },
         ))
@@ -290,19 +299,12 @@ fn pending_approval_has_cancel_and_host_fingerprint_without_resources() {
 #[test]
 fn readonly_workspace_can_browse_download_but_cannot_claim_control() {
     let mut app = start::<ReadOnlyFixture>(390.0, ColorScheme::Dark);
+    app.wait_for("已连接 · 只读授权").unwrap();
+    assert_eq!(app.screen().press_target("取得控制权").unwrap(), None);
+    app.press("文件").unwrap();
     app.wait_for("只读授权：可以浏览和下载，不能上传。")
         .unwrap();
-    assert_eq!(app.screen().press_target("取得控制权").unwrap(), None);
     assert_eq!(app.screen().press_target("选择文件上传").unwrap(), None);
-    app.press("打开普通终端").unwrap();
-    app.wait_until("attach command", Duration::from_secs(3), |screen| {
-        screen
-            .texts()
-            .iter()
-            .any(|text| text.contains("TerminalAttach { grant: \"grant\", pane: None }"))
-    })
-    .unwrap();
-    app.scroll("resource-tools", px(10000.0)).unwrap();
     app.press("下载并校验").unwrap();
     app.wait_until("download command", Duration::from_secs(3), |screen| {
         screen
@@ -311,12 +313,8 @@ fn readonly_workspace_can_browse_download_but_cannot_claim_control() {
             .any(|text| text.contains("Download { grant: \"grant\", path: \"project/example.txt\""))
     })
     .unwrap();
-    assert!(
-        app.screen()
-            .texts()
-            .iter()
-            .any(|text| text.contains("只读浏览"))
-    );
+    app.press("返回会话").unwrap();
+    app.wait_for("terminal-observer").unwrap();
 }
 
 #[test]
@@ -341,7 +339,9 @@ fn operate_workspace_requires_explicit_control_and_uses_real_herdr_and_file_requ
         },
     )
     .unwrap();
-    app.press("查看 Herdr 会话与窗格").unwrap();
+    // The persistent sidebar owns authorized Herdr resources.
+    app.press("Herdr").unwrap();
+    app.press("开发主机").unwrap();
     app.wait_until("herdr snapshot command", Duration::from_secs(3), |screen| {
         screen
             .texts()
@@ -349,7 +349,7 @@ fn operate_workspace_requires_explicit_control_and_uses_real_herdr_and_file_requ
             .any(|text| text.contains("session.snapshot"))
     })
     .unwrap();
-    app.scroll("resource-tools", px(10000.0)).unwrap();
+    app.press("文件").unwrap();
     app.press("选择文件上传").unwrap();
     app.wait_until("upload command", Duration::from_secs(3), |screen| {
         screen
@@ -559,4 +559,85 @@ fn public_relay_shortcut_has_chinese_copy_and_keeps_existing_bindings() {
             .iter()
             .any(|text| text.contains("COMMAND"))
     );
+}
+
+#[component]
+fn ControlledFixture() -> impl IntoElement {
+    let mut model = ready(Permission::Operate);
+    model.panes[0].controller = true;
+    fixture(model, true)
+}
+
+#[component]
+fn SeparateKindsFixture() -> impl IntoElement {
+    let mut model = ready(Permission::Operate);
+    model.panes.clear();
+    model.herdr_grant = "grant".into();
+    model.herdr_panes = vec![("w1:p1".into(), "项目 / 开发 Agent".into())];
+    model.resources.push(Resource {
+        id: "terminal-grant".into(),
+        name: "构建终端".into(),
+        backend: "pty".into(),
+        terminal: true,
+        herdr: false,
+        files: false,
+    });
+    fixture(model, true)
+}
+
+#[test]
+fn composer_preserves_draft_across_files_and_sends_real_terminal_input() {
+    let mut app = start::<ControlledFixture>(390.0, ColorScheme::Light);
+    app.wait_for("会话输入").unwrap();
+    app.type_text("会话输入", "你好 Neko").unwrap();
+    app.press("文件").unwrap();
+    app.wait_for("授权目录 /project").unwrap();
+    app.press("返回会话").unwrap();
+    assert_eq!(
+        app.screen().input_text("会话输入").unwrap(),
+        Some("你好 Neko")
+    );
+    app.press("发送").unwrap();
+    let encoded = neko_remoted_protocol::encode("你好 Neko\r".as_bytes());
+    app.wait_until("real input operation", Duration::from_secs(3), |screen| {
+        screen
+            .texts()
+            .iter()
+            .any(|text| text.contains("TerminalInput") && text.contains(&encoded))
+    })
+    .unwrap();
+    assert_eq!(app.screen().input_text("会话输入").unwrap(), Some(""));
+}
+
+#[test]
+fn herdr_and_ordinary_terminals_are_distinct_navigation_with_distinct_attach_requests() {
+    for width in [375.0, 1200.0] {
+        let mut app = start::<SeparateKindsFixture>(width, ColorScheme::Dark);
+        app.wait_for("开发主机").unwrap();
+        assert!(!app.shows("构建终端"));
+        app.press("项目 / 开发 Agent").unwrap();
+        app.wait_until("Herdr pane attach", Duration::from_secs(3), |screen| {
+            screen
+                .texts()
+                .iter()
+                .any(|text| text.contains("pane: Some(\"w1:p1\")"))
+        })
+        .unwrap();
+        app.press("终端").unwrap();
+        app.wait_for("构建终端").unwrap();
+        assert!(!app.shows("开发主机"));
+        assert!(!app.shows("项目 / 开发 Agent"));
+        app.press("构建终端").unwrap();
+        app.wait_until(
+            "ordinary terminal attach",
+            Duration::from_secs(3),
+            |screen| {
+                screen
+                    .texts()
+                    .iter()
+                    .any(|text| text.contains("grant: \"terminal-grant\", pane: None"))
+            },
+        )
+        .unwrap();
+    }
 }

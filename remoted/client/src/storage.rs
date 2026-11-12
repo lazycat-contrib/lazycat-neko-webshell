@@ -56,19 +56,120 @@ pub async fn identity() -> Result<Identity> {
     Ok(identity)
 }
 
-pub async fn bindings() -> Result<Vec<Binding>> {
-    let Some(value) = crate::platform::secure_get(BINDINGS).await? else {
-        return Ok(Vec::new());
-    };
-    let bindings: Vec<Binding> = serde_json::from_str(&value).context("已配对设备存储损坏")?;
-    ensure!(bindings.len() <= protocol::MAX_DEVICES, "已配对设备过多");
-    for binding in &bindings {
-        validate(binding)?;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BindingIdentity {
+    relay: RelayAddress,
+    route: String,
+    host_key: String,
+}
+impl BindingIdentity {
+    fn of(binding: &Binding) -> Self {
+        Self {
+            relay: binding.relay.clone(),
+            route: binding.route.clone(),
+            host_key: binding.host_key.clone(),
+        }
     }
-    Ok(bindings)
+    fn matches(&self, binding: &Binding) -> bool {
+        self.relay == binding.relay
+            && self.route == binding.route
+            && self.host_key == binding.host_key
+    }
 }
 
-fn validate(binding: &Binding) -> Result<()> {
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SavedBindings {
+    version: u8,
+    bindings: Vec<Binding>,
+    selected: Option<BindingIdentity>,
+    auto_connect: bool,
+}
+
+pub(crate) struct Preferences {
+    pub bindings: Vec<Binding>,
+    pub selected: Option<Binding>,
+    pub auto_connect: bool,
+}
+
+fn decode_bindings(value: Option<&str>) -> Result<SavedBindings> {
+    let Some(value) = value else {
+        return Ok(SavedBindings {
+            version: 1,
+            bindings: Vec::new(),
+            selected: None,
+            auto_connect: false,
+        });
+    };
+    let saved: SavedBindings = if value.trim_start().starts_with('[') {
+        let bindings: Vec<Binding> = serde_json::from_str(value).context("已配对设备存储损坏")?;
+        // Only a single legacy binding has an unambiguous most-recent identity.
+        let selected = (bindings.len() == 1).then(|| BindingIdentity::of(&bindings[0]));
+        let auto_connect = selected.is_some();
+        SavedBindings {
+            version: 1,
+            bindings,
+            selected,
+            auto_connect,
+        }
+    } else {
+        serde_json::from_str(value).context("已配对设备和连接偏好存储损坏")?
+    };
+    ensure!(saved.version == 1, "不支持的设备偏好版本；未覆盖现有存储");
+    ensure!(
+        saved.bindings.len() <= protocol::MAX_DEVICES,
+        "已配对设备过多"
+    );
+    for binding in &saved.bindings {
+        validate(binding)?;
+    }
+    if let Some(selected) = &saved.selected {
+        protocol::decode32(&selected.route).context("上次选择的设备 route 损坏")?;
+        protocol::decode32(&selected.host_key).context("上次选择的设备公钥损坏")?;
+    }
+    Ok(saved)
+}
+
+async fn load_bindings() -> Result<SavedBindings> {
+    decode_bindings(crate::platform::secure_get(BINDINGS).await?.as_deref())
+}
+async fn save_bindings(saved: &SavedBindings) -> Result<()> {
+    crate::platform::secure_set(BINDINGS, &serde_json::to_string(saved)?).await
+}
+pub(crate) async fn preferences() -> Result<Preferences> {
+    let saved = load_bindings().await?;
+    let selected = saved
+        .selected
+        .as_ref()
+        .and_then(|id| saved.bindings.iter().find(|b| id.matches(b)))
+        .cloned();
+    Ok(Preferences {
+        auto_connect: saved.auto_connect && selected.is_some(),
+        bindings: saved.bindings,
+        selected,
+    })
+}
+
+/// Persists only an existing exact host identity; never creates or migrates a binding.
+pub(crate) async fn select_binding(binding: &Binding) -> Result<()> {
+    let mut saved = load_bindings().await?;
+    validate(binding)?;
+    ensure!(
+        saved.bindings.contains(binding),
+        "该设备配对已变化，请重新选择"
+    );
+    saved.selected = Some(BindingIdentity::of(binding));
+    saved.auto_connect = true;
+    save_bindings(&saved).await
+}
+pub(crate) async fn stop_auto_connect() -> Result<()> {
+    let mut saved = load_bindings().await?;
+    saved.auto_connect = false;
+    save_bindings(&saved).await
+}
+
+pub(crate) fn validate(binding: &Binding) -> Result<()> {
     protocol::decode32(&binding.route)?;
     protocol::decode32(&binding.host_key)?;
     ensure!(
@@ -79,9 +180,12 @@ fn validate(binding: &Binding) -> Result<()> {
 }
 
 pub async fn remember(binding: Binding) -> Result<Vec<Binding>> {
-    let saved = remember_in(bindings().await?, binding)?;
-    crate::platform::secure_set(BINDINGS, &serde_json::to_string(&saved)?).await?;
-    Ok(saved)
+    let mut saved = load_bindings().await?;
+    saved.bindings = remember_in(saved.bindings, binding.clone())?;
+    saved.selected = Some(BindingIdentity::of(&binding));
+    saved.auto_connect = true;
+    save_bindings(&saved).await?;
+    Ok(saved.bindings)
 }
 
 fn remember_in(mut saved: Vec<Binding>, binding: Binding) -> Result<Vec<Binding>> {
@@ -93,9 +197,18 @@ fn remember_in(mut saved: Vec<Binding>, binding: Binding) -> Result<Vec<Binding>
 }
 
 pub async fn forget(binding: &Binding) -> Result<Vec<Binding>> {
-    let saved = forget_from(bindings().await?, binding);
-    crate::platform::secure_set(BINDINGS, &serde_json::to_string(&saved)?).await?;
-    Ok(saved)
+    let mut saved = load_bindings().await?;
+    saved.bindings = forget_from(saved.bindings, binding);
+    if saved
+        .selected
+        .as_ref()
+        .is_some_and(|id| id.matches(binding))
+    {
+        saved.selected = None;
+        saved.auto_connect = false;
+    }
+    save_bindings(&saved).await?;
+    Ok(saved.bindings)
 }
 
 fn forget_from(mut saved: Vec<Binding>, binding: &Binding) -> Vec<Binding> {
@@ -188,5 +301,34 @@ mod tests {
         let saved = remember_in(saved, binding(32)).unwrap();
         assert_eq!(saved.len(), 32);
         assert!(!saved.iter().any(|item| item.route == binding(7).route));
+    }
+    #[test]
+    fn legacy_single_binding_migrates_but_multiple_bindings_do_not_guess_a_host() {
+        let one =
+            decode_bindings(Some(&serde_json::to_string(&vec![binding(1)]).unwrap())).unwrap();
+        assert!(one.auto_connect && one.selected.as_ref().unwrap().matches(&binding(1)));
+        let several = decode_bindings(Some(
+            &serde_json::to_string(&vec![binding(1), binding(2)]).unwrap(),
+        ))
+        .unwrap();
+        assert!(!several.auto_connect && several.selected.is_none());
+    }
+    #[test]
+    fn exact_host_preference_and_manual_stop_survive_persistence_roundtrip() {
+        let old = binding(1);
+        let mut rotated = old.clone();
+        rotated.host_key = protocol::encode(&[9; 32]);
+        let mut saved = SavedBindings {
+            version: 1,
+            bindings: vec![old.clone(), rotated.clone()],
+            selected: Some(BindingIdentity::of(&old)),
+            auto_connect: true,
+        };
+        let restored = decode_bindings(Some(&serde_json::to_string(&saved).unwrap())).unwrap();
+        assert!(restored.selected.as_ref().unwrap().matches(&old));
+        assert!(!restored.selected.as_ref().unwrap().matches(&rotated));
+        saved.auto_connect = false;
+        let stopped = decode_bindings(Some(&serde_json::to_string(&saved).unwrap())).unwrap();
+        assert!(!stopped.auto_connect && stopped.selected.is_some());
     }
 }

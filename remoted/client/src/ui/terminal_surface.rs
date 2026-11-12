@@ -75,18 +75,26 @@ impl TerminalEmulator for SharedEmulator {
         self.buffer.feed(data);
     }
     fn resize(&mut self, size: TerminalSize) {
+        // NSH clamps a not-yet-laid-out or hidden terminal's zero bounds to
+        // 1x1. Applying that placeholder would irreversibly truncate the shared
+        // VT before the visible viewport is measured.
+        if size.cols == 1 && size.rows == 1 {
+            return;
+        }
         self.viewport = size;
         self.buffer.resize(size);
     }
     fn line_count(&self) -> usize {
-        self.buffer.line_count().max(self.viewport.rows as usize)
+        // NSH invalidates its rows after releasing its emulator borrow. Tracking
+        // the shared buffer here would also invalidate them inside feed/resize.
+        untracked(|| self.buffer.line_count()).max(self.viewport.rows as usize)
     }
     fn line(&self, index: usize) -> TerminalLine {
-        self.buffer.line(index)
+        untracked(|| self.buffer.line(index))
     }
     fn cursor(&self) -> Option<TerminalCursor> {
         (self.viewport == self.buffer.size.get_untracked())
-            .then(|| self.buffer.cursor())
+            .then(|| untracked(|| self.buffer.cursor()))
             .flatten()
     }
     fn modes(&self) -> TerminalModes {
@@ -128,5 +136,45 @@ impl Surface {
     }
     pub fn reset(&self) {
         self.write("\x1bc".into());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nsh_core::element::Root;
+    use nsh_engine::EngineConfig;
+    use nsh_testing::Headless;
+
+    #[component]
+    fn PlaceholderResizeFixture() -> impl IntoElement {
+        let buffer = Buffer::new();
+        let mut emulator = SharedEmulator {
+            buffer: buffer.clone(),
+            viewport: TerminalSize::default(),
+        };
+        emulator.feed(b"developer@neko:~/project$ git status\r\nWorking tree clean");
+        let original = buffer.text();
+        emulator.resize(TerminalSize::new(1, 1));
+        let placeholder_preserved =
+            buffer.text() == original && buffer.size.get_untracked() == TerminalSize::default();
+        emulator.resize(TerminalSize::new(105, 27));
+        let visible_preserved = buffer
+            .text()
+            .contains("developer@neko:~/project$ git status")
+            && buffer.text().contains("Working tree clean")
+            && buffer.size.get_untracked() == TerminalSize::new(105, 27);
+        text(format!(
+            "placeholder={placeholder_preserved};visible={visible_preserved}"
+        ))
+    }
+
+    #[test]
+    fn placeholder_resize_preserves_shared_terminal_output() {
+        let mut app = Headless::start(EngineConfig::new(Root::of::<PlaceholderResizeFixture>()))
+            .expect("start resize regression fixture");
+        app.first_render()
+            .expect("render resize regression fixture");
+        assert!(app.shows("placeholder=true;visible=true"));
     }
 }

@@ -12,6 +12,7 @@ pub struct Chunk {
 pub struct Ui {
     pub model: Signal<Model>,
     pub active: Signal<String>,
+    pub navigation: super::navigation::Navigation,
     client: Stored<Client>,
     pub refs: Stored<HashMap<String, Surface>>,
     pub pending: Stored<HashMap<String, VecDeque<Chunk>>>,
@@ -25,18 +26,27 @@ impl Ui {
             while let Some(update) = receiver.recv().await {
                 match update {
                     Update::Model(model) => {
-                        if !model
-                            .panes
-                            .iter()
-                            .any(|pane| pane.stream == ui.active.get_untracked())
+                        let newly_attached = model.panes.iter().rev().find(|pane| {
+                            !ui.model.with_untracked(|previous| {
+                                previous.panes.iter().any(|old| old.stream == pane.stream)
+                            })
+                        });
+                        if let Some(pane) = newly_attached {
+                            ui.navigation.section.set(match pane.kind {
+                                controller::PaneKind::Herdr => super::navigation::Section::Herdr,
+                                controller::PaneKind::Terminal => {
+                                    super::navigation::Section::Terminal
+                                }
+                            });
+                            ui.active.set(pane.stream.clone());
+                            ui.navigation.show_session();
+                        } else if !ui.active.get_untracked().is_empty()
+                            && !model
+                                .panes
+                                .iter()
+                                .any(|pane| pane.stream == ui.active.get_untracked())
                         {
-                            ui.active.set(
-                                model
-                                    .panes
-                                    .last()
-                                    .map(|pane| pane.stream.clone())
-                                    .unwrap_or_default(),
-                            );
+                            ui.active.set(String::new());
                         }
                         ui.refs.with(|refs| {
                             refs.retain(|stream, _| {
@@ -76,7 +86,7 @@ impl Ui {
                                 false
                             });
                             if exceeded {
-                                ui.send(Command::Disconnect);
+                                ui.send(Command::Suspend);
                                 ui.error("终端显示缓冲已满，已断开以保留输出顺序".into());
                             }
                         }
@@ -89,7 +99,7 @@ impl Ui {
                 timer(std::time::Duration::from_millis(250)).await;
                 for event in crate::platform::drain_events() {
                     if event["lifecycle"] == "destroyed" {
-                        ui.send(Command::Disconnect);
+                        ui.send(Command::Suspend);
                     }
                 }
             }
@@ -103,18 +113,69 @@ impl Ui {
             .last()
             .map(|pane| pane.stream.clone())
             .unwrap_or_default();
+        let navigation =
+            super::navigation::Navigation::new(!model.ready() && model.bindings.is_empty());
+        if let Some(pane) = model.panes.last() {
+            navigation.section.set(match pane.kind {
+                controller::PaneKind::Herdr => super::navigation::Section::Herdr,
+                controller::PaneKind::Terminal => super::navigation::Section::Terminal,
+            });
+        }
         Self {
             model: signal_with(model, SignalEquals::Never),
             active: signal(active),
+            navigation,
             client: stored(client),
             refs: stored(HashMap::new()),
             pending: stored(HashMap::new()),
         }
     }
 
+    pub fn back(self) {
+        if self.navigation.drawer.get_untracked() {
+            self.navigation.drawer.set(false);
+        } else if self.navigation.files.get_untracked() {
+            self.navigation.files.set(false);
+        } else if self.navigation.settings.get_untracked() {
+            self.navigation.settings.set(false);
+        } else {
+            self.active.set(String::new());
+        }
+    }
+
+    pub fn secondary(self) -> bool {
+        self.navigation.drawer.get()
+            || self.navigation.files.get()
+            || self.navigation.settings.get()
+            || !self.active.get().is_empty()
+    }
+
+    /// Explicit app-level intent, including when a connection transition has
+    /// advanced before its next model update reaches the UI.
+    pub fn disconnect(self) -> bool {
+        match self.client.with(|client| client.send(Command::Disconnect)) {
+            Ok(()) => true,
+            Err(error) => {
+                self.error(error.to_string());
+                false
+            }
+        }
+    }
+
     pub fn send(self, command: Command) {
-        if let Err(error) = self.client.with(|client| client.send(command)) {
-            self.error(error.to_string());
+        self.submit(command);
+    }
+
+    pub fn submit(self, command: Command) -> bool {
+        match self
+            .client
+            .with(|client| client.send_for(self.model.with_untracked(|m| m.generation), command))
+        {
+            Ok(()) => true,
+            Err(error) => {
+                self.error(error.to_string());
+                false
+            }
         }
     }
 

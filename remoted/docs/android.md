@@ -1,4 +1,8 @@
-# Android app host
+# neoko-terminal Android app host
+
+neoko-terminal is the native client for the ordinary terminal, Herdr and file
+sessions shared with WebShell. Its product name does not change the installed
+application ID, pairing identity or credential namespace.
 
 The Android application owns `community.lazycat.neko.remoted.RemotedActivity`.
 It embeds the actual `com.longbridge.nsh.NshView`, calls `runRustApp("nsh")`,
@@ -111,14 +115,33 @@ from Maven Central, and checked against SHA-256
 Its Apache-2.0 license and attribution are in `client/android/licenses/` and
 copied into the APK's `assets/licenses/`. The JAR is cached outside the repo.
 
-The redistributed NSH runtime and Java embedding are from Longbridge's NSH
-revision `0e4a20bd41ee72a35515cecbf9a7fba88742d911`, matching the Cargo pin.
+The redistributed NSH runtime and Java embedding are from Longbridge's NSH **0.5.0**
+revision `f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1`, matching the Cargo pin.
 `android/licenses/NSH-LICENSE-APACHE` is an unchanged copy of that revision's
 `LICENSE-APACHE`. It and the shared `NOTICE` containing Longbridge attribution
 and the revision are packaged alongside the ZXing license in `assets/licenses/`.
 No NSH source changes are applied. The app's MIT license is copied directly
 from `remoted/LICENSE` into `assets/licenses/NEKO-LICENSE`. The build verifies
 all four license/notice assets byte for byte inside the signed APK.
+
+### NSH 0.5.0 terminal/input boundary
+
+The official `v0.5.0` tag resolves to the pinned commit above. Rebuild both the
+CLI and Android Java/native runtime from that commit; do not reuse older
+`classes.jar`, `classes.dex` or `libnsh.so`. The upstream runtime supports API 26,
+but this application's minimum remains API 28.
+
+`TerminalApi` and `TerminalEmulator` are unchanged. The app retains one shared
+emulator across observer/control views, feeds each output chunk once and drops
+emulator query replies because the host owns PTY replies. Emulator trait reads
+must not subscribe to the shared buffer's revision: NSH publishes its own
+revision after releasing its emulator borrow.
+
+Android 0.5.0 ends composition on submit, improving ordinary composer inputs.
+The Terminal's hidden input still has no `on_key_press` or composition listener;
+IME editor-action Enter, `deleteSurroundingText` Backspace and CJK preedit are
+not established as working by this upgrade. Test those actual InputConnection
+paths; hardware key injection or an ASCII typing test is not equivalent.
 
 ## Rust and JNI contract
 

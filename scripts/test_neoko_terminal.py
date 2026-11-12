@@ -11,7 +11,7 @@ import warnings
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location('native', ROOT / 'scripts/prepare-remoted-native.py')
+spec = importlib.util.spec_from_file_location('native', ROOT / 'scripts/prepare-neoko-terminal.py')
 native = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(native)
 
@@ -22,18 +22,18 @@ class NativeValidationTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.directory = Path(self.directory.name)
         self.profile = json.loads(native.PROFILE.read_text())
-        self.apk_name = 'neko-remoted-client-v0.1.0-android-arm64.apk'
+        self.apk_name = 'neoko-terminal-v0.1.0-android-arm64.apk'
         self.apk = self.make_apk()
         self.apk_sha = hashlib.sha256(self.apk).hexdigest()
         self.selection = {
             'schemaVersion': 1, 'version': '0.1.0', 'sourceRepository': self.profile['sourceRepository'],
             'sourceCommit': 'a' * 40, 'sourceRunId': 123, 'sourceRunAttempt': 1,
-            'sourceWorkflow': 'remoted-client.yml', 'sourceEvent': 'push',
-            'sourceRef': 'refs/tags/remoted-client-v0.1.0', 'artifactId': 456,
-            'artifactName': 'remoted-client-native-v0.1.0',
+            'sourceWorkflow': 'neoko-terminal-android.yml', 'sourceEvent': 'push',
+            'sourceRef': 'refs/tags/neoko-terminal-android-v0.1.0', 'artifactId': 456,
+            'artifactName': 'neoko-terminal-android-v0.1.0',
         }
         self.manifest = {
-            'schemaVersion': 1, 'component': 'remoted-client', 'version': '0.1.0', 'protocolVersion': 1,
+            'schemaVersion': 1, 'component': 'neoko-terminal', 'version': '0.1.0', 'protocolVersion': 1,
             **{key: self.selection[key] for key in native.SOURCE_FIELDS if key != 'version'},
             'apkName': self.apk_name, 'apkSha256': self.apk_sha, 'apkSize': len(self.apk),
             'packageName': 'community.lazycat.neko.remoted', 'versionCode': 1, 'abi': 'arm64-v8a',
@@ -85,6 +85,33 @@ class NativeValidationTests(unittest.TestCase):
                 profile = {**self.profile, 'signingCertificateSha256': value}
                 with self.assertRaisesRegex(ValueError, 'must be pinned'):
                     native.validate_profile(profile)
+
+    def test_renamed_contract_preserves_package_and_certificate(self):
+        self.assertEqual(self.profile['component'], 'neoko-terminal')
+        self.assertEqual(self.profile['name'], 'neoko-terminal')
+        self.assertEqual(self.profile['packageName'], 'community.lazycat.neko.remoted')
+        self.assertEqual(self.profile['signingCertificateSha256'],
+                         '6e2df6d3940b6898cb749365015483c52d40c2991995ab47333c03328b142e8e')
+        for field, value in [('component', 'remoted-client'), ('sourceWorkflow', 'remoted-client.yml'),
+                             ('sourceWorkflow', 'neoko-terminal-desktop.yml'),
+                             ('tagPrefix', 'remoted-client-v'), ('tagPrefix', 'neoko-terminal-desktop-v'),
+                             ('artifactPrefix', 'remoted-client-native-v')]:
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                native.validate_profile({**self.profile, field: value})
+
+    def test_old_provenance_and_desktop_sources_are_rejected(self):
+        for field, value in [('component', 'remoted-client'), ('sourceWorkflow', 'remoted-client.yml'),
+                             ('sourceWorkflow', 'neoko-terminal-desktop.yml'),
+                             ('sourceRef', 'refs/tags/remoted-client-v0.1.0'),
+                             ('sourceRef', 'refs/tags/neoko-terminal-desktop-v0.1.0')]:
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                self.prepare(self.artifact(manifest={**self.manifest, field: value}))
+
+    def test_old_apk_name_is_rejected_even_with_consistent_manifest_and_checksum(self):
+        self.apk_name = 'neko-remoted-client-v0.1.0-android-arm64.apk'
+        self.manifest['apkName'] = self.apk_name
+        with self.assertRaisesRegex(ValueError, 'exactly APK'):
+            self.prepare(self.artifact())
 
     def test_extra_private_source_or_signing_files_are_rejected(self):
         for name in ('Cargo.toml', 'private.p12', 'source.rs', '.env', '../secret', '/secret', 'nested/a.apk', 'a\\b'):

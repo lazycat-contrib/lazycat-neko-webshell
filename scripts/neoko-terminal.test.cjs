@@ -3,21 +3,21 @@ const test = require('node:test');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const native = require('./remoted-client.cjs');
+const native = require('./neoko-terminal.cjs');
 const root = path.resolve(__dirname, '..');
 const profile = native.loadProfile();
 const commit = 'a'.repeat(40);
 const publicCommit = 'b'.repeat(40);
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const repository = {id: 42, full_name: profile.sourceRepository, private: true};
-const workflow = {id: 73, path: '.github/workflows/remoted-client.yml', state: 'active'};
+const workflow = {id: 73, path: '.github/workflows/neoko-terminal-android.yml', state: 'active'};
 const trusted = {
   id: 123, workflow_id: workflow.id, path: workflow.path, repository, head_repository: repository,
-  status: 'completed', conclusion: 'success', event: 'push', head_branch: 'remoted-client-v0.1.0',
+  status: 'completed', conclusion: 'success', event: 'push', head_branch: 'neoko-terminal-android-v0.1.0',
   head_sha: commit, run_attempt: 1, pull_requests: [],
 };
 const artifact = {
-  id: 456, name: 'remoted-client-native-v0.1.0', expired: false, size_in_bytes: 3,
+  id: 456, name: 'neoko-terminal-android-v0.1.0', expired: false, size_in_bytes: 3,
   digest: 'sha256:' + sha('zip'), expires_at: '2099-01-01T00:00:00Z',
   workflow_run: {id: 123, head_sha: commit, repository_id: 42, head_repository_id: 42, head_branch: trusted.head_branch},
 };
@@ -43,9 +43,9 @@ test('production certificate is pinned and missing/placeholder fingerprints fail
 test('successful private tag run selects exactly its matching immutable native artifact', async () => {
   const selection = await select(sourceGithub());
   assert.equal(selection.sourceCommit, commit);
-  assert.equal(selection.sourceWorkflow, 'remoted-client.yml');
+  assert.equal(selection.sourceWorkflow, 'neoko-terminal-android.yml');
   assert.equal(selection.artifactDigest, artifact.digest);
-  assert.equal(selection.sourceRef, 'refs/tags/remoted-client-v0.1.0');
+  assert.equal(selection.sourceRef, 'refs/tags/neoko-terminal-android-v0.1.0');
   await select(sourceGithub({run: {...trusted, event: 'workflow_dispatch'}}));
 });
 
@@ -72,7 +72,7 @@ test('annotated tags resolve to the expected commit and cycles are rejected', as
 
 test('missing, duplicate, expired, mismatched, unsigned-digest and oversized artifacts fail', async () => {
   for (const artifacts of [[], [artifact, artifact], [{...artifact, expired: true}],
-    [{...artifact, name: 'remoted-client-native-v0.1.1'}], [{...artifact, digest: null}],
+    [{...artifact, name: 'neoko-terminal-android-v0.1.1'}], [{...artifact, digest: null}],
     [{...artifact, size_in_bytes: profile.maxArchiveBytes + 1}], [{...artifact, expires_at: '2020-01-01'}],
     [{...artifact, workflow_run: {...artifact.workflow_run, head_sha: 'f'.repeat(40)}}]]) {
     await assert.rejects(select(sourceGithub({artifacts})));
@@ -118,8 +118,8 @@ test('untrusted redirects, oversize bodies, and digest mismatches never leave a 
 function verifiedFixture(t) {
   const directory = temporaryDirectory(t);
   const selection = {schemaVersion: 1, version: '0.1.0', sourceRepository: profile.sourceRepository, sourceCommit: commit,
-    sourceRunId: 123, sourceRunAttempt: 1, sourceWorkflow: 'remoted-client.yml', sourceEvent: 'push', sourceRef: 'refs/tags/remoted-client-v0.1.0'};
-  const files = {'neko-remoted-client-v0.1.0-android-arm64.apk': Buffer.from('verified APK'), 'checksums.txt': Buffer.from('checksum'), 'provenance.json': Buffer.from('{}')};
+    sourceRunId: 123, sourceRunAttempt: 1, sourceWorkflow: 'neoko-terminal-android.yml', sourceEvent: 'push', sourceRef: 'refs/tags/neoko-terminal-android-v0.1.0'};
+  const files = {'neoko-terminal-v0.1.0-android-arm64.apk': Buffer.from('verified APK'), 'checksums.txt': Buffer.from('checksum'), 'provenance.json': Buffer.from('{}')};
   fs.mkdirSync(path.join(directory, 'verified'));
   for (const [name, bytes] of Object.entries(files)) fs.writeFileSync(path.join(directory, 'verified', name), bytes);
   const hashes = Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha(bytes)]));
@@ -131,7 +131,7 @@ function verifiedFixture(t) {
 function publicGithub({assets = [], wrongReadback = false, tag = null, draft = true, existing = false} = {}) {
   const writes = [];
   let tagSHA = tag;
-  const release = {id: 7, tag_name: 'remoted-client-v0.1.0', draft, html_url: 'https://github.com/public/release'};
+  const release = {id: 7, tag_name: 'neoko-terminal-android-v0.1.0', draft, html_url: 'https://github.com/public/release'};
   const github = {
     rest: {git: {
       getRef: async () => { if (!tagSHA) throw Object.assign(new Error('missing'), {status: 404}); return {data: {object: {type: 'commit', sha: tagSHA}}}; },
@@ -182,7 +182,7 @@ test('actual native release reads back every attachment before leaving draft and
   assert.equal(writes.at(-1)[0], 'publish');
   assert.equal(writes.find(([type]) => type === 'create')[1].make_latest, 'false');
   assert.equal(writes.at(-1)[1].make_latest, 'false');
-  assert.equal(writes[0][1].ref, 'refs/tags/remoted-client-v0.1.0');
+  assert.equal(writes[0][1].ref, 'refs/tags/neoko-terminal-android-v0.1.0');
 });
 
 test('different existing native public tag is never moved', async t => {
@@ -217,10 +217,52 @@ test('failed remote attachment readback cannot publish the draft', async t => {
 });
 
 test('native workflow stays manual, dry-run-default and independent of every storefront path', () => {
-  const workflowText = fs.readFileSync(path.join(root, '.github/workflows/publish-remoted-client.yml'), 'utf8');
+  const workflowText = fs.readFileSync(path.join(root, '.github/workflows/publish-neoko-terminal-android.yml'), 'utf8');
   assert.match(workflowText, /workflow_dispatch:/);
   assert.match(workflowText, /dry-run:[\s\S]*default: true/);
   assert.doesNotMatch(workflowText, /schedule:|publish-lpk|prepare-lpk|lazycat-github-action|APPSTORE|LZC_API_TOKEN/);
   assert.match(workflowText, /revalidateSource/);
   assert.match(workflowText, /DRY_RUN !== 'false'/);
+});
+
+test('renamed Android contract pins the component, identity and signing certificate', () => {
+  assert.equal(profile.component, 'neoko-terminal');
+  assert.equal(profile.name, 'neoko-terminal');
+  assert.equal(profile.packageName, 'community.lazycat.neko.remoted');
+  assert.equal(profile.tagPrefix, 'neoko-terminal-android-v');
+  assert.equal(profile.artifactPrefix, 'neoko-terminal-android-v');
+  assert.equal(profile.sourceWorkflow, 'neoko-terminal-android.yml');
+  for (const change of [
+    {component: 'remoted-client'}, {tagPrefix: 'remoted-client-v'},
+    {tagPrefix: 'neoko-terminal-desktop-v'}, {artifactPrefix: 'remoted-client-native-v'},
+    {sourceWorkflow: 'remoted-client.yml'}, {sourceWorkflow: 'neoko-terminal-desktop.yml'},
+  ]) assert.throws(() => native.validateProfile({...profile, ...change}), /component profile/);
+});
+
+test('old and desktop workflows, tags and artifacts cannot enter Android publication', async () => {
+  for (const filename of ['remoted-client.yml', 'neoko-terminal-desktop.yml']) {
+    const wf = {...workflow, path: `.github/workflows/${filename}`};
+    await assert.rejects(select(sourceGithub({wf, run: {...trusted, path: wf.path}})), /workflow identity/);
+  }
+  for (const head_branch of ['remoted-client-v0.1.0', 'neoko-terminal-desktop-v0.1.0']) {
+    await assert.rejects(select(sourceGithub({run: {...trusted, head_branch}})), /trusted private/);
+  }
+  for (const name of ['remoted-client-native-v0.1.0', 'neoko-terminal-0.1.0-x86_64-unknown-linux-gnu']) {
+    await assert.rejects(select(sourceGithub({artifacts: [{...artifact, name}]})), /exactly one/);
+  }
+});
+
+test('old APK filename cannot publish even with a matching local verification hash', async t => {
+  const fixture = verifiedFixture(t);
+  const oldName = 'neko-remoted-client-v0.1.0-android-arm64.apk';
+  const newName = 'neoko-terminal-v0.1.0-android-arm64.apk';
+  fs.renameSync(path.join(fixture.directory, 'verified', newName), path.join(fixture.directory, 'verified', oldName));
+  const markerPath = path.join(fixture.directory, 'verification.json');
+  const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+  marker.files[oldName] = marker.files[newName];
+  delete marker.files[newName];
+  fs.writeFileSync(markerPath, JSON.stringify(marker));
+  const {github, writes} = publicGithub();
+  await assert.rejects(native.publishRelease({github, core, context, directory: fixture.directory, profile, dryRun: false}), /unexpected files/);
+  assert.deepEqual(writes, []);
 });

@@ -15,17 +15,17 @@ fn main() -> impl std::process::Termination {
     let _instance = match neko_remoted_client::platform::initialize() {
         Ok(instance) => instance,
         Err(error) => {
-            eprintln!("Cannot start Remoted: {error:#}");
+            eprintln!("Cannot start neoko-terminal: {error:#}");
             return std::process::ExitCode::FAILURE;
         }
     };
     std::process::Termination::report(platform::run_app(
         platform::AppSource::Rust(neko_remoted_client::root()),
         platform::AppOptions {
-            title: "小橘远程".to_owned(),
+            title: "neoko-terminal".to_owned(),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             app_id: "community.lazycat.neko.remoted".to_owned(),
-            size: (480, 640),
+            size: (1100, 760),
             ..Default::default()
         },
     ))

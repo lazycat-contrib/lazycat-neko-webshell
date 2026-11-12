@@ -1,8 +1,8 @@
 {
-  "name": "小橘远程",
+  "name": "neoko-terminal",
   "id": "community.lazycat.neko.remoted",
-  "version": "0.1.5",
-  "build": 6,
+  "version": "0.2.0",
+  "build": 7,
   "appearance": "system",
   "rust": ".",
   "root": "App",

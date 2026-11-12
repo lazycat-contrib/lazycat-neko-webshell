@@ -4,12 +4,13 @@ use super::{
     terminal_observer,
     terminal_surface::Surface,
 };
-use crate::controller::{Command, Pane};
-use neko_remoted_protocol::{self as protocol, messages::Operation};
+use crate::controller::{Command, Pane, PaneKind};
+use neko_remoted_protocol::messages::Operation;
 use nsh_base::{TerminalEvent, terminal, theme};
 use nsh_core::prelude::*;
 
 pub fn render(ui: Ui, pane: ReadSignal<Pane>) -> impl IntoElement {
+    let more = signal(false);
     let surface = Surface::new();
     let reference = surface.reference;
     provide_context(surface.factory());
@@ -19,13 +20,24 @@ pub fn render(ui: Ui, pane: ReadSignal<Pane>) -> impl IntoElement {
         pane.with(|pane| pane.controller && !pane.read_only && pane.exit.is_none())
     });
     effect(move || {
-        if controlling.get() && writable.get() {
+        let visible = pane.with(|p| p.stream == ui.active.get())
+            && !ui.navigation.settings.get()
+            && !ui.navigation.files.get();
+        // Herdr owns pane geometry through its layout. Only an active ordinary
+        // terminal may change the remote PTY size; hidden layouts can be 1x1.
+        if controlling.get()
+            && writable.get()
+            && visible
+            && pane.with(|p| p.kind == PaneKind::Terminal)
+        {
             let (cols, rows) = size.get();
-            ui.send(Command::Request(Operation::TerminalResize {
-                stream: pane.get_untracked().stream,
-                cols,
-                rows,
-            }));
+            if cols > 1 && rows > 1 {
+                ui.send(Command::Request(Operation::TerminalResize {
+                    stream: pane.get_untracked().stream,
+                    cols,
+                    rows,
+                }));
+            }
         }
     });
     let stream = pane.get_untracked().stream;
@@ -46,6 +58,8 @@ pub fn render(ui: Ui, pane: ReadSignal<Pane>) -> impl IntoElement {
         .child(
             view()
                 .px_4()
+                .flex_row()
+                .items_center()
                 .gap_2()
                 .child(
                     text(move || {
@@ -61,12 +75,11 @@ pub fn render(ui: Ui, pane: ReadSignal<Pane>) -> impl IntoElement {
                             )
                         })
                     })
-                    .text_sm(),
+                    .text_sm()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .number_of_lines(1),
                 )
-                .child(when(
-                    move || pane.with(|pane| pane.gap),
-                    || hint("输出存在缺口；当前画面可能不完整。"),
-                ))
                 .child(action(
                     move || {
                         if pane.with(|pane| pane.controller) {
@@ -89,6 +102,24 @@ pub fn render(ui: Ui, pane: ReadSignal<Pane>) -> impl IntoElement {
                     },
                 ))
                 .child(action(
+                    "更多",
+                    false,
+                    || false,
+                    move || more.update(|open| *open = !*open),
+                )),
+        )
+        .child(when(
+            move || pane.with(|pane| pane.gap),
+            || {
+                view()
+                    .px_4()
+                    .child(hint("输出存在缺口；当前画面可能不完整。"))
+            },
+        ))
+        .child(when(
+            move || more.get(),
+            move || {
+                view().px_4().child(action(
                     "关闭此窗格连接",
                     false,
                     || false,
@@ -97,8 +128,9 @@ pub fn render(ui: Ui, pane: ReadSignal<Pane>) -> impl IntoElement {
                             stream: pane.get_untracked().stream,
                         }))
                     },
-                )),
-        )
+                ))
+            },
+        ))
         .child(
             view()
                 .flex_1()
@@ -136,11 +168,17 @@ pub fn render(ui: Ui, pane: ReadSignal<Pane>) -> impl IntoElement {
                                                 && pane.exit.is_none()
                                         })
                                     {
-                                        for chunk in data.as_bytes().chunks(16 * 1024) {
-                                            ui.send(Command::Request(Operation::TerminalInput {
-                                                stream: pane.get_untracked().stream,
-                                                data: protocol::encode(chunk),
-                                            }));
+                                        let herdr =
+                                            pane.with_untracked(|p| p.kind == PaneKind::Herdr);
+                                        for frame in super::terminal_input::frames(data, herdr) {
+                                            if !ui.submit(Command::Request(
+                                                Operation::TerminalInput {
+                                                    stream: pane.get_untracked().stream,
+                                                    data: frame,
+                                                },
+                                            )) {
+                                                break;
+                                            }
                                         }
                                     }
                                 })
@@ -160,4 +198,5 @@ pub fn render(ui: Ui, pane: ReadSignal<Pane>) -> impl IntoElement {
                     .otherwise(move || terminal_observer::render(observer.clone(), size)),
                 ),
         )
+        .child(super::composer::render(ui, pane))
 }

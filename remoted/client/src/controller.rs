@@ -21,6 +21,11 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+mod connection_scope;
+mod retry;
+use connection_scope::ConnectionScope;
+use retry::Retry;
+
 const QUEUE: usize = 32;
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -36,8 +41,15 @@ pub enum Phase {
     Ready,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneKind {
+    Terminal,
+    Herdr,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pane {
+    pub kind: PaneKind,
     pub stream: String,
     pub name: String,
     pub controller: bool,
@@ -51,12 +63,21 @@ pub struct Model {
     pub phase: Phase,
     pub relay: Option<RelayAddress>,
     pub bindings: Vec<Binding>,
+    /// Selected saved host, retained while offline so the UI can retry it.
+    pub active_binding: Option<Binding>,
+    /// Workspace actions must carry this value through Client::send_for.
+    pub generation: u64,
+    /// True only while a session navigation request is awaiting its reply.
+    pub opening: bool,
+    pub reconnect_attempt: usize,
+    pub reconnect_in_seconds: Option<u64>,
     pub fingerprint: String,
     pub permission: Option<Permission>,
     pub resources: Vec<Resource>,
     pub panes: Vec<Pane>,
     pub herdr_grant: String,
     pub herdr_panes: Vec<(String, String)>,
+    pub herdr_response: Option<HerdrResponse>,
     pub file_grant: String,
     pub path: String,
     pub entries: Vec<FileEntry>,
@@ -64,6 +85,17 @@ pub struct Model {
     pub transfer: Option<TransferView>,
     pub error: String,
     pub notice: String,
+}
+
+#[derive(Clone, Debug)]
+#[allow(
+    dead_code,
+    reason = "Typed RPC result exposed for the independently owned Herdr UI"
+)]
+pub struct HerdrResponse {
+    pub grant: String,
+    pub method: String,
+    pub data: serde_json::Value,
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +115,9 @@ impl Model {
         self.ready() && self.permission == Some(Permission::Operate)
     }
     pub fn status(&self) -> &'static str {
+        if self.reconnect_in_seconds.is_some() {
+            return "连接中断，等待自动重连…";
+        }
         match self.phase {
             Phase::Offline => "未连接",
             Phase::Checking => "正在检查 Relay…",
@@ -104,6 +139,11 @@ impl Model {
 
 #[derive(Debug)]
 pub enum Command {
+    #[doc(hidden)]
+    Scoped {
+        generation: u64,
+        command: Box<Command>,
+    },
     Check(String),
     Pair {
         code: String,
@@ -112,6 +152,8 @@ pub enum Command {
     Reconnect(Binding),
     Forget(Binding),
     Disconnect,
+    /// Lifecycle detach: stop this process without disabling saved auto-connect.
+    Suspend,
     Request(Operation),
     Upload {
         grant: String,
@@ -137,17 +179,84 @@ pub enum Update {
 #[derive(Clone)]
 pub struct Client {
     sender: mpsc::Sender<Command>,
+    scope: Option<Arc<ConnectionScope>>,
 }
 
 impl Client {
     #[cfg(test)]
     pub(crate) fn fixture(sender: mpsc::Sender<Command>) -> Self {
-        Self { sender }
+        Self {
+            sender,
+            scope: None,
+        }
     }
     pub fn send(&self, command: Command) -> Result<()> {
-        self.sender
-            .try_send(command)
-            .map_err(|error| anyhow::anyhow!("操作队列繁忙或连接已关闭，请稍后重试：{error}"))
+        let permit = self
+            .sender
+            .try_reserve()
+            .map_err(|_| anyhow::anyhow!("操作队列繁忙或连接已关闭，请稍后重试"))?;
+        if let Some(scope) = &self.scope {
+            let generation = if command.changes_connection()
+                || matches!(&command, Command::Forget(binding) if scope.is_selected(binding))
+            {
+                scope.advance()?
+            } else {
+                scope.current()
+            };
+            permit.send(Command::Scoped {
+                generation,
+                command: Box::new(command),
+            });
+        } else {
+            permit.send(command);
+        }
+        Ok(())
+    }
+
+    /// Sends a workspace action only to the connection shown by the originating UI.
+    pub fn send_for(&self, generation: u64, command: Command) -> Result<()> {
+        if command.changes_connection() && !matches!(command, Command::Disconnect) {
+            return self.send(command);
+        }
+        let permit = self
+            .sender
+            .try_reserve()
+            .map_err(|_| anyhow::anyhow!("操作队列繁忙或连接已关闭，请稍后重试"))?;
+        if let Some(scope) = &self.scope {
+            ensure!(
+                scope.current() == generation,
+                "工作区已切换，旧页面操作已丢弃"
+            );
+            let generation = if matches!(command, Command::Disconnect)
+                || matches!(&command, Command::Forget(binding) if scope.is_selected(binding))
+            {
+                scope
+                    .advance_if_current(generation)
+                    .context("工作区已切换，旧页面操作已丢弃")?
+            } else {
+                generation
+            };
+            permit.send(Command::Scoped {
+                generation,
+                command: Box::new(command),
+            });
+        } else {
+            permit.send(command);
+        }
+        Ok(())
+    }
+}
+
+impl Command {
+    fn changes_connection(&self) -> bool {
+        matches!(
+            self,
+            Self::Check(_)
+                | Self::Pair { .. }
+                | Self::Reconnect(_)
+                | Self::Disconnect
+                | Self::Suspend
+        )
     }
 }
 
@@ -155,6 +264,8 @@ pub fn start() -> (Client, mpsc::Receiver<Update>) {
     let (sender, commands) = mpsc::channel(QUEUE);
     let (updates, receiver) = mpsc::channel(QUEUE);
     let failure = updates.clone();
+    let scope = Arc::new(ConnectionScope::default());
+    let actor_scope = scope.clone();
     let launched = std::thread::Builder::new()
         .name("remoted-controller".into())
         .spawn(move || {
@@ -162,7 +273,9 @@ pub fn start() -> (Client, mpsc::Receiver<Update>) {
                 .enable_all()
                 .build()
             {
-                Ok(runtime) => runtime.block_on(Actor::new(updates).run(commands)),
+                Ok(runtime) => {
+                    runtime.block_on(Actor::with_scope(updates, actor_scope).run(commands))
+                }
                 Err(error) => {
                     let _ = failure.blocking_send(Update::Model(Box::new(Model {
                         error: error.to_string(),
@@ -172,17 +285,48 @@ pub fn start() -> (Client, mpsc::Receiver<Update>) {
             }
         });
     if let Err(error) = launched {
-        let _ = sender.try_send(Command::Disconnect);
+        let _ = sender.try_send(Command::Suspend);
         eprintln!("启动远程控制器失败：{error}");
     }
-    (Client { sender }, receiver)
+    (
+        Client {
+            sender,
+            scope: Some(scope),
+        },
+        receiver,
+    )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Attachment {
+    grant: String,
+    pane: Option<String>,
+}
+
+#[derive(Clone)]
+struct Restoration {
+    attachment: Attachment,
+    backend: String,
+}
+
+#[derive(Clone, Copy)]
+enum ReconnectMode {
+    Selected,
+    Retry,
 }
 
 enum Pending {
     Ordinary,
-    Attach,
+    Attach(Attachment),
+    Restore {
+        previous: String,
+        attachment: Attachment,
+    },
     Detach(String),
-    Herdr(String),
+    Herdr {
+        grant: String,
+        method: String,
+    },
     Files(String),
     TransferStart,
     Transfer(String),
@@ -198,17 +342,30 @@ struct OutputState {
     sequence: Option<u64>,
 }
 struct Preparation {
+    generation: u64,
     cancel: Arc<AtomicBool>,
     grant: String,
     path: String,
 }
 enum PreparedResult {
-    Prepared(Result<Option<Prepared>>),
-    Finished { result: Result<()>, size: u64 },
+    Prepared {
+        generation: u64,
+        result: Result<Option<Prepared>>,
+    },
+    Finished {
+        generation: u64,
+        result: Result<()>,
+        size: u64,
+    },
 }
 
 struct Actor {
     model: Model,
+    scope: Arc<ConnectionScope>,
+    retry: Retry,
+    unknown_outcome: bool,
+    attachments: HashMap<String, Attachment>,
+    restoring: HashMap<String, Restoration>,
     session: Option<Session>,
     binding: Option<Binding>,
     identity: Option<Identity>,
@@ -222,16 +379,27 @@ struct Actor {
     transfer: Option<Transfer>,
     cancelling: bool,
     finalizing: bool,
+    finalizing_generation: Option<u64>,
     completed: Option<String>,
     handshake_deadline: Option<Instant>,
     last_received: Instant,
 }
 
 impl Actor {
+    #[cfg(test)]
     fn new(updates: mpsc::Sender<Update>) -> Self {
+        Self::with_scope(updates, Arc::new(ConnectionScope::default()))
+    }
+
+    fn with_scope(updates: mpsc::Sender<Update>, scope: Arc<ConnectionScope>) -> Self {
         let (prepare_tx, prepare_rx) = mpsc::channel(1);
         Self {
             model: Model::default(),
+            scope,
+            retry: Retry::default(),
+            unknown_outcome: false,
+            attachments: HashMap::new(),
+            restoring: HashMap::new(),
             session: None,
             binding: None,
             identity: None,
@@ -245,17 +413,30 @@ impl Actor {
             transfer: None,
             cancelling: false,
             finalizing: false,
+            finalizing_generation: None,
             completed: None,
             handshake_deadline: None,
             last_received: Instant::now(),
         }
     }
 
+    fn restore_preferences(&mut self, preferences: storage::Preferences) -> Option<Binding> {
+        self.model.bindings = preferences.bindings;
+        self.model.active_binding = preferences.selected.clone();
+        preferences
+            .auto_connect
+            .then_some(preferences.selected)
+            .flatten()
+    }
+
     async fn publish(&self) {
-        let _ = self
-            .updates
-            .send(Update::Model(Box::new(self.model.clone())))
-            .await;
+        self.scope.select(self.model.active_binding.clone());
+        let mut model = self.model.clone();
+        model.opening = self.outstanding.values().any(|request| {
+            matches!(&request.kind, Pending::Attach(_) | Pending::Restore { .. })
+                || matches!(&request.kind, Pending::Herdr { method, .. } if method == "session.snapshot")
+        });
+        let _ = self.updates.send(Update::Model(Box::new(model))).await;
     }
 
     async fn run(mut self, mut commands: mpsc::Receiver<Command>) {
@@ -263,11 +444,23 @@ impl Actor {
             Ok(relay) => self.model.relay = relay,
             Err(error) => self.model.error = format!("无法恢复 Relay 设置：{error:#}"),
         }
-        match storage::bindings().await {
-            Ok(bindings) => self.model.bindings = bindings,
-            Err(error) => self.model.error = format!("无法读取安全设备存储：{error:#}"),
+        let mut automatic = None;
+        match storage::preferences().await {
+            Ok(preferences) => automatic = self.restore_preferences(preferences),
+            Err(error) => self.model.error = format!("无法读取安全设备和自动连接偏好：{error:#}"),
         }
         self.publish().await;
+        if let Some(binding) = automatic
+            && let Some(generation) = self.scope.advance_if_current(0)
+        {
+            self.model.generation = generation;
+            self.retry.arm();
+            let result = self.connect_binding(binding, ReconnectMode::Selected).await;
+            self.connection_result(result).await;
+            if self.model.generation == self.scope.current() {
+                self.publish().await;
+            }
+        }
         let mut deadline = tokio::time::interval(Duration::from_secs(1));
         loop {
             enum Incoming {
@@ -298,24 +491,26 @@ impl Actor {
                     self.disconnected().await;
                     Err(error)
                 }
-                Incoming::Prepared(PreparedResult::Prepared(prepared)) => {
-                    self.prepared(prepared).await
-                }
-                Incoming::Prepared(PreparedResult::Finished { result, size }) => {
-                    self.finalizing = false;
-                    if let Some(view) = &mut self.model.transfer {
-                        view.status = if result.is_ok() {
-                            "传输完成 · SHA-256 已校验"
-                        } else {
-                            "文件提交失败；未确认保存"
-                        }
-                        .into();
-                        view.offset = size;
-                    }
-                    result
-                }
+                Incoming::Prepared(prepared) => self.preparation_result(prepared).await,
                 Incoming::Tick => {
-                    if self
+                    if let Some(at) = self.retry.at {
+                        if at > Instant::now() {
+                            self.model.reconnect_in_seconds = Some(
+                                at.saturating_duration_since(Instant::now())
+                                    .as_millis()
+                                    .div_ceil(1000) as u64,
+                            );
+                            self.publish().await;
+                            continue;
+                        }
+                        self.retry.at = None;
+                        self.model.reconnect_in_seconds = None;
+                        if let Some(binding) = self.retry_target() {
+                            self.connect_binding(binding, ReconnectMode::Retry).await
+                        } else {
+                            continue;
+                        }
+                    } else if self
                         .outstanding
                         .values()
                         .any(|request| request.expires < Instant::now())
@@ -326,24 +521,34 @@ impl Actor {
                             && self.last_received.elapsed() > Duration::from_secs(35))
                     {
                         self.disconnected().await;
-                        Err(anyhow::anyhow!(
-                            "请求超时，操作结果可能未知；未自动重试。请重连后核对。"
-                        ))
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "连接或请求超时，操作结果可能未知；只重连，不重放操作",
+                        )
+                        .into())
                     } else {
                         continue;
                     }
                 }
             };
-            if let Err(error) = result {
-                self.model.error = format!("{error:#}");
+            if self.model.generation != self.scope.current() {
+                continue;
             }
+            self.connection_result(result).await;
             self.publish().await;
         }
         self.disconnected().await;
     }
 
     async fn disconnected(&mut self) {
-        self.session = None;
+        if self.retry.enabled {
+            self.capture_restoration();
+        }
+        self.unknown_outcome |=
+            !self.outstanding.is_empty() || self.transfer.is_some() || self.finalizing;
+        if let Some(session) = self.session.take() {
+            session.close().await;
+        }
         self.binding = None;
         self.outstanding.clear();
         self.handshake_deadline = None;
@@ -356,14 +561,277 @@ impl Actor {
             pane.read_only = true;
         }
         self.model.herdr_panes.clear();
+        self.model.herdr_response = None;
         self.model.herdr_grant.clear();
         self.model.entries.clear();
         self.model.file_grant.clear();
         self.model.path.clear();
-        if let Some(preparation) = &self.preparation {
+        if let Some(preparation) = self.preparation.take() {
             preparation.cancel.store(true, Ordering::Release);
         }
         self.cleanup_transfer().await;
+        self.finalizing = false;
+        self.finalizing_generation = None;
+        self.completed = None;
+        if self.unknown_outcome {
+            self.model.notice = self.outcome_notice();
+        }
+    }
+
+    async fn detach_with_preference(
+        &mut self,
+        command: Command,
+        persist_manual_stop: impl std::future::Future<Output = Result<()>>,
+    ) -> Result<()> {
+        self.stop_retry();
+        self.disconnected().await;
+        if matches!(command, Command::Disconnect) {
+            self.model.notice = format!(
+                "已断开，自动连接已停止；主机终端仍保留。{}",
+                self.outcome_notice()
+            );
+            persist_manual_stop
+                .await
+                .context("已断开，但停止自动连接偏好未能安全保存")?;
+        }
+        Ok(())
+    }
+
+    fn capture_restoration(&mut self) {
+        for pane in self.model.panes.iter().filter(|pane| pane.exit.is_none()) {
+            if let Some(attachment) = self.attachments.get(&pane.stream)
+                && let Some(resource) = self
+                    .model
+                    .resources
+                    .iter()
+                    .find(|r| r.id == attachment.grant)
+            {
+                self.restoring.insert(
+                    pane.stream.clone(),
+                    Restoration {
+                        attachment: attachment.clone(),
+                        backend: resource.backend.clone(),
+                    },
+                );
+            }
+        }
+    }
+
+    fn restoration_requests(&mut self) -> Vec<(String, Attachment)> {
+        let before = self.restoring.len();
+        self.restoring.retain(|_, saved| {
+            self.model.resources.iter().any(|r| {
+                r.id == saved.attachment.grant
+                    && r.backend == saved.backend
+                    && if saved.attachment.pane.is_some() {
+                        r.herdr
+                    } else {
+                        r.terminal && r.backend != "herdr"
+                    }
+            })
+        });
+        if self.restoring.len() < before {
+            self.model
+                .notice
+                .push_str("部分会话授权已变化，未自动恢复；请重新选择会话。");
+        }
+        self.restoring
+            .iter()
+            .map(|(stream, saved)| (stream.clone(), saved.attachment.clone()))
+            .collect()
+    }
+
+    fn clear_workspace(&mut self) {
+        self.output.clear();
+        self.outstanding.clear();
+        self.attachments.clear();
+        self.restoring.clear();
+        self.identity = None;
+        self.model.panes.clear();
+        self.model.permission = None;
+        self.model.resources.clear();
+        self.model.fingerprint.clear();
+        self.model.herdr_grant.clear();
+        self.model.herdr_panes.clear();
+        self.model.herdr_response = None;
+        self.model.file_grant.clear();
+        self.model.path.clear();
+        self.model.entries.clear();
+        self.model.truncated = false;
+        self.model.transfer = None;
+        self.model.notice = self.outcome_notice();
+    }
+
+    fn outcome_notice(&self) -> String {
+        if self.unknown_outcome {
+            "上次连接的部分操作结果未知，未自动重放；请核对后再操作。".into()
+        } else {
+            String::new()
+        }
+    }
+
+    async fn connection_result(&mut self, result: Result<()>) {
+        let Err(error) = result else {
+            return;
+        };
+        self.connection_failure(&error);
+    }
+
+    fn connection_failure(&mut self, error: &anyhow::Error) {
+        self.model.error = format!("{error:#}");
+        if self.session.is_some() || !self.retry.enabled {
+            return;
+        }
+        if network::authentication_failure(error) {
+            self.stop_retry();
+            self.model.notice = format!(
+                "认证或授权已失效，已停止自动重连；请在主机确认授权。{}",
+                self.outcome_notice()
+            );
+        } else if network::retryable(error) && self.model.active_binding.is_some() {
+            if let Some(delay) = self.retry.schedule(Instant::now()) {
+                self.model.reconnect_attempt = self.retry.attempts;
+                self.model.reconnect_in_seconds = Some(delay.as_secs());
+                self.model.notice = self.outcome_notice();
+            } else {
+                self.stop_retry();
+                self.model.notice = format!(
+                    "自动重连已达到 5 次上限，请点击设备重试。{}",
+                    self.outcome_notice()
+                );
+            }
+        }
+    }
+
+    fn stop_retry(&mut self) {
+        self.retry.stop();
+        self.restoring.clear();
+        self.model.reconnect_in_seconds = None;
+        self.model.reconnect_attempt = 0;
+    }
+
+    fn retry_target(&mut self) -> Option<Binding> {
+        let generation = self.scope.advance_if_current(self.model.generation)?;
+        self.model.generation = generation;
+        self.model.active_binding.clone()
+    }
+
+    async fn connect_binding(&mut self, binding: Binding, mode: ReconnectMode) -> Result<()> {
+        let target = binding.clone();
+        let relay = binding.relay.clone();
+        self.reconnect_with(binding, mode, network::check_relay(&relay), async move {
+            let identity = storage::identity().await?;
+            let key = protocol::decode32(&target.host_key)?;
+            let session = Session::connect(&target.relay, &target.route, &identity, &key).await?;
+            Ok((identity, session))
+        })
+        .await
+    }
+
+    async fn reconnect_with(
+        &mut self,
+        binding: Binding,
+        mode: ReconnectMode,
+        check: impl std::future::Future<Output = Result<()>>,
+        connect: impl std::future::Future<Output = Result<(Identity, Session)>>,
+    ) -> Result<()> {
+        storage::validate(&binding)?;
+        ensure!(
+            self.model.bindings.contains(&binding),
+            "该配对已不存在或身份已变化，请从设备列表重新选择"
+        );
+        self.disconnected().await;
+        let restoring = if matches!(mode, ReconnectMode::Retry)
+            && self.model.active_binding.as_ref() == Some(&binding)
+        {
+            std::mem::take(&mut self.restoring)
+        } else {
+            HashMap::new()
+        };
+        self.clear_workspace();
+        self.restoring = restoring;
+        self.model.active_binding = Some(binding.clone());
+        self.model.relay = Some(binding.relay.clone());
+        self.model.fingerprint = protocol::fingerprint(&protocol::decode32(&binding.host_key)?);
+        self.model.phase = Phase::Checking;
+        self.publish().await;
+        let scope = self.scope.clone();
+        let generation = self.model.generation;
+        let result: Result<()> = async {
+            scope
+                .during(generation, check)
+                .await
+                .context("目标设备的 Relay 检查失败")?;
+            self.model.phase = Phase::Connecting;
+            self.publish().await;
+            let (identity, session) = scope
+                .during(generation, connect)
+                .await
+                .context("目标主机连接失败")?;
+            self.identity = Some(identity);
+            self.binding = Some(binding);
+            self.session = Some(session);
+            self.model.phase = Phase::AwaitingReady;
+            self.handshake_deadline = Some(Instant::now() + Duration::from_secs(30));
+            self.last_received = Instant::now();
+            Ok(())
+        }
+        .await;
+        if let Err(error) = result {
+            self.disconnected().await;
+            return Err(error.context("设备连接未完成，配对已保留，可点击该设备重试"));
+        }
+        Ok(())
+    }
+
+    async fn preparation_result(&mut self, prepared: PreparedResult) -> Result<()> {
+        let generation = match &prepared {
+            PreparedResult::Prepared { generation, .. }
+            | PreparedResult::Finished { generation, .. } => *generation,
+        };
+        if generation != self.model.generation || generation != self.scope.current() {
+            if self
+                .preparation
+                .as_ref()
+                .is_some_and(|p| p.generation == generation)
+            {
+                self.preparation
+                    .take()
+                    .expect("preparation checked")
+                    .cancel
+                    .store(true, Ordering::Release);
+            }
+            if self.finalizing_generation == Some(generation) {
+                self.finalizing = false;
+                self.finalizing_generation = None;
+            }
+            if let PreparedResult::Prepared {
+                result: Ok(Some(prepared)),
+                ..
+            } = prepared
+                && let Err(error) = transfers::cleanup(&prepared.handle, prepared.upload).await
+            {
+                eprintln!("旧连接文件句柄清理未确认：{error:#}");
+            }
+            return Ok(());
+        }
+        match prepared {
+            PreparedResult::Prepared { result, .. } => self.prepared(result).await,
+            PreparedResult::Finished { result, size, .. } => {
+                self.finalizing = false;
+                self.finalizing_generation = None;
+                if let Some(view) = &mut self.model.transfer {
+                    view.status = if result.is_ok() {
+                        "传输完成 · SHA-256 已校验"
+                    } else {
+                        "文件提交失败；未确认保存"
+                    }
+                    .into();
+                    view.offset = size;
+                }
+                result
+            }
+        }
     }
 
     async fn cleanup_transfer(&mut self) {
@@ -387,15 +855,20 @@ impl Actor {
     async fn request(&mut self, operation: Operation, kind: Pending) -> Result<()> {
         ensure!(self.outstanding.len() < 64, "待确认请求过多");
         let approval = matches!(kind, Pending::Identify);
-        let result = self
-            .session
-            .as_mut()
-            .context("尚未连接主机")?
-            .request(operation)
+        let scope = self.scope.clone();
+        let result = scope
+            .during(
+                self.model.generation,
+                self.session
+                    .as_mut()
+                    .context("尚未连接主机")?
+                    .request(operation),
+            )
             .await;
         let id = match result {
             Ok(id) => id,
             Err(error) => {
+                self.unknown_outcome = true;
                 self.disconnected().await;
                 return Err(error.context("发送失败，操作结果可能未知；未自动重试"));
             }
@@ -411,15 +884,52 @@ impl Actor {
     }
 
     async fn command(&mut self, command: Command) -> Result<()> {
+        let (generation, command) = match command {
+            Command::Scoped {
+                generation,
+                command,
+            } => (generation, *command),
+            command => {
+                let generation = if command.changes_connection()
+                    || matches!(&command, Command::Forget(binding) if self.model.active_binding.as_ref() == Some(binding))
+                {
+                    self.scope.advance()?
+                } else {
+                    self.scope.current()
+                };
+                (generation, command)
+            }
+        };
+        ensure!(
+            generation == self.scope.current(),
+            "工作区已切换，旧页面操作已丢弃"
+        );
+        if command.changes_connection()
+            || matches!(&command, Command::Forget(binding) if self.model.active_binding.as_ref() == Some(binding))
+        {
+            self.model.generation = generation;
+        }
+        ensure!(
+            generation == self.model.generation,
+            "工作区已切换，旧页面操作已丢弃"
+        );
         self.model.error.clear();
         match command {
-            Command::Disconnect => {
-                self.disconnected().await;
-                self.model.notice = "已断开；主机终端仍保留".into();
+            Command::Scoped { .. } => bail!("不接受嵌套工作区命令"),
+            command @ (Command::Disconnect | Command::Suspend) => {
+                self.detach_with_preference(command, storage::stop_auto_connect())
+                    .await?;
             }
             Command::Forget(binding) => {
-                ensure!(self.session.is_none(), "请先断开设备，再忘记本机配对");
+                if self.model.active_binding.as_ref() == Some(&binding) {
+                    self.stop_retry();
+                    self.disconnected().await;
+                }
                 self.model.bindings = storage::forget(&binding).await?;
+                if self.model.active_binding.as_ref() == Some(&binding) {
+                    self.model.active_binding = None;
+                    self.clear_workspace();
+                }
                 self.model.notice =
                     "已忘记本机配对；主机授权未撤销，如需撤销请在小橘管理此设备。".into();
             }
@@ -429,9 +939,16 @@ impl Actor {
                     "请先断开当前设备"
                 );
                 let relay = RelayAddress::parse(&address)?;
+                self.stop_retry();
+                self.clear_workspace();
+                self.model.active_binding = None;
                 self.model.phase = Phase::Checking;
                 self.publish().await;
-                if let Err(error) = network::check_relay(&relay).await {
+                if let Err(error) = self
+                    .scope
+                    .during(generation, network::check_relay(&relay))
+                    .await
+                {
                     self.model.phase = Phase::Offline;
                     return Err(error);
                 }
@@ -450,80 +967,99 @@ impl Actor {
                 );
                 let relay = self.model.relay.clone().context("尚未选择 Relay")?;
                 let code = DeviceCode::parse(&code, &relay)?;
+                self.stop_retry();
+                self.clear_workspace();
+                self.model.active_binding = None;
                 self.model.phase = Phase::Connecting;
                 self.publish().await;
-                let result = async {
-                    self.identity = Some(storage::identity().await?);
-                    let session = Session::pair(
-                        &relay,
-                        &code,
-                        self.identity.as_ref().context("设备身份缺失")?,
-                    )
-                    .await?;
-                    self.model.fingerprint = protocol::fingerprint(session.host_key());
-                    self.binding = Some(Binding {
-                        relay,
-                        route: code.route().into(),
-                        host_key: protocol::encode(session.host_key()),
-                        device_id: String::new(),
-                    });
-                    self.session = Some(session);
-                    self.model.panes.clear();
-                    self.model.phase = Phase::AwaitingApproval;
-                    self.handshake_deadline = Some(Instant::now() + Duration::from_secs(150));
-                    self.request(
-                        Operation::Identify {
-                            name: name.trim().into(),
-                        },
-                        Pending::Identify,
-                    )
-                    .await
-                }
-                .await;
+                let scope = self.scope.clone();
+                let result = scope
+                    .during(generation, async {
+                        self.identity = Some(storage::identity().await?);
+                        let session = Session::pair(
+                            &relay,
+                            &code,
+                            self.identity.as_ref().context("设备身份缺失")?,
+                        )
+                        .await?;
+                        self.model.fingerprint = protocol::fingerprint(session.host_key());
+                        self.binding = Some(Binding {
+                            relay,
+                            route: code.route().into(),
+                            host_key: protocol::encode(session.host_key()),
+                            device_id: String::new(),
+                        });
+                        self.session = Some(session);
+                        self.model.panes.clear();
+                        self.model.phase = Phase::AwaitingApproval;
+                        self.handshake_deadline = Some(Instant::now() + Duration::from_secs(150));
+                        self.request(
+                            Operation::Identify {
+                                name: name.trim().into(),
+                            },
+                            Pending::Identify,
+                        )
+                        .await
+                    })
+                    .await;
                 if result.is_err() {
-                    self.session = None;
+                    self.disconnected().await;
                     self.model.phase = Phase::RelayReady;
                 }
                 result?;
             }
             Command::Reconnect(binding) => {
+                storage::validate(&binding)?;
                 ensure!(
-                    self.model.phase == Phase::RelayReady
-                        && self.model.relay.as_ref() == Some(&binding.relay),
-                    "请先检查该设备的 Relay"
+                    self.model.bindings.contains(&binding),
+                    "设备配对已变化，请重新选择"
                 );
-                self.model.phase = Phase::Connecting;
-                self.publish().await;
-                let result = async {
-                    self.identity = Some(storage::identity().await?);
-                    let key = protocol::decode32(&binding.host_key)?;
-                    let session = Session::connect(
-                        &binding.relay,
-                        &binding.route,
-                        self.identity.as_ref().context("设备身份缺失")?,
-                        &key,
-                    )
+                self.stop_retry();
+                storage::select_binding(&binding)
+                    .await
+                    .context("所选设备偏好未能安全保存，未开始连接")?;
+                ensure!(self.scope.current() == generation, "设备选择已变化");
+                self.retry.arm();
+                self.model.reconnect_attempt = 0;
+                self.connect_binding(binding, ReconnectMode::Selected)
                     .await?;
-                    self.model.fingerprint = protocol::fingerprint(&key);
-                    self.binding = Some(binding);
-                    self.session = Some(session);
-                    self.model.panes.clear();
-                    self.model.phase = Phase::AwaitingReady;
-                    self.handshake_deadline = Some(Instant::now() + Duration::from_secs(30));
-                    Ok::<_, anyhow::Error>(())
-                }
-                .await;
-                if result.is_err() {
-                    self.session = None;
-                    self.model.phase = Phase::RelayReady;
-                }
-                result?;
             }
             Command::Request(operation) => {
                 self.validate(&operation)?;
                 let kind = match &operation {
-                    Operation::TerminalAttach { .. } => Pending::Attach,
-                    Operation::Herdr { grant, .. } => Pending::Herdr(grant.clone()),
+                    Operation::TerminalAttach { grant, pane } => {
+                        ensure!(
+                            self.model.panes.len()
+                                + self
+                                    .outstanding
+                                    .values()
+                                    .filter(|request| matches!(
+                                        request.kind,
+                                        Pending::Attach(_) | Pending::Restore { .. }
+                                    ))
+                                    .count()
+                                < 8,
+                            "最多打开 8 个终端"
+                        );
+                        let attachment = Attachment {
+                            grant: grant.clone(),
+                            pane: pane.clone(),
+                        };
+                        ensure!(!self.outstanding.values().any(|request| matches!(&request.kind, Pending::Attach(active) | Pending::Restore { attachment: active, .. } if active == &attachment)), "此终端正在打开，请等待");
+                        ensure!(
+                            pane.is_none()
+                                || !self
+                                    .attachments
+                                    .values()
+                                    .any(|active| active == &attachment),
+                            "此 Herdr 终端已打开"
+                        );
+                        Pending::Attach(attachment)
+                    }
+                    Operation::Herdr { grant, method, .. } => Pending::Herdr {
+                        grant: grant.clone(),
+                        method: method.clone(),
+                    },
                     Operation::FileList { grant, .. } => Pending::Files(grant.clone()),
                     Operation::TerminalDetach { stream } => Pending::Detach(stream.clone()),
                     _ => Pending::Ordinary,
@@ -568,7 +1104,7 @@ impl Actor {
         ensure!(
             self.model.resources.iter().any(|resource| resource.id == id
                 && match capability {
-                    "terminal" => resource.terminal,
+                    "terminal" => resource.terminal && resource.backend != "herdr",
                     "herdr" => resource.herdr,
                     "files" => resource.files,
                     _ => false,
@@ -646,6 +1182,7 @@ impl Actor {
         );
         let cancel = Arc::new(AtomicBool::new(false));
         self.preparation = Some(Preparation {
+            generation: self.model.generation,
             cancel: cancel.clone(),
             grant,
             path,
@@ -664,11 +1201,17 @@ impl Actor {
             cancellable: true,
         });
         let sender = self.prepare_tx.clone();
+        let generation = self.model.generation;
         let name = name.to_owned();
         tokio::spawn(async move {
             let result = transfers::prepare(upload, &name, cancel).await;
-            if let Err(undelivered) = sender.send(PreparedResult::Prepared(result)).await
-                && let PreparedResult::Prepared(Ok(Some(prepared))) = undelivered.0
+            if let Err(undelivered) = sender
+                .send(PreparedResult::Prepared { generation, result })
+                .await
+                && let PreparedResult::Prepared {
+                    result: Ok(Some(prepared)),
+                    ..
+                } = undelivered.0
             {
                 let _ = transfers::cleanup(&prepared.handle, prepared.upload).await;
             }
@@ -767,6 +1310,8 @@ impl Actor {
                         return Err(error.context("安全保存失败，未发送配对确认"));
                     }
                 };
+                self.model.active_binding = Some(binding.clone());
+                self.retry.arm();
                 self.binding = Some(binding);
                 self.request(Operation::AcknowledgePairing {}, Pending::Ordinary)
                     .await?;
@@ -788,14 +1333,32 @@ impl Actor {
                 );
                 self.outstanding.clear();
                 self.model.phase = Phase::Ready;
+                self.model.error.clear();
                 self.handshake_deadline = None;
                 self.model.permission = Some(permission);
-                self.model.resources = resources;
-                self.model.notice.clear();
+                self.model.resources = ordinary_terminal_capabilities(resources);
+                self.retry.at = None;
+                self.retry.connected_at = Some(Instant::now());
+                self.model.reconnect_in_seconds = None;
+                self.model.notice = self.outcome_notice();
+                let requests = self.restoration_requests();
+                for (previous, attachment) in requests {
+                    self.request(
+                        Operation::TerminalAttach {
+                            grant: attachment.grant.clone(),
+                            pane: attachment.pane.clone(),
+                        },
+                        Pending::Restore {
+                            previous,
+                            attachment,
+                        },
+                    )
+                    .await?;
+                }
             }
             Event::Resources { resources } => {
                 ensure!(self.model.ready(), "主机尚未就绪");
-                self.model.resources = resources;
+                self.model.resources = ordinary_terminal_capabilities(resources);
             }
             Event::Ping { nonce } => {
                 self.session
@@ -812,6 +1375,7 @@ impl Actor {
                 changed = false;
                 if let Some(Pending::Detach(stream)) = pending {
                     self.model.panes.retain(|pane| pane.stream != stream);
+                    self.attachments.remove(&stream);
                     self.output.remove(&stream);
                     changed = true;
                 }
@@ -821,10 +1385,27 @@ impl Actor {
                 name,
                 read_only,
             } => {
+                let attachment = match pending {
+                    Some(Pending::Attach(attachment)) => attachment,
+                    Some(Pending::Restore {
+                        previous,
+                        attachment,
+                    }) => {
+                        self.restoring.remove(&previous);
+                        attachment
+                    }
+                    _ => bail!("未请求的终端附着"),
+                };
                 ensure!(
-                    matches!(pending, Some(Pending::Attach)) && self.model.panes.len() < 8,
-                    "未请求的终端附着"
+                    self.model.panes.len() < 8 && !self.output.contains_key(&stream),
+                    "终端重复或数量超限"
                 );
+                let kind = if attachment.pane.is_some() {
+                    PaneKind::Herdr
+                } else {
+                    PaneKind::Terminal
+                };
+                self.attachments.insert(stream.clone(), attachment);
                 self.output.insert(
                     stream.clone(),
                     OutputState {
@@ -833,6 +1414,7 @@ impl Actor {
                     },
                 );
                 self.model.panes.push(Pane {
+                    kind,
                     stream,
                     name,
                     controller: false,
@@ -891,6 +1473,8 @@ impl Actor {
                     .context("界面已关闭")?;
             }
             Event::TerminalExit { stream, code } => {
+                self.attachments.remove(&stream);
+                self.restoring.remove(&stream);
                 if let Some(output) = self.output.get_mut(&stream) {
                     self.updates
                         .send(Update::Output {
@@ -912,11 +1496,18 @@ impl Actor {
                 }
             }
             Event::Herdr { data } => {
-                let Some(Pending::Herdr(grant)) = pending else {
+                let Some(Pending::Herdr { grant, method }) = pending else {
                     bail!("未请求的 Herdr 回复");
                 };
-                self.model.herdr_grant = grant;
-                self.model.herdr_panes = crate::ui::herdr::panes(&data);
+                if matches!(method.as_str(), "session.snapshot" | "pane.list") {
+                    self.model.herdr_grant = grant.clone();
+                    self.model.herdr_panes = crate::ui::herdr::panes(&data);
+                }
+                self.model.herdr_response = Some(HerdrResponse {
+                    grant,
+                    method,
+                    data,
+                });
             }
             Event::FileList {
                 path,
@@ -1028,7 +1619,9 @@ impl Actor {
                     }
                     let active = self.transfer.take().context("传输缺失")?;
                     self.finalizing = true;
+                    self.finalizing_generation = Some(self.model.generation);
                     let sender = self.prepare_tx.clone();
+                    let generation = self.model.generation;
                     tokio::spawn(async move {
                         let result = active.complete().await;
                         let result = if let Err(error) = result {
@@ -1046,7 +1639,13 @@ impl Actor {
                         } else {
                             result
                         };
-                        let _ = sender.send(PreparedResult::Finished { result, size }).await;
+                        let _ = sender
+                            .send(PreparedResult::Finished {
+                                generation,
+                                result,
+                                size,
+                            })
+                            .await;
                     });
                 }
             }
@@ -1070,6 +1669,7 @@ impl Actor {
                 message,
                 outcome_unknown,
             } => {
+                self.unknown_outcome |= outcome_unknown;
                 if matches!(
                     code.as_str(),
                     "REQUEST_FAILED" | "QUEUE_FULL" | "DEVICE_BUSY"
@@ -1077,6 +1677,9 @@ impl Actor {
                     && pending.is_some()
                 {
                     match pending {
+                        Some(Pending::Restore { previous, .. }) => {
+                            self.restoring.remove(&previous);
+                        }
                         Some(Pending::TransferStart) => self.cleanup_transfer().await,
                         Some(Pending::Cancel(id))
                             if self
@@ -1120,8 +1723,17 @@ impl Actor {
                 if self.transfer.is_some() || self.prepared.is_some() {
                     self.cleanup_transfer().await;
                 }
-                if matches!(code.as_str(), "revoked" | "disabled" | "unauthorized") {
-                    self.disconnected().await;
+                if matches!(
+                    code.to_ascii_lowercase().as_str(),
+                    "revoked"
+                        | "disabled"
+                        | "unauthorized"
+                        | "authentication_failed"
+                        | "authorization_failed"
+                ) {
+                    return Err(
+                        network::AuthenticationRejected(format!("{code}：{message}")).into(),
+                    );
                 }
                 bail!(
                     "{code}：{message}{}",
@@ -1135,6 +1747,15 @@ impl Actor {
         }
         Ok(changed)
     }
+}
+
+fn ordinary_terminal_capabilities(mut resources: Vec<Resource>) -> Vec<Resource> {
+    for resource in &mut resources {
+        if resource.backend == "herdr" {
+            resource.terminal = false;
+        }
+    }
+    resources
 }
 
 #[cfg(test)]
@@ -1153,6 +1774,7 @@ mod tests {
         assert!(!actor.model.writable());
         actor.model.phase = Phase::Ready;
         actor.model.panes.push(Pane {
+            kind: PaneKind::Terminal,
             stream: "s".into(),
             name: "shell".into(),
             controller: false,
@@ -1195,6 +1817,7 @@ mod tests {
         let mut actor = Actor::new(sender);
         actor.model.phase = Phase::Ready;
         actor.model.panes.push(Pane {
+            kind: PaneKind::Terminal,
             stream: "stream".into(),
             name: "terminal".into(),
             controller: false,
@@ -1328,6 +1951,7 @@ mod tests {
         actor.model.phase = Phase::Ready;
         actor.model.permission = Some(Permission::Operate);
         actor.model.panes.push(Pane {
+            kind: PaneKind::Terminal,
             stream: "stream".into(),
             name: "shell".into(),
             controller: true,
@@ -1477,5 +2101,699 @@ mod tests {
                     .is_err()
             );
         }
+    }
+    fn saved_binding(index: u8) -> Binding {
+        Binding {
+            relay: RelayAddress::parse("https://relay.example.com").unwrap(),
+            route: protocol::encode(&[index; 32]),
+            host_key: protocol::encode(&[index + 1; 32]),
+            device_id: format!("device-{index}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reconnect_from_ready_or_offline_checks_target_and_clears_the_old_workspace() {
+        for phase in [Phase::Ready, Phase::Offline] {
+            let (sender, mut updates) = mpsc::channel(32);
+            let mut actor = Actor::new(sender);
+            let old = saved_binding(1);
+            let target = saved_binding(3);
+            actor.model.phase = phase;
+            actor.model.bindings = vec![old.clone(), target.clone()];
+            actor.model.active_binding = Some(old);
+            actor.model.resources.push(Resource {
+                id: "shared-grant".into(),
+                name: "old".into(),
+                backend: "ssh".into(),
+                terminal: true,
+                herdr: false,
+                files: true,
+            });
+            actor.model.panes.push(Pane {
+                kind: PaneKind::Terminal,
+                stream: "old-stream".into(),
+                name: "old".into(),
+                controller: true,
+                read_only: false,
+                exit: None,
+                gap: false,
+            });
+            actor
+                .model
+                .herdr_panes
+                .push(("old-pane".into(), "old".into()));
+            actor.model.path = "old/path".into();
+            actor.outstanding.insert(
+                7,
+                Outstanding {
+                    kind: Pending::Ordinary,
+                    expires: Instant::now() + Duration::from_secs(30),
+                },
+            );
+            let result = actor
+                .reconnect_with(
+                    target.clone(),
+                    ReconnectMode::Selected,
+                    async { Err(anyhow::anyhow!("health fixture failed")) },
+                    async { panic!("connect must not run after failed relay validation") },
+                )
+                .await;
+            assert!(result.is_err());
+            assert_eq!(actor.model.active_binding, Some(target));
+            assert_eq!(actor.model.bindings.len(), 2);
+            assert_eq!(actor.model.phase, Phase::Offline);
+            assert!(
+                actor.model.panes.is_empty()
+                    && actor.model.resources.is_empty()
+                    && actor.model.herdr_panes.is_empty()
+                    && actor.model.path.is_empty()
+                    && actor.outstanding.is_empty()
+            );
+            let Some(Update::Model(model)) = updates.recv().await else {
+                panic!("missing startup state")
+            };
+            assert_eq!(model.phase, Phase::Checking);
+            assert!(model.active_binding.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn queued_commands_and_old_ui_events_cannot_enter_the_next_host() {
+        let mut actor = actor();
+        let (sender, mut commands) = mpsc::channel(8);
+        let client = Client {
+            sender,
+            scope: Some(actor.scope.clone()),
+        };
+        client
+            .send_for(0, Command::Request(Operation::Resources {}))
+            .unwrap();
+        client.send(Command::Reconnect(saved_binding(1))).unwrap();
+        assert!(
+            client
+                .send_for(0, Command::Request(Operation::Resources {}))
+                .is_err()
+        );
+        assert!(client.send_for(0, Command::Disconnect).is_err());
+        let error = actor
+            .command(commands.recv().await.unwrap())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("工作区已切换"));
+        assert!(actor.outstanding.is_empty());
+    }
+
+    #[tokio::test]
+    async fn newer_device_selection_cancels_an_inflight_relay_check() {
+        let mut actor = actor();
+        let target = saved_binding(1);
+        actor.model.bindings.push(target.clone());
+        let scope = actor.scope.clone();
+        let (result, _) = tokio::join!(
+            actor.reconnect_with(
+                target,
+                ReconnectMode::Selected,
+                std::future::pending(),
+                async { panic!("superseded check must never connect") }
+            ),
+            async move {
+                tokio::task::yield_now().await;
+                scope.advance().unwrap();
+            }
+        );
+        assert!(format!("{:#}", result.unwrap_err()).contains("取消"));
+        assert!(actor.session.is_none());
+    }
+
+    #[tokio::test]
+    async fn old_file_preparation_and_finalization_results_do_not_touch_new_transfer() {
+        let mut actor = actor();
+        actor.model.generation = actor.scope.advance().unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        actor.preparation = Some(Preparation {
+            generation: 1,
+            cancel: cancel.clone(),
+            grant: "new-grant".into(),
+            path: "new".into(),
+        });
+        actor.finalizing = true;
+        actor.finalizing_generation = Some(1);
+        actor.model.transfer = Some(TransferView {
+            name: "new-file".into(),
+            offset: 9,
+            total: 10,
+            status: "new-transfer".into(),
+            cancellable: false,
+        });
+        actor
+            .preparation_result(PreparedResult::Prepared {
+                generation: 0,
+                result: Err(anyhow::anyhow!("old picker failed")),
+            })
+            .await
+            .unwrap();
+        actor
+            .preparation_result(PreparedResult::Finished {
+                generation: 0,
+                result: Ok(()),
+                size: 100,
+            })
+            .await
+            .unwrap();
+        assert!(actor.preparation.is_some() && actor.finalizing && !cancel.load(Ordering::Acquire));
+        assert_eq!(actor.model.transfer.as_ref().unwrap().offset, 9);
+        assert_eq!(
+            actor.model.transfer.as_ref().unwrap().status,
+            "new-transfer"
+        );
+    }
+
+    #[tokio::test]
+    async fn attach_kind_uses_the_request_and_non_listing_herdr_reply_preserves_panes() {
+        let mut actor = actor();
+        actor.model.phase = Phase::Ready;
+        for (id, pane, kind) in [
+            (1, None, PaneKind::Terminal),
+            (2, Some("herdr-pane".into()), PaneKind::Herdr),
+        ] {
+            actor.outstanding.insert(
+                id,
+                Outstanding {
+                    kind: Pending::Attach(Attachment {
+                        grant: "grant".into(),
+                        pane,
+                    }),
+                    expires: Instant::now() + Duration::from_secs(30),
+                },
+            );
+            actor
+                .response(Response {
+                    id,
+                    event: Event::TerminalAttached {
+                        stream: format!("s{id}"),
+                        name: "shell".into(),
+                        read_only: true,
+                    },
+                })
+                .await
+                .unwrap();
+            assert_eq!(actor.model.panes.last().unwrap().kind, kind);
+        }
+        actor.model.herdr_grant = "grant".into();
+        actor.model.herdr_panes = vec![("keep".into(), "Shell".into())];
+        actor.outstanding.insert(
+            3,
+            Outstanding {
+                kind: Pending::Herdr {
+                    grant: "grant".into(),
+                    method: "agent.read".into(),
+                },
+                expires: Instant::now() + Duration::from_secs(30),
+            },
+        );
+        actor
+            .response(Response {
+                id: 3,
+                event: Event::Herdr {
+                    data: serde_json::json!({"text":"agent status"}),
+                },
+            })
+            .await
+            .unwrap();
+        assert_eq!(actor.model.herdr_panes, [("keep".into(), "Shell".into())]);
+        assert_eq!(
+            actor.model.herdr_response.as_ref().unwrap().method,
+            "agent.read"
+        );
+        let resources = ordinary_terminal_capabilities(vec![Resource {
+            id: "herdr".into(),
+            name: "Herdr".into(),
+            backend: "herdr".into(),
+            terminal: true,
+            herdr: true,
+            files: false,
+        }]);
+        assert!(!resources[0].terminal && resources[0].herdr);
+        actor.model.resources = resources;
+        assert!(
+            actor
+                .validate(&Operation::TerminalAttach {
+                    grant: "herdr".into(),
+                    pane: None
+                })
+                .is_err()
+        );
+        assert!(
+            actor
+                .validate(&Operation::TerminalAttach {
+                    grant: "herdr".into(),
+                    pane: Some("p".into())
+                })
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn startup_restores_selection_but_manual_stop_is_not_auto_connected() {
+        let mut actor = actor();
+        let binding = saved_binding(1);
+        let automatic = actor.restore_preferences(storage::Preferences {
+            bindings: vec![binding.clone()],
+            selected: Some(binding.clone()),
+            auto_connect: true,
+        });
+        assert_eq!(automatic, Some(binding.clone()));
+        assert_eq!(actor.model.active_binding, Some(binding.clone()));
+        assert!(
+            actor
+                .restore_preferences(storage::Preferences {
+                    bindings: vec![binding.clone()],
+                    selected: Some(binding),
+                    auto_connect: false
+                })
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn transient_retry_never_keeps_pending_requests_or_transfer_for_replay() {
+        let mut actor = actor();
+        let binding = saved_binding(1);
+        actor.model.active_binding = Some(binding.clone());
+        actor.model.bindings.push(binding);
+        actor.retry.arm();
+        actor.outstanding.insert(
+            1,
+            Outstanding {
+                kind: Pending::Ordinary,
+                expires: Instant::now(),
+            },
+        );
+        actor.disconnected().await;
+        actor
+            .connection_result(Err(std::io::Error::from(
+                std::io::ErrorKind::ConnectionAborted,
+            )
+            .into()))
+            .await;
+        assert!(actor.retry.at.is_some());
+        assert_eq!(actor.model.reconnect_attempt, 1);
+        assert!(
+            actor.session.is_none() && actor.outstanding.is_empty() && actor.transfer.is_none()
+        );
+        assert!(actor.model.notice.contains("结果未知"));
+        actor.stop_retry();
+        assert!(actor.retry.at.is_none() && !actor.retry.enabled);
+    }
+    #[test]
+    fn authorization_failure_clears_pending_retry_until_explicit_reconnect() {
+        let mut actor = actor();
+        actor.retry.arm();
+        actor.model.active_binding = Some(saved_binding(1));
+        actor.retry.schedule(Instant::now()).unwrap();
+        actor.connection_failure(&network::AuthenticationRejected("revoked".into()).into());
+        assert!(!actor.retry.enabled && actor.retry.at.is_none());
+        assert!(actor.model.notice.contains("停止自动重连"));
+    }
+    #[test]
+    fn background_retry_cannot_supersede_a_queued_explicit_device_selection() {
+        let mut actor = actor();
+        actor.model.active_binding = Some(saved_binding(1));
+        actor.retry.arm();
+        let (sender, mut commands) = mpsc::channel(8);
+        let client = Client {
+            sender,
+            scope: Some(actor.scope.clone()),
+        };
+        client.send(Command::Reconnect(saved_binding(2))).unwrap();
+        assert!(actor.retry_target().is_none());
+        assert_eq!(actor.scope.current(), 1);
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::Scoped { generation: 1, .. }
+        ));
+    }
+    #[test]
+    fn forgetting_selected_host_invalidates_retry_before_controller_receives_it() {
+        let mut actor = actor();
+        let binding = saved_binding(1);
+        actor.model.active_binding = Some(binding.clone());
+        actor.scope.select(Some(binding.clone()));
+        actor.retry.arm();
+        let (sender, mut commands) = mpsc::channel(8);
+        let client = Client {
+            sender,
+            scope: Some(actor.scope.clone()),
+        };
+        client.send_for(0, Command::Forget(binding)).unwrap();
+        assert!(actor.retry_target().is_none());
+        assert!(matches!(
+            commands.try_recv().unwrap(),
+            Command::Scoped { generation: 1, .. }
+        ));
+    }
+    fn opened_actor() -> Actor {
+        let mut actor = actor();
+        let binding = saved_binding(1);
+        actor.model.active_binding = Some(binding.clone());
+        actor.model.bindings.push(binding);
+        actor.model.phase = Phase::Ready;
+        actor.model.permission = Some(Permission::Operate);
+        actor.retry.arm();
+        for (stream, grant, pane, exit) in [
+            ("shell", "terminal", None, None),
+            ("herdr", "herdr", Some("pane-1"), None),
+            ("exited", "terminal", None, Some(0)),
+        ] {
+            actor.model.panes.push(Pane {
+                kind: if pane.is_some() {
+                    PaneKind::Herdr
+                } else {
+                    PaneKind::Terminal
+                },
+                stream: stream.into(),
+                name: stream.into(),
+                controller: true,
+                read_only: false,
+                exit,
+                gap: false,
+            });
+            actor.attachments.insert(
+                stream.into(),
+                Attachment {
+                    grant: grant.into(),
+                    pane: pane.map(str::to_owned),
+                },
+            );
+        }
+        actor.model.resources = vec![
+            Resource {
+                id: "terminal".into(),
+                name: "shell".into(),
+                backend: "ssh".into(),
+                terminal: true,
+                herdr: false,
+                files: false,
+            },
+            Resource {
+                id: "herdr".into(),
+                name: "Herdr".into(),
+                backend: "herdr".into(),
+                terminal: false,
+                herdr: true,
+                files: false,
+            },
+        ];
+        actor
+    }
+
+    #[tokio::test]
+    async fn lifecycle_suspend_preserves_auto_preference_but_manual_disconnect_disables_it() {
+        for command in [Command::Suspend, Command::Disconnect] {
+            let manual = matches!(command, Command::Disconnect);
+            let mut actor = opened_actor();
+            let auto = AtomicBool::new(true);
+            let (session, mut requests) = Session::observed();
+            actor.session = Some(session);
+            actor.capture_restoration();
+            let cancel = Arc::new(AtomicBool::new(false));
+            actor.preparation = Some(Preparation {
+                generation: 0,
+                cancel: cancel.clone(),
+                grant: "g".into(),
+                path: "p".into(),
+            });
+            actor.outstanding.insert(
+                1,
+                Outstanding {
+                    kind: Pending::Ordinary,
+                    expires: Instant::now(),
+                },
+            );
+            actor
+                .detach_with_preference(command, async {
+                    auto.store(false, Ordering::Release);
+                    Ok(())
+                })
+                .await
+                .unwrap();
+            assert_eq!(auto.load(Ordering::Acquire), !manual);
+            assert!(actor.session.is_none() && !actor.retry.enabled && actor.retry.at.is_none());
+            assert!(actor.outstanding.is_empty() && actor.restoring.is_empty());
+            assert!(cancel.load(Ordering::Acquire));
+            assert!(
+                actor
+                    .model
+                    .panes
+                    .iter()
+                    .all(|p| !p.controller && p.read_only)
+            );
+            assert!(actor.model.active_binding.is_some());
+            assert!(
+                requests.recv().await.is_none(),
+                "detach must not send control/input/close-PTY operations"
+            );
+            let preferences = storage::Preferences {
+                bindings: actor.model.bindings.clone(),
+                selected: actor.model.active_binding.clone(),
+                auto_connect: auto.load(Ordering::Acquire),
+            };
+            assert_eq!(actor.restore_preferences(preferences).is_some(), !manual);
+        }
+    }
+
+    #[tokio::test]
+    async fn lifecycle_suspend_is_global_even_when_ui_generation_lags_retry() {
+        let mut actor = opened_actor();
+        actor.model.generation = actor.scope.advance().unwrap();
+        let (sender, mut commands) = mpsc::channel(8);
+        let client = Client {
+            sender,
+            scope: Some(actor.scope.clone()),
+        };
+        client.send_for(0, Command::Suspend).unwrap();
+        assert!(actor.retry_target().is_none());
+        actor.command(commands.recv().await.unwrap()).await.unwrap();
+        assert!(!actor.retry.enabled && actor.session.is_none());
+        assert_eq!(actor.model.generation, 2);
+    }
+
+    #[tokio::test]
+    async fn automatic_retry_restores_only_confirmed_live_sessions_without_control_or_input() {
+        let mut actor = opened_actor();
+        let resources = actor.model.resources.clone();
+        let target = actor.model.active_binding.clone().unwrap();
+        actor.disconnected().await;
+        assert_eq!(actor.restoring.len(), 2);
+        for _ in 0..2 {
+            let failed = actor
+                .reconnect_with(
+                    target.clone(),
+                    ReconnectMode::Retry,
+                    async {
+                        Err(std::io::Error::from(std::io::ErrorKind::ConnectionAborted).into())
+                    },
+                    async { panic!("failed check must not connect") },
+                )
+                .await;
+            assert!(failed.is_err());
+            assert_eq!(
+                actor.restoring.len(),
+                2,
+                "failed attempts must retain restore descriptors"
+            );
+        }
+        let (session, mut requests) = Session::observed();
+        actor.session = Some(session);
+        actor.binding = Some(target.clone());
+        actor.model.phase = Phase::AwaitingReady;
+        actor
+            .response(Response {
+                id: 0,
+                event: Event::Ready {
+                    device_id: target.device_id,
+                    permission: Permission::Operate,
+                    resources,
+                },
+            })
+            .await
+            .unwrap();
+        assert_eq!(actor.outstanding.len(), 2);
+        for _ in 0..2 {
+            let request = requests.recv().await.unwrap();
+            assert!(
+                matches!(request.operation, Operation::TerminalAttach { .. }),
+                "only attach may be replayed"
+            );
+            actor
+                .response(Response {
+                    id: request.id,
+                    event: Event::TerminalAttached {
+                        stream: format!("new-{}", request.id),
+                        name: "resumed".into(),
+                        read_only: false,
+                    },
+                })
+                .await
+                .unwrap();
+        }
+        assert!(requests.try_recv().is_err());
+        assert!(actor.restoring.is_empty());
+        assert_eq!(actor.model.panes.len(), 2);
+        assert!(
+            actor
+                .model
+                .panes
+                .iter()
+                .all(|p| !p.controller && p.exit.is_none())
+        );
+        assert!(
+            actor
+                .validate(&Operation::TerminalInput {
+                    stream: actor.model.panes[0].stream.clone(),
+                    data: "unsafe".into()
+                })
+                .is_err()
+        );
+        actor.disconnected().await;
+        assert!(requests.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn fresh_grants_and_explicit_selection_bound_session_restoration() {
+        let mut actor = opened_actor();
+        actor.capture_restoration();
+        actor.model.resources[0].backend = "different-target-backend".into();
+        let requests = actor.restoration_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].1.pane.as_deref(), Some("pane-1"));
+        assert!(actor.model.notice.contains("授权已变化"));
+        for same_host in [true, false] {
+            let mut actor = opened_actor();
+            let target = if same_host {
+                saved_binding(1)
+            } else {
+                saved_binding(3)
+            };
+            if !same_host {
+                actor.model.bindings.push(target.clone());
+            }
+            let failed = actor
+                .reconnect_with(
+                    target,
+                    ReconnectMode::Selected,
+                    async { Err(anyhow::anyhow!("fixture offline")) },
+                    async { panic!("check failed") },
+                )
+                .await;
+            assert!(failed.is_err());
+            assert!(
+                actor.restoring.is_empty()
+                    && actor.attachments.is_empty()
+                    && actor.model.panes.is_empty()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn opening_tracks_navigation_and_clears_after_success_failure_or_disconnect() {
+        let (sender, mut updates) = mpsc::channel(8);
+        let mut actor = Actor::new(sender);
+        actor.model.phase = Phase::Ready;
+        for (kind, opening) in [
+            (Pending::Ordinary, false),
+            (
+                Pending::Herdr {
+                    grant: "g".into(),
+                    method: "agent.read".into(),
+                },
+                false,
+            ),
+            (
+                Pending::Herdr {
+                    grant: "g".into(),
+                    method: "session.snapshot".into(),
+                },
+                true,
+            ),
+            (
+                Pending::Attach(Attachment {
+                    grant: "g".into(),
+                    pane: None,
+                }),
+                true,
+            ),
+        ] {
+            actor.outstanding.insert(
+                1,
+                Outstanding {
+                    kind,
+                    expires: Instant::now(),
+                },
+            );
+            actor.publish().await;
+            let Some(Update::Model(model)) = updates.recv().await else {
+                panic!("missing model")
+            };
+            assert_eq!(model.opening, opening);
+        }
+        actor
+            .response(Response {
+                id: 1,
+                event: Event::Error {
+                    code: "REQUEST_FAILED".into(),
+                    message: "fixture failed".into(),
+                    outcome_unknown: false,
+                },
+            })
+            .await
+            .unwrap();
+        actor.publish().await;
+        let Some(Update::Model(model)) = updates.recv().await else {
+            panic!("missing model")
+        };
+        assert!(!model.opening);
+        actor.outstanding.insert(
+            2,
+            Outstanding {
+                kind: Pending::Attach(Attachment {
+                    grant: "g".into(),
+                    pane: None,
+                }),
+                expires: Instant::now(),
+            },
+        );
+        actor
+            .response(Response {
+                id: 2,
+                event: Event::TerminalAttached {
+                    stream: "s".into(),
+                    name: "shell".into(),
+                    read_only: true,
+                },
+            })
+            .await
+            .unwrap();
+        actor.publish().await;
+        let Some(Update::Model(model)) = updates.recv().await else {
+            panic!("missing model")
+        };
+        assert!(!model.opening);
+        actor.outstanding.insert(
+            3,
+            Outstanding {
+                kind: Pending::Herdr {
+                    grant: "g".into(),
+                    method: "session.snapshot".into(),
+                },
+                expires: Instant::now(),
+            },
+        );
+        actor.disconnected().await;
+        actor.publish().await;
+        let Some(Update::Model(model)) = updates.recv().await else {
+            panic!("missing model")
+        };
+        assert!(!model.opening);
     }
 }

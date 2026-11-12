@@ -1,4 +1,4 @@
-name: Publish Remoted native client
+name: Publish neoko-terminal Android
 on:
   workflow_dispatch:
     inputs:
@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       source-run-id:
-        description: Successful trusted private remoted-client.yml run ID
+        description: Successful trusted private neoko-terminal-android.yml run ID
         required: true
         type: string
       source-commit:
@@ -22,7 +22,7 @@ permissions:
   contents: write
   actions: read
 concurrency:
-  group: publish-remoted-client
+  group: publish-neoko-terminal-android
   cancel-in-progress: false
 jobs:
   native:
@@ -42,7 +42,7 @@ jobs:
           SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
         with:
           github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          script: await require('./scripts/remoted-client.cjs').selectAndDownload({github, core});
+          script: await require('./scripts/neoko-terminal.cjs').selectAndDownload({github, core});
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -52,16 +52,16 @@ jobs:
         run: sdkmanager 'build-tools;35.0.1'
       - name: Verify native ZIP, provenance, APK metadata, ABI and production signature
         run: |
-          python3 scripts/prepare-remoted-native.py \
-            --archive dist/remoted-client/artifact.zip \
-            --selection dist/remoted-client/selection.json \
+          python3 scripts/prepare-neoko-terminal.py \
+            --archive dist/neoko-terminal/artifact.zip \
+            --selection dist/neoko-terminal/selection.json \
             --aapt "$ANDROID_HOME/build-tools/35.0.1/aapt" \
             --apksigner "$ANDROID_HOME/build-tools/35.0.1/apksigner"
       - name: Revalidate source run, immutable tag and selected artifact
         uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          script: await require('./scripts/remoted-client.cjs').revalidateSource({github});
+          script: await require('./scripts/neoko-terminal.cjs').revalidateSource({github});
       - name: Complete the dry run or publish only native Release assets
         id: release
         uses: actions/github-script@v9
@@ -69,7 +69,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry-run }}
         with:
           script: |
-            await require('./scripts/remoted-client.cjs').publishRelease({
+            await require('./scripts/neoko-terminal.cjs').publishRelease({
               github, context, core, dryRun: process.env.DRY_RUN !== 'false',
             });
       - name: Summarize native verification

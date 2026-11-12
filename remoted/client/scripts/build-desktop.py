@@ -15,9 +15,9 @@ import tomllib
 import zipfile
 
 CLIENT = Path(__file__).resolve().parents[1]
-NSH_REV = "0e4a20bd41ee72a35515cecbf9a7fba88742d911"
+NSH_REV = "f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1"
 APP_ID = "community.lazycat.neko.remoted"
-BINARY = "neko-remoted-client"
+BINARY = "neoko-terminal"
 
 
 def run(*args, **kwargs):
@@ -53,19 +53,20 @@ def main():
     # Check the locked dependency, rather than trusting a toolchain checkout.
     if f"{NSH_REV}" not in (CLIENT / "Cargo.lock").read_text():
         raise RuntimeError("Cargo.lock does not contain the pinned NSH revision")
-    stem = f"neko-remoted-desktop-{args.version}-{args.target}"
+    stem = f"neoko-terminal-{args.version}-{args.target}"
     with tempfile.TemporaryDirectory(prefix="remoted-desktop-") as work:
         stage = Path(work)
         licenses = stage / "licenses"
         licenses.mkdir()
         shutil.copy2(CLIENT.parent / "LICENSE", licenses / "NEKO-LICENSE")
         shutil.copy2(CLIENT / "android/licenses/NSH-LICENSE-APACHE", licenses / "NSH-LICENSE-APACHE")
+        shutil.copy2(CLIENT / "android/licenses/NOTICE", licenses / "NOTICE")
         (stage / "INSTALL.txt").write_text(
-            "Remoted desktop " + args.version + "\nEnter the same HTTPS/WSS Relay as the host, then paste/type its device code.\n"
+            "neoko-terminal desktop " + args.version + "\nEnter the same HTTPS/WSS Relay as the host, then paste/type its device code.\n"
             "The host must explicitly approve the device. No camera is required.\n"
             "Credentials stay in the OS credential store. Never delete them to repair a temporary store failure.\n"
-            "Windows: extract ZIP, run neko-remoted-client.exe; unsigned, SmartScreen may warn.\n"
-            "macOS: extract ZIP, copy Remoted.app to Applications; ad-hoc signed, NOT notarized.\n"
+            "Windows: extract ZIP, run neoko-terminal.exe; unsigned, SmartScreen may warn.\n"
+            "macOS: extract ZIP, copy neoko-terminal.app to Applications; ad-hoc signed, NOT notarized.\n"
             "Use System Settings > Privacy & Security > Open Anyway for a trusted local build if Gatekeeper blocks it.\n"
             "Linux: install deb with apt; a running and unlocked Secret Service (e.g. GNOME Keyring) is required.\n",
             encoding="utf-8")
@@ -81,26 +82,26 @@ def main():
             bindir.mkdir(parents=True)
             shutil.copy2(binary, bindir / BINARY)
             (bindir / BINARY).chmod(0o755)
-            docs = root / "usr/share/doc/neko-remoted-desktop"
+            docs = root / "usr/share/doc/neoko-terminal"
             docs.mkdir(parents=True)
             shutil.copytree(licenses, docs / "licenses")
             shutil.copy2(stage / "INSTALL.txt", docs / "INSTALL.txt")
             desktop = root / f"usr/share/applications/{APP_ID}.desktop"
             desktop.parent.mkdir(parents=True)
-            desktop.write_text(f"[Desktop Entry]\nType=Application\nName=Remoted\nName[zh_CN]=小橘远程\nExec={BINARY}\nIcon={APP_ID}\nTerminal=false\nCategories=Network;RemoteAccess;\nStartupWMClass={APP_ID}\n", encoding="utf-8")
+            desktop.write_text(f"[Desktop Entry]\nType=Application\nName=neoko-terminal\nName[zh_CN]=neoko-terminal\nExec={BINARY}\nIcon={APP_ID}\nTerminal=false\nCategories=Network;RemoteAccess;\nStartupWMClass={APP_ID}\n", encoding="utf-8")
             icon = root / f"usr/share/pixmaps/{APP_ID}.png"
             icon.parent.mkdir(parents=True)
             shutil.copy2(CLIENT / "android/res/drawable/neko.png", icon)
             control = root / "DEBIAN/control"
             control.parent.mkdir()
             # t64 names are the Ubuntu 24.04 baseline; a local Arch build is not that baseline.
-            control.write_text(f"Package: neko-remoted-desktop\nVersion: {args.version}\nArchitecture: amd64\nMaintainer: LazyCat Community\nSection: net\nPriority: optional\nDepends: libc6 (>= {glibc}), libgtk-4-1 (>= {gtk}), libglib2.0-0t64 (>= {glib}), libpango-1.0-0, libpangocairo-1.0-0, libcairo2, libgdk-pixbuf-2.0-0, libgraphene-1.0-0, libgstreamer1.0-0 (>= {gst}), libgstreamer-plugins-base1.0-0 (>= {gst}), libdbus-1-3, libgcc-s1, libstdc++6\nRecommends: gnome-keyring\nDescription: Native Remoted terminal client\n Manual Relay and device-code pairing with host approval.\n", encoding="utf-8")
+            control.write_text(f"Package: neoko-terminal\nVersion: {args.version}\nArchitecture: amd64\nMaintainer: LazyCat Community\nSection: net\nPriority: optional\nReplaces: neko-remoted-desktop\nConflicts: neko-remoted-desktop\nProvides: neko-remoted-desktop\nDepends: libc6 (>= {glibc}), libgtk-4-1 (>= {gtk}), libglib2.0-0t64 (>= {glib}), libpango-1.0-0, libpangocairo-1.0-0, libcairo2, libgdk-pixbuf-2.0-0, libgraphene-1.0-0, libgstreamer1.0-0 (>= {gst}), libgstreamer-plugins-base1.0-0 (>= {gst}), libdbus-1-3, libgcc-s1, libstdc++6\nRecommends: gnome-keyring\nDescription: Native neoko-terminal client\n Manual Relay and device-code pairing with host approval.\n", encoding="utf-8")
             (docs / "build-info.json").write_text(json.dumps(info, indent=2) + "\n")
             package = args.out / f"{stem}.deb"
             run(os.environ.get("DPKG_DEB", "dpkg-deb"), "--root-owner-group", "--build", root, package)
             run(os.environ.get("DPKG_DEB", "dpkg-deb"), "--info", package)
         elif system == "macos":
-            app = stage / "Remoted.app"
+            app = stage / "neoko-terminal.app"
             contents = app / "Contents"
             macos = contents / "MacOS"
             resources = contents / "Resources"
@@ -109,7 +110,7 @@ def main():
             shutil.copy2(binary, macos / BINARY)
             (macos / BINARY).chmod(0o755)
             with (contents / "Info.plist").open("wb") as handle:
-                plistlib.dump({"CFBundleIdentifier": APP_ID, "CFBundleName": "Remoted", "CFBundleDisplayName": "小橘远程",
+                plistlib.dump({"CFBundleIdentifier": APP_ID, "CFBundleName": "neoko-terminal", "CFBundleDisplayName": "neoko-terminal",
                               "CFBundleExecutable": BINARY, "CFBundlePackageType": "APPL", "CFBundleShortVersionString": args.version,
                               "CFBundleVersion": args.version, "LSMinimumSystemVersion": os.environ.get("MACOSX_DEPLOYMENT_TARGET", "14.0"),
                               "NSHighResolutionCapable": True}, handle)

@@ -17,7 +17,7 @@ import time
 import zipfile
 
 BASE = Path(__file__).resolve().parents[1]
-PROFILE = BASE / 'components/remoted-client/profile.json'
+PROFILE = BASE / 'components/neoko-terminal/profile.json'
 SEMVER = r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)'
 MANIFEST_FIELDS = {
     'schemaVersion', 'component', 'version', 'protocolVersion', 'sourceRepository',
@@ -47,10 +47,10 @@ def read_json(data):
 
 
 def validate_profile(profile):
-    require(profile['component'] == 'remoted-client', 'Wrong native component')
-    require(profile['sourceWorkflow'] == 'remoted-client.yml', 'Wrong source workflow')
-    require(profile['tagPrefix'] == 'remoted-client-v', 'Wrong native tag prefix')
-    require(profile['artifactPrefix'] == 'remoted-client-native-v', 'Wrong native artifact prefix')
+    require(profile['component'] == 'neoko-terminal', 'Wrong native component')
+    require(profile['sourceWorkflow'] == 'neoko-terminal-android.yml', 'Wrong source workflow')
+    require(profile['tagPrefix'] == 'neoko-terminal-android-v', 'Wrong native tag prefix')
+    require(profile['artifactPrefix'] == 'neoko-terminal-android-v', 'Wrong native artifact prefix')
     fingerprint = profile.get('signingCertificateSha256')
     require(isinstance(fingerprint, str) and re.fullmatch(r'[0-9a-f]{64}', fingerprint)
             and fingerprint != '0' * 64, 'A production signing certificate fingerprint must be pinned')
@@ -207,7 +207,7 @@ def prepare(archive_path, selection, profile, output, aapt, apksigner, inspect=i
         archive_sha = hashlib.file_digest(source, 'sha256').hexdigest()
     require(selection['artifactDigest'] == 'sha256:' + archive_sha and selection['artifactSize'] == archive_path.stat().st_size,
             'Artifact archive digest/size differs from GitHub metadata')
-    apk_name = f'neko-remoted-client-v{version}-android-arm64.apk'
+    apk_name = f'neoko-terminal-v{version}-android-arm64.apk'
     expected = {apk_name, 'checksums.txt', 'provenance.json'}
     output.parent.mkdir(parents=True, exist_ok=True)
     require(not output.exists() and not output.is_symlink(), 'Verified output already exists; refusing replacement')
@@ -253,7 +253,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--archive', required=True)
     parser.add_argument('--selection', required=True)
-    parser.add_argument('--output', default='dist/remoted-client/verified')
+    parser.add_argument('--output', default='dist/neoko-terminal/verified')
     parser.add_argument('--aapt', required=True)
     parser.add_argument('--apksigner', required=True)
     args = parser.parse_args()

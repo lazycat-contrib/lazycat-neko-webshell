@@ -19,8 +19,12 @@
 
 要求懒猫系统 1.6.0 或更新版本。安装后，从系统 WebShell 入口选择目标应用实例即可使用。
 
-## 小橘远程 Android 客户端
+## neoko-terminal 原生客户端
 
-小橘远程是独立的 Android ARM64 原生客户端，最低支持 Android 9（API 28）。客户端源码位于 [remoted/client](remoted/client)，通过用户指定的 Relay 与主机配对；自行部署 Relay 请参阅 [Cloudflare 部署指南](remoted/docs/deploy-cloudflare.md)。
+neoko-terminal 是支持 Windows、macOS、Linux 和 Android 的原生终端客户端。Android 提供 ARM64 版本，最低支持 Android 9（API 28）。客户端源码位于 [remoted/client](remoted/client)，通过用户指定的 Relay 与主机配对；自行部署 Relay 请参阅 [Cloudflare 部署指南](remoted/docs/deploy-cloudflare.md)。
 
-原生 APK 使用独立的 `remoted-client-v<版本>` 发布标签，与小橘终端的 LPK 和商店发布分开管理。发布流程默认仅验证，检查来源、校验值及固定生产证书后才能正式发布；详见 [原生客户端发布说明](components/remoted-client/README.md)。
+原生 APK 使用独立的 `neoko-terminal-android-v<版本>` 发布标签，与小橘终端的 LPK 和商店发布分开管理。发布流程默认仅验证，检查来源、校验值及固定生产证书后才能正式发布；详见 [原生客户端发布说明](components/neoko-terminal/README.md)。
+
+桌面发布使用独立的 `neoko-terminal-desktop-v<版本>` 标签，包名以 `neoko-terminal-<版本>-<target>` 开头。Android 应用 ID 与生产签名证书保持不变，已有安装可以沿用原有身份升级。
+
+公开仓库的 Android 和桌面发布流程都从私有仓库拉取对应 Actions 构建产物，校验来源、校验值及各平台产物合同后发布，不在公开仓库重复构建原生客户端。桌面发布须齐备四个目标平台的产物，上传后逐一回读校验。

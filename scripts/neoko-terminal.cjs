@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const {isDeepStrictEqual} = require('node:util');
 
 const root = path.resolve(__dirname, '..');
-const work = path.join(root, 'dist/remoted-client');
+const work = path.join(root, 'dist/neoko-terminal');
 const stableVersion = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
 const sha40 = /^[0-9a-f]{40}$/;
 const sha256 = /^[0-9a-f]{64}$/;
@@ -13,13 +13,13 @@ const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function ensure(value, message) { if (!value) throw new Error(message); }
 
 function loadProfile() {
-  const profile = JSON.parse(fs.readFileSync(path.join(root, 'components/remoted-client/profile.json'), 'utf8'));
+  const profile = JSON.parse(fs.readFileSync(path.join(root, 'components/neoko-terminal/profile.json'), 'utf8'));
   validateProfile(profile);
   return profile;
 }
 function validateProfile(profile) {
-  ensure(profile.component === 'remoted-client' && profile.tagPrefix === 'remoted-client-v' &&
-    profile.artifactPrefix === 'remoted-client-native-v' && profile.sourceWorkflow === 'remoted-client.yml', 'Unexpected native component profile');
+  ensure(profile.component === 'neoko-terminal' && profile.tagPrefix === 'neoko-terminal-android-v' &&
+    profile.artifactPrefix === 'neoko-terminal-android-v' && profile.sourceWorkflow === 'neoko-terminal-android.yml', 'Unexpected native component profile');
   ensure(profile.sourceRepository === 'ca-x/lazycat-neko-webshell' && profile.publicRepository === 'lazycat-contrib/lazycat-neko-webshell', 'Unexpected repository profile');
   ensure(typeof profile.signingCertificateSha256 === 'string' && sha256.test(profile.signingCertificateSha256) &&
     profile.signingCertificateSha256 !== '0'.repeat(64), 'A production signing certificate fingerprint must be pinned');
@@ -86,6 +86,10 @@ async function selectSource({github, version, commit, runID, profile = loadProfi
 
 async function downloadArchive({selection, token, output, profile = loadProfile(), fetchImpl = fetch}) {
   validateProfile(profile);
+  return downloadArtifactArchive({selection, token, output, profile, fetchImpl});
+}
+
+async function downloadArtifactArchive({selection, token, output, profile, fetchImpl = fetch}) {
   ensure(typeof token === 'string' && token.length > 0, 'Private source read token is required');
   ensure(selection.sourceRepository === profile.sourceRepository && positiveInteger(selection.artifactId) &&
     positiveInteger(selection.artifactSize) && selection.artifactSize <= profile.maxArchiveBytes, 'Invalid selected artifact');
@@ -146,7 +150,7 @@ function verifiedFiles(profile = loadProfile(), directory = work) {
   ensure(stableVersion.test(selection.version) && selection.sourceRepository === profile.sourceRepository &&
     selection.sourceWorkflow === profile.sourceWorkflow && selection.sourceRef === 'refs/tags/' + profile.tagPrefix + selection.version &&
     sha40.test(selection.sourceCommit) && ['push', 'workflow_dispatch'].includes(selection.sourceEvent), 'Invalid verified native source');
-  const apkName = `neko-remoted-client-v${selection.version}-android-arm64.apk`;
+  const apkName = `neoko-terminal-v${selection.version}-android-arm64.apk`;
   const expected = [apkName, 'checksums.txt', 'provenance.json'].sort();
   ensure(JSON.stringify(Object.keys(marker.files).sort()) === JSON.stringify(expected) &&
     JSON.stringify(fs.readdirSync(path.join(directory, 'verified')).sort()) === JSON.stringify(expected), 'Verified output has unexpected files');
@@ -174,6 +178,12 @@ async function assetBytes(github, owner, repo, asset, limit) {
 
 async function publishRelease({github, context, core, dryRun = true, profile = loadProfile(), directory = work}) {
   const {selection, files} = verifiedFiles(profile, directory);
+  return publishVerifiedRelease({github, context, core, dryRun, profile, selection, files,
+    body: `Android arm64-v8a native client ${selection.version}.\n\nSource: ${selection.sourceRepository}@${selection.sourceCommit}\nBuild run: ${selection.sourceRunId} (attempt ${selection.sourceRunAttempt}).\n\nIncludes the production-signed APK, checksums and provenance.`,
+  });
+}
+
+async function publishVerifiedRelease({github, context, core, dryRun = true, profile, selection, files, body}) {
   const {owner, repo} = context.repo;
   ensure(`${owner}/${repo}` === profile.publicRepository && context.eventName === 'workflow_dispatch' &&
     context.ref === 'refs/heads/main' && sha40.test(context.sha), 'Native publication requires the trusted public main workflow_dispatch');
@@ -206,7 +216,7 @@ async function publishRelease({github, context, core, dryRun = true, profile = l
   if (!exists) await github.rest.git.createRef({owner, repo, ref: `refs/tags/${tag}`, sha: context.sha});
   if (!release) release = (await github.rest.repos.createRelease({
     owner, repo, tag_name: tag, target_commitish: context.sha, name: `${profile.name} ${selection.version}`, draft: true,
-    prerelease: false, make_latest: 'false', body: `Android arm64-v8a native client ${selection.version}.\n\nSource: ${selection.sourceRepository}@${selection.sourceCommit}\nBuild run: ${selection.sourceRunId} (attempt ${selection.sourceRunAttempt}).\n\nIncludes the production-signed APK, checksums and provenance.`,
+    prerelease: false, make_latest: 'false', body,
   })).data;
   for (const file of files) {
     let asset = assets.find(asset => asset.name === file.name);
@@ -224,4 +234,4 @@ async function publishRelease({github, context, core, dryRun = true, profile = l
 }
 
 module.exports = {loadProfile, validateProfile, validateRun, tagCommit, selectSource, downloadArchive,
-  selectAndDownload, revalidateSource, verifiedFiles, publishRelease};
+  selectAndDownload, revalidateSource, verifiedFiles, publishRelease, downloadArtifactArchive, publishVerifiedRelease};

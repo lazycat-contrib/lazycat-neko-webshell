@@ -1,0 +1,21 @@
+{
+  "component": "neoko-terminal",
+  "name": "neoko-terminal desktop",
+  "sourceRepository": "ca-x/lazycat-neko-webshell",
+  "publicRepository": "lazycat-contrib/lazycat-neko-webshell",
+  "sourceWorkflow": "neoko-terminal-desktop.yml",
+  "tagPrefix": "neoko-terminal-desktop-v",
+  "artifactPrefix": "neoko-terminal-desktop-",
+  "packageName": "community.lazycat.neko.remoted",
+  "nshRevision": "f4d68f7f9f31eb7b3ecc8a4cbc31096d5c6238a1",
+  "targets": [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin"
+  ],
+  "maxArchiveBytes": 268435456,
+  "maxPackageBytes": 268435456,
+  "maxMetadataBytes": 8192,
+  "crateVersion": "0.2.0"
+}

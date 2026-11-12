@@ -1,15 +1,17 @@
-# 小橘远程（Remoted）
+# neoko-terminal 与 Remoted
 
-Remoted 将小橘终端中明确授权的会话，通过自建 Relay 提供给独立的 NSH 原生客户端。主机和客户端均主动连接 Relay，不需要把终端服务端口直接暴露到公网。
+neoko-terminal 是 Rust + NSH 原生客户端，支持 Windows、macOS、Linux 和 Android。Remoted 是它与小橘终端共用的远程协议，将明确授权的已有会话通过 Relay 提供给客户端。主机和客户端均主动连接 Relay，不需要把终端服务端口直接暴露到公网。
 
 Android 首发包名为 `community.lazycat.neko.remoted`，支持 Android 9 / API 28 及以上的 arm64 设备。客户端、协议及 Relay 独立版本；主机能力由小橘终端新版提供。两端均需显式配置同一个 Relay 并由主机用户批准设备；可以填写自建地址，或点击“使用公共中转”填入 `https://neko-relay.czyt.eu.org`，不会自动连接或配对。
+
+配对后从设备侧栏切换主机。Herdr 与普通终端分别导航，两端与 WebShell 使用同一会话及控制权；文件入口只展示获授权目录。启动时恢复上次主机，临时断网有限重试，手动断开则停止自动连接。重连只恢复已确认的运行中会话，不重发输入、传输或取得控制权。会话交互与设计约定见 [原生界面说明](docs/native-ui.md)。
+
 | 目录 | 职责 |
 | --- | --- |
 | `protocol/` | 地址与设备码、Noise 握手、加密消息及协议边界 |
 | `relay/` | Cloudflare Worker + SQLite Durable Objects，转发连接控制帧和密文 |
 | `client/` | 独立 NSH 原生客户端及平台适配；拥有自己的 Cargo workspace |
-
-WebShell 主机的配对、审批、授权、会话与文件适配由已安装的小橘终端应用提供。其实现位于私有源码仓库的 `src/remoted/`，不包含在本公开仓库中；此处路径仅作源码位置说明，不是本仓库的相对链接。
+| `../src/remoted/` | WebShell 主机的配对、审批、授权、会话与文件适配 |
 
 部署从 [Cloudflare 部署指南](docs/deploy-cloudflare.md) 开始；Relay 的入口和测试见 [Relay README](relay/README.md)。原生客户端的构建、签名和 Android 平台验证见 [Android 指南](docs/android.md)，Windows、macOS 和 Linux deb 的构建与安装见 [桌面指南](docs/native-desktop.md)，线协议见 [协议说明](docs/protocol.md)。
 
@@ -25,8 +27,10 @@ WebShell 主机的配对、审批、授权、会话与文件适配由已安装�
 
 ## 验证与边界
 
-验证覆盖真实本地 workerd/DO WebSocket、Noise 两种握手、发送窗口及超时拒绝、只读方法集合、目标文件沙箱、原生状态机和 NSH headless 交互。Android API 35 模拟器使用实际发布签名 APK 验证了 NshView/JNI、Keystore 加密与篡改拒绝、SAF 流式读写/取消、相机权限与预览、生命周期及明暗主题。
+验证覆盖真实本地 workerd/DO WebSocket、Noise 两种握手、发送窗口及超时拒绝、只读方法集合、目标文件沙箱、原生状态机和 NSH headless 交互。此前 Android 0.1.5 在 API 35 模拟器中使用实际发布签名 APK 验证了 NshView/JNI、Keystore 加密与篡改拒绝、SAF 流式读写/取消、相机权限与预览、生命周期及明暗主题。
 
 这不等于已验证所有物理设备或线上懒猫部署。部署者应按部署指南完成真实归属查询、主机批准、普通终端/Herdr 和文件收发验收；实际扫码成像、不同云文件提供方、4 GiB 文件和 API 28/16 KiB 内存页硬件仍需各自验证。APK 的签名、ZIP 及 ELF 对齐检查与运行平台验证分开记录。
 
 原生客户端与 Relay 的本目录代码采用 [MIT License](LICENSE)。NSH 和 ZXing 的声明随 Android 包提供；相关第三方许可见 `client/android/licenses/`。
+
+本次实际业务链路与平台验收边界见 [2026-11-12 验收记录](docs/acceptance-2026-11-12.md)。

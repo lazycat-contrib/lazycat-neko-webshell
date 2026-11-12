@@ -107,3 +107,49 @@ pub fn tab(
                 .text_color(move || theme().secondary_foreground),
         )
 }
+
+/// A list row, rather than a full-width form action. Shared by devices and sessions.
+pub fn navigation_row(
+    title: impl IntoReactive<SharedString>,
+    detail: impl IntoReactive<SharedString>,
+    selected: impl Fn() -> bool + 'static,
+    run: impl Fn() + 'static,
+) -> impl IntoElement {
+    navigation_row_disabled(title, detail, selected, || false, run)
+}
+
+pub fn navigation_row_disabled(
+    title: impl IntoReactive<SharedString>,
+    detail: impl IntoReactive<SharedString>,
+    selected: impl Fn() -> bool + 'static,
+    disabled: impl Fn() -> bool + 'static,
+    run: impl Fn() + 'static,
+) -> impl IntoElement {
+    button()
+        .selected(selected)
+        .disabled(disabled)
+        .disabled_style(|s| s.opacity(0.55))
+        .on_press(run)
+        .min_h(px(56.0))
+        .px_3()
+        .py_2()
+        .gap_1()
+        .rounded(move || theme().radius)
+        .bg(move || theme().background.opacity(0.0))
+        .selected_style(|s| s.bg(move || theme().accent))
+        .hover(|s| s.bg(move || theme().secondary))
+        .active(|s| s.opacity(0.75))
+        .focus(|s| s.outline(px(2.0)).outline_color(move || theme().ring))
+        .child(
+            text(title)
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .number_of_lines(1),
+        )
+        .child(
+            text(detail)
+                .text_xs()
+                .text_color(move || theme().muted_foreground)
+                .number_of_lines(1),
+        )
+}
