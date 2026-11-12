@@ -1,5 +1,7 @@
 // Application relay: opaque encrypted frames; routing and deployment are documented in ../README.md.
 // Only connection metadata and Noise ciphertext pass through this service.
+import metadata from '../package.json' with { type: 'json' };
+
 export const LIMITS = Object.freeze({ message: 98_304, peers: 16, framesPerSecond: 256, buffered: 512 * 1024 });
 const PROTOCOL = "neko.remoted.v1";
 const json = (status, code) => Response.json({ code }, { status, headers: { "cache-control": "no-store" } });
@@ -21,6 +23,16 @@ export async function authorizeHost(header, route) {
 export default {
   async fetch(request, env) {
     const u = new URL(request.url);
+    if (u.pathname === "/" && !u.search) {
+      if (request.method !== "GET") return json(405, "METHOD_NOT_ALLOWED");
+      const buildValue = value => typeof value === "string" && value.trim() ? value : "unknown";
+      return Response.json({
+        service: metadata.name, package_version: metadata.version,
+        relay_protocol: PROTOCOL, protocol_version: 1,
+        build_commit: buildValue(env.RELAY_BUILD_COMMIT),
+        build_time: buildValue(env.RELAY_BUILD_TIME),
+      }, { headers: { "cache-control": "no-store" } });
+    }
     if (request.method === "GET" && u.pathname === "/healthz" && !u.search) {
       const health = { protocol: PROTOCOL, version: 1 };
       if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return Response.json(health);

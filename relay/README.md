@@ -38,3 +38,15 @@ npm run test:integration
 真实 WebSocket/DO 集成测试覆盖多客户端隔离、错误凭据拒绝、host 替换后的 generation 清理、主机离线错误、ACK 额度恢复、慢客户端隔离、无效累计 ACK 的发送者隔离，以及未认证 peer 洪泛时的连接隔离回归。
 
 自动命令会为测试设置本地 `REMOTED_TEST_RELAY`，不会使用外部同名环境变量指定的生产 Relay。应用的 Relay 地址解析仍要求 HTTPS/WSS，本地 HTTP 测试并不代表应用允许不安全连接。
+
+## 版本诊断
+
+`GET /` 返回 JSON：`service`、`package_version`、`relay_protocol`、`protocol_version`、`build_commit`、`build_time`。响应设置 `Cache-Control: no-store`，不包含设备、路由或凭据。版本来自 `package.json`；构建信息由部署时注入，未配置时显示 `unknown`。`GET /healthz` 保持协议健康检查。
+
+部署应在已提交且干净的 Relay 源码上执行，填写该源码的完整 commit 和实际 UTC 构建时间：
+
+```bash
+npx wrangler deploy --var RELAY_BUILD_COMMIT:<完整commit> --var RELAY_BUILD_TIME:<UTC时间>
+```
+
+后续手动部署也应传入这两个参数，以便根路径准确标识部署源码；缺失时会明确显示 `unknown`。
