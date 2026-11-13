@@ -32,15 +32,15 @@ function validateProfile(profile) {
 
 function validateRun(run, repository, workflow, version, commit, requestedID, profile) {
   const tag = profile.tagPrefix + version;
-  ensure(repository.private === true && repository.full_name === profile.sourceRepository && positiveInteger(repository.id), 'Expected the pinned private source repository');
-  ensure(workflow.path === `.github/workflows/${profile.sourceWorkflow}` && positiveInteger(workflow.id) && workflow.state === 'active', 'Unexpected private workflow identity');
+  ensure(repository.full_name === profile.sourceRepository && positiveInteger(repository.id), 'Expected the pinned source repository');
+  ensure(workflow.path === `.github/workflows/${profile.sourceWorkflow}` && positiveInteger(workflow.id) && workflow.state === 'active', 'Unexpected source workflow identity');
   ensure(run.id === requestedID && run.workflow_id === workflow.id && run.path === workflow.path &&
     run.repository?.id === repository.id && run.repository?.full_name === profile.sourceRepository &&
     run.head_repository?.id === repository.id && run.head_repository?.full_name === profile.sourceRepository &&
     run.status === 'completed' && run.conclusion === 'success' && ['push', 'workflow_dispatch'].includes(run.event) &&
     run.head_branch === tag && sha40.test(run.head_sha) && run.head_sha === commit && positiveInteger(run.run_attempt) &&
     Array.isArray(run.pull_requests) && run.pull_requests.length === 0,
-  'Expected the successful trusted private tag/workflow/commit; PR, fork, branch, and incomplete runs are rejected');
+  'Expected the successful trusted source tag/workflow/commit; PR, fork, branch, and incomplete runs are rejected');
 }
 
 async function tagCommit(github, owner, repo, tag) {

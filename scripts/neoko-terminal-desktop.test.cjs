@@ -50,18 +50,37 @@ test('successful immutable private desktop tag selects exactly four target artif
   await select(sourceGithub({run: {...trusted, event: 'workflow_dispatch'}}));
 });
 
+test('public pinned source selects all four trusted desktop artifacts on a successful rerun', async () => {
+  const repo = {...repository, private: false};
+  for (const event of ['push', 'workflow_dispatch']) {
+    const run = {...trusted, repository: repo, head_repository: repo, event, run_attempt: 2};
+    const selection = await select(sourceGithub({repo, run}));
+    assert.equal(selection.sourceRepository, profile.sourceRepository);
+    assert.equal(selection.sourceCommit, commit);
+    assert.equal(selection.sourceRunAttempt, 2);
+    assert.deepEqual(selection.artifacts.map(a => a.target), profile.targets);
+    assert.deepEqual(selection.artifacts.map(a => a.artifactDigest), artifacts.map(a => a.digest));
+  }
+});
+
 test('desktop source rejects PRs forks branches workflow substitutions and unfinished or rerun identities', async () => {
-  for (const change of [{event: 'pull_request'}, {event: 'pull_request_target'}, {event: 'workflow_run'},
-    {head_repository: {...repository, id: 99}}, {repository: {...repository, full_name: 'attacker/fork'}},
+  const changes = [{event: 'pull_request'}, {event: 'pull_request_target'}, {event: 'workflow_run'},
+    {head_repository: {...repository, id: 99}}, {head_repository: {...repository, full_name: 'attacker/fork'}},
+    {repository: {...repository, id: 99}}, {repository: {...repository, full_name: 'attacker/fork'}},
     {workflow_id: 99}, {path: '.github/workflows/neoko-terminal-android.yml'}, {head_branch: 'main'},
     {head_branch: 'neoko-terminal-android-v0.4.0'}, {head_sha: 'f'.repeat(40)}, {run_attempt: 0}, {id: 124},
-    {status: 'in_progress'}, {conclusion: 'failure'}, {pull_requests: [{number: 1}]}]) {
-    await assert.rejects(select(sourceGithub({run: {...trusted, ...change}})));
+    {status: 'in_progress'}, {conclusion: 'failure'}, {pull_requests: [{number: 1}]}];
+  for (const visibility of [true, false]) {
+    const repo = {...repository, private: visibility};
+    const run = {...trusted, repository: repo, head_repository: repo};
+    for (const change of changes) await assert.rejects(select(sourceGithub({repo, run: {...run, ...change}})), /trusted source/);
+    for (const change of [{full_name: 'attacker/fork'}, {id: 0}, {id: '42'}]) {
+      await assert.rejects(select(sourceGithub({repo: {...repo, ...change}, run})), /pinned source/);
+    }
+    await assert.rejects(select(sourceGithub({repo, run, wf: {...workflow, path: '.github/workflows/other.yml'}})), /workflow identity/);
+    await assert.rejects(select(sourceGithub({repo, run, wf: {...workflow, state: 'disabled_manually'}})), /workflow identity/);
+    await assert.rejects(select(sourceGithub({repo, run, tag: 'f'.repeat(40)})), /tag moved/);
   }
-  await assert.rejects(select(sourceGithub({repo: {...repository, private: false}})));
-  await assert.rejects(select(sourceGithub({wf: {...workflow, path: '.github/workflows/other.yml'}})));
-  await assert.rejects(select(sourceGithub({wf: {...workflow, state: 'disabled_manually'}})));
-  await assert.rejects(select(sourceGithub({tag: 'f'.repeat(40)})), /tag moved/);
 });
 
 test('desktop versions commits IDs and profile namespaces fail closed', async () => {

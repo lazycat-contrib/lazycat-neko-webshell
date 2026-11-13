@@ -49,16 +49,35 @@ test('successful private tag run selects exactly its matching immutable native a
   await select(sourceGithub({run: {...trusted, event: 'workflow_dispatch'}}));
 });
 
+test('public pinned source selects the same trusted Android artifact on a successful rerun', async () => {
+  const repo = {...repository, private: false};
+  for (const event of ['push', 'workflow_dispatch']) {
+    const run = {...trusted, repository: repo, head_repository: repo, event, run_attempt: 2};
+    const selection = await select(sourceGithub({repo, run}));
+    assert.equal(selection.sourceRepository, profile.sourceRepository);
+    assert.equal(selection.sourceCommit, commit);
+    assert.equal(selection.sourceRunAttempt, 2);
+    assert.equal(selection.artifactDigest, artifact.digest);
+  }
+});
+
 test('PR, fork, branch, workflow, status, attempt, run ID, and headSHA substitutions fail', async () => {
   const overrides = [{event: 'pull_request'}, {event: 'pull_request_target'}, {event: 'workflow_run'},
     {head_repository: {...repository, id: 99}}, {head_repository: {...repository, full_name: 'attacker/fork'}},
-    {repository: {...repository, id: 99}}, {head_branch: 'main'}, {head_branch: 'v0.1.0'},
+    {repository: {...repository, id: 99}}, {repository: {...repository, full_name: 'attacker/fork'}},
+    {head_branch: 'main'}, {head_branch: 'v0.1.0'},
     {workflow_id: 99}, {path: '.github/workflows/lazycat.yml'}, {status: 'in_progress'},
     {conclusion: 'failure'}, {head_sha: 'f'.repeat(40)}, {run_attempt: 0}, {id: 124}, {pull_requests: [{number: 1}]}];
-  for (const override of overrides) await assert.rejects(select(sourceGithub({run: {...trusted, ...override}})), /trusted private/);
-  await assert.rejects(select(sourceGithub({repo: {...repository, private: false}})), /private source/);
-  await assert.rejects(select(sourceGithub({wf: {...workflow, state: 'disabled_manually'}})), /workflow identity/);
-  await assert.rejects(select(sourceGithub({tag: 'f'.repeat(40)})), /headSHA/);
+  for (const visibility of [true, false]) {
+    const repo = {...repository, private: visibility};
+    const run = {...trusted, repository: repo, head_repository: repo};
+    for (const override of overrides) await assert.rejects(select(sourceGithub({repo, run: {...run, ...override}})), /trusted source/);
+    for (const change of [{full_name: 'attacker/fork'}, {id: 0}, {id: '42'}]) {
+      await assert.rejects(select(sourceGithub({repo: {...repo, ...change}, run})), /pinned source/);
+    }
+    await assert.rejects(select(sourceGithub({repo, run, wf: {...workflow, state: 'disabled_manually'}})), /workflow identity/);
+    await assert.rejects(select(sourceGithub({repo, run, tag: 'f'.repeat(40)})), /headSHA/);
+  }
 });
 
 test('annotated tags resolve to the expected commit and cycles are rejected', async () => {
@@ -249,7 +268,7 @@ test('old and desktop workflows, tags and artifacts cannot enter Android publica
     await assert.rejects(select(sourceGithub({wf, run: {...trusted, path: wf.path}})), /workflow identity/);
   }
   for (const head_branch of ['remoted-client-v0.1.0', 'neoko-terminal-desktop-v0.1.0']) {
-    await assert.rejects(select(sourceGithub({run: {...trusted, head_branch}})), /trusted private/);
+    await assert.rejects(select(sourceGithub({run: {...trusted, head_branch}})), /trusted source/);
   }
   for (const name of ['remoted-client-native-v0.1.0', 'neoko-terminal-0.1.0-x86_64-unknown-linux-gnu']) {
     await assert.rejects(select(sourceGithub({artifacts: [{...artifact, name}]})), /exactly one/);

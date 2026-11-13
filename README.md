@@ -33,6 +33,6 @@ neoko-terminal 是支持 Windows、macOS、Linux 和 Android 的原生终端客�
 
 桌面发布使用独立的 `neoko-terminal-desktop-v<版本>` 标签，包名以 `neoko-terminal-<版本>-<target>` 开头。Android 应用 ID 与生产签名证书保持不变，已有安装可以沿用原有身份升级。
 
-公开仓库的 Android 和桌面发布流程都从私有仓库拉取对应 Actions 构建产物，校验来源、校验值及各平台产物合同后发布，不在公开仓库重复构建原生客户端。桌面统一发布 Release 构建的稳定正式包，须齐备 Windows x64、macOS Apple Silicon、macOS Intel 和 Linux amd64 deb 的产物，上传后逐一回读校验；草稿和预发布版本不算发布完成。
+公开仓库的 Android 和桌面发布流程都从 `ca-x/lazycat-neko-webshell` 拉取对应 Actions 构建产物，校验来源、校验值及各平台产物合同后发布。来源仓库可以是公开或私有仓库。桌面统一发布 Release 构建的稳定正式包，须齐备 Windows x64、macOS Apple Silicon、macOS Intel 和 Linux amd64 deb 的产物，上传后逐一回读校验；草稿和预发布版本不算发布完成。
 
-本仓库维护 GitHub Actions 发布流程、产物校验脚本，以及 [Relay 源码](relay) 和部署说明。应用与原生客户端由私有仓库构建，安装包在 Releases 下载。
+本仓库维护 GitHub Actions 发布流程、产物校验脚本，以及 [Relay 源码](relay) 和部署说明。应用与原生客户端由来源仓库构建，安装包在 Releases 下载。
