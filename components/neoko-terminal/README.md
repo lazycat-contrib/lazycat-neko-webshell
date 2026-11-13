@@ -76,13 +76,13 @@ New versions normally leave `release-commit` blank.
 ## Desktop source-build publication
 
 The public `neoko-terminal-desktop.yml` is a publisher, not a source builder. Run it
-manually on public `main` with `version` (default `0.4.1`), `source-run-id`,
+manually on public `main` with `version` (default `0.5.3`), `source-run-id`,
 `source-commit` and `dry-run` (default `true`). It fetches artifacts from the source
 `neoko-terminal-desktop.yml` successful run on the exact immutable
 `neoko-terminal-desktop-vX.Y.Z` tag. There is no public Cargo build or package rebuild.
 
 `desktop-profile.json` pins the repositories, workflow, tag and artifact namespaces,
-application ID, crate version (`0.3.0`), NSH revision and these four targets:
+application ID, crate version (`0.4.3`), NSH revision and these four targets:
 
 - `x86_64-unknown-linux-gnu`
 - `x86_64-pc-windows-msvc`

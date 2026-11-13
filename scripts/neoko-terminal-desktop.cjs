@@ -21,7 +21,7 @@ function validateProfile(profile) {
   ensure(profile.component === 'neoko-terminal' && profile.sourceRepository === 'ca-x/lazycat-neko-webshell' &&
     profile.publicRepository === 'lazycat-contrib/lazycat-neko-webshell' && profile.sourceWorkflow === 'neoko-terminal-desktop.yml' &&
     profile.tagPrefix === 'neoko-terminal-desktop-v' && profile.artifactPrefix === 'neoko-terminal-desktop-' &&
-    profile.crateVersion === '0.4.0' && isDeepStrictEqual(profile.nativeBuildInputs, nativeBuildInputs) &&
+    profile.crateVersion === '0.4.3' && isDeepStrictEqual(profile.nativeBuildInputs, nativeBuildInputs) &&
     profile.packageName === 'community.lazycat.neko.remoted' && sha40.test(profile.nshRevision) &&
     isDeepStrictEqual(profile.targets, targets), 'Unexpected desktop source profile');
   for (const key of ['maxArchiveBytes', 'maxPackageBytes', 'maxMetadataBytes']) {

@@ -35,7 +35,7 @@ def validate_profile(profile):
             and profile['sourceWorkflow'] == 'neoko-terminal-desktop.yml'
             and profile['tagPrefix'] == 'neoko-terminal-desktop-v'
             and profile['artifactPrefix'] == 'neoko-terminal-desktop-'
-            and profile['crateVersion'] == '0.4.0'
+            and profile['crateVersion'] == '0.4.3'
             and profile.get('nativeBuildInputs') == NATIVE_BUILD_INPUTS
             and profile['packageName'] == 'community.lazycat.neko.remoted'
             and re.fullmatch(r'[0-9a-f]{40}', profile['nshRevision'])

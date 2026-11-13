@@ -208,7 +208,7 @@ test('public desktop workflow only pulls private artifacts, verifies and revalid
   const workflowText = fs.readFileSync(path.join(root, '.github/workflows/neoko-terminal-desktop.yml'), 'utf8');
   assert.match(workflowText, /workflow_dispatch:/);
   for (const input of ['version', 'source-run-id', 'source-commit', 'release-commit', 'dry-run']) assert.match(workflowText, new RegExp(`      ${input}:`));
-  assert.match(workflowText, /default: '0\.5\.0'/);
+  assert.match(workflowText, /default: '0\.5\.3'/);
   assert.match(workflowText, /python-version: '3\.14'/);
   assert.match(workflowText, /releaseCommit: process.env.RELEASE_COMMIT \|\| context.sha/);
   assert.match(workflowText, /dry-run:[\s\S]*default: true/);

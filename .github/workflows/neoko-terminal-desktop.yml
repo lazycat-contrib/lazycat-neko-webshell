@@ -5,7 +5,7 @@ on:
       version:
         description: Independent desktop stable version
         required: true
-        default: '0.5.0'
+        default: '0.5.3'
         type: string
       source-run-id:
         description: Successful trusted private neoko-terminal-desktop.yml run ID

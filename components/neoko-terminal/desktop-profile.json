@@ -17,7 +17,7 @@
   "maxArchiveBytes": 268435456,
   "maxPackageBytes": 268435456,
   "maxMetadataBytes": 8192,
-  "crateVersion": "0.4.0",
+  "crateVersion": "0.4.3",
   "nativeBuildInputs": {
     "ghostty_source_revision": "108cacb17ed8990840cd14abfce43d8ed8503ca1",
     "ghostty_wrapper_revision": "cd4d497e8c698b27054a677ce19d1bd1a1a4d8bf",
