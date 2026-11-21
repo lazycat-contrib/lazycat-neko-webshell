@@ -76,7 +76,7 @@ New versions normally leave `release-commit` blank.
 ## Desktop source-build publication
 
 The public `neoko-terminal-desktop.yml` is a publisher, not a source builder. Run it
-manually on public `main` with `version` (default `0.5.5`), `source-run-id`,
+manually on public `main` with `version` (default `0.5.6`), `source-run-id`,
 `source-commit` and `dry-run` (default `true`). It fetches artifacts from the source
 `neoko-terminal-desktop.yml` successful run on the exact immutable
 `neoko-terminal-desktop-vX.Y.Z` tag. There is no public Cargo build or package rebuild.
