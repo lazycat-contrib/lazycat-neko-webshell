@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {validateRun, ensureAsset, publishedAssetURL} = require('./release.cjs');
+const {validateRun, ensureAsset, publishedAssetURL, findRelease} = require('./release.cjs');
 
 const trusted = {workflow_id: 42, head_branch: 'main', head_repository: {full_name: 'owner/private'}, event: 'push', conclusion: 'success'};
 test('accepts the trusted successful source workflow only', () => {
@@ -34,6 +34,22 @@ test('a temporary draft URL cannot reach a store', async () => {
     browser_download_url: 'https://github.com/owner/public/releases/download/untagged-123/app.lpk',
   }})}}};
   await assert.rejects(() => publishedAssetURL(github, 'owner', 'public', 17, 'v0.1.1', 'app.lpk'), /published version URL/);
+});
+
+test('publication resumes the exact draft with its prepared store notes', async () => {
+  const draft = {id: 9, tag_name: 'v0.1.9', draft: true, body: 'Notes for both stores'};
+  const releases = [{tag_name: 'v0.1.8', draft: false}, draft];
+  const listReleases = () => {};
+  const github = {rest: {repos: {listReleases}}, paginate: async (method, request) => {
+    assert.equal(method, listReleases);
+    assert.deepEqual(request, {owner: 'owner', repo: 'public', per_page: 100});
+    return releases;
+  }};
+  assert.equal(await findRelease(github, 'owner', 'public', 'v0.1.9'), draft);
+  assert.equal(await findRelease(github, 'owner', 'public', 'v0.1.8'), releases[0]);
+  assert.equal(await findRelease(github, 'owner', 'public', 'v0.2.0'), undefined);
+  releases.push({...draft, id: 10});
+  await assert.rejects(findRelease(github, 'owner', 'public', 'v0.1.9'), /Multiple releases/);
 });
 
 test('client/server source tags cannot cross their component boundary', () => {

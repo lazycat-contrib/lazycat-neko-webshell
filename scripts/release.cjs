@@ -88,17 +88,22 @@ async function publishedAssetURL(github, owner, repo, assetID, tag, filename) {
   return asset.browser_download_url;
 }
 
+async function findRelease(github, owner, repo, tag) {
+  // GitHub's release-by-tag endpoint omits drafts, including drafts with an existing tag.
+  const releases = await github.paginate(github.rest.repos.listReleases, {owner, repo, per_page: 100});
+  const matches = releases.filter(release => release.tag_name === tag);
+  if (matches.length > 1) throw new Error(`Multiple releases have tag ${tag}`);
+  return matches[0];
+}
+
 async function publishRelease({github, context, core}) {
   const {owner, repo} = context.repo;
   const version = process.env.LPK_VERSION;
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version || '')) throw new Error('Invalid release version');
   const p = profile();
   const tag = p.tagPrefix + version;
-  let release;
-  try {
-    release = (await github.rest.repos.getReleaseByTag({owner, repo, tag})).data;
-  } catch (error) {
-    if (error.status !== 404) throw error;
+  let release = await findRelease(github, owner, repo, tag);
+  if (!release) {
     release = (await github.rest.repos.createRelease({
       owner, repo, tag_name: tag, target_commitish: context.sha, draft: true,
       name: `${p.name} ${tag}`,
@@ -121,4 +126,4 @@ async function publishRelease({github, context, core}) {
   await core.summary.write();
 }
 
-module.exports = {profile, validateRun, selectSource, ensureAsset, publishedAssetURL, publishRelease};
+module.exports = {profile, validateRun, selectSource, ensureAsset, publishedAssetURL, findRelease, publishRelease};
