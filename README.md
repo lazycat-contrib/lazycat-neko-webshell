@@ -35,4 +35,10 @@ neoko-terminal 是支持 Windows、macOS、Linux 和 Android 的原生终端客�
 
 公开仓库的 Android 和桌面发布流程都从 `ca-x/lazycat-neko-webshell` 拉取对应 Actions 构建产物，校验来源、校验值及各平台产物合同后发布。来源仓库可以是公开或私有仓库。桌面统一发布 Release 构建的稳定正式包，须齐备 Windows x64、macOS Apple Silicon、macOS Intel 和 Linux amd64 deb 的产物，上传后逐一回读校验；草稿和预发布版本不算发布完成。
 
-本仓库维护 GitHub Actions 发布流程、产物校验脚本，以及 [Relay 源码](relay) 和部署说明。应用与原生客户端由来源仓库构建，安装包在 Releases 下载。
+本仓库维护 GitHub Actions 发布流程、产物校验脚本，以及 [Relay 源码](relay) 和部署说明。安装包在 Releases 下载。
+
+## WebShell LPK 发布
+
+本仓库的 `Publish Neko LPK` 工作流从公开源码仓库 `ca-x/lazycat-neko-webshell` 选择最新稳定版 `vX.Y.Z` 标签，固定到该标签的提交后构建 amd64 LPK。构建作业使用只读权限，发布作业独立检查包 ID、版本、可执行文件架构和 SHA256，然后创建 Release 并提交喵喵和懒猫官方商店。
+
+定时任务跳过已有公开 Release 的版本。手动发布或重试可指定 `source-tag`，取消勾选默认的 `dry-run`。已有 Release 或草稿中的同版 LPK 会直接用于校验和商店重试，以保留原始校验值。

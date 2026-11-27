@@ -18,6 +18,6 @@ jobs:
       - name: Verify source-file rejection and release recovery
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py'
-          node --test scripts/release.test.cjs
+          node --test scripts/release.test.cjs scripts/neko-source.test.cjs
       - name: Validate workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/*.yml

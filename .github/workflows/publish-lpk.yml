@@ -5,6 +5,9 @@ on:
       component:
         required: true
         type: string
+      built-version:
+        description: Version built in this workflow run
+        type: string
       source-run-id:
         type: string
         default: ''
@@ -13,9 +16,9 @@ on:
         default: true
     secrets:
       LPK_SOURCE_REPOSITORY:
-        required: true
+        required: false
       SOURCE_REPO_TOKEN:
-        required: true
+        required: false
       APPSTORE_URL:
         required: true
       APPSTORE_TOKEN:
@@ -47,14 +50,27 @@ jobs:
         uses: actions/github-script@v9
         env:
           SOURCE_REPOSITORY: ${{ secrets.LPK_SOURCE_REPOSITORY }}
+          BUILT_VERSION: ${{ inputs.built-version }}
           SOURCE_BRANCH: ${{ vars.LPK_SOURCE_BRANCH || 'main' }}
           SOURCE_RUN_ID: ${{ inputs.source-run-id }}
         with:
-          github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          github-token: ${{ secrets.SOURCE_REPO_TOKEN || github.token }}
           script: |
-            await require('./scripts/release.cjs').selectSource({github, core});
+            const release = require('./scripts/release.cjs');
+            if (process.env.BUILT_VERSION) {
+              const p = release.profile();
+              const version = process.env.BUILT_VERSION;
+              core.setOutput('available', 'true');
+              core.setOutput('artifact-name', p.artifactPrefix + version);
+              core.setOutput('package-id', p.packageId);
+              core.setOutput('tag', p.tagPrefix + version);
+              core.setOutput('official', String(p.official));
+              core.setOutput('version', version);
+            } else {
+              await release.selectSource({github, core});
+            }
       - name: Download only the component LPK
-        if: steps.source.outputs.available == 'true'
+        if: steps.source.outputs.available == 'true' && !inputs.built-version
         uses: actions/download-artifact@v8
         with:
           name: ${{ steps.source.outputs.artifact-name }}
@@ -62,6 +78,12 @@ jobs:
           repository: ${{ secrets.LPK_SOURCE_REPOSITORY }}
           run-id: ${{ steps.source.outputs.run-id }}
           github-token: ${{ secrets.SOURCE_REPO_TOKEN }}
+      - name: Download the LPK built in this run
+        if: inputs.built-version
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.source.outputs.artifact-name }}
+          path: dist/import
       - name: Inspect runtime and prepare the versioned asset
         if: steps.source.outputs.available == 'true'
         id: package
